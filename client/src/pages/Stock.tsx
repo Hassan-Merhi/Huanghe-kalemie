@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { AlertTriangle, ArrowRightLeft, Bike, CheckCircle2, Search, Trash2 } from "lucide-react";
@@ -475,7 +475,7 @@ function UnitPicker({ variantId, locationId, needed, value, onChange }: { varian
   return (
     <div className="mt-3 space-y-2">
       <p className={cn("text-xs", value.length === needed ? "text-muted-foreground" : "text-destructive")}>
-        {t(`Pick the motorcycles removed: ${value.length} of ${needed} selected.`, `Choisissez les motos retirées : ${value.length} sur ${needed} sélectionnée(s).`)}
+        {t(`Pick the motorcycles: ${value.length} of ${needed} selected.`, `Choisissez les motos : ${value.length} sur ${needed} sélectionnée(s).`)}
       </p>
       {q.isLoading ? (
         <Loading />
@@ -546,6 +546,7 @@ function AdjustmentHistory() {
 interface TransferLine {
   variant: VariantRow;
   qty: string;
+  unitIds: number[];
 }
 
 function TransferForm() {
@@ -579,8 +580,18 @@ function TransferForm() {
     for (const l of lines) {
       if (!isPositive(l.qty)) return setError(t(`Enter a quantity for ${l.variant.productName}.`, `Saisissez une quantité pour ${l.variant.productName}.`));
       if (d(l.qty).gt(d(l.variant.locationQty))) return setError(t(`Not enough ${l.variant.productName} at the source location.`, `Pas assez de ${l.variant.productName} à l'emplacement de départ.`));
+      if (l.variant.tracksSerials) {
+        if (!d(l.qty).isInteger()) return setError(t("Motorcycles must be whole units.", "Les motos doivent être en unités entières."));
+        if (l.unitIds.length !== d(l.qty).toNumber()) return setError(t(`Pick exactly ${l.qty} motorcycle(s) of ${l.variant.productName} to move.`, `Choisissez exactement ${l.qty} moto(s) de ${l.variant.productName} à déplacer.`));
+      }
     }
-    m.mutate({ date: dateValue, fromLocationId: fromId, toLocationId: toId, note: note.trim() || undefined, lines: lines.map((l) => ({ variantId: l.variant.id, qty: d(l.qty).toString() })) });
+    m.mutate({
+      date: dateValue,
+      fromLocationId: fromId,
+      toLocationId: toId,
+      note: note.trim() || undefined,
+      lines: lines.map((l) => ({ variantId: l.variant.id, qty: d(l.qty).toString(), ...(l.variant.tracksSerials ? { unitIds: l.unitIds } : {}) })),
+    });
   }
 
   return (
@@ -609,12 +620,8 @@ function TransferForm() {
           <VariantSearch
             locationId={fromId}
             onPick={(v) => {
-              if (v.tracksSerials) {
-                setError(t("Motorcycles cannot be transferred here yet: their chassis records would stay at the old location.", "Les motos ne peuvent pas encore être transférées ici : leurs fiches châssis resteraient à l'ancien emplacement."));
-                return;
-              }
               setError(null);
-              if (!lines.some((l) => l.variant.id === v.id)) setLines([...lines, { variant: v, qty: "" }]);
+              if (!lines.some((l) => l.variant.id === v.id)) setLines([...lines, { variant: v, qty: "", unitIds: [] }]);
             }}
           />
           {lines.length > 0 && (
@@ -630,7 +637,8 @@ function TransferForm() {
                 </TableHeader>
                 <TableBody>
                   {lines.map((l, i) => (
-                    <TableRow key={l.variant.id}>
+                    <Fragment key={l.variant.id}>
+                    <TableRow>
                       <TableCell>
                         <div className="font-medium">{l.variant.productName}{l.variant.label !== "Standard" ? ` · ${l.variant.label}` : ""}</div>
                         <div className="text-xs text-muted-foreground">{l.variant.sku}</div>
@@ -639,6 +647,14 @@ function TransferForm() {
                       <TableCell><Input className="w-24" inputMode="decimal" value={l.qty} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} /></TableCell>
                       <TableCell><Button variant="ghost" size="icon" onClick={() => setLines(lines.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></Button></TableCell>
                     </TableRow>
+                    {l.variant.tracksSerials && fromId && isPositive(l.qty) && (
+                      <TableRow>
+                        <TableCell colSpan={4}>
+                          <UnitPicker variantId={l.variant.id} locationId={fromId} needed={d(l.qty).toNumber()} value={l.unitIds} onChange={(ids) => setLines(lines.map((x, j) => (j === i ? { ...x, unitIds: ids } : x)))} />
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    </Fragment>
                   ))}
                 </TableBody>
               </Table>

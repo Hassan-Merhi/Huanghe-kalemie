@@ -77,7 +77,7 @@ Database migrations run automatically on start, and the first start creates the 
 
 1. Settings → set partner names, shop name, CDF rate; create users.
 2. Stock → Adjust stock → kind *Opening stock*: enter each item's quantity and cost (and chassis numbers for bikes).
-3. Reports → Journal → manual journal of type *opening* for cash balances (or Money → partner capital if the partners are putting money in).
+3. Reports → Journal → manual entry with *Opening balance* switched on for cash balances (or Money → partner capital if the partners are putting money in).
 
 ### Tests
 

@@ -2,6 +2,7 @@ import { Fragment, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, ChevronRight, Download, Plus, Printer, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Switch } from "@/components/ui/switch";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -662,6 +663,7 @@ function ManualJournalDialog({ onClose }: { onClose: () => void }) {
   const accounts = accountsQ.data ?? [];
   const [day, setDay] = useState(todayLocal());
   const [memo, setMemo] = useState("");
+  const [opening, setOpening] = useState(false);
   const [lines, setLines] = useState<DraftLine[]>([blankLine(), blankLine()]);
   const m = useApiMutation("POST", "/api/journals", { success: t("Entry saved", "Écriture enregistrée"), onSuccess: onClose });
   const set = (key: number, patch: Partial<DraftLine>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -692,6 +694,7 @@ function ManualJournalDialog({ onClose }: { onClose: () => void }) {
     m.mutate({
       date: day,
       memo: memo.trim(),
+      type: opening ? "opening" : "manual",
       lines: lines.map((l) => {
         const a = acc(l.accountId);
         return {
@@ -718,6 +721,10 @@ function ManualJournalDialog({ onClose }: { onClose: () => void }) {
           <Field label={t("Date", "Date")}><Input type="date" value={day} onChange={(e) => setDay(e.target.value)} /></Field>
           <Field label={t("Description", "Description")}><Input value={memo} onChange={(e) => setMemo(e.target.value)} /></Field>
         </div>
+        <label className="flex items-center gap-2 text-sm">
+          <Switch checked={opening} onCheckedChange={setOpening} />
+          {t("Opening balance (cash, debts and capital you start with)", "Solde d'ouverture (caisse, dettes et capital de départ)")}
+        </label>
         <div className="space-y-3">
           {lines.map((l, i) => {
             const a = acc(l.accountId);
