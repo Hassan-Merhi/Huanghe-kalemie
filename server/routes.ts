@@ -1,0 +1,754 @@
+import type { Express, Request } from "express";
+import { and, asc, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
+import { z } from "zod";
+import {
+  accounts,
+  ACCOUNT_TYPES,
+  auditLog,
+  categories,
+  CONTAINER_EXPENSE_TYPES,
+  CONTAINER_STATUSES,
+  containers,
+  exchangeRates,
+  expenses,
+  journalLines,
+  journals,
+  locations,
+  parties,
+  PARTY_TYPES,
+  partners,
+  periods,
+  ROLES,
+  sales,
+  settings,
+  stockAdjustments,
+  stockMovements,
+  users,
+} from "@shared/schema";
+import { ALLOCATION_METHODS } from "@shared/landedCost";
+import { validatePartnerShares } from "@shared/partnerSplit";
+import { dec } from "@shared/money";
+import { db } from "./db";
+import { badRequest, conflict, notFound } from "./errors";
+import { hashPassword, requireAuth, requireRole } from "./auth";
+import {
+  asyncHandler,
+  decimalString,
+  id,
+  isoDate,
+  month,
+  nonNegativeDecimal,
+  optionalDecimal,
+  optionalId,
+  paramId,
+  positiveDecimal,
+  todayIso,
+} from "./http";
+import * as catalog from "./services/catalog";
+import * as containerSvc from "./services/containers";
+import * as salesSvc from "./services/sales";
+import * as ops from "./services/operations";
+import * as periodSvc from "./services/periods";
+import * as reports from "./services/reports";
+import { getSetting } from "./setup";
+import { reverseJournal } from "./services/ledger";
+import { transferStock } from "./services/stock";
+
+const STAFF = ["manager"] as const; // owner is always allowed
+const READERS = ["manager", "partner"] as const;
+const SELLERS = ["manager", "cashier"] as const;
+const EVERYONE = ["manager", "cashier", "partner"] as const;
+
+const uid = (req: Request) => req.user!.id;
+
+async function audit(req: Request, action: string, entity: string, entityId: number | null, data?: unknown) {
+  await db.insert(auditLog).values({ userId: req.user?.id ?? null, action, entity, entityId, data: (data ?? null) as never });
+}
+
+const variantSchema = z.object({
+  sku: z.string().max(60).optional().nullable(),
+  barcode: z.string().max(64).optional().nullable(),
+  attributes: z.record(z.string(), z.string()).optional(),
+  sellPrice: optionalDecimal,
+  reorderLevel: optionalDecimal,
+  active: z.boolean().optional(),
+});
+
+const productSchema = z.object({
+  name: z.string().min(1).max(200),
+  categoryId: optionalId,
+  brand: z.string().max(80).optional().nullable(),
+  unit: z.string().max(20).optional().nullable(),
+  description: z.string().max(2000).optional().nullable(),
+  tracksSerials: z.boolean().optional(),
+  active: z.boolean().optional(),
+});
+
+const paymentSchema = z.object({ accountId: id, amount: positiveDecimal, rate: optionalDecimal });
+
+export function registerRoutes(app: Express) {
+  app.use("/api", (req, res, next) => {
+    if (req.path.startsWith("/auth/") || req.path === "/health") return next();
+    return requireAuth(req, res, next);
+  });
+
+  app.get("/api/health", asyncHandler(async (_req, res) => {
+    await db.execute(sql`select 1`);
+    res.json({ ok: true });
+  }));
+
+  // ---------------------------------------------------------------- Settings, rates, users
+
+  app.get("/api/settings", requireRole(...EVERYONE), asyncHandler(async (_req, res) => {
+    const rows = await db.select().from(settings);
+    const [rate] = await db.select().from(exchangeRates).orderBy(desc(exchangeRates.date)).limit(1);
+    res.json({ ...Object.fromEntries(rows.map((r) => [r.key, r.value])), latestRate: rate ?? null, today: todayIso() });
+  }));
+
+  app.patch("/api/settings", requireRole(), asyncHandler(async (req, res) => {
+    const body = z
+      .object({ shopName: z.string().min(1).max(120).optional(), defaultCdfRate: positiveDecimal.optional(), receiptFooter: z.string().max(300).optional() })
+      .parse(req.body);
+    for (const [key, value] of Object.entries(body)) {
+      if (value === undefined) continue;
+      await db.insert(settings).values({ key, value }).onConflictDoUpdate({ target: settings.key, set: { value, updatedAt: new Date() } });
+    }
+    await audit(req, "update", "settings", null, body);
+    res.json({ ok: true });
+  }));
+
+  app.get("/api/exchange-rates", requireRole(...EVERYONE), asyncHandler(async (_req, res) => {
+    res.json(await db.select().from(exchangeRates).orderBy(desc(exchangeRates.date)).limit(60));
+  }));
+
+  /** Rate for a date: that day's rate, else the latest before it, else the default. */
+  app.get("/api/exchange-rates/for/:date", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
+    const date = isoDate.parse(req.params.date);
+    const [row] = await db.select().from(exchangeRates).where(lte(exchangeRates.date, date)).orderBy(desc(exchangeRates.date)).limit(1);
+    const fallback = await getSetting(db, "defaultCdfRate", "2800");
+    res.json({ date, cdfPerUsd: row?.cdfPerUsd ?? String(fallback), source: row ? row.date : "default" });
+  }));
+
+  app.post("/api/exchange-rates", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = z.object({ date: isoDate, cdfPerUsd: positiveDecimal }).parse(req.body);
+    const [row] = await db
+      .insert(exchangeRates)
+      .values({ date: body.date, cdfPerUsd: body.cdfPerUsd, createdBy: uid(req) })
+      .onConflictDoUpdate({ target: exchangeRates.date, set: { cdfPerUsd: body.cdfPerUsd, createdBy: uid(req) } })
+      .returning();
+    res.json(row);
+  }));
+
+  app.get("/api/users", requireRole(), asyncHandler(async (_req, res) => {
+    const rows = await db
+      .select({ id: users.id, username: users.username, fullName: users.fullName, role: users.role, partnerId: users.partnerId, language: users.language, active: users.active })
+      .from(users)
+      .orderBy(asc(users.username));
+    res.json(rows);
+  }));
+
+  const userSchema = z.object({
+    username: z.string().min(3).max(60).regex(/^[a-zA-Z0-9._-]+$/, "Letters, numbers, dot, dash or underscore only"),
+    fullName: z.string().min(1).max(120),
+    role: z.enum(ROLES),
+    partnerId: optionalId,
+    language: z.enum(["fr", "en"]).optional(),
+    password: z.string().min(8).max(200),
+    active: z.boolean().optional(),
+  });
+
+  app.post("/api/users", requireRole(), asyncHandler(async (req, res) => {
+    const body = userSchema.parse(req.body);
+    if (body.role === "partner" && !body.partnerId) throw badRequest("Link a partner login to its partner");
+    const [row] = await db
+      .insert(users)
+      .values({
+        username: body.username.toLowerCase(),
+        fullName: body.fullName,
+        role: body.role,
+        partnerId: body.role === "partner" ? body.partnerId : null,
+        language: body.language ?? "fr",
+        passwordHash: await hashPassword(body.password),
+      })
+      .returning({ id: users.id });
+    await audit(req, "create", "user", row.id, { username: body.username, role: body.role });
+    res.status(201).json(row);
+  }));
+
+  app.patch("/api/users/:id", requireRole(), asyncHandler(async (req, res) => {
+    const userId = paramId(req);
+    const body = userSchema.partial().parse(req.body);
+    if (userId === uid(req) && (body.active === false || (body.role && body.role !== "owner"))) {
+      throw badRequest("You cannot remove your own owner access");
+    }
+    await db
+      .update(users)
+      .set({
+        ...(body.username && { username: body.username.toLowerCase() }),
+        ...(body.fullName && { fullName: body.fullName }),
+        ...(body.role && { role: body.role }),
+        ...(body.partnerId !== undefined && { partnerId: body.partnerId }),
+        ...(body.language && { language: body.language }),
+        ...(body.active !== undefined && { active: body.active }),
+        ...(body.password && { passwordHash: await hashPassword(body.password) }),
+      })
+      .where(eq(users.id, userId));
+    await audit(req, "update", "user", userId, { ...body, password: body.password ? "(changed)" : undefined });
+    res.json({ ok: true });
+  }));
+
+  app.patch("/api/me", asyncHandler(async (req, res) => {
+    const body = z.object({ language: z.enum(["fr", "en"]).optional(), password: z.string().min(8).max(200).optional() }).parse(req.body);
+    await db
+      .update(users)
+      .set({ ...(body.language && { language: body.language }), ...(body.password && { passwordHash: await hashPassword(body.password) }) })
+      .where(eq(users.id, uid(req)));
+    res.json({ ok: true });
+  }));
+
+  // ---------------------------------------------------------------- Locations & categories
+
+  app.get("/api/locations", requireRole(...EVERYONE), asyncHandler(async (_req, res) => {
+    res.json(await db.select().from(locations).orderBy(asc(locations.id)));
+  }));
+  app.post("/api/locations", requireRole(), asyncHandler(async (req, res) => {
+    const body = z.object({ name: z.string().min(1).max(80) }).parse(req.body);
+    const [row] = await db.insert(locations).values(body).returning();
+    res.status(201).json(row);
+  }));
+  app.patch("/api/locations/:id", requireRole(), asyncHandler(async (req, res) => {
+    const body = z.object({ name: z.string().min(1).max(80).optional(), active: z.boolean().optional() }).parse(req.body);
+    const [row] = await db.update(locations).set(body).where(eq(locations.id, paramId(req))).returning();
+    res.json(row);
+  }));
+
+  app.get("/api/categories", requireRole(...EVERYONE), asyncHandler(async (_req, res) => {
+    res.json(await db.select().from(categories).orderBy(asc(categories.name)));
+  }));
+  app.post("/api/categories", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = z.object({ name: z.string().min(1).max(80), parentId: optionalId }).parse(req.body);
+    const [row] = await db.insert(categories).values(body).returning();
+    res.status(201).json(row);
+  }));
+  app.patch("/api/categories/:id", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = z.object({ name: z.string().min(1).max(80).optional(), parentId: optionalId, active: z.boolean().optional() }).parse(req.body);
+    const [row] = await db.update(categories).set(body).where(eq(categories.id, paramId(req))).returning();
+    res.json(row);
+  }));
+
+  // ---------------------------------------------------------------- Catalog
+
+  app.get("/api/products", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
+    const q = z.object({ search: z.string().optional(), categoryId: optionalId, includeInactive: z.enum(["true", "false"]).optional() }).parse(req.query);
+    res.json(await catalog.listProducts(db, { search: q.search, categoryId: q.categoryId ?? undefined, includeInactive: q.includeInactive === "true" }));
+  }));
+  app.get("/api/products/:id", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
+    res.json(await catalog.getProduct(db, paramId(req)));
+  }));
+  app.post("/api/products", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = productSchema.extend({ variants: z.array(variantSchema).min(1) }).parse(req.body);
+    const product = await db.transaction((tx) => catalog.createProduct(tx, body));
+    await audit(req, "create", "product", product.id);
+    res.status(201).json(product);
+  }));
+  app.patch("/api/products/:id", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = productSchema.partial().parse(req.body);
+    res.json(await db.transaction((tx) => catalog.updateProduct(tx, paramId(req), body)));
+  }));
+  app.post("/api/products/:id/variants", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = variantSchema.parse(req.body);
+    res.status(201).json(await db.transaction((tx) => catalog.addVariant(tx, paramId(req), body)));
+  }));
+  app.patch("/api/variants/:id", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = variantSchema.parse(req.body);
+    res.json(await db.transaction((tx) => catalog.updateVariant(tx, paramId(req), body)));
+  }));
+  app.get("/api/variants", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
+    const q = z
+      .object({ search: z.string().optional(), locationId: optionalId, limit: z.coerce.number().int().min(1).max(500).optional(), ids: z.string().optional() })
+      .parse(req.query);
+    const ids = q.ids ? q.ids.split(",").map((x) => id.parse(x)) : undefined;
+    res.json(await catalog.searchVariants(db, { search: q.search, locationId: q.locationId ?? undefined, limit: q.limit, ids }));
+  }));
+  app.get("/api/variants/:id/movements", requireRole(...READERS), asyncHandler(async (req, res) => {
+    const rows = await db
+      .select({ movement: stockMovements, locationName: locations.name })
+      .from(stockMovements)
+      .innerJoin(locations, eq(locations.id, stockMovements.locationId))
+      .where(eq(stockMovements.variantId, paramId(req)))
+      .orderBy(desc(stockMovements.date), desc(stockMovements.id))
+      .limit(500);
+    res.json(rows.map((r) => ({ ...r.movement, locationName: r.locationName })));
+  }));
+
+  app.get("/api/units", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
+    const q = z.object({ variantId: optionalId, status: z.string().optional(), locationId: optionalId, search: z.string().optional() }).parse(req.query);
+    res.json(await catalog.listUnits(db, { variantId: q.variantId ?? undefined, status: q.status, locationId: q.locationId ?? undefined, search: q.search }));
+  }));
+  app.patch("/api/units/:id", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = z.object({ chassisNo: z.string().max(60).nullable().optional(), engineNo: z.string().max(60).nullable().optional(), color: z.string().max(40).nullable().optional() }).parse(req.body);
+    res.json(await db.transaction((tx) => catalog.updateUnit(tx, paramId(req), body)));
+  }));
+
+  // ---------------------------------------------------------------- Stock
+
+  app.get("/api/stock", requireRole(...READERS), asyncHandler(async (_req, res) => {
+    res.json(await reports.stockValuation(db));
+  }));
+
+  const adjustmentSchema = z.object({
+    date: isoDate,
+    locationId: id,
+    kind: z.enum(["opening", "count", "damage", "loss", "found", "other"]),
+    reason: z.string().min(1).max(300),
+    lines: z
+      .array(
+        z.object({
+          variantId: id,
+          qtyChange: decimalString,
+          unitCost: optionalDecimal,
+          unitIds: z.array(id).optional(),
+          serials: z.array(z.object({ chassisNo: z.string().max(60), engineNo: z.string().max(60).nullable().optional(), color: z.string().max(40).nullable().optional() })).optional(),
+        }),
+      )
+      .min(1),
+  });
+  app.post("/api/stock/adjustments", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = adjustmentSchema.parse(req.body);
+    const result = await db.transaction((tx) => ops.adjustStock(tx, body, uid(req)));
+    await audit(req, "create", "stock_adjustment", result.id, body);
+    res.status(201).json(result);
+  }));
+  app.get("/api/stock/adjustments", requireRole(...READERS), asyncHandler(async (_req, res) => {
+    res.json(await db.select().from(stockAdjustments).orderBy(desc(stockAdjustments.id)).limit(200));
+  }));
+  app.post("/api/stock/transfers", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = z.object({ date: isoDate, fromLocationId: id, toLocationId: id, note: z.string().max(300).optional(), lines: z.array(z.object({ variantId: id, qty: positiveDecimal })).min(1) }).parse(req.body);
+    await db.transaction(async (tx) => {
+      for (const l of body.lines) {
+        await transferStock(tx, { date: body.date, type: "transfer_out", variantId: l.variantId, fromLocationId: body.fromLocationId, toLocationId: body.toLocationId, qty: l.qty, note: body.note, userId: uid(req) });
+      }
+    });
+    res.status(201).json({ ok: true });
+  }));
+
+  // ---------------------------------------------------------------- Parties
+
+  app.get("/api/parties", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
+    const q = z.object({ type: z.enum(PARTY_TYPES).optional(), search: z.string().optional() }).parse(req.query);
+    let rows = await reports.partyBalances(db, q.type);
+    if (q.search) {
+      const s = q.search.toLowerCase();
+      rows = rows.filter((r) => r.name.toLowerCase().includes(s) || (r.phone ?? "").includes(s));
+    }
+    res.json(rows);
+  }));
+  const partySchema = z.object({ type: z.enum(PARTY_TYPES), name: z.string().min(1).max(120), phone: z.string().max(40).optional().nullable(), notes: z.string().max(1000).optional().nullable(), active: z.boolean().optional() });
+  app.post("/api/parties", requireRole(...SELLERS), asyncHandler(async (req, res) => {
+    const body = partySchema.parse(req.body);
+    if (req.user!.role === "cashier" && body.type !== "customer") throw badRequest("Cashiers can only add customers");
+    const [row] = await db.insert(parties).values(body).returning();
+    res.status(201).json(row);
+  }));
+  app.patch("/api/parties/:id", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = partySchema.omit({ type: true }).partial().parse(req.body);
+    const [row] = await db.update(parties).set(body).where(eq(parties.id, paramId(req))).returning();
+    if (!row) throw notFound("Contact");
+    res.json(row);
+  }));
+  app.get("/api/parties/:id/statement", requireRole(...READERS, "cashier"), asyncHandler(async (req, res) => {
+    res.json(await reports.partyStatement(db, paramId(req)));
+  }));
+
+  // ---------------------------------------------------------------- Accounts & journals
+
+  app.get("/api/accounts", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
+    const rows = await reports.accountBalances(db);
+    // Cashiers only need the money accounts they take payments into.
+    res.json(req.user!.role === "cashier" ? rows.filter((r) => r.isMoney && r.active).map(({ debit, credit, balance, nativeBalance, ...r }) => r) : rows);
+  }));
+  app.post("/api/accounts", requireRole(), asyncHandler(async (req, res) => {
+    const body = z
+      .object({ code: z.string().min(1).max(20), name: z.string().min(1).max(120), type: z.enum(ACCOUNT_TYPES), isMoney: z.boolean().optional(), currency: z.enum(["USD", "CDF"]).optional() })
+      .parse(req.body);
+    if (body.isMoney && body.type !== "asset") throw badRequest("Cash, bank and mobile money accounts are assets");
+    const [row] = await db.insert(accounts).values(body).returning();
+    await audit(req, "create", "account", row.id, body);
+    res.status(201).json(row);
+  }));
+  app.patch("/api/accounts/:id", requireRole(), asyncHandler(async (req, res) => {
+    const body = z.object({ name: z.string().min(1).max(120).optional(), active: z.boolean().optional() }).parse(req.body);
+    const [existing] = await db.select().from(accounts).where(eq(accounts.id, paramId(req)));
+    if (!existing) throw notFound("Account");
+    if (existing.systemKey && body.active === false) throw badRequest("This account is used by the app and cannot be switched off");
+    const [row] = await db.update(accounts).set(body).where(eq(accounts.id, existing.id)).returning();
+    res.json(row);
+  }));
+  app.get("/api/accounts/:id/ledger", requireRole(...READERS), asyncHandler(async (req, res) => {
+    const q = z.object({ from: isoDate, to: isoDate }).parse(req.query);
+    res.json(await reports.accountLedger(db, paramId(req), q.from, q.to));
+  }));
+
+  app.get("/api/journals", requireRole(...READERS), asyncHandler(async (req, res) => {
+    const q = z.object({ from: isoDate.optional(), to: isoDate.optional(), type: z.string().optional() }).parse(req.query);
+    const conds = [];
+    if (q.from) conds.push(gte(journals.date, q.from));
+    if (q.to) conds.push(lte(journals.date, q.to));
+    if (q.type) conds.push(eq(journals.type, q.type as never));
+    const js = await db.select().from(journals).where(conds.length ? and(...conds) : undefined).orderBy(desc(journals.date), desc(journals.id)).limit(300);
+    const lines = js.length
+      ? await db
+          .select({ line: journalLines, accountName: accounts.name, accountCode: accounts.code, partyName: parties.name })
+          .from(journalLines)
+          .innerJoin(accounts, eq(accounts.id, journalLines.accountId))
+          .leftJoin(parties, eq(parties.id, journalLines.partyId))
+          .where(inArray(journalLines.journalId, js.map((j) => j.id)))
+      : [];
+    res.json(js.map((j) => ({ ...j, lines: lines.filter((l) => l.line.journalId === j.id).map((l) => ({ ...l.line, accountName: l.accountName, accountCode: l.accountCode, partyName: l.partyName })) })));
+  }));
+
+  const manualLine = z.object({ accountId: id, debit: optionalDecimal, credit: optionalDecimal, partyId: optionalId, nativeAmount: optionalDecimal, rate: optionalDecimal, memo: z.string().max(300).optional().nullable() });
+  app.post("/api/journals", requireRole(), asyncHandler(async (req, res) => {
+    const body = z.object({ date: isoDate, memo: z.string().min(1).max(300), type: z.enum(["manual", "opening"]).optional(), lines: z.array(manualLine).min(2) }).parse(req.body);
+    const journalId = await db.transaction((tx) => ops.manualJournal(tx, body, uid(req)));
+    await audit(req, "create", "journal", journalId, body);
+    res.status(201).json({ id: journalId });
+  }));
+  app.post("/api/journals/:id/reverse", requireRole(), asyncHandler(async (req, res) => {
+    const body = z.object({ date: isoDate }).parse(req.body);
+    const [j] = await db.select().from(journals).where(eq(journals.id, paramId(req)));
+    if (!j) throw notFound("Journal");
+    if (!["manual", "opening", "transfer", "customer_receipt", "supplier_payment", "partner_contribution", "partner_withdrawal"].includes(j.type)) {
+      throw badRequest("Cancel this from its own screen (sale, expense, container or month close)");
+    }
+    const reversalId = await db.transaction((tx) => reverseJournal(tx, j.id, { date: body.date, userId: uid(req) }));
+    await audit(req, "reverse", "journal", j.id);
+    res.json({ id: reversalId });
+  }));
+
+  // ---------------------------------------------------------------- Money movements
+
+  const partyPayment = z.object({ date: isoDate, partyId: id, accountId: id, amount: positiveDecimal, rate: optionalDecimal, memo: z.string().max(300).optional().nullable() });
+  app.post("/api/money/customer-receipt", requireRole(...SELLERS), asyncHandler(async (req, res) => {
+    const body = partyPayment.parse(req.body);
+    res.status(201).json({ id: await db.transaction((tx) => ops.receiveFromCustomer(tx, body, uid(req))) });
+  }));
+  app.post("/api/money/party-payment", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = partyPayment.parse(req.body);
+    res.status(201).json({ id: await db.transaction((tx) => ops.payParty(tx, body, uid(req))) });
+  }));
+  app.post("/api/money/transfer", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = z.object({ date: isoDate, fromAccountId: id, fromAmount: positiveDecimal, toAccountId: id, toAmount: positiveDecimal, rate: optionalDecimal, memo: z.string().max(300).optional().nullable() }).parse(req.body);
+    res.status(201).json({ id: await db.transaction((tx) => ops.transferMoney(tx, body, uid(req))) });
+  }));
+  const partnerMoney = z.object({ date: isoDate, partnerId: id, accountId: id, amount: positiveDecimal, rate: optionalDecimal, memo: z.string().max(300).optional().nullable() });
+  app.post("/api/money/partner-contribution", requireRole(), asyncHandler(async (req, res) => {
+    const body = partnerMoney.parse(req.body);
+    const journalId = await db.transaction((tx) => ops.partnerContribution(tx, body, uid(req)));
+    await audit(req, "create", "partner_contribution", journalId, body);
+    res.status(201).json({ id: journalId });
+  }));
+  app.post("/api/money/partner-withdrawal", requireRole(), asyncHandler(async (req, res) => {
+    const body = partnerMoney.parse(req.body);
+    const journalId = await db.transaction((tx) => ops.partnerWithdrawal(tx, body, uid(req)));
+    await audit(req, "create", "partner_withdrawal", journalId, body);
+    res.status(201).json({ id: journalId });
+  }));
+
+  // ---------------------------------------------------------------- Operating expenses
+
+  app.get("/api/expenses", requireRole(...READERS), asyncHandler(async (req, res) => {
+    const q = z.object({ from: isoDate.optional(), to: isoDate.optional() }).parse(req.query);
+    const conds = [];
+    if (q.from) conds.push(gte(expenses.date, q.from));
+    if (q.to) conds.push(lte(expenses.date, q.to));
+    const rows = await db
+      .select({ expense: expenses, accountName: accounts.name })
+      .from(expenses)
+      .innerJoin(accounts, eq(accounts.id, expenses.accountId))
+      .where(conds.length ? and(...conds) : undefined)
+      .orderBy(desc(expenses.date), desc(expenses.id))
+      .limit(500);
+    res.json(rows.map((r) => ({ ...r.expense, accountName: r.accountName })));
+  }));
+  app.post("/api/expenses", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = z
+      .object({ date: isoDate, accountId: id, description: z.string().min(1).max(300), amount: positiveDecimal, currency: z.enum(["USD", "CDF"]).optional(), rate: optionalDecimal, paidFromAccountId: optionalId, payablePartyId: optionalId })
+      .parse(req.body);
+    res.status(201).json(await db.transaction((tx) => ops.createExpense(tx, body, uid(req))));
+  }));
+  app.post("/api/expenses/:id/void", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = z.object({ date: isoDate.optional() }).parse(req.body ?? {});
+    await db.transaction((tx) => ops.voidExpense(tx, paramId(req), body.date ?? todayIso(), uid(req)));
+    await audit(req, "void", "expense", paramId(req));
+    res.json({ ok: true });
+  }));
+
+  // ---------------------------------------------------------------- Containers
+
+  app.get("/api/containers", requireRole(...READERS), asyncHandler(async (_req, res) => {
+    const rows = await db
+      .select({
+        container: containers,
+        supplierName: parties.name,
+        lineCount: sql<number>`(select count(*)::int from container_lines l where l.container_id = ${containers.id})`,
+        expensesUsd: sql<string>`(select coalesce(sum(e.amount_usd), 0) from container_expenses e where e.container_id = ${containers.id})`,
+      })
+      .from(containers)
+      .innerJoin(parties, eq(parties.id, containers.supplierId))
+      .orderBy(desc(containers.id));
+    res.json(rows.map((r) => ({ ...r.container, supplierName: r.supplierName, lineCount: r.lineCount, expensesUsd: r.expensesUsd })));
+  }));
+
+  const containerSchema = z.object({
+    number: z.string().min(1).max(60),
+    supplierId: id,
+    status: z.enum(CONTAINER_STATUSES).exclude(["finalized"]).optional(),
+    currency: z.string().length(3).optional(),
+    rateToUsd: positiveDecimal.optional(),
+    locationId: id,
+    shipDate: isoDate.optional().nullable(),
+    arrivalDate: isoDate.optional().nullable(),
+    notes: z.string().max(2000).optional().nullable(),
+  });
+  app.post("/api/containers", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = containerSchema.parse(req.body);
+    const [supplier] = await db.select().from(parties).where(eq(parties.id, body.supplierId));
+    if (!supplier || supplier.type !== "supplier") throw badRequest("Pick a supplier");
+    const [row] = await db.insert(containers).values({ ...body, number: body.number.trim().toUpperCase(), currency: (body.currency ?? "USD").toUpperCase() }).returning();
+    await audit(req, "create", "container", row.id);
+    res.status(201).json(row);
+  }));
+  app.get("/api/containers/:id", requireRole(...READERS), asyncHandler(async (req, res) => {
+    const c = await containerSvc.getContainer(db, paramId(req));
+    const [supplier] = await db.select().from(parties).where(eq(parties.id, c.supplierId));
+    let preview = null;
+    let previewError = null;
+    if (c.lines.length) {
+      try {
+        preview = await containerSvc.previewLandedCost(db, c.id);
+      } catch (e) {
+        previewError = e instanceof Error ? e.message : String(e);
+      }
+    }
+    res.json({ ...c, supplierName: supplier?.name, preview, previewError });
+  }));
+  app.patch("/api/containers/:id", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = containerSchema.partial().parse(req.body);
+    const updated = await db.transaction(async (tx) => {
+      const [c] = await tx.select().from(containers).where(eq(containers.id, paramId(req))).for("update");
+      if (!c) throw notFound("Container");
+      if (c.status === "finalized") {
+        const allowed = Object.keys(body).every((k) => ["notes", "shipDate", "arrivalDate"].includes(k));
+        if (!allowed) throw conflict("This container is finalized. Only dates and notes can change.");
+      }
+      const [row] = await tx
+        .update(containers)
+        .set({ ...body, ...(body.number && { number: body.number.trim().toUpperCase() }), ...(body.currency && { currency: body.currency.toUpperCase() }) })
+        .where(eq(containers.id, c.id))
+        .returning();
+      return row;
+    });
+    res.json(updated);
+  }));
+  app.put("/api/containers/:id/lines", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = z.object({ lines: z.array(z.object({ variantId: id, quantity: positiveDecimal, unitPrice: nonNegativeDecimal, weightKg: optionalDecimal, volumeCbm: optionalDecimal })) }).parse(req.body);
+    await db.transaction((tx) => containerSvc.replaceLines(tx, paramId(req), body.lines));
+    res.json(await containerSvc.getContainer(db, paramId(req)));
+  }));
+  app.post("/api/containers/:id/expenses", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = z
+      .object({
+        date: isoDate,
+        type: z.enum(CONTAINER_EXPENSE_TYPES),
+        description: z.string().max(300).optional().nullable(),
+        amount: positiveDecimal,
+        currency: z.enum(["USD", "CDF"]).default("USD"),
+        rate: optionalDecimal,
+        method: z.enum(ALLOCATION_METHODS).default("value"),
+        targetLineId: optionalId,
+        paidFromAccountId: optionalId,
+        payablePartyId: optionalId,
+      })
+      .parse(req.body);
+    const row = await db.transaction((tx) => containerSvc.addExpense(tx, paramId(req), body, uid(req)));
+    res.status(201).json(row);
+  }));
+  app.patch("/api/containers/:id/expenses/:expenseId", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = z.object({ method: z.enum(ALLOCATION_METHODS), targetLineId: optionalId }).parse(req.body);
+    await db.transaction((tx) => containerSvc.updateExpenseAllocation(tx, paramId(req), paramId(req, "expenseId"), body.method, body.targetLineId));
+    res.json({ ok: true });
+  }));
+  app.delete("/api/containers/:id/expenses/:expenseId", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const q = z.object({ date: isoDate.optional() }).parse(req.query);
+    await db.transaction((tx) => containerSvc.removeExpense(tx, paramId(req), paramId(req, "expenseId"), q.date ?? todayIso(), uid(req)));
+    res.json({ ok: true });
+  }));
+  app.post("/api/containers/:id/finalize", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = z.object({ offloadDate: isoDate }).parse(req.body);
+    const result = await db.transaction((tx) => containerSvc.finalizeContainer(tx, paramId(req), body.offloadDate, uid(req)));
+    await audit(req, "finalize", "container", paramId(req), { landedTotalUsd: result.landedTotalUsd });
+    res.json(result);
+  }));
+  app.post("/api/containers/:id/reverse", requireRole(), asyncHandler(async (req, res) => {
+    const body = z.object({ date: isoDate }).parse(req.body);
+    await db.transaction((tx) => containerSvc.reverseContainer(tx, paramId(req), body.date, uid(req)));
+    await audit(req, "reverse", "container", paramId(req));
+    res.json({ ok: true });
+  }));
+
+  // ---------------------------------------------------------------- Sales
+
+  app.get("/api/sales", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
+    const q = z.object({ from: isoDate.optional(), to: isoDate.optional(), customerId: optionalId, search: z.string().optional() }).parse(req.query);
+    const conds = [];
+    // Cashiers see today's sales only.
+    if (req.user!.role === "cashier") conds.push(eq(sales.date, todayIso()));
+    if (q.from) conds.push(gte(sales.date, q.from));
+    if (q.to) conds.push(lte(sales.date, q.to));
+    if (q.customerId) conds.push(eq(sales.customerId, q.customerId));
+    if (q.search) conds.push(or(ilike(sales.number, `%${q.search}%`), ilike(parties.name, `%${q.search}%`))!);
+    const rows = await db
+      .select({ sale: sales, customerName: parties.name, cashier: users.fullName })
+      .from(sales)
+      .leftJoin(parties, eq(parties.id, sales.customerId))
+      .leftJoin(users, eq(users.id, sales.createdBy))
+      .where(conds.length ? and(...conds) : undefined)
+      .orderBy(desc(sales.date), desc(sales.id))
+      .limit(500);
+    const showCost = req.user!.role !== "cashier";
+    res.json(rows.map((r) => ({ ...r.sale, cogs: showCost ? r.sale.cogs : undefined, customerName: r.customerName, cashier: r.cashier })));
+  }));
+  app.get("/api/sales/:id", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
+    const sale = await salesSvc.getSale(db, paramId(req));
+    if (req.user!.role === "cashier") {
+      res.json({ ...sale, cogs: undefined, lines: sale.lines.map(({ cogs, ...l }) => l) });
+      return;
+    }
+    res.json(sale);
+  }));
+  app.post("/api/sales", requireRole(...SELLERS), asyncHandler(async (req, res) => {
+    const body = z
+      .object({
+        date: isoDate.optional(),
+        locationId: id,
+        customerId: optionalId,
+        discount: optionalDecimal,
+        note: z.string().max(500).optional().nullable(),
+        lines: z.array(z.object({ variantId: id, unitId: optionalId, qty: positiveDecimal, unitPrice: nonNegativeDecimal, lineDiscount: optionalDecimal })).min(1),
+        payments: z.array(paymentSchema),
+      })
+      .parse(req.body);
+    // Cashiers always sell today.
+    const date = req.user!.role === "cashier" || !body.date ? todayIso() : body.date;
+    const sale = await db.transaction((tx) => salesSvc.createSale(tx, { ...body, date }, uid(req)));
+    res.status(201).json(sale);
+  }));
+  app.post("/api/sales/:id/void", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = z.object({ reason: z.string().min(1).max(300), date: isoDate.optional() }).parse(req.body);
+    const sale = await db.transaction((tx) => salesSvc.voidSale(tx, paramId(req), body.date ?? todayIso(), body.reason, uid(req)));
+    await audit(req, "void", "sale", sale.id, body);
+    res.json(sale);
+  }));
+  app.post("/api/sales/:id/returns", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = z
+      .object({ date: isoDate.optional(), reason: z.string().min(1).max(300), refundAccountId: optionalId, rate: optionalDecimal, lines: z.array(z.object({ saleLineId: id, qty: positiveDecimal })).min(1) })
+      .parse(req.body);
+    const sale = await db.transaction((tx) => salesSvc.returnSale(tx, paramId(req), { ...body, date: body.date ?? todayIso() }, uid(req)));
+    await audit(req, "return", "sale", sale.id, body);
+    res.json(sale);
+  }));
+
+  // ---------------------------------------------------------------- Partners & months
+
+  app.get("/api/partners", requireRole(...READERS), asyncHandler(async (req, res) => {
+    const rows = await reports.partnerSummaries(db);
+    res.json(req.user!.role === "partner" ? rows.filter((r) => r.id === req.user!.partnerId) : rows);
+  }));
+  app.put("/api/partners", requireRole(), asyncHandler(async (req, res) => {
+    const body = z.object({ partners: z.array(z.object({ id, name: z.string().min(1).max(80), sharePct: decimalString, bearsOperatingExpenses: z.boolean() })).min(1) }).parse(req.body);
+    validatePartnerShares(body.partners);
+    await db.transaction(async (tx) => {
+      // Shares apply to months closed from now on; closed months keep the split they were closed with.
+      const existing = await tx.select().from(partners);
+      for (const p of body.partners) {
+        const row = existing.find((e) => e.id === p.id);
+        if (!row) throw notFound("Partner");
+        await tx.update(partners).set({ name: p.name, sharePct: dec(p.sharePct).toFixed(2), bearsOperatingExpenses: p.bearsOperatingExpenses }).where(eq(partners.id, p.id));
+        await tx.update(accounts).set({ name: `${p.name}: capital` }).where(eq(accounts.id, row.capitalAccountId));
+        await tx.update(accounts).set({ name: `${p.name}: profit share (current account)` }).where(eq(accounts.id, row.currentAccountId));
+      }
+    });
+    await audit(req, "update", "partners", null, body);
+    res.json(await reports.partnerSummaries(db));
+  }));
+  app.get("/api/partners/:id/statement", requireRole(...READERS), asyncHandler(async (req, res) => {
+    const partnerId = paramId(req);
+    if (req.user!.role === "partner" && req.user!.partnerId !== partnerId) throw notFound("Partner");
+    res.json(await reports.partnerStatement(db, partnerId));
+  }));
+
+  app.get("/api/periods", requireRole(...READERS), asyncHandler(async (_req, res) => {
+    res.json(await db.select().from(periods).orderBy(desc(periods.month)));
+  }));
+  app.get("/api/periods/:month", requireRole(...READERS), asyncHandler(async (req, res) => {
+    res.json(await periodSvc.previewPeriod(db, month.parse(req.params.month)));
+  }));
+  app.post("/api/periods/:month/close", requireRole(), asyncHandler(async (req, res) => {
+    const m = month.parse(req.params.month);
+    const result = await db.transaction((tx) => periodSvc.closePeriod(tx, m, uid(req)));
+    await audit(req, "close", "period", null, { month: m, split: result.split });
+    res.json(result);
+  }));
+  app.post("/api/periods/:month/reopen", requireRole(), asyncHandler(async (req, res) => {
+    const m = month.parse(req.params.month);
+    await db.transaction((tx) => periodSvc.reopenPeriod(tx, m, uid(req)));
+    await audit(req, "reopen", "period", null, { month: m });
+    res.json({ ok: true });
+  }));
+
+  // ---------------------------------------------------------------- Reports
+
+  app.get("/api/reports/dashboard", requireRole(...READERS), asyncHandler(async (_req, res) => {
+    res.json(await reports.dashboard(db, todayIso()));
+  }));
+  app.get("/api/reports/profit-loss", requireRole(...READERS), asyncHandler(async (req, res) => {
+    const q = z.object({ from: isoDate, to: isoDate }).parse(req.query);
+    res.json(await reports.profitAndLoss(db, q.from, q.to));
+  }));
+  app.get("/api/reports/trial-balance", requireRole(...READERS), asyncHandler(async (req, res) => {
+    const q = z.object({ asOf: isoDate.optional() }).parse(req.query);
+    res.json(await reports.trialBalance(db, q.asOf));
+  }));
+  app.get("/api/reports/sales-by-product", requireRole(...READERS), asyncHandler(async (req, res) => {
+    const q = z.object({ from: isoDate, to: isoDate }).parse(req.query);
+    res.json(await reports.salesByProduct(db, q.from, q.to));
+  }));
+  app.get("/api/reports/daily", requireRole(...READERS, "cashier"), asyncHandler(async (req, res) => {
+    const q = z.object({ date: isoDate.optional() }).parse(req.query);
+    const date = req.user!.role === "cashier" ? todayIso() : q.date ?? todayIso();
+    const result = await db.execute<{ account_id: number; name: string; currency: string; usd: string; native: string }>(sql`
+      select p.account_id, a.name, p.currency, sum(p.amount_usd) as usd, sum(p.amount_native) as native
+      from sale_payments p
+      join sales s on s.id = p.sale_id
+      join accounts a on a.id = p.account_id
+      where s.date = ${date} and s.status = 'completed'
+      group by p.account_id, a.name, p.currency
+      order by a.name
+    `);
+    const [totals] = await db
+      .select({ count: sql<number>`count(*)::int`, total: sql<string>`coalesce(sum(${sales.total}), 0)`, credit: sql<string>`coalesce(sum(${sales.creditUsd}), 0)` })
+      .from(sales)
+      .where(and(eq(sales.date, date), eq(sales.status, "completed")));
+    res.json({ date, ...totals, byAccount: result.rows });
+  }));
+  app.get("/api/audit", requireRole(), asyncHandler(async (_req, res) => {
+    const rows = await db
+      .select({ log: auditLog, username: users.username })
+      .from(auditLog)
+      .leftJoin(users, eq(users.id, auditLog.userId))
+      .orderBy(desc(auditLog.id))
+      .limit(300);
+    res.json(rows.map((r) => ({ ...r.log, username: r.username })));
+  }));
+}
