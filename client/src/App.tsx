@@ -1,9 +1,10 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { Redirect, Route, Switch } from "wouter";
+import { Redirect, Route, Switch, useLocation } from "wouter";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/ThemeProvider";
 import { AppLayout } from "@/components/AppLayout";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Loading } from "@/components/common";
 import { queryClient } from "@/lib/api";
 import { AuthProvider, useAuth, type Role } from "@/lib/auth";
@@ -35,6 +36,7 @@ function Guard({ roles, children }: { roles: Role[]; children: React.ReactNode }
 
 function Routes() {
   const { user, loading } = useAuth();
+  const [location] = useLocation();
   if (loading) return <Loading />;
   if (!user) return <Login />;
   const R = (path: string, roles: Role[], C: React.ComponentType) => (
@@ -46,6 +48,7 @@ function Routes() {
   );
   return (
     <AppLayout>
+      <ErrorBoundary key={location}>
       <Switch>
         {R("/", ["manager", "partner"], Dashboard)}
         {R("/pos", ["manager", "cashier"], POS)}
@@ -68,6 +71,7 @@ function Routes() {
           <Redirect to="/" />
         </Route>
       </Switch>
+      </ErrorBoundary>
     </AppLayout>
   );
 }
