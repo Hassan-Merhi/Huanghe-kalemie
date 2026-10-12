@@ -1,0 +1,671 @@
+import { Fragment, useEffect, useMemo, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "wouter";
+import { AlertTriangle, ArrowRightLeft, Bike, CheckCircle2, Search, Trash2 } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Textarea } from "@/components/ui/textarea";
+import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
+import { LocationSelect, useLocations, VariantSearch } from "@/components/pickers";
+import { useApiMutation } from "@/hooks/useApiMutation";
+import { d, date, qty, todayLocal, unitCost, usd, variantText } from "@/lib/format";
+import { useAuth } from "@/lib/auth";
+import { useT } from "@/lib/i18n";
+import type { MotorcycleUnit, VariantRow } from "@/lib/types";
+import { cn } from "@/lib/utils";
+
+type T = (en: string, fr: string) => string;
+
+interface StockItem {
+  variantId: number;
+  sku: string;
+  barcode: string | null;
+  attributes: Record<string, string>;
+  productId: number;
+  productName: string;
+  categoryName: string | null;
+  unit: string;
+  qty: string;
+  value: string;
+  sellPrice: string;
+  reorderLevel: string;
+  avgCost: string;
+  retailValue: string;
+  low: boolean;
+}
+
+interface StockValuation {
+  items: StockItem[];
+  totalValue: string;
+  totalRetailValue: string;
+  ledgerInventory: string;
+  reconciled: boolean;
+}
+
+interface Adjustment {
+  id: number;
+  number: string;
+  date: string;
+  locationId: number;
+  kind: Kind;
+  reason: string;
+  journalId: number | null;
+  createdAt: string;
+}
+
+type Kind = "opening" | "count" | "damage" | "loss" | "found" | "other";
+const KINDS: Kind[] = ["opening", "count", "damage", "loss", "found", "other"];
+
+function kindLabel(t: T, k: string) {
+  const m: Record<string, [string, string]> = {
+    opening: ["Opening stock", "Stock d'ouverture"],
+    count: ["Stock count correction", "Correction d'inventaire"],
+    damage: ["Damaged", "Endommagé"],
+    loss: ["Lost / stolen", "Perdu / volé"],
+    found: ["Found", "Retrouvé"],
+    other: ["Other", "Autre"],
+  };
+  const x = m[k];
+  return x ? t(x[0], x[1]) : k;
+}
+
+const isQty = (s: string) => /^-?\d+(\.\d+)?$/.test(s.trim());
+const isPositive = (s: string) => /^\d+(\.\d+)?$/.test(s.trim()) && d(s).gt(0);
+
+export default function Stock() {
+  const t = useT();
+  const { can } = useAuth();
+  const { data: locations = [] } = useLocations();
+  const isManager = can("manager");
+  const multiLocation = locations.filter((l) => l.active).length > 1;
+  const [tab, setTab] = useState("valuation");
+
+  return (
+    <div>
+      <PageHeader
+        title={t("Stock", "Stock")}
+        description={t("Stock is valued at weighted average cost (purchase price plus container costs).", "Le stock est valorisé au coût moyen pondéré (prix d'achat plus frais du conteneur).")}
+      />
+      <Tabs value={tab} onValueChange={setTab}>
+        <TabsList className="mb-4 flex h-auto w-full flex-wrap justify-start sm:w-auto">
+          <TabsTrigger value="valuation">{t("Valuation", "Valorisation")}</TabsTrigger>
+          {isManager && <TabsTrigger value="adjust">{t("Adjust stock", "Ajuster le stock")}</TabsTrigger>}
+          <TabsTrigger value="history">{t("Adjustments", "Ajustements")}</TabsTrigger>
+          {isManager && multiLocation && <TabsTrigger value="transfer">{t("Transfer", "Transfert")}</TabsTrigger>}
+        </TabsList>
+        <TabsContent value="valuation"><Valuation /></TabsContent>
+        {isManager && <TabsContent value="adjust"><AdjustForm onDone={() => setTab("history")} /></TabsContent>}
+        <TabsContent value="history"><AdjustmentHistory /></TabsContent>
+        {isManager && multiLocation && <TabsContent value="transfer"><TransferForm /></TabsContent>}
+      </Tabs>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ Valuation
+
+function Valuation() {
+  const t = useT();
+  const q = useQuery<StockValuation>({ queryKey: ["/api/stock"] });
+  const [search, setSearch] = useState("");
+  const [lowOnly, setLowOnly] = useState(false);
+  const [hideEmpty, setHideEmpty] = useState(false);
+  const data = q.data;
+  const rows = useMemo(() => {
+    const term = search.trim().toLowerCase();
+    return (data?.items ?? []).filter((i) => {
+      if (lowOnly && !i.low) return false;
+      if (hideEmpty && d(i.qty).isZero()) return false;
+      if (!term) return true;
+      return [i.productName, i.sku, i.barcode ?? "", i.categoryName ?? "", variantText(i.attributes)].some((x) => x.toLowerCase().includes(term));
+    });
+  }, [data, search, lowOnly, hideEmpty]);
+  const shown = useMemo(
+    () => ({
+      qty: rows.reduce((s, i) => s.plus(d(i.qty)), d(0)),
+      value: rows.reduce((s, i) => s.plus(d(i.value)), d(0)),
+      retail: rows.reduce((s, i) => s.plus(d(i.retailValue)), d(0)),
+    }),
+    [rows],
+  );
+
+  if (q.isLoading) return <Loading />;
+  if (q.error || !data) return <ErrorText error={q.error} />;
+  const lowCount = data.items.filter((i) => i.low).length;
+
+  return (
+    <div className="space-y-4">
+      <div className="grid gap-3 sm:grid-cols-3">
+        <StatCard label={t("Stock value (cost)", "Valeur du stock (coût)")} value={usd(data.totalValue)} />
+        <StatCard
+          label={t("Retail value", "Valeur de vente")}
+          value={usd(data.totalRetailValue)}
+          sub={t(`Potential margin ${usd(d(data.totalRetailValue).minus(d(data.totalValue)).toFixed(2))}`, `Marge potentielle ${usd(d(data.totalRetailValue).minus(d(data.totalValue)).toFixed(2))}`)}
+        />
+        <StatCard label={t("Low stock items", "Articles en stock bas")} value={lowCount} tone={lowCount ? "bad" : "neutral"} />
+      </div>
+
+      {data.reconciled ? (
+        <p className="flex items-center gap-2 text-sm text-green-700 dark:text-green-400">
+          <CheckCircle2 className="h-4 w-4" /> {t("Stock value matches the ledger", "La valeur du stock correspond à la comptabilité")} ({usd(data.ledgerInventory)})
+        </p>
+      ) : (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>{t("Stock value does not match the ledger", "La valeur du stock ne correspond pas à la comptabilité")}</AlertTitle>
+          <AlertDescription>
+            {t("Items", "Articles")}: {usd(data.totalValue)} · {t("Inventory account", "Compte Stock")}: {usd(data.ledgerInventory)} · {t("Difference", "Écart")}: {usd(d(data.totalValue).minus(d(data.ledgerInventory)).toFixed(2))}
+          </AlertDescription>
+        </Alert>
+      )}
+
+      <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-center">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input className="pl-9" placeholder={t("Search item, SKU, category, size", "Chercher article, code, catégorie, taille")} value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
+        <label className="flex items-center gap-2 text-sm"><Switch checked={lowOnly} onCheckedChange={setLowOnly} /> {t("Low stock only", "Stock bas seulement")}</label>
+        <label className="flex items-center gap-2 text-sm"><Switch checked={hideEmpty} onCheckedChange={setHideEmpty} /> {t("Hide zero stock", "Masquer stock zéro")}</label>
+      </div>
+
+      {rows.length === 0 ? (
+        <EmptyState title={t("No items", "Aucun article")} />
+      ) : (
+        <Card className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t("Item", "Article")}</TableHead>
+                <TableHead>{t("SKU", "Code")}</TableHead>
+                <TableHead>{t("Category", "Catégorie")}</TableHead>
+                <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
+                <TableHead className="text-right">{t("Avg cost", "Coût moyen")}</TableHead>
+                <TableHead className="text-right">{t("Value", "Valeur")}</TableHead>
+                <TableHead className="text-right">{t("Retail value", "Valeur de vente")}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((i) => (
+                <TableRow key={i.variantId}>
+                  <TableCell>
+                    <Link href={`/products/${i.productId}`} className="font-medium hover:underline">{i.productName}</Link>
+                    {variantText(i.attributes) && <div className="text-xs text-muted-foreground">{variantText(i.attributes)}</div>}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap font-mono text-xs">{i.sku}</TableCell>
+                  <TableCell className="text-muted-foreground">{i.categoryName ?? "—"}</TableCell>
+                  <TableCell className="whitespace-nowrap text-right">
+                    <Num className={d(i.qty).lte(0) ? "text-destructive" : undefined}>{qty(i.qty)}</Num>
+                    {i.low && <Badge variant="destructive" className="ml-2">{t("Low", "Bas")}</Badge>}
+                  </TableCell>
+                  <TableCell className="text-right"><Num>{unitCost(i.avgCost)}</Num></TableCell>
+                  <TableCell className="text-right"><Num>{usd(i.value)}</Num></TableCell>
+                  <TableCell className="text-right"><Num>{usd(i.retailValue)}</Num></TableCell>
+                </TableRow>
+              ))}
+              <TableRow className="bg-muted/40 font-medium">
+                <TableCell colSpan={3}>{t(`Total (${rows.length} lines)`, `Total (${rows.length} lignes)`)}</TableCell>
+                <TableCell className="text-right"><Num>{qty(shown.qty.toString())}</Num></TableCell>
+                <TableCell />
+                <TableCell className="text-right"><Num>{usd(shown.value.toFixed(2))}</Num></TableCell>
+                <TableCell className="text-right"><Num>{usd(shown.retail.toFixed(2))}</Num></TableCell>
+              </TableRow>
+            </TableBody>
+          </Table>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ Adjust stock
+
+interface Serial {
+  chassisNo: string;
+  engineNo: string;
+  color: string;
+}
+
+interface AdjLine {
+  key: number;
+  variant: VariantRow;
+  qty: string;
+  unitCost: string;
+  serials: Serial[];
+  unitIds: number[];
+}
+
+let lineKey = 1;
+
+function AdjustForm({ onDone }: { onDone: () => void }) {
+  const t = useT();
+  const [dateValue, setDateValue] = useState(todayLocal());
+  const [locationId, setLocationId] = useState<number | null>(null);
+  const [kind, setKind] = useState<Kind>("count");
+  const [reason, setReason] = useState("");
+  const [lines, setLines] = useState<AdjLine[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const onlyRemove = kind === "damage" || kind === "loss";
+  const onlyAdd = kind === "opening";
+  const signed = !onlyRemove && !onlyAdd;
+
+  const m = useApiMutation<unknown, { number: string }>("POST", "/api/stock/adjustments", {
+    success: t("Stock adjusted", "Stock ajusté"),
+    onSuccess: () => {
+      setLines([]);
+      setReason("");
+      onDone();
+    },
+  });
+
+  // Changing location invalidates picked motorcycles.
+  useEffect(() => {
+    setLines((ls) => ls.map((l) => ({ ...l, unitIds: [] })));
+  }, [locationId]);
+
+  function change(l: AdjLine) {
+    if (!isQty(l.qty)) return d(0);
+    const n = d(l.qty);
+    if (onlyRemove) return n.abs().negated();
+    if (onlyAdd) return n.abs();
+    return n;
+  }
+
+  function update(key: number, patch: Partial<AdjLine>) {
+    setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  }
+
+  function setQty(l: AdjLine, value: string) {
+    const patch: Partial<AdjLine> = { qty: value };
+    if (l.variant.tracksSerials) {
+      const n = isQty(value) ? Number(value) : 0;
+      const count = Number.isInteger(n) ? n : 0;
+      const adding = onlyAdd || (!onlyRemove && count > 0);
+      const want = adding ? Math.min(Math.abs(count), 200) : 0;
+      const serials = l.serials.slice(0, want);
+      while (serials.length < want) serials.push({ chassisNo: "", engineNo: "", color: "" });
+      patch.serials = serials;
+    }
+    update(l.key, patch);
+  }
+
+  function addVariant(v: VariantRow) {
+    if (lines.some((l) => l.variant.id === v.id)) return;
+    const cost = d(v.stockQty).gt(0) ? d(v.avgCost).toDecimalPlaces(4).toString() : "";
+    setLines((ls) => [...ls, { key: lineKey++, variant: v, qty: "", unitCost: cost, serials: [], unitIds: [] }]);
+  }
+
+  function submit() {
+    setError(null);
+    if (!locationId) return setError(t("Choose a location.", "Choisissez un emplacement."));
+    if (!reason.trim()) return setError(t("Give a reason.", "Indiquez un motif."));
+    const active = lines.filter((l) => !change(l).isZero());
+    if (active.length === 0) return setError(t("Add at least one item with a quantity.", "Ajoutez au moins un article avec une quantité."));
+    const payload = [];
+    for (const l of lines) {
+      const name = `${l.variant.productName} (${l.variant.sku})`;
+      if (!isQty(l.qty) || d(l.qty).isZero()) return setError(t(`Enter a quantity for ${name} or remove the line.`, `Saisissez une quantité pour ${name} ou retirez la ligne.`));
+      const c = change(l);
+      if (l.variant.tracksSerials && !c.isInteger()) return setError(t("Motorcycles must be whole units.", "Les motos doivent être en unités entières."));
+      const line: { variantId: number; qtyChange: string; unitCost?: string; unitIds?: number[]; serials?: { chassisNo: string; engineNo: string | null; color: string | null }[] } = {
+        variantId: l.variant.id,
+        qtyChange: c.toString(),
+      };
+      if (c.gt(0)) {
+        if (l.unitCost.trim()) {
+          if (!/^\d+(\.\d+)?$/.test(l.unitCost.trim())) return setError(t(`Invalid cost for ${name}.`, `Coût invalide pour ${name}.`));
+          line.unitCost = d(l.unitCost).toString();
+        } else if (d(l.variant.stockQty).lte(0)) {
+          return setError(t(`Give a cost per unit for ${name}: it has no stock to take an average from.`, `Indiquez un coût unitaire pour ${name} : il n'a pas de stock pour calculer une moyenne.`));
+        }
+        if (l.variant.tracksSerials) {
+          const chassis = l.serials.map((s) => s.chassisNo.trim().toUpperCase()).filter(Boolean);
+          if (new Set(chassis).size !== chassis.length) return setError(t("The same chassis number is typed twice.", "Le même numéro de châssis est saisi deux fois."));
+          line.serials = l.serials.map((s) => ({ chassisNo: s.chassisNo.trim().toUpperCase(), engineNo: s.engineNo.trim().toUpperCase() || null, color: s.color.trim() || null }));
+        }
+      } else if (l.variant.tracksSerials) {
+        if (l.unitIds.length !== c.abs().toNumber()) {
+          return setError(t(`Pick exactly ${c.abs().toString()} motorcycle(s) of ${name} to remove.`, `Choisissez exactement ${c.abs().toString()} moto(s) de ${name} à retirer.`));
+        }
+        line.unitIds = l.unitIds;
+      }
+      payload.push(line);
+    }
+    m.mutate({ date: dateValue, locationId, kind, reason: reason.trim(), lines: payload });
+  }
+
+  const totalChange = lines.reduce((s, l) => {
+    const c = change(l);
+    if (c.isZero()) return s;
+    const cost = c.gt(0) ? (l.unitCost.trim() ? d(l.unitCost) : d(l.variant.avgCost)) : d(l.variant.avgCost);
+    return s.plus(c.times(cost));
+  }, d(0));
+
+  return (
+    <div className="space-y-4">
+      <Alert>
+        <AlertDescription className="text-sm">
+          {kind === "opening"
+            ? t(
+                "Opening stock is the stock already in the shop when you start using the system. Its value is posted against “Opening balances” (capital), not as profit or loss.",
+                "Le stock d'ouverture est le stock déjà présent au magasin quand vous commencez à utiliser le système. Sa valeur est passée en « Soldes d'ouverture » (capital), pas en profit ni en perte.",
+              )
+            : t(
+                "Other adjustments count as stock losses or gains at average cost. They reduce or increase the gross profit shared by both partners at month close.",
+                "Les autres ajustements comptent comme pertes ou gains de stock au coût moyen. Ils diminuent ou augmentent la marge brute partagée par les deux associés à la clôture du mois.",
+              )}
+        </AlertDescription>
+      </Alert>
+
+      <Card>
+        <CardContent className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Field label={t("Date", "Date")}><Input type="date" value={dateValue} onChange={(e) => setDateValue(e.target.value)} /></Field>
+          <Field label={t("Location", "Emplacement")}><LocationSelect value={locationId} onChange={setLocationId} /></Field>
+          <Field label={t("Kind", "Type")}>
+            <Select value={kind} onValueChange={(v) => setKind(v as Kind)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>{KINDS.map((k) => <SelectItem key={k} value={k}>{kindLabel(t, k)}</SelectItem>)}</SelectContent>
+            </Select>
+          </Field>
+          <Field label={t("Reason", "Motif")} className="sm:col-span-2 lg:col-span-1">
+            <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={kind === "opening" ? t("Stock at start", "Stock au démarrage") : t("e.g. monthly count", "ex. inventaire mensuel")} />
+          </Field>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">{t("Items", "Articles")}</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            {onlyRemove
+              ? t("Type the quantity removed.", "Saisissez la quantité retirée.")
+              : onlyAdd
+                ? t("Type the quantity on hand and its cost per unit.", "Saisissez la quantité en main et son coût unitaire.")
+                : t("Type + to add (e.g. 3) or − to remove (e.g. -2).", "Saisissez + pour ajouter (ex. 3) ou − pour retirer (ex. -2).")}
+          </p>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <VariantSearch onPick={addVariant} locationId={locationId} showCost />
+          {lines.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">{t("Search or scan items to adjust.", "Cherchez ou scannez les articles à ajuster.")}</p>}
+          {lines.map((l) => {
+            const c = change(l);
+            const needsCost = c.gt(0) && d(l.variant.stockQty).lte(0);
+            return (
+              <div key={l.key} className="rounded-lg border p-3">
+                <div className="flex items-start justify-between gap-2">
+                  <div className="min-w-0">
+                    <p className="flex items-center gap-1 font-medium">
+                      {l.variant.tracksSerials && <Bike className="h-4 w-4 text-primary" />}
+                      {l.variant.productName}{l.variant.label !== "Standard" ? ` · ${l.variant.label}` : ""}
+                    </p>
+                    <p className="text-xs text-muted-foreground">
+                      {l.variant.sku} · {t("here", "ici")} {qty(l.variant.locationQty)} · {t("total", "total")} {qty(l.variant.stockQty)} · {t("avg cost", "coût moyen")} {unitCost(l.variant.avgCost)}
+                    </p>
+                  </div>
+                  <Button variant="ghost" size="icon" onClick={() => setLines(lines.filter((x) => x.key !== l.key))}><Trash2 className="h-4 w-4" /></Button>
+                </div>
+                <div className="mt-2 grid gap-3 sm:grid-cols-3">
+                  <Field label={onlyRemove ? t("Qty removed", "Qté retirée") : onlyAdd ? t("Qty", "Qté") : t("Qty change (+/−)", "Variation (+/−)")}>
+                    <Input inputMode={signed ? "text" : "decimal"} value={l.qty} onChange={(e) => setQty(l, e.target.value)} />
+                  </Field>
+                  {c.gt(0) && (
+                    <Field
+                      label={t("Cost per unit (USD)", "Coût unitaire (USD)")}
+                      hint={needsCost ? t("Required: no stock yet", "Obligatoire : pas encore de stock") : t("Blank = current average cost", "Vide = coût moyen actuel")}
+                    >
+                      <Input inputMode="decimal" value={l.unitCost} onChange={(e) => update(l.key, { unitCost: e.target.value })} className={cn(needsCost && !l.unitCost.trim() && "border-destructive")} />
+                    </Field>
+                  )}
+                  {!c.isZero() && (
+                    <div className="flex items-end pb-2 text-sm">
+                      <span className={c.lt(0) ? "text-destructive" : "text-green-700 dark:text-green-400"}>
+                        {c.gt(0) ? "+" : ""}{qty(c.toString())} · ≈ {usd(c.times(c.gt(0) && l.unitCost.trim() ? d(l.unitCost) : d(l.variant.avgCost)).toFixed(2))}
+                      </span>
+                    </div>
+                  )}
+                </div>
+                {l.variant.tracksSerials && c.gt(0) && l.serials.length > 0 && (
+                  <div className="mt-3 space-y-2">
+                    <p className="text-xs text-muted-foreground">
+                      {t("Chassis numbers (can be entered later in Motorcycles; a bike cannot be sold without one).", "Numéros de châssis (peuvent être saisis plus tard dans Motos ; une moto ne peut pas être vendue sans).")}
+                    </p>
+                    {l.serials.map((s, i) => (
+                      <div key={i} className="grid grid-cols-[24px_1fr] gap-2 sm:grid-cols-[24px_1fr_1fr_140px]">
+                        <span className="pt-2 text-xs text-muted-foreground">{i + 1}.</span>
+                        <Input className="font-mono uppercase" placeholder={t("Chassis no.", "N° de châssis")} value={s.chassisNo} onChange={(e) => update(l.key, { serials: l.serials.map((x, j) => (j === i ? { ...x, chassisNo: e.target.value } : x)) })} />
+                        <Input className="col-start-2 font-mono uppercase sm:col-start-auto" placeholder={t("Engine no.", "N° de moteur")} value={s.engineNo} onChange={(e) => update(l.key, { serials: l.serials.map((x, j) => (j === i ? { ...x, engineNo: e.target.value } : x)) })} />
+                        <Input className="col-start-2 sm:col-start-auto" placeholder={t("Colour", "Couleur")} value={s.color} onChange={(e) => update(l.key, { serials: l.serials.map((x, j) => (j === i ? { ...x, color: e.target.value } : x)) })} />
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {l.variant.tracksSerials && c.lt(0) && locationId && (
+                  <UnitPicker variantId={l.variant.id} locationId={locationId} needed={c.abs().toNumber()} value={l.unitIds} onChange={(ids) => update(l.key, { unitIds: ids })} />
+                )}
+              </div>
+            );
+          })}
+          {lines.length > 0 && (
+            <p className="text-right text-sm">
+              {t("Estimated value change", "Variation de valeur estimée")}: <span className="font-semibold">{usd(totalChange.toFixed(2))}</span>
+            </p>
+          )}
+        </CardContent>
+      </Card>
+
+      {error && <ErrorText error={error} />}
+      <div className="flex justify-end">
+        <Button onClick={submit} disabled={m.isPending || lines.length === 0}>{t("Save adjustment", "Enregistrer l'ajustement")}</Button>
+      </div>
+    </div>
+  );
+}
+
+function UnitPicker({ variantId, locationId, needed, value, onChange }: { variantId: number; locationId: number; needed: number; value: number[]; onChange: (ids: number[]) => void }) {
+  const t = useT();
+  const q = useQuery<MotorcycleUnit[]>({ queryKey: ["/api/units", { variantId, locationId, status: "in_stock" }] });
+  const units = q.data ?? [];
+  return (
+    <div className="mt-3 space-y-2">
+      <p className={cn("text-xs", value.length === needed ? "text-muted-foreground" : "text-destructive")}>
+        {t(`Pick the motorcycles: ${value.length} of ${needed} selected.`, `Choisissez les motos : ${value.length} sur ${needed} sélectionnée(s).`)}
+      </p>
+      {q.isLoading ? (
+        <Loading />
+      ) : units.length === 0 ? (
+        <p className="text-sm text-muted-foreground">{t("No motorcycle of this variant in stock here.", "Aucune moto de cette variante en stock ici.")}</p>
+      ) : (
+        <div className="grid gap-1 sm:grid-cols-2">
+          {units.map((u) => {
+            const checked = value.includes(u.id);
+            return (
+              <label key={u.id} className="flex cursor-pointer items-center gap-2 rounded border px-2 py-1.5 text-sm hover:bg-muted">
+                <Checkbox
+                  checked={checked}
+                  disabled={!checked && value.length >= needed}
+                  onCheckedChange={(v) => onChange(v ? [...value, u.id] : value.filter((x) => x !== u.id))}
+                />
+                <span className="font-mono text-xs">{u.chassisNo ?? t("(no chassis no.)", "(sans n° de châssis)")}</span>
+                <span className="text-xs text-muted-foreground">{[u.engineNo, u.color].filter(Boolean).join(" · ")}</span>
+              </label>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ History
+
+function AdjustmentHistory() {
+  const t = useT();
+  const q = useQuery<Adjustment[]>({ queryKey: ["/api/stock/adjustments"] });
+  const { data: locations = [] } = useLocations();
+  if (q.isLoading) return <Loading />;
+  if (q.error) return <ErrorText error={q.error} />;
+  const rows = q.data ?? [];
+  if (rows.length === 0) return <EmptyState title={t("No adjustments yet", "Aucun ajustement")} />;
+  return (
+    <Card className="overflow-x-auto">
+      <Table>
+        <TableHeader>
+          <TableRow>
+            <TableHead>{t("Number", "Numéro")}</TableHead>
+            <TableHead>{t("Date", "Date")}</TableHead>
+            <TableHead>{t("Location", "Emplacement")}</TableHead>
+            <TableHead>{t("Kind", "Type")}</TableHead>
+            <TableHead>{t("Reason", "Motif")}</TableHead>
+          </TableRow>
+        </TableHeader>
+        <TableBody>
+          {rows.map((a) => (
+            <TableRow key={a.id}>
+              <TableCell className="whitespace-nowrap font-mono text-xs">{a.number}</TableCell>
+              <TableCell className="whitespace-nowrap">{date(a.date)}</TableCell>
+              <TableCell>{locations.find((l) => l.id === a.locationId)?.name ?? `#${a.locationId}`}</TableCell>
+              <TableCell><Badge variant={a.kind === "opening" ? "default" : a.kind === "damage" || a.kind === "loss" ? "destructive" : "outline"}>{kindLabel(t, a.kind)}</Badge></TableCell>
+              <TableCell className="max-w-[320px] truncate" title={a.reason}>{a.reason}</TableCell>
+            </TableRow>
+          ))}
+        </TableBody>
+      </Table>
+    </Card>
+  );
+}
+
+// ------------------------------------------------------------------ Transfer
+
+interface TransferLine {
+  variant: VariantRow;
+  qty: string;
+  unitIds: number[];
+}
+
+function TransferForm() {
+  const t = useT();
+  const { data: locations = [] } = useLocations();
+  const active = locations.filter((l) => l.active);
+  const [dateValue, setDateValue] = useState(todayLocal());
+  const [fromId, setFromId] = useState<number | null>(null);
+  const [toId, setToId] = useState<number | null>(null);
+  const [note, setNote] = useState("");
+  const [lines, setLines] = useState<TransferLine[]>([]);
+  const [error, setError] = useState<string | null>(null);
+  const m = useApiMutation("POST", "/api/stock/transfers", {
+    success: t("Stock transferred", "Stock transféré"),
+    onSuccess: () => { setLines([]); setNote(""); },
+  });
+
+  useEffect(() => {
+    if (fromId && (!toId || toId === fromId)) {
+      const other = active.find((l) => l.id !== fromId);
+      if (other) setToId(other.id);
+    }
+  }, [fromId, toId, active]);
+  // Quantities shown are for the source location; reset the list when it changes.
+  useEffect(() => setLines([]), [fromId]);
+
+  function submit() {
+    setError(null);
+    if (!fromId || !toId || fromId === toId) return setError(t("Pick two different locations.", "Choisissez deux emplacements différents."));
+    if (lines.length === 0) return setError(t("Add at least one item.", "Ajoutez au moins un article."));
+    for (const l of lines) {
+      if (!isPositive(l.qty)) return setError(t(`Enter a quantity for ${l.variant.productName}.`, `Saisissez une quantité pour ${l.variant.productName}.`));
+      if (d(l.qty).gt(d(l.variant.locationQty))) return setError(t(`Not enough ${l.variant.productName} at the source location.`, `Pas assez de ${l.variant.productName} à l'emplacement de départ.`));
+      if (l.variant.tracksSerials) {
+        if (!d(l.qty).isInteger()) return setError(t("Motorcycles must be whole units.", "Les motos doivent être en unités entières."));
+        if (l.unitIds.length !== d(l.qty).toNumber()) return setError(t(`Pick exactly ${l.qty} motorcycle(s) of ${l.variant.productName} to move.`, `Choisissez exactement ${l.qty} moto(s) de ${l.variant.productName} à déplacer.`));
+      }
+    }
+    m.mutate({
+      date: dateValue,
+      fromLocationId: fromId,
+      toLocationId: toId,
+      note: note.trim() || undefined,
+      lines: lines.map((l) => ({ variantId: l.variant.id, qty: d(l.qty).toString(), ...(l.variant.tracksSerials ? { unitIds: l.unitIds } : {}) })),
+    });
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardContent className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Field label={t("Date", "Date")}><Input type="date" value={dateValue} onChange={(e) => setDateValue(e.target.value)} /></Field>
+          <Field label={t("From", "De")}><LocationSelect value={fromId} onChange={setFromId} /></Field>
+          <Field label={t("To", "Vers")}>
+            <Select value={toId ? String(toId) : ""} onValueChange={(v) => setToId(Number(v))}>
+              <SelectTrigger><SelectValue placeholder={t("Choose…", "Choisir…")} /></SelectTrigger>
+              <SelectContent>
+                {active.filter((l) => l.id !== fromId).map((l) => <SelectItem key={l.id} value={String(l.id)}>{l.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label={t("Note", "Note")}><Input value={note} onChange={(e) => setNote(e.target.value)} /></Field>
+        </CardContent>
+      </Card>
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="flex items-center gap-2 text-base"><ArrowRightLeft className="h-4 w-4" /> {t("Items to move", "Articles à déplacer")}</CardTitle>
+          <p className="text-xs text-muted-foreground">{t("A transfer moves quantity only; the stock value does not change.", "Un transfert déplace seulement la quantité ; la valeur du stock ne change pas.")}</p>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <VariantSearch
+            locationId={fromId}
+            onPick={(v) => {
+              setError(null);
+              if (!lines.some((l) => l.variant.id === v.id)) setLines([...lines, { variant: v, qty: "", unitIds: [] }]);
+            }}
+          />
+          {lines.length > 0 && (
+            <div className="overflow-x-auto">
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t("Item", "Article")}</TableHead>
+                    <TableHead className="text-right">{t("Available", "Disponible")}</TableHead>
+                    <TableHead>{t("Qty", "Qté")}</TableHead>
+                    <TableHead />
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {lines.map((l, i) => (
+                    <Fragment key={l.variant.id}>
+                    <TableRow>
+                      <TableCell>
+                        <div className="font-medium">{l.variant.productName}{l.variant.label !== "Standard" ? ` · ${l.variant.label}` : ""}</div>
+                        <div className="text-xs text-muted-foreground">{l.variant.sku}</div>
+                      </TableCell>
+                      <TableCell className="text-right"><Num>{qty(l.variant.locationQty)}</Num></TableCell>
+                      <TableCell><Input className="w-24" inputMode="decimal" value={l.qty} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} /></TableCell>
+                      <TableCell><Button variant="ghost" size="icon" onClick={() => setLines(lines.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></Button></TableCell>
+                    </TableRow>
+                    {l.variant.tracksSerials && fromId && isPositive(l.qty) && (
+                      <TableRow>
+                        <TableCell colSpan={4}>
+                          <UnitPicker variantId={l.variant.id} locationId={fromId} needed={d(l.qty).toNumber()} value={l.unitIds} onChange={(ids) => setLines(lines.map((x, j) => (j === i ? { ...x, unitIds: ids } : x)))} />
+                        </TableCell>
+                      </TableRow>
+                    )}
+                    </Fragment>
+                  ))}
+                </TableBody>
+              </Table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      {error && <ErrorText error={error} />}
+      <div className="flex justify-end">
+        <Button onClick={submit} disabled={m.isPending || lines.length === 0}>{t("Transfer", "Transférer")}</Button>
+      </div>
+    </div>
+  );
+}

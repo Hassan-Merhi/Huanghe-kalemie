@@ -1,0 +1,183 @@
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { motorcycleUnits, products, stockLevels, stockMovements, variants, type MovementType } from "@shared/schema";
+import { Decimal, cents, dec, type DecimalInput } from "@shared/money";
+import type { Tx } from "../db";
+import { badRequest, conflict } from "../errors";
+
+/*
+ * Stock is valued at weighted average cost per variant. Each variant keeps its total quantity
+ * and total value; issuing stock removes value in proportion (and the last unit takes whatever
+ * value is left), so the Inventory account always equals the sum of variant values.
+ */
+
+interface MovementRef {
+  date: string;
+  type: MovementType;
+  sourceType?: string | null;
+  sourceId?: number | null;
+  journalId?: number | null;
+  note?: string | null;
+  userId?: number | null;
+}
+
+async function lockVariant(tx: Tx, variantId: number) {
+  const [variant] = await tx.select().from(variants).where(eq(variants.id, variantId)).for("update");
+  if (!variant) throw badRequest(`Variant ${variantId} not found`);
+  return variant;
+}
+
+async function locationQty(tx: Tx, variantId: number, locationId: number): Promise<Decimal> {
+  const [row] = await tx
+    .select({ qty: stockLevels.qty })
+    .from(stockLevels)
+    .where(and(eq(stockLevels.variantId, variantId), eq(stockLevels.locationId, locationId)))
+    .for("update");
+  return dec(row?.qty ?? 0);
+}
+
+async function addLocationQty(tx: Tx, variantId: number, locationId: number, delta: Decimal) {
+  if (delta.isNegative()) {
+    // Callers check availability first; the row exists because stock is there.
+    await tx
+      .update(stockLevels)
+      .set({ qty: sql`${stockLevels.qty} - ${delta.abs().toFixed(3)}` })
+      .where(and(eq(stockLevels.variantId, variantId), eq(stockLevels.locationId, locationId)));
+    return;
+  }
+  await tx
+    .insert(stockLevels)
+    .values({ variantId, locationId, qty: delta.toFixed(3) })
+    .onConflictDoUpdate({
+      target: [stockLevels.variantId, stockLevels.locationId],
+      set: { qty: sql`${stockLevels.qty} + ${delta.toFixed(3)}` },
+    });
+}
+
+/** Add stock at a known total value. */
+export async function receiveStock(
+  tx: Tx,
+  input: MovementRef & { variantId: number; locationId: number; qty: DecimalInput; value: DecimalInput },
+): Promise<void> {
+  const q = dec(input.qty, "quantity");
+  const v = cents(input.value);
+  if (q.lte(0)) throw badRequest("Quantity must be greater than zero");
+  if (v.isNegative()) throw badRequest("Stock value cannot be negative");
+  const variant = await lockVariant(tx, input.variantId);
+  await tx
+    .update(variants)
+    .set({
+      stockQty: dec(variant.stockQty).plus(q).toFixed(3),
+      stockValue: dec(variant.stockValue).plus(v).toFixed(2),
+    })
+    .where(eq(variants.id, variant.id));
+  await addLocationQty(tx, variant.id, input.locationId, q);
+  await tx.insert(stockMovements).values({
+    date: input.date,
+    variantId: variant.id,
+    locationId: input.locationId,
+    type: input.type,
+    qty: q.toFixed(3),
+    value: v.toFixed(2),
+    sourceType: input.sourceType ?? null,
+    sourceId: input.sourceId ?? null,
+    journalId: input.journalId ?? null,
+    note: input.note ?? null,
+    createdBy: input.userId ?? null,
+  });
+}
+
+/** Remove stock at average cost. Returns the value removed. */
+export async function issueStock(
+  tx: Tx,
+  input: MovementRef & { variantId: number; locationId: number; qty: DecimalInput; label?: string },
+): Promise<string> {
+  const q = dec(input.qty, "quantity");
+  if (q.lte(0)) throw badRequest("Quantity must be greater than zero");
+  const variant = await lockVariant(tx, input.variantId);
+  const available = await locationQty(tx, variant.id, input.locationId);
+  if (available.lt(q)) {
+    throw conflict(
+      `Not enough stock of ${input.label ?? variant.sku}: ${available.toString()} available, ${q.toString()} needed`,
+    );
+  }
+  const totalQty = dec(variant.stockQty);
+  const totalValue = dec(variant.stockValue);
+  const value = q.equals(totalQty) ? totalValue : cents(totalValue.times(q).dividedBy(totalQty));
+
+  await tx
+    .update(variants)
+    .set({
+      stockQty: totalQty.minus(q).toFixed(3),
+      stockValue: totalValue.minus(value).toFixed(2),
+    })
+    .where(eq(variants.id, variant.id));
+  await addLocationQty(tx, variant.id, input.locationId, q.negated());
+  await tx.insert(stockMovements).values({
+    date: input.date,
+    variantId: variant.id,
+    locationId: input.locationId,
+    type: input.type,
+    qty: q.negated().toFixed(3),
+    value: value.negated().toFixed(2),
+    sourceType: input.sourceType ?? null,
+    sourceId: input.sourceId ?? null,
+    journalId: input.journalId ?? null,
+    note: input.note ?? null,
+    createdBy: input.userId ?? null,
+  });
+  return value.toFixed(2);
+}
+
+/** Move quantity between locations. Value does not change. */
+export async function transferStock(
+  tx: Tx,
+  input: MovementRef & { variantId: number; fromLocationId: number; toLocationId: number; qty: DecimalInput; unitIds?: number[] },
+): Promise<void> {
+  const q = dec(input.qty, "quantity");
+  if (q.lte(0)) throw badRequest("Quantity must be greater than zero");
+  if (input.fromLocationId === input.toLocationId) throw badRequest("Pick two different locations");
+  const variant = await lockVariant(tx, input.variantId);
+  const available = await locationQty(tx, variant.id, input.fromLocationId);
+  if (available.lt(q)) throw conflict(`Not enough stock of ${variant.sku} to transfer`);
+  const [product] = await tx.select({ tracksSerials: products.tracksSerials }).from(products).where(eq(products.id, variant.productId));
+  if (product?.tracksSerials) {
+    // Motorcycles move with their own records.
+    const ids = input.unitIds ?? [];
+    if (!q.isInteger() || ids.length !== q.toNumber()) throw badRequest(`Pick which ${q.toString()} motorcycle(s) of ${variant.sku} are moving`);
+    const units = await tx.select().from(motorcycleUnits).where(inArray(motorcycleUnits.id, ids)).for("update");
+    if (units.length !== ids.length || units.some((u) => u.variantId !== variant.id || u.status !== "in_stock" || u.locationId !== input.fromLocationId)) {
+      throw badRequest("One of the motorcycles picked is not in stock at that location");
+    }
+    await tx.update(motorcycleUnits).set({ locationId: input.toLocationId }).where(inArray(motorcycleUnits.id, ids));
+  }
+  await addLocationQty(tx, variant.id, input.fromLocationId, q.negated());
+  await addLocationQty(tx, variant.id, input.toLocationId, q);
+  const base = {
+    date: input.date,
+    variantId: variant.id,
+    value: "0.00",
+    sourceType: input.sourceType ?? null,
+    sourceId: input.sourceId ?? null,
+    note: input.note ?? null,
+    createdBy: input.userId ?? null,
+  };
+  await tx.insert(stockMovements).values([
+    { ...base, locationId: input.fromLocationId, type: "transfer_out", qty: q.negated().toFixed(3) },
+    { ...base, locationId: input.toLocationId, type: "transfer_in", qty: q.toFixed(3) },
+  ]);
+}
+
+/** Attach the journal id to movements created before the journal existed. */
+export async function linkMovementsToJournal(tx: Tx, sourceType: string, sourceId: number, journalId: number | null) {
+  if (!journalId) return;
+  await tx
+    .update(stockMovements)
+    .set({ journalId })
+    .where(
+      and(
+        eq(stockMovements.sourceType, sourceType),
+        eq(stockMovements.sourceId, sourceId),
+        sql`${stockMovements.journalId} IS NULL`,
+      ),
+    );
+}
