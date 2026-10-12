@@ -47,6 +47,11 @@ async function main() {
       locationName: process.env.LOCATION_NAME,
     }),
   );
+  // DEMO_DATA=true fills an empty shop with sample items and sales (for a demo server only).
+  if (process.env.DEMO_DATA === "true") {
+    const demo = await import("./demo");
+    if (await demo.isEmptyShop()) await demo.seedDemo();
+  }
   const app = await createApp();
   const server = createServer(app);
 
