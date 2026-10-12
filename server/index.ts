@@ -31,7 +31,7 @@ export async function createApp() {
   setupSession(app);
   registerAuthRoutes(app);
   registerRoutes(app);
-  app.use("/api", (_req, res) => res.status(404).json({ message: "Not found" }));
+  app.use("/api", (_req, res) => res.status(404).json({ message: "Not found", messageFr: "Introuvable" }));
   app.use(errorHandler);
   return app;
 }

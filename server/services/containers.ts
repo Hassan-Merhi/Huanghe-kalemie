@@ -18,7 +18,7 @@ import { variantColour } from "./catalog";
 
 export async function getContainer(tx: Tx, id: number) {
   const [container] = await tx.select().from(containers).where(eq(containers.id, id));
-  if (!container) throw notFound("Container");
+  if (!container) throw notFound("Container", "Conteneur introuvable");
   const lines = await tx
     .select({
       line: containerLines,
@@ -46,9 +46,9 @@ export async function getContainer(tx: Tx, id: number) {
 
 async function lockEditable(tx: Tx, id: number) {
   const [container] = await tx.select().from(containers).where(eq(containers.id, id)).for("update");
-  if (!container) throw notFound("Container");
+  if (!container) throw notFound("Container", "Conteneur introuvable");
   if (container.status === "finalized") {
-    throw conflict("This container is finalized. Reverse the offload before changing it.");
+    throw conflict("This container is finalized. Reverse the offload before changing it.", "Ce conteneur est finalisé. Annulez le déchargement avant de le modifier.");
   }
   return container;
 }
@@ -71,17 +71,17 @@ export async function replaceLines(tx: Tx, containerId: number, lines: Container
       .from(variants)
       .innerJoin(products, eq(products.id, variants.productId))
       .where(inArray(variants.id, variantIds));
-    if (found.length !== variantIds.length) throw badRequest("One of the items does not exist");
+    if (found.length !== variantIds.length) throw badRequest("One of the items does not exist", "Un des articles n'existe pas");
     const serial = new Set(found.filter((f) => f.tracksSerials).map((f) => f.id));
     for (const l of lines) {
       if (serial.has(l.variantId) && !dec(l.quantity).isInteger()) {
-        throw badRequest("Motorcycles must be whole units");
+        throw badRequest("Motorcycles must be whole units", "Les motos se comptent en unités entières");
       }
     }
   }
   for (const l of lines) {
-    if (dec(l.quantity).lte(0)) throw badRequest("Every line needs a quantity greater than zero");
-    if (dec(l.unitPrice).isNegative()) throw badRequest("Unit price cannot be negative");
+    if (dec(l.quantity).lte(0)) throw badRequest("Every line needs a quantity greater than zero", "Chaque ligne doit avoir une quantité supérieure à zéro");
+    if (dec(l.unitPrice).isNegative()) throw badRequest("Unit price cannot be negative", "Le prix unitaire ne peut pas être négatif");
   }
   // Expenses pinned to a line keep their target only if that line survives; lines are re-created,
   // so clear single-line targets and let the user re-pick them.
@@ -138,18 +138,18 @@ export interface ContainerExpenseInput {
 export async function addExpense(tx: Tx, containerId: number, input: ContainerExpenseInput, userId: number) {
   const container = await lockEditable(tx, containerId);
   if (!!input.paidFromAccountId === !!input.payablePartyId) {
-    throw badRequest("Say either which account paid this expense or who is owed for it");
+    throw badRequest("Say either which account paid this expense or who is owed for it", "Indiquez soit le compte qui a payé cette dépense, soit à qui elle est due");
   }
   if (input.method === "line") {
-    if (!input.targetLineId) throw badRequest("Pick the line this expense belongs to");
+    if (!input.targetLineId) throw badRequest("Pick the line this expense belongs to", "Choisissez la ligne à laquelle appartient cette dépense");
     const [line] = await tx
       .select()
       .from(containerLines)
       .where(and(eq(containerLines.id, input.targetLineId), eq(containerLines.containerId, containerId)));
-    if (!line) throw badRequest("That line is not in this container");
+    if (!line) throw badRequest("That line is not in this container", "Cette ligne n'est pas dans ce conteneur");
   }
   const amount = cents(input.amount);
-  if (amount.lte(0)) throw badRequest("Amount must be greater than zero");
+  if (amount.lte(0)) throw badRequest("Amount must be greater than zero", "Le montant doit être supérieur à zéro");
 
   let creditLine;
   let currency: "USD" | "CDF" = input.currency;
@@ -206,7 +206,7 @@ export async function removeExpense(tx: Tx, containerId: number, expenseId: numb
     .select()
     .from(containerExpenses)
     .where(and(eq(containerExpenses.id, expenseId), eq(containerExpenses.containerId, containerId)));
-  if (!expense) throw notFound("Expense");
+  if (!expense) throw notFound("Expense", "Dépense introuvable");
   if (expense.journalId) await reverseJournal(tx, expense.journalId, { date, userId, memo: "Frais de conteneur supprimé" });
   await tx.delete(containerExpenses).where(eq(containerExpenses.id, expenseId));
 }
@@ -220,7 +220,7 @@ export async function updateExpenseAllocation(
   targetLineId: number | null,
 ) {
   await lockEditable(tx, containerId);
-  if (method === "line" && !targetLineId) throw badRequest("Pick the line this expense belongs to");
+  if (method === "line" && !targetLineId) throw badRequest("Pick the line this expense belongs to", "Choisissez la ligne à laquelle appartient cette dépense");
   await tx
     .update(containerExpenses)
     .set({ method, targetLineId: method === "line" ? targetLineId : null })
@@ -254,9 +254,9 @@ export async function previewLandedCost(tx: Tx, containerId: number): Promise<La
 export async function finalizeContainer(tx: Tx, containerId: number, offloadDate: string, userId: number) {
   const container = await lockEditable(tx, containerId);
   const full = await getContainer(tx, containerId);
-  if (full.lines.length === 0) throw badRequest("Add the container's items before offloading");
+  if (full.lines.length === 0) throw badRequest("Add the container's items before offloading", "Ajoutez les articles du conteneur avant le déchargement");
   const unpinned = full.expenses.find((e) => e.method === "line" && !e.targetLineId);
-  if (unpinned) throw badRequest("An expense charged to one line has no line. Pick its line first.");
+  if (unpinned) throw badRequest("An expense charged to one line has no line. Pick its line first.", "Une dépense imputée à une seule ligne n'a pas de ligne. Choisissez d'abord sa ligne.");
   const result = await previewLandedCost(tx, containerId);
 
   const inventoryId = await systemAccountId(tx, SYSTEM_ACCOUNTS.inventory);
@@ -366,13 +366,13 @@ const EXPENSE_TYPE_FR: Record<string, string> = {
 
 export async function reverseContainer(tx: Tx, containerId: number, date: string, userId: number) {
   const [container] = await tx.select().from(containers).where(eq(containers.id, containerId)).for("update");
-  if (!container) throw notFound("Container");
-  if (container.status !== "finalized") throw badRequest("Only an offloaded container can be reversed");
+  if (!container) throw notFound("Container", "Conteneur introuvable");
+  if (container.status !== "finalized") throw badRequest("Only an offloaded container can be reversed", "Seul un conteneur déchargé peut être annulé");
   const full = await getContainer(tx, containerId);
 
   const units = await tx.select().from(motorcycleUnits).where(eq(motorcycleUnits.containerId, containerId));
   if (units.some((u) => u.status !== "in_stock")) {
-    throw conflict("Some motorcycles from this container are already sold, so it cannot be reversed");
+    throw conflict("Some motorcycles from this container are already sold, so it cannot be reversed", "Des motos de ce conteneur sont déjà vendues, il ne peut donc pas être annulé");
   }
   for (const line of full.lines) {
     const [lvl] = await tx
@@ -381,7 +381,7 @@ export async function reverseContainer(tx: Tx, containerId: number, date: string
       .where(and(eq(stockLevels.variantId, line.variantId), eq(stockLevels.locationId, container.locationId)));
     const needed = sum(full.lines.filter((l) => l.variantId === line.variantId).map((l) => l.quantity));
     if (dec(lvl?.qty ?? 0).lt(needed)) {
-      throw conflict(`Not enough ${line.productName} (${line.sku}) left in stock to reverse this container`);
+      throw conflict(`Not enough ${line.productName} (${line.sku}) left in stock to reverse this container`, `Stock insuffisant de ${line.productName} (${line.sku}) pour annuler ce conteneur`);
     }
   }
 

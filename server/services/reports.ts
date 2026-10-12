@@ -77,7 +77,7 @@ export async function trialBalance(tx: Tx, asOf?: string) {
 
 export async function accountLedger(tx: Tx, accountId: number, from: string, to: string) {
   const [account] = await tx.select().from(accounts).where(eq(accounts.id, accountId));
-  if (!account) throw notFound("Account");
+  if (!account) throw notFound("Account", "Compte introuvable");
   const [opening] = await tx
     .select({
       bal: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)`,
@@ -127,7 +127,7 @@ export async function accountLedger(tx: Tx, accountId: number, from: string, to:
 /** Customer, supplier or agent statement. Positive balance = they owe us. */
 export async function partyStatement(tx: Tx, partyId: number) {
   const [party] = await tx.select().from(parties).where(eq(parties.id, partyId));
-  if (!party) throw notFound("Customer, supplier or agent");
+  if (!party) throw notFound("Customer, supplier or agent", "Client, fournisseur ou agent introuvable");
   const rows = await tx
     .select({
       journalId: journals.id,
@@ -189,7 +189,7 @@ export async function partnerSummaries(tx: Tx) {
 
 export async function partnerStatement(tx: Tx, partnerId: number) {
   const [p] = await tx.select().from(partners).where(eq(partners.id, partnerId));
-  if (!p) throw notFound("Partner");
+  if (!p) throw notFound("Partner", "Associé introuvable");
   const rows = await tx
     .select({
       journalId: journals.id,

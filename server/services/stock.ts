@@ -22,7 +22,7 @@ interface MovementRef {
 
 async function lockVariant(tx: Tx, variantId: number) {
   const [variant] = await tx.select().from(variants).where(eq(variants.id, variantId)).for("update");
-  if (!variant) throw badRequest(`Variant ${variantId} not found`);
+  if (!variant) throw badRequest(`Variant ${variantId} not found`, `Variante ${variantId} introuvable`);
   return variant;
 }
 
@@ -60,8 +60,8 @@ export async function receiveStock(
 ): Promise<void> {
   const q = dec(input.qty, "quantity");
   const v = cents(input.value);
-  if (q.lte(0)) throw badRequest("Quantity must be greater than zero");
-  if (v.isNegative()) throw badRequest("Stock value cannot be negative");
+  if (q.lte(0)) throw badRequest("Quantity must be greater than zero", "La quantité doit être supérieure à zéro");
+  if (v.isNegative()) throw badRequest("Stock value cannot be negative", "La valeur du stock ne peut pas être négative");
   const variant = await lockVariant(tx, input.variantId);
   await tx
     .update(variants)
@@ -96,12 +96,13 @@ export async function issueStock(
   input: MovementRef & { variantId: number; locationId: number; qty: DecimalInput; label?: string; value?: DecimalInput },
 ): Promise<string> {
   const q = dec(input.qty, "quantity");
-  if (q.lte(0)) throw badRequest("Quantity must be greater than zero");
+  if (q.lte(0)) throw badRequest("Quantity must be greater than zero", "La quantité doit être supérieure à zéro");
   const variant = await lockVariant(tx, input.variantId);
   const available = await locationQty(tx, variant.id, input.locationId);
   if (available.lt(q)) {
     throw conflict(
       `Not enough stock of ${input.label ?? variant.sku}: ${available.toString()} available, ${q.toString()} needed`,
+      `Stock insuffisant de ${input.label ?? variant.sku} : ${available.toString()} disponible(s), ${q.toString()} nécessaire(s)`,
     );
   }
   const totalQty = dec(variant.stockQty);
@@ -141,19 +142,19 @@ export async function transferStock(
   input: MovementRef & { variantId: number; fromLocationId: number; toLocationId: number; qty: DecimalInput; unitIds?: number[] },
 ): Promise<void> {
   const q = dec(input.qty, "quantity");
-  if (q.lte(0)) throw badRequest("Quantity must be greater than zero");
-  if (input.fromLocationId === input.toLocationId) throw badRequest("Pick two different locations");
+  if (q.lte(0)) throw badRequest("Quantity must be greater than zero", "La quantité doit être supérieure à zéro");
+  if (input.fromLocationId === input.toLocationId) throw badRequest("Pick two different locations", "Choisissez deux emplacements différents");
   const variant = await lockVariant(tx, input.variantId);
   const available = await locationQty(tx, variant.id, input.fromLocationId);
-  if (available.lt(q)) throw conflict(`Not enough stock of ${variant.sku} to transfer`);
+  if (available.lt(q)) throw conflict(`Not enough stock of ${variant.sku} to transfer`, `Stock insuffisant de ${variant.sku} pour le transfert`);
   const [product] = await tx.select({ tracksSerials: products.tracksSerials }).from(products).where(eq(products.id, variant.productId));
   if (product?.tracksSerials) {
     // Motorcycles move with their own records.
     const ids = input.unitIds ?? [];
-    if (!q.isInteger() || ids.length !== q.toNumber()) throw badRequest(`Pick which ${q.toString()} motorcycle(s) of ${variant.sku} are moving`);
+    if (!q.isInteger() || ids.length !== q.toNumber()) throw badRequest(`Pick which ${q.toString()} motorcycle(s) of ${variant.sku} are moving`, `Choisissez quelle(s) ${q.toString()} moto(s) de ${variant.sku} sont transférées`);
     const units = await tx.select().from(motorcycleUnits).where(inArray(motorcycleUnits.id, ids)).for("update");
     if (units.length !== ids.length || units.some((u) => u.variantId !== variant.id || u.status !== "in_stock" || u.locationId !== input.fromLocationId)) {
-      throw badRequest("One of the motorcycles picked is not in stock at that location");
+      throw badRequest("One of the motorcycles picked is not in stock at that location", "Une des motos choisies n'est pas en stock à cet emplacement");
     }
     await tx.update(motorcycleUnits).set({ locationId: input.toLocationId }).where(inArray(motorcycleUnits.id, ids));
   }

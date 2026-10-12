@@ -41,7 +41,7 @@ export async function systemAccountId(tx: Tx, key: SystemAccountKey): Promise<nu
   const cached = accountIdCache.get(key);
   if (cached) return cached;
   const [row] = await tx.select({ id: accounts.id }).from(accounts).where(eq(accounts.systemKey, key));
-  if (!row) throw new AppError(500, `System account ${key} is missing. Run the seed.`, "SETUP");
+  if (!row) throw new AppError(500, `System account ${key} is missing. Run the seed.`, "SETUP", `Le compte système ${key} est manquant. Lancez le seed.`);
   accountIdCache.set(key, row.id);
   return row.id;
 }
@@ -57,7 +57,7 @@ export async function nextNumber(tx: Tx, key: string, prefix: string, width = 6)
 }
 
 export function monthOf(date: string): string {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw badRequest("Dates must be YYYY-MM-DD");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw badRequest("Dates must be YYYY-MM-DD", "Les dates doivent être au format AAAA-MM-JJ");
   return date.slice(0, 7);
 }
 
@@ -65,7 +65,7 @@ export async function assertPeriodOpen(tx: Tx, date: string): Promise<void> {
   const month = monthOf(date);
   const [row] = await tx.select({ status: periods.status }).from(periods).where(eq(periods.month, month));
   if (row?.status === "closed") {
-    throw new AppError(409, `${month} is closed. Reopen it before changing anything dated in that month.`, "PERIOD_CLOSED");
+    throw new AppError(409, `${month} is closed. Reopen it before changing anything dated in that month.`, "PERIOD_CLOSED", `Le mois ${month} est clôturé. Rouvrez-le avant de modifier quoi que ce soit daté de ce mois.`);
   }
 }
 
@@ -73,7 +73,7 @@ export async function assertPeriodOpen(tx: Tx, date: string): Promise<void> {
 export function toUsd(currency: Currency, native: DecimalInput, rate?: DecimalInput | null): string {
   if (currency === "USD") return cents(native).toFixed(2);
   const r = dec(rate, "exchange rate");
-  if (r.lte(0)) throw badRequest("A CDF amount needs an exchange rate greater than zero");
+  if (r.lte(0)) throw badRequest("A CDF amount needs an exchange rate greater than zero", "Un montant en FC nécessite un taux de change supérieur à zéro");
   return cents(dec(native).dividedBy(r)).toFixed(2);
 }
 
@@ -113,7 +113,7 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
     .map((l) => ({ ...l, debit: cents(l.debit ?? 0), credit: cents(l.credit ?? 0) }))
     .map((l) => {
       if (l.debit.isNegative() || l.credit.isNegative()) {
-        throw new AppError(500, "Journal amounts cannot be negative", "LEDGER");
+        throw new AppError(500, "Journal amounts cannot be negative", "LEDGER", "Les montants d'une écriture ne peuvent pas être négatifs");
       }
       // Net a line that has both sides.
       if (!l.debit.isZero() && !l.credit.isZero()) {
@@ -133,9 +133,10 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
       500,
       `Journal does not balance: debits ${totalDebit.toFixed(2)} vs credits ${totalCredit.toFixed(2)}`,
       "LEDGER_UNBALANCED",
+      `Écriture déséquilibrée : débits ${totalDebit.toFixed(2)} contre crédits ${totalCredit.toFixed(2)}`,
     );
   }
-  if (lines.length < 2) throw new AppError(500, "A journal needs at least two lines", "LEDGER");
+  if (lines.length < 2) throw new AppError(500, "A journal needs at least two lines", "LEDGER", "Une écriture doit avoir au moins deux lignes");
 
   const ids = Array.from(new Set(lines.map((l) => l.accountId)));
   const accountRows = await tx.select().from(accounts).where(inArray(accounts.id, ids));
@@ -143,17 +144,17 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
 
   const values = lines.map((l) => {
     const account = byId.get(l.accountId);
-    if (!account) throw badRequest(`Account ${l.accountId} does not exist`);
-    if (!account.active) throw badRequest(`Account ${account.name} is inactive`);
+    if (!account) throw badRequest(`Account ${l.accountId} does not exist`, `Le compte ${l.accountId} n'existe pas`);
+    if (!account.active) throw badRequest(`Account ${account.name} is inactive`, `Le compte ${account.name} est inactif`);
     if (account.systemKey && PARTY_REQUIRED.includes(account.systemKey) && !l.partyId) {
-      throw badRequest(`${account.name} needs a customer, supplier or agent`);
+      throw badRequest(`${account.name} needs a customer, supplier or agent`, `${account.name} nécessite un client, un fournisseur ou un agent`);
     }
     const isCdf = account.isMoney && account.currency === "CDF";
     let nativeAmount: string | null = null;
     let rate: string | null = null;
     if (isCdf) {
       if (l.nativeAmount === undefined || l.nativeAmount === null || !l.rate) {
-        throw badRequest(`${account.name} is a CDF account: give the CDF amount and the rate`);
+        throw badRequest(`${account.name} is a CDF account: give the CDF amount and the rate`, `${account.name} est un compte en FC : indiquez le montant en FC et le taux`);
       }
       const native = cents(l.nativeAmount).abs();
       nativeAmount = (l.debit.isZero() ? native.negated() : native).toFixed(2);
@@ -197,8 +198,8 @@ export async function reverseJournal(
   opts: { date: string; type?: JournalType; memo?: string; userId?: number | null; skipPeriodCheck?: boolean },
 ): Promise<number> {
   const [original] = await tx.select().from(journals).where(eq(journals.id, journalId)).for("update");
-  if (!original) throw badRequest("Journal not found");
-  if (original.reversedByJournalId) throw badRequest(`Journal ${original.number} is already reversed`);
+  if (!original) throw badRequest("Journal not found", "Écriture introuvable");
+  if (original.reversedByJournalId) throw badRequest(`Journal ${original.number} is already reversed`, `L'écriture ${original.number} est déjà contre-passée`);
   const lines = await tx.select().from(journalLines).where(eq(journalLines.journalId, journalId));
 
   const reversalId = await postJournal(tx, {
@@ -220,7 +221,7 @@ export async function reverseJournal(
       memo: l.memo,
     })),
   });
-  if (!reversalId) throw new AppError(500, "Nothing to reverse", "LEDGER");
+  if (!reversalId) throw new AppError(500, "Nothing to reverse", "LEDGER", "Rien à contre-passer");
   await tx.update(journals).set({ reversedByJournalId: reversalId }).where(eq(journals.id, original.id));
   return reversalId;
 }
@@ -239,10 +240,10 @@ export async function moneyLeg(
   leg: MoneyLeg,
 ): Promise<{ accountId: number; currency: Currency; usd: string; nativeAmount: string | null; rate: string | null }> {
   const [account] = await tx.select().from(accounts).where(eq(accounts.id, leg.accountId));
-  if (!account || !account.isMoney) throw badRequest("Choose a cash, bank or mobile money account");
-  if (!account.active) throw badRequest(`${account.name} is inactive`);
+  if (!account || !account.isMoney) throw badRequest("Choose a cash, bank or mobile money account", "Choisissez un compte caisse, banque ou mobile money");
+  if (!account.active) throw badRequest(`${account.name} is inactive`, `Le compte ${account.name} est inactif`);
   const amount = cents(leg.amount);
-  if (amount.lte(0)) throw badRequest("Amounts must be greater than zero");
+  if (amount.lte(0)) throw badRequest("Amounts must be greater than zero", "Les montants doivent être supérieurs à zéro");
   const usd = toUsd(account.currency, amount, leg.rate);
   return {
     accountId: account.id,

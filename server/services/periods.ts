@@ -8,7 +8,7 @@ import { postJournal, reverseJournal } from "./ledger";
 import { todayIso } from "../http";
 
 export function monthRange(month: string): { from: string; to: string } {
-  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw badRequest("Month must be YYYY-MM");
+  if (!/^\d{4}-(0[1-9]|1[0-2])$/.test(month)) throw badRequest("Month must be YYYY-MM", "Le mois doit être au format AAAA-MM");
   const [y, m] = month.split("-").map(Number);
   const last = new Date(Date.UTC(y, m, 0)).getUTCDate();
   return { from: `${month}-01`, to: `${month}-${String(last).padStart(2, "0")}` };
@@ -121,18 +121,18 @@ function prevMonth(month: string): string {
 export async function closePeriod(tx: Tx, month: string, userId: number) {
   const { to } = monthRange(month);
   const today = todayIso();
-  if (to >= today) throw badRequest("A month can be closed only after it has ended");
+  if (to >= today) throw badRequest("A month can be closed only after it has ended", "Un mois ne peut être clôturé qu'une fois terminé");
 
   await tx.insert(periods).values({ month }).onConflictDoNothing();
   const [period] = await tx.select().from(periods).where(eq(periods.month, month)).for("update");
-  if (period.status === "closed") throw conflict(`${month} is already closed`);
+  if (period.status === "closed") throw conflict(`${month} is already closed`, `Le mois ${month} est déjà clôturé`);
 
   const first = await firstActivityMonth(tx);
   if (first && first < month) {
     const prev = prevMonth(month);
     if (prev >= first) {
       const [p] = await tx.select().from(periods).where(eq(periods.month, prev));
-      if (p?.status !== "closed") throw conflict(`Close ${prev} first. Months are closed in order.`);
+      if (p?.status !== "closed") throw conflict(`Close ${prev} first. Months are closed in order.`, `Clôturez d'abord ${prev}. Les mois se clôturent dans l'ordre.`);
     }
   }
 
@@ -182,14 +182,14 @@ export async function closePeriod(tx: Tx, month: string, userId: number) {
 /** Reopen the latest closed month so it can be corrected. */
 export async function reopenPeriod(tx: Tx, month: string, userId: number) {
   const [period] = await tx.select().from(periods).where(eq(periods.month, month)).for("update");
-  if (!period || period.status !== "closed") throw conflict(`${month} is not closed`);
+  if (!period || period.status !== "closed") throw conflict(`${month} is not closed`, `Le mois ${month} n'est pas clôturé`);
   const [later] = await tx
     .select()
     .from(periods)
     .where(and(eq(periods.status, "closed"), sql`${periods.month} > ${month}`))
     .orderBy(desc(periods.month))
     .limit(1);
-  if (later) throw conflict(`Reopen ${later.month} first. Only the latest closed month can be reopened.`);
+  if (later) throw conflict(`Reopen ${later.month} first. Only the latest closed month can be reopened.`, `Rouvrez d'abord ${later.month}. Seul le dernier mois clôturé peut être rouvert.`);
   if (period.closingJournalId) {
     await reverseJournal(tx, period.closingJournalId, {
       date: monthRange(month).to,

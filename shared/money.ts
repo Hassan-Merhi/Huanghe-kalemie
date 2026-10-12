@@ -17,15 +17,31 @@ export class MoneyError extends Error {
   }
 }
 
+const FIELD_FR: Record<string, string> = {
+  value: "valeur",
+  quantity: "quantité",
+  "exchange rate": "taux de change",
+  rate: "taux",
+  share: "part",
+  "unit price": "prix unitaire",
+  "unit cost": "coût unitaire",
+};
+
+function fieldFr(field: string): string {
+  const w = /^weight (\d+)$/.exec(field);
+  if (w) return `poids ${w[1]}`;
+  return FIELD_FR[field] ?? field;
+}
+
 export function dec(value: DecimalInput | null | undefined, field = "value"): Decimal {
   if (value === null || value === undefined || value === "") return new Decimal(0);
   let d: Decimal;
   try {
     d = new Decimal(value);
   } catch {
-    throw new MoneyError(`${field} must be a number`);
+    throw new MoneyError(`${field} must be a number`, `Le champ « ${fieldFr(field)} » doit être un nombre`);
   }
-  if (!d.isFinite()) throw new MoneyError(`${field} must be a finite number`);
+  if (!d.isFinite()) throw new MoneyError(`${field} must be a finite number`, `Le champ « ${fieldFr(field)} » doit être un nombre fini`);
   return d;
 }
 
@@ -60,20 +76,20 @@ export function sum(values: DecimalInput[]): Decimal {
  */
 export function allocateCents(total: DecimalInput, weights: DecimalInput[]): Decimal[] {
   const totalCents = cents(total).times(100);
-  if (!totalCents.isInteger()) throw new MoneyError("total must be in cents");
+  if (!totalCents.isInteger()) throw new MoneyError("total must be in cents", "Le total doit être en centimes");
   if (weights.length === 0) {
     if (totalCents.isZero()) return [];
-    throw new MoneyError("Cannot allocate an amount across zero lines");
+    throw new MoneyError("Cannot allocate an amount across zero lines", "Impossible de répartir un montant sur zéro ligne");
   }
   const w = weights.map((x, i) => {
     const d = dec(x, `weight ${i + 1}`);
-    if (d.isNegative()) throw new MoneyError("Allocation weights cannot be negative");
+    if (d.isNegative()) throw new MoneyError("Allocation weights cannot be negative", "Les poids de répartition ne peuvent pas être négatifs");
     return d;
   });
   const weightSum = sum(w);
   if (weightSum.isZero()) {
     if (totalCents.isZero()) return w.map(() => new Decimal(0));
-    throw new MoneyError("Allocation weights add up to zero");
+    throw new MoneyError("Allocation weights add up to zero", "La somme des poids de répartition est nulle");
   }
   const sign = totalCents.isNegative() ? -1 : 1;
   const absTotal = totalCents.abs();

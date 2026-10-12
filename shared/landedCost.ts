@@ -73,42 +73,51 @@ const METHOD_LABEL: Record<AllocationMethod, string> = {
   line: "a single line",
 };
 
+const METHOD_LABEL_FR: Record<AllocationMethod, string> = {
+  value: "valeur d'achat",
+  quantity: "quantité",
+  weight: "poids",
+  volume: "volume",
+  line: "ligne unique",
+};
+
 export function computeLandedCost(
   lines: LandedCostLineInput[],
   expenses: LandedCostExpenseInput[],
   rateToUsd: DecimalInput = 1,
 ): LandedCostResult {
-  if (lines.length === 0) throw new MoneyError("The container has no lines");
+  if (lines.length === 0) throw new MoneyError("The container has no lines", "Le conteneur n'a aucune ligne");
   const rate = dec(rateToUsd, "exchange rate");
-  if (rate.lte(0)) throw new MoneyError("Exchange rate must be greater than zero");
+  if (rate.lte(0)) throw new MoneyError("Exchange rate must be greater than zero", "Le taux de change doit être supérieur à zéro");
 
   const keys = new Set<string>();
   const fob = lines.map((line) => {
     const k = String(line.key);
-    if (keys.has(k)) throw new MoneyError(`Duplicate line key ${k}`);
+    if (keys.has(k)) throw new MoneyError(`Duplicate line key ${k}`, `Clé de ligne en double ${k}`);
     keys.add(k);
     const q = dec(line.quantity, "quantity");
-    if (q.lte(0)) throw new MoneyError("Every line needs a quantity greater than zero");
+    if (q.lte(0)) throw new MoneyError("Every line needs a quantity greater than zero", "Chaque ligne doit avoir une quantité supérieure à zéro");
     const p = dec(line.unitPrice, "unit price");
-    if (p.isNegative()) throw new MoneyError("Unit price cannot be negative");
+    if (p.isNegative()) throw new MoneyError("Unit price cannot be negative", "Le prix unitaire ne peut pas être négatif");
     return cents(q.times(p).times(rate));
   });
 
   const allocated: Decimal[][] = expenses.map((expense) => {
     const amount = cents(expense.amountUsd);
-    if (amount.isNegative()) throw new MoneyError("Container expenses cannot be negative");
+    if (amount.isNegative()) throw new MoneyError("Container expenses cannot be negative", "Les dépenses du conteneur ne peuvent pas être négatives");
     if (expense.method === "line") {
       const idx = lines.findIndex((l) => String(l.key) === String(expense.targetLineKey));
-      if (idx < 0) throw new MoneyError("An expense charged to a single line must name that line");
+      if (idx < 0) throw new MoneyError("An expense charged to a single line must name that line", "Une dépense imputée à une seule ligne doit indiquer cette ligne");
       return lines.map((_, i) => (i === idx ? amount : new Decimal(0)));
     }
     if (!ALLOCATION_METHODS.includes(expense.method)) {
-      throw new MoneyError(`Unknown allocation method ${expense.method}`);
+      throw new MoneyError(`Unknown allocation method ${expense.method}`, `Méthode de répartition inconnue ${expense.method}`);
     }
     const weights = lines.map((line, i) => weightFor(expense.method, line, fob[i]));
     if (!amount.isZero() && sum(weights).isZero()) {
       throw new MoneyError(
         `Cannot split an expense by ${METHOD_LABEL[expense.method]}: no line has a ${METHOD_LABEL[expense.method]}`,
+        `Impossible de répartir une dépense par ${METHOD_LABEL_FR[expense.method]} : aucune ligne n'a de ${METHOD_LABEL_FR[expense.method]}`,
       );
     }
     return allocateCents(amount, weights);
