@@ -8,7 +8,10 @@ export type DecimalInput = string | number | Decimal;
 
 export class MoneyError extends Error {
   readonly status = 422;
-  constructor(message: string) {
+  constructor(
+    message: string,
+    readonly messageFr?: string,
+  ) {
     super(message);
     this.name = "MoneyError";
   }
