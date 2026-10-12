@@ -16,7 +16,8 @@ export async function createApp() {
   app.disable("x-powered-by");
   app.use(
     helmet({
-      contentSecurityPolicy: {
+      // Vite's dev server injects inline scripts; enforce the policy in production only.
+      contentSecurityPolicy: process.env.NODE_ENV !== "production" ? false : {
         useDefaults: true,
         directives: {
           "font-src": ["'self'", "https://fonts.gstatic.com", "data:"],

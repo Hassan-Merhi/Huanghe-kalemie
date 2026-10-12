@@ -283,7 +283,7 @@ function MonthSection() {
                       <TableCell>{t("Total", "Total")}</TableCell>
                       <TableCell className="text-right">100%</TableCell>
                       <TableCell className="text-right"><Signed value={p.split.grossProfit} /></TableCell>
-                      <TableCell className="text-right"><Num>− {usd(p.split.operatingExpenses)}</Num></TableCell>
+                      <TableCell className="text-right"><Num>{d(p.split.operatingExpenses).isZero() ? "" : "− "}{usd(p.split.operatingExpenses)}</Num></TableCell>
                       <TableCell className="text-right"><Signed value={p.split.netProfit} /></TableCell>
                     </TableRow>
                   </TableFooter>

@@ -137,8 +137,8 @@ export default function ProductDetail() {
                       {v.label}
                       {!v.active && <Badge variant="secondary" className="ml-2">{t("Inactive", "Inactif")}</Badge>}
                     </TableCell>
-                    <TableCell className="font-mono text-xs">{v.sku}</TableCell>
-                    <TableCell className="font-mono text-xs">{v.barcode ?? "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap font-mono text-xs">{v.sku}</TableCell>
+                    <TableCell className="whitespace-nowrap font-mono text-xs">{v.barcode ?? "—"}</TableCell>
                     <TableCell className="text-right"><Num>{usd(v.sellPrice)}</Num></TableCell>
                     <TableCell className="text-right"><Num>{qty(v.reorderLevel)}</Num></TableCell>
                     <TableCell className="text-right">
@@ -193,10 +193,10 @@ export default function ProductDetail() {
                   {myUnits.map((u) => (
                     <TableRow key={u.id} className={!u.chassisNo ? "bg-amber-50 dark:bg-amber-950/30" : undefined}>
                       <TableCell>{u.label}</TableCell>
-                      <TableCell className="font-mono text-xs">
+                      <TableCell className="whitespace-nowrap font-mono text-xs">
                         {u.chassisNo ?? <span className="font-sans text-amber-700 dark:text-amber-400">{t("Missing — register in Motorcycles", "Manquant — à saisir dans Motos")}</span>}
                       </TableCell>
-                      <TableCell className="font-mono text-xs">{u.engineNo ?? "—"}</TableCell>
+                      <TableCell className="whitespace-nowrap font-mono text-xs">{u.engineNo ?? "—"}</TableCell>
                       <TableCell>{u.color ?? "—"}</TableCell>
                       <TableCell>{locName(u.locationId)}</TableCell>
                     </TableRow>

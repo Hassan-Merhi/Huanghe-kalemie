@@ -344,11 +344,17 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
       if (v.tracksSerials) {
         const serials = line.serials ?? [];
         if (serials.length > change.toNumber()) throw badRequest("More chassis numbers than motorcycles added");
+        const chassis = serials.map((s) => s.chassisNo?.trim().toUpperCase()).filter((c): c is string => !!c);
+        if (new Set(chassis).size !== chassis.length) throw badRequest("The same chassis number is entered twice");
+        if (chassis.length) {
+          const taken = await tx.select({ chassisNo: motorcycleUnits.chassisNo }).from(motorcycleUnits).where(inArray(motorcycleUnits.chassisNo, chassis));
+          if (taken.length) throw conflict(`Chassis number ${taken[0].chassisNo} is already registered`);
+        }
         const rows = Array.from({ length: change.toNumber() }, (_, i) => ({
           variantId: v.variant.id,
           locationId: input.locationId,
-          chassisNo: serials[i]?.chassisNo || null,
-          engineNo: serials[i]?.engineNo || null,
+          chassisNo: serials[i]?.chassisNo?.trim().toUpperCase() || null,
+          engineNo: serials[i]?.engineNo?.trim().toUpperCase() || null,
           color: serials[i]?.color || null,
           status: "in_stock",
         }));

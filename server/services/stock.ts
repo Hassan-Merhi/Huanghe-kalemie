@@ -1,5 +1,5 @@
-import { and, eq, sql } from "drizzle-orm";
-import { stockLevels, stockMovements, variants, type MovementType } from "@shared/schema";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { motorcycleUnits, products, stockLevels, stockMovements, variants, type MovementType } from "@shared/schema";
 import { Decimal, cents, dec, type DecimalInput } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict } from "../errors";
@@ -131,7 +131,7 @@ export async function issueStock(
 /** Move quantity between locations. Value does not change. */
 export async function transferStock(
   tx: Tx,
-  input: MovementRef & { variantId: number; fromLocationId: number; toLocationId: number; qty: DecimalInput },
+  input: MovementRef & { variantId: number; fromLocationId: number; toLocationId: number; qty: DecimalInput; unitIds?: number[] },
 ): Promise<void> {
   const q = dec(input.qty, "quantity");
   if (q.lte(0)) throw badRequest("Quantity must be greater than zero");
@@ -139,6 +139,17 @@ export async function transferStock(
   const variant = await lockVariant(tx, input.variantId);
   const available = await locationQty(tx, variant.id, input.fromLocationId);
   if (available.lt(q)) throw conflict(`Not enough stock of ${variant.sku} to transfer`);
+  const [product] = await tx.select({ tracksSerials: products.tracksSerials }).from(products).where(eq(products.id, variant.productId));
+  if (product?.tracksSerials) {
+    // Motorcycles move with their own records.
+    const ids = input.unitIds ?? [];
+    if (!q.isInteger() || ids.length !== q.toNumber()) throw badRequest(`Pick which ${q.toString()} motorcycle(s) of ${variant.sku} are moving`);
+    const units = await tx.select().from(motorcycleUnits).where(inArray(motorcycleUnits.id, ids)).for("update");
+    if (units.length !== ids.length || units.some((u) => u.variantId !== variant.id || u.status !== "in_stock" || u.locationId !== input.fromLocationId)) {
+      throw badRequest("One of the motorcycles picked is not in stock at that location");
+    }
+    await tx.update(motorcycleUnits).set({ locationId: input.toLocationId }).where(inArray(motorcycleUnits.id, ids));
+  }
   await addLocationQty(tx, variant.id, input.fromLocationId, q.negated());
   await addLocationQty(tx, variant.id, input.toLocationId, q);
   const base = {

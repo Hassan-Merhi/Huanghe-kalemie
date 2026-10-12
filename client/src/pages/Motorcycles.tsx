@@ -69,10 +69,10 @@ export default function Motorcycles() {
               <span className="font-medium">{u.productName}</span>
               <div className="text-xs text-muted-foreground">{u.label !== "Standard" ? `${u.label} · ` : ""}{u.sku}</div>
             </TableCell>
-            <TableCell className="font-mono text-xs">
+            <TableCell className="whitespace-nowrap font-mono text-xs">
               {u.chassisNo ?? <span className="font-sans text-amber-700 dark:text-amber-400">{t("Not registered", "Non saisi")}</span>}
             </TableCell>
-            <TableCell className="font-mono text-xs">{u.engineNo ?? "—"}</TableCell>
+            <TableCell className="whitespace-nowrap font-mono text-xs">{u.engineNo ?? "—"}</TableCell>
             <TableCell>{u.color ?? "—"}</TableCell>
             <TableCell>
               {u.status === "sold" ? <Badge variant="secondary">{t("Sold", "Vendue")}</Badge> : <Badge variant="outline">{t("In stock", "En stock")}</Badge>}

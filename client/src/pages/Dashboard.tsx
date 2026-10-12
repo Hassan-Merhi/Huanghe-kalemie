@@ -1,5 +1,207 @@
-import { PageHeader } from "@/components/common";
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "wouter";
+import { AlertTriangle, ArrowRight, Container, Receipt, ShoppingCart } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { EmptyState, ErrorText, Loading, Num, PageHeader, StatCard } from "@/components/common";
+import { useAuth } from "@/lib/auth";
+import { useT } from "@/lib/i18n";
+import { cdf, d, date as fmtDate, usd } from "@/lib/format";
+
+interface DashboardData {
+  today: string;
+  month: string;
+  todaySales: { count: number; total: string };
+  monthPnl: { income: string; costOfSales: string; grossProfit: string; operatingExpenses: string; netProfit: string };
+  money: { id: number; name: string; currency: "USD" | "CDF"; balance: string; nativeBalance: string }[];
+  receivables: string;
+  payables: string;
+  stockValue: string;
+  lowStockCount: number;
+  openContainers: { id: number; number: string; status: string; arrivalDate: string | null }[];
+  recentSales: { id: number; number: string; date: string; total: string; status: string; customerName: string | null }[];
+  partners: { id: number; name: string; sharePct: string; bearsOperatingExpenses: boolean; currentBalance: string; capitalBalance: string }[];
+}
+
+const STATUS_LABEL: Record<string, [string, string]> = {
+  draft: ["Draft", "Brouillon"],
+  ordered: ["Ordered", "Commandé"],
+  shipped: ["Shipped", "Expédié"],
+  in_transit: ["In transit", "En route"],
+  arrived: ["Arrived", "Arrivé"],
+};
 
 export default function Dashboard() {
-  return <PageHeader title="Dashboard" />;
+  const t = useT();
+  const { can } = useAuth();
+  const q = useQuery<DashboardData>({ queryKey: ["/api/reports/dashboard"] });
+  const data = q.data;
+  const monthName = data ? new Date(`${data.month}-01T00:00:00`).toLocaleDateString("fr-FR", { month: "long", year: "numeric" }) : "";
+  const moneyTotal = (data?.money ?? []).reduce((s, m) => s.plus(d(m.balance)), d(0));
+
+  return (
+    <div>
+      <PageHeader
+        title={t("Dashboard", "Tableau de bord")}
+        description={data ? `${fmtDate(data.today)} · ${t("month of", "mois de")} ${monthName}` : undefined}
+        actions={
+          can("manager") ? (
+            <>
+              <Button asChild><Link href="/pos"><ShoppingCart className="mr-1 h-4 w-4" /> {t("New sale", "Nouvelle vente")}</Link></Button>
+              <Button asChild variant="outline"><Link href="/expenses"><Receipt className="mr-1 h-4 w-4" /> {t("Add expense", "Ajouter une dépense")}</Link></Button>
+              <Button asChild variant="outline"><Link href="/containers"><Container className="mr-1 h-4 w-4" /> {t("New container", "Nouveau conteneur")}</Link></Button>
+            </>
+          ) : undefined
+        }
+      />
+
+      {q.isLoading ? (
+        <Loading />
+      ) : q.error || !data ? (
+        <ErrorText error={q.error} />
+      ) : (
+        <div className="space-y-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            <StatCard label={t("Today's sales", "Ventes du jour")} value={usd(data.todaySales.total)} sub={`${data.todaySales.count} ${t("sale(s)", "vente(s)")}`} />
+            <StatCard
+              label={t("Gross profit this month", "Marge brute du mois")}
+              value={usd(data.monthPnl.grossProfit)}
+              tone={d(data.monthPnl.grossProfit).lt(0) ? "bad" : "good"}
+              sub={`${t("Sales", "Ventes")} ${usd(data.monthPnl.income)} − ${t("cost", "coût")} ${usd(data.monthPnl.costOfSales)}`}
+            />
+            <StatCard label={t("Running costs this month", "Charges du mois")} value={usd(data.monthPnl.operatingExpenses)} sub={t("Rent, salaries, electricity…", "Loyer, salaires, électricité…")} />
+            <StatCard label={t("Net profit this month", "Bénéfice net du mois")} value={usd(data.monthPnl.netProfit)} tone={d(data.monthPnl.netProfit).lt(0) ? "bad" : "good"} />
+            <StatCard label={t("Stock value (at cost)", "Valeur du stock (au coût)")} value={usd(data.stockValue)} />
+            <StatCard label={t("Customers owe us", "Créances clients")} value={usd(data.receivables)} sub={<Link href="/contacts" className="underline-offset-2 hover:underline">{t("See customers", "Voir les clients")}</Link>} />
+            <StatCard label={t("We owe suppliers", "Dettes fournisseurs")} value={usd(data.payables)} sub={<Link href="/contacts" className="underline-offset-2 hover:underline">{t("See suppliers", "Voir les fournisseurs")}</Link>} />
+            <StatCard
+              label={t("Low stock items", "Articles en stock bas")}
+              value={<span className="flex items-center gap-2">{data.lowStockCount}{data.lowStockCount > 0 && <AlertTriangle className="h-5 w-5 text-amber-500" />}</span>}
+              sub={<Link href="/stock" className="inline-flex items-center underline-offset-2 hover:underline">{t("Open stock", "Voir le stock")} <ArrowRight className="ml-1 h-3 w-3" /></Link>}
+            />
+          </div>
+
+          <div className="grid gap-4 lg:grid-cols-2">
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
+                <CardTitle className="text-base">{t("Money", "Trésorerie")}</CardTitle>
+                <Link href="/money" className="text-sm text-muted-foreground hover:text-foreground">{t("Details", "Détails")}</Link>
+              </CardHeader>
+              <CardContent className="p-4 pt-0">
+                {data.money.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">{t("No money accounts.", "Aucun compte de trésorerie.")}</p>
+                ) : (
+                  <div className="divide-y text-sm">
+                    {data.money.map((m) => (
+                      <div key={m.id} className="flex items-center justify-between gap-2 py-2">
+                        <span>{m.name}</span>
+                        <span className="text-right">
+                          {m.currency === "CDF" ? (
+                            <>
+                              <Num className="block font-medium">{cdf(m.nativeBalance)}</Num>
+                              <Num className="block text-xs text-muted-foreground">≈ {usd(m.balance)}</Num>
+                            </>
+                          ) : (
+                            <Num className="font-medium">{usd(m.balance)}</Num>
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                    <div className="flex justify-between py-2 font-semibold">
+                      <span>{t("Total (USD value)", "Total (valeur USD)")}</span>
+                      <Num>{usd(moneyTotal.toFixed(2))}</Num>
+                    </div>
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
+                <CardTitle className="text-base">{t("Partners", "Associés")}</CardTitle>
+                <Link href="/partners" className="text-sm text-muted-foreground hover:text-foreground">{t("Details", "Détails")}</Link>
+              </CardHeader>
+              <CardContent className="p-4 pt-0">
+                <p className="mb-2 text-xs text-muted-foreground">
+                  {t(
+                    "At each month close, gross profit is split 75/25; shop running costs then come off the 75% partner's share only.",
+                    "À chaque clôture mensuelle, la marge brute est partagée 75/25 ; les charges de la boutique sont ensuite déduites uniquement de la part de l'associé à 75 %.",
+                  )}
+                </p>
+                <div className="divide-y text-sm">
+                  {data.partners.map((p) => (
+                    <div key={p.id} className="flex items-center justify-between gap-2 py-2">
+                      <span>
+                        <span className="font-medium">{p.name}</span> <Badge variant="outline" className="ml-1">{Number(p.sharePct)} %</Badge>
+                        {p.bearsOperatingExpenses && <span className="block text-xs text-muted-foreground">{t("bears running costs", "supporte les charges")}</span>}
+                      </span>
+                      <span className="text-right">
+                        <Num className="block font-medium">{usd(p.currentBalance)}</Num>
+                        <span className="block text-xs text-muted-foreground">{t("profit share owed", "part de bénéfice due")}</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
+                <CardTitle className="text-base">{t("Containers not yet offloaded", "Conteneurs pas encore déchargés")}</CardTitle>
+                <Link href="/containers" className="text-sm text-muted-foreground hover:text-foreground">{t("All", "Tous")}</Link>
+              </CardHeader>
+              <CardContent className="p-4 pt-0">
+                {data.openContainers.length === 0 ? (
+                  <p className="text-sm text-muted-foreground">{t("No container on the way.", "Aucun conteneur en cours.")}</p>
+                ) : (
+                  <div className="divide-y text-sm">
+                    {data.openContainers.map((c) => {
+                      const label = STATUS_LABEL[c.status];
+                      return (
+                        <Link key={c.id} href={`/containers/${c.id}`} className="flex items-center justify-between gap-2 py-2 hover:bg-muted/50">
+                          <span className="font-medium">{c.number}</span>
+                          <span className="flex items-center gap-2 text-muted-foreground">
+                            {c.arrivalDate && <span className="text-xs">{t("arrival", "arrivée")} {fmtDate(c.arrivalDate)}</span>}
+                            <Badge variant="secondary">{label ? t(label[0], label[1]) : c.status}</Badge>
+                          </span>
+                        </Link>
+                      );
+                    })}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
+                <CardTitle className="text-base">{t("Recent sales", "Ventes récentes")}</CardTitle>
+                <Link href="/sales" className="text-sm text-muted-foreground hover:text-foreground">{t("All", "Toutes")}</Link>
+              </CardHeader>
+              <CardContent className="p-4 pt-0">
+                {data.recentSales.length === 0 ? (
+                  <EmptyState title={t("No sales yet", "Pas encore de ventes")} />
+                ) : (
+                  <div className="divide-y text-sm">
+                    {data.recentSales.map((s) => (
+                      <Link key={s.id} href={`/sales/${s.id}`} className="flex items-center justify-between gap-2 py-2 hover:bg-muted/50">
+                        <span className="min-w-0">
+                          <span className="font-medium">{s.number}</span>
+                          <span className="text-muted-foreground"> · {fmtDate(s.date)} · {s.customerName ?? t("walk-in", "de passage")}</span>
+                        </span>
+                        <span className="flex shrink-0 items-center gap-2">
+                          {s.status === "voided" && <Badge variant="destructive">{t("Cancelled", "Annulée")}</Badge>}
+                          <Num className={s.status === "voided" ? "text-muted-foreground line-through" : "font-medium"}>{usd(s.total)}</Num>
+                        </span>
+                      </Link>
+                    ))}
+                  </div>
+                )}
+              </CardContent>
+            </Card>
+          </div>
+        </div>
+      )}
+    </div>
+  );
 }

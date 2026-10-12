@@ -1,5 +1,5 @@
 import { and, asc, eq, ilike, inArray, or, sql } from "drizzle-orm";
-import { categories, motorcycleUnits, products, stockLevels, variants } from "@shared/schema";
+import { categories, locations, motorcycleUnits, products, stockLevels, variants } from "@shared/schema";
 import { dec } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, notFound } from "../errors";
@@ -272,14 +272,17 @@ export async function listUnits(tx: Tx, opts: { variantId?: number; status?: str
       sku: variants.sku,
       attributes: variants.attributes,
       productName: products.name,
+      productId: products.id,
+      locationName: locations.name,
     })
     .from(motorcycleUnits)
     .innerJoin(variants, eq(variants.id, motorcycleUnits.variantId))
     .innerJoin(products, eq(products.id, variants.productId))
+    .innerJoin(locations, eq(locations.id, motorcycleUnits.locationId))
     .where(conds.length ? and(...conds) : undefined)
     .orderBy(asc(motorcycleUnits.id))
     .limit(1000)
-    .then((rows) => rows.map((r) => ({ ...r.unit, sku: r.sku, attributes: r.attributes, productName: r.productName, label: variantLabel(r.attributes) })));
+    .then((rows) => rows.map((r) => ({ ...r.unit, sku: r.sku, attributes: r.attributes, productName: r.productName, productId: r.productId, locationName: r.locationName, label: variantLabel(r.attributes) })));
 }
 
 export async function updateUnit(tx: Tx, id: number, input: { chassisNo?: string | null; engineNo?: string | null; color?: string | null }) {

@@ -218,7 +218,8 @@ function ChassisPicker({ line, locationId, takenUnitIds, onChange }: { line: Car
     queryKey: ["/api/units", { variantId: line.variant.id, status: "in_stock", locationId: locationId ?? undefined }],
     enabled: !!locationId,
   });
-  const units = q.data ?? [];
+  // Sellable bikes first; the ones still missing a chassis number at the bottom.
+  const units = [...(q.data ?? [])].sort((a, b) => Number(!a.chassisNo) - Number(!b.chassisNo) || a.id - b.id);
   const missingChassis = units.filter((u) => !u.chassisNo).length;
   return (
     <div className="space-y-1">

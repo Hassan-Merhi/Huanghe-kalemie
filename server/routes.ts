@@ -18,12 +18,14 @@ import {
   PARTY_TYPES,
   partners,
   periods,
+  products,
   ROLES,
   sales,
   settings,
   stockAdjustments,
   stockMovements,
   users,
+  variants,
 } from "@shared/schema";
 import { ALLOCATION_METHODS } from "@shared/landedCost";
 import { validatePartnerShares } from "@shared/partnerSplit";
@@ -231,7 +233,9 @@ export function registerRoutes(app: Express) {
     res.status(201).json(row);
   }));
   app.patch("/api/categories/:id", requireRole(...STAFF), asyncHandler(async (req, res) => {
-    const body = z.object({ name: z.string().min(1).max(80).optional(), parentId: optionalId, active: z.boolean().optional() }).parse(req.body);
+    const body = z
+      .object({ name: z.string().min(1).max(80).optional(), parentId: z.union([id, z.null()]).optional(), active: z.boolean().optional() })
+      .parse(req.body);
     const [row] = await db.update(categories).set(body).where(eq(categories.id, paramId(req))).returning();
     res.json(row);
   }));
@@ -240,10 +244,16 @@ export function registerRoutes(app: Express) {
 
   app.get("/api/products", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
     const q = z.object({ search: z.string().optional(), categoryId: optionalId, includeInactive: z.enum(["true", "false"]).optional() }).parse(req.query);
-    res.json(await catalog.listProducts(db, { search: q.search, categoryId: q.categoryId ?? undefined, includeInactive: q.includeInactive === "true" }));
+    const rows = await catalog.listProducts(db, { search: q.search, categoryId: q.categoryId ?? undefined, includeInactive: q.includeInactive === "true" });
+    res.json(req.user!.role === "cashier" ? rows.map(({ stockValue, ...r }) => r) : rows);
   }));
   app.get("/api/products/:id", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
-    res.json(await catalog.getProduct(db, paramId(req)));
+    const product = await catalog.getProduct(db, paramId(req));
+    if (req.user!.role === "cashier") {
+      res.json({ ...product, variants: product.variants.map(({ avgCost, stockValue, ...v }) => v) });
+      return;
+    }
+    res.json(product);
   }));
   app.post("/api/products", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = productSchema.extend({ variants: z.array(variantSchema).min(1) }).parse(req.body);
@@ -268,7 +278,8 @@ export function registerRoutes(app: Express) {
       .object({ search: z.string().optional(), locationId: optionalId, limit: z.coerce.number().int().min(1).max(500).optional(), ids: z.string().optional() })
       .parse(req.query);
     const ids = q.ids ? q.ids.split(",").map((x) => id.parse(x)) : undefined;
-    res.json(await catalog.searchVariants(db, { search: q.search, locationId: q.locationId ?? undefined, limit: q.limit, ids }));
+    const rows = await catalog.searchVariants(db, { search: q.search, locationId: q.locationId ?? undefined, limit: q.limit, ids });
+    res.json(req.user!.role === "cashier" ? rows.map(({ avgCost, stockValue, ...r }) => r) : rows);
   }));
   app.get("/api/variants/:id/movements", requireRole(...READERS), asyncHandler(async (req, res) => {
     const rows = await db
@@ -320,13 +331,33 @@ export function registerRoutes(app: Express) {
     res.status(201).json(result);
   }));
   app.get("/api/stock/adjustments", requireRole(...READERS), asyncHandler(async (_req, res) => {
-    res.json(await db.select().from(stockAdjustments).orderBy(desc(stockAdjustments.id)).limit(200));
+    const rows = await db
+      .select({ adjustment: stockAdjustments, locationName: locations.name })
+      .from(stockAdjustments)
+      .innerJoin(locations, eq(locations.id, stockAdjustments.locationId))
+      .orderBy(desc(stockAdjustments.id))
+      .limit(200);
+    const ids = rows.map((r) => r.adjustment.id);
+    const moves = ids.length
+      ? await db
+          .select({ m: stockMovements, sku: variants.sku, attributes: variants.attributes, productName: products.name })
+          .from(stockMovements)
+          .innerJoin(variants, eq(variants.id, stockMovements.variantId))
+          .innerJoin(products, eq(products.id, variants.productId))
+          .where(and(eq(stockMovements.sourceType, "adjustment"), inArray(stockMovements.sourceId, ids)))
+      : [];
+    res.json(
+      rows.map((r) => {
+        const lines = moves.filter((m) => m.m.sourceId === r.adjustment.id).map((m) => ({ variantId: m.m.variantId, sku: m.sku, attributes: m.attributes, productName: m.productName, qty: m.m.qty, value: m.m.value }));
+        return { ...r.adjustment, locationName: r.locationName, lines, value: lines.reduce((s, l) => s.plus(l.value), dec(0)).toFixed(2) };
+      }),
+    );
   }));
   app.post("/api/stock/transfers", requireRole(...STAFF), asyncHandler(async (req, res) => {
-    const body = z.object({ date: isoDate, fromLocationId: id, toLocationId: id, note: z.string().max(300).optional(), lines: z.array(z.object({ variantId: id, qty: positiveDecimal })).min(1) }).parse(req.body);
+    const body = z.object({ date: isoDate, fromLocationId: id, toLocationId: id, note: z.string().max(300).optional(), lines: z.array(z.object({ variantId: id, qty: positiveDecimal, unitIds: z.array(id).optional() })).min(1) }).parse(req.body);
     await db.transaction(async (tx) => {
       for (const l of body.lines) {
-        await transferStock(tx, { date: body.date, type: "transfer_out", variantId: l.variantId, fromLocationId: body.fromLocationId, toLocationId: body.toLocationId, qty: l.qty, note: body.note, userId: uid(req) });
+        await transferStock(tx, { date: body.date, type: "transfer_out", variantId: l.variantId, fromLocationId: body.fromLocationId, toLocationId: body.toLocationId, qty: l.qty, unitIds: l.unitIds, note: body.note, userId: uid(req) });
       }
     });
     res.status(201).json({ ok: true });
@@ -384,7 +415,7 @@ export function registerRoutes(app: Express) {
     const body = z.object({ name: z.string().min(1).max(120).optional(), active: z.boolean().optional() }).parse(req.body);
     const [existing] = await db.select().from(accounts).where(eq(accounts.id, paramId(req)));
     if (!existing) throw notFound("Account");
-    if (existing.systemKey && body.active === false) throw badRequest("This account is used by the app and cannot be switched off");
+    if ((existing.systemKey || existing.partnerId) && body.active === false) throw badRequest("This account is used by the app and cannot be switched off");
     const [row] = await db.update(accounts).set(body).where(eq(accounts.id, existing.id)).returning();
     res.json(row);
   }));
