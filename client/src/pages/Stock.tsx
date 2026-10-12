@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { AlertTriangle, ArrowRightLeft, Bike, CheckCircle2, Search, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, Bike, CheckCircle2, ChevronDown, ChevronRight, Search, Trash2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -59,6 +59,11 @@ interface Adjustment {
   reason: string;
   journalId: number | null;
   createdAt: string;
+  locationName?: string;
+  /** Signed stock movements: qty and value are positive in, negative out. */
+  lines?: { variantId: number; sku: string; attributes: Record<string, string>; productName: string; qty: string; value: string }[];
+  /** Net value change of the adjustment, USD. */
+  value?: string;
 }
 
 type Kind = "opening" | "count" | "damage" | "loss" | "found" | "other";
@@ -509,32 +514,87 @@ function AdjustmentHistory() {
   const t = useT();
   const q = useQuery<Adjustment[]>({ queryKey: ["/api/stock/adjustments"] });
   const { data: locations = [] } = useLocations();
+  const [open, setOpen] = useState<Set<number>>(new Set());
   if (q.isLoading) return <Loading />;
   if (q.error) return <ErrorText error={q.error} />;
   const rows = q.data ?? [];
   if (rows.length === 0) return <EmptyState title={t("No adjustments yet", "Aucun ajustement")} />;
+  const toggle = (id: number) =>
+    setOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  const signed = (v: string) => (d(v).gt(0) ? `+${usd(v)}` : d(v).lt(0) ? `−${usd(d(v).abs().toFixed(2))}` : usd(v));
+  const tone = (v: string) => (d(v).gt(0) ? "text-green-700 dark:text-green-400" : d(v).lt(0) ? "text-destructive" : "");
   return (
     <Card className="overflow-x-auto">
       <Table>
         <TableHeader>
           <TableRow>
+            <TableHead className="w-8" />
             <TableHead>{t("Number", "Numéro")}</TableHead>
             <TableHead>{t("Date", "Date")}</TableHead>
             <TableHead>{t("Location", "Emplacement")}</TableHead>
             <TableHead>{t("Kind", "Type")}</TableHead>
             <TableHead>{t("Reason", "Motif")}</TableHead>
+            <TableHead className="text-right">{t("Items", "Articles")}</TableHead>
+            <TableHead className="text-right">{t("Value", "Valeur")}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {rows.map((a) => (
-            <TableRow key={a.id}>
-              <TableCell className="whitespace-nowrap font-mono text-xs">{a.number}</TableCell>
-              <TableCell className="whitespace-nowrap">{date(a.date)}</TableCell>
-              <TableCell>{locations.find((l) => l.id === a.locationId)?.name ?? `#${a.locationId}`}</TableCell>
-              <TableCell><Badge variant={a.kind === "opening" ? "default" : a.kind === "damage" || a.kind === "loss" ? "destructive" : "outline"}>{kindLabel(t, a.kind)}</Badge></TableCell>
-              <TableCell className="max-w-[320px] truncate" title={a.reason}>{a.reason}</TableCell>
-            </TableRow>
-          ))}
+          {rows.map((a) => {
+            const lines = a.lines ?? [];
+            const expanded = open.has(a.id);
+            return (
+              <Fragment key={a.id}>
+                <TableRow className={cn(lines.length > 0 && "cursor-pointer")} onClick={() => lines.length > 0 && toggle(a.id)}>
+                  <TableCell className="px-2">
+                    {lines.length > 0 && (
+                      <Button variant="ghost" size="icon" className="h-7 w-7" aria-expanded={expanded} aria-label={expanded ? t("Hide items", "Masquer les articles") : t("Show items", "Voir les articles")}>
+                        {expanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
+                      </Button>
+                    )}
+                  </TableCell>
+                  <TableCell className="whitespace-nowrap font-mono text-xs">{a.number}</TableCell>
+                  <TableCell className="whitespace-nowrap">{date(a.date)}</TableCell>
+                  <TableCell className="whitespace-nowrap">{a.locationName ?? locations.find((l) => l.id === a.locationId)?.name ?? `#${a.locationId}`}</TableCell>
+                  <TableCell><Badge variant={a.kind === "opening" ? "default" : a.kind === "damage" || a.kind === "loss" ? "destructive" : "outline"}>{kindLabel(t, a.kind)}</Badge></TableCell>
+                  <TableCell className="max-w-[320px] truncate" title={a.reason}>{a.reason}</TableCell>
+                  <TableCell className="text-right"><Num>{lines.length}</Num></TableCell>
+                  <TableCell className="text-right">{a.value !== undefined && <Num className={cn("font-medium", tone(a.value))}>{signed(a.value)}</Num>}</TableCell>
+                </TableRow>
+                {expanded && (
+                  <TableRow className="bg-muted/30 hover:bg-muted/30">
+                    <TableCell />
+                    <TableCell colSpan={7} className="py-2">
+                      <div className="divide-y text-sm">
+                        {lines.map((l, i) => (
+                          <div key={`${l.variantId}-${i}`} className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-0.5 py-1.5">
+                            <span className="min-w-0">
+                              <span className="font-medium">{l.productName}</span> <span className="text-muted-foreground">{variantText(l.attributes)}</span>
+                              <span className="ml-2 font-mono text-xs text-muted-foreground">{l.sku}</span>
+                            </span>
+                            <span className="flex gap-4">
+                              <Num className={tone(l.qty)}>{d(l.qty).gt(0) ? "+" : ""}{qty(l.qty)}</Num>
+                              <Num className={cn("w-24 text-right", tone(l.value))}>{signed(l.value)}</Num>
+                            </span>
+                          </div>
+                        ))}
+                        {a.value !== undefined && (
+                          <div className="flex justify-between gap-4 py-1.5 font-medium">
+                            <span>{t("Total value change", "Variation de valeur totale")}</span>
+                            <Num className={cn("w-24 text-right", tone(a.value))}>{signed(a.value)}</Num>
+                          </div>
+                        )}
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                )}
+              </Fragment>
+            );
+          })}
         </TableBody>
       </Table>
     </Card>

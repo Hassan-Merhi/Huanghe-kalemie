@@ -99,7 +99,7 @@ export interface MotorcycleUnit {
 
 export interface Party {
   id: number;
-  type: "customer" | "supplier" | "agent";
+  type: "customer" | "supplier" | "agent" | "employee";
   name: string;
   phone: string | null;
   notes: string | null;

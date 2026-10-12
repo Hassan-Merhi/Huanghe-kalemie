@@ -199,7 +199,7 @@ function UserDialog({ user, partners, onClose }: { user: UserRow | null; partner
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent className="max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{user ? t("Edit user", "Modifier l'utilisateur") : t("New user", "Nouvel utilisateur")}</DialogTitle>
         </DialogHeader>
@@ -226,7 +226,7 @@ function UserDialog({ user, partners, onClose }: { user: UserRow | null; partner
             </Select>
           </Field>
           {role === "partner" && (
-            <Field label={t("Partner", "Associé")} className="sm:col-span-2" hint={t("This login only sees this partner's figures.", "Cet accès ne voit que les chiffres de cet associé.")}>
+            <Field label={t("Partner", "Associé")} className="sm:col-span-2" hint={t("Read-only access to the whole business, linked to this partner.", "Accès en lecture seule à toute l'activité, rattaché à cet associé.")}>
               <Select value={partnerId ? String(partnerId) : ""} onValueChange={(v) => setPartnerId(Number(v))}>
                 <SelectTrigger><SelectValue placeholder={t("Choose partner", "Choisir l'associé")} /></SelectTrigger>
                 <SelectContent>
@@ -318,7 +318,7 @@ function NameDialog({ url, row, onClose }: { url: string; row: Location | Catego
   }
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent className="max-h-[92vh] overflow-y-auto">
         <DialogHeader><DialogTitle>{row ? t("Rename", "Renommer") : t("Add", "Ajouter")}</DialogTitle></DialogHeader>
         <Field label={t("Name", "Nom")}><Input autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && name.trim() && save()} /></Field>
         <DialogFooter>
@@ -418,7 +418,7 @@ function AccountDialog({ account, onClose }: { account: Account | null; onClose:
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent className="max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{account ? t("Edit account", "Modifier le compte") : t("New account", "Nouveau compte")}</DialogTitle>
           {account && (

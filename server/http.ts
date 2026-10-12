@@ -14,15 +14,20 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
   if (err instanceof ZodError) {
     const first = err.issues[0];
     const where = first?.path.length ? `${first.path.join(".")}: ` : "";
-    return res.status(400).json({ message: `${where}${first?.message ?? "Invalid input"}`, code: "VALIDATION", issues: err.issues });
+    return res.status(400).json({
+      message: `${where}${first?.message ?? "Invalid input"}`,
+      messageFr: `Saisie incomplète ou invalide${first?.path.length ? ` (${first.path.join(".")})` : ""}. Vérifiez les champs et réessayez.`,
+      code: "VALIDATION",
+      issues: err.issues,
+    });
   }
-  if (err instanceof AppError) return res.status(err.status).json({ message: err.message, code: err.code });
-  if (err instanceof MoneyError) return res.status(422).json({ message: err.message, code: "INVALID_AMOUNT" });
+  if (err instanceof AppError) return res.status(err.status).json({ message: err.message, messageFr: err.messageFr, code: err.code });
+  if (err instanceof MoneyError) return res.status(422).json({ message: err.message, messageFr: err.messageFr ?? "Montant invalide", code: "INVALID_AMOUNT" });
   const pgCode = (err as { code?: string; cause?: { code?: string } })?.cause?.code ?? (err as { code?: string })?.code;
-  if (pgCode === "23505") return res.status(409).json({ message: "That value is already used", code: "DUPLICATE" });
-  if (pgCode === "23514") return res.status(409).json({ message: "Not enough stock for this change", code: "CHECK" });
+  if (pgCode === "23505") return res.status(409).json({ message: "That value is already used", messageFr: "Cette valeur est déjà utilisée", code: "DUPLICATE" });
+  if (pgCode === "23514") return res.status(409).json({ message: "Not enough stock for this change", messageFr: "Stock insuffisant pour cette opération", code: "CHECK" });
   log("Unhandled error", { path: req.path, error: err instanceof Error ? err.stack ?? err.message : String(err) });
-  res.status(500).json({ message: "Something went wrong. Please try again.", code: "INTERNAL" });
+  res.status(500).json({ message: "Something went wrong. Please try again.", messageFr: "Une erreur est survenue. Réessayez.", code: "INTERNAL" });
 }
 
 // ---------------------------------------------------------------- Shared validators

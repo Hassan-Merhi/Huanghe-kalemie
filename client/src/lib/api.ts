@@ -19,8 +19,15 @@ async function parse(res: Response) {
     data = { message: text };
   }
   if (!res.ok) {
-    const d = (data ?? {}) as { message?: string; code?: string };
-    throw new ApiError(res.status, d.message || res.statusText, d.code);
+    const d = (data ?? {}) as { message?: string; messageFr?: string; code?: string };
+    // The server sends English and, when it has one, French; show the chosen language.
+    let fr = true;
+    try {
+      fr = (localStorage.getItem("lang") ?? "fr") === "fr";
+    } catch {
+      /* storage unavailable: keep French, the default */
+    }
+    throw new ApiError(res.status, (fr && d.messageFr) || d.message || res.statusText, d.code);
   }
   return data;
 }

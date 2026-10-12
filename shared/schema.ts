@@ -199,7 +199,8 @@ export const stockMovements = pgTable(
   }),
 );
 
-export const UNIT_STATUSES = ["in_stock", "sold"] as const;
+/** "reversed": the container offload was undone; the record keeps its chassis number for the next offload. */
+export const UNIT_STATUSES = ["in_stock", "sold", "reversed"] as const;
 
 export const motorcycleUnits = pgTable(
   "motorcycle_units",
@@ -224,10 +225,10 @@ export const motorcycleUnits = pgTable(
 
 // ---------------------------------------------------------------- Parties
 
-export const PARTY_TYPES = ["customer", "supplier", "agent"] as const;
+export const PARTY_TYPES = ["customer", "supplier", "agent", "employee"] as const;
 export type PartyType = (typeof PARTY_TYPES)[number];
 
-/** Customers, suppliers and agents (clearing, transport). Balances come from the ledger. */
+/** Customers, suppliers, agents (clearing, transport) and employees (salaries owed). Balances come from the ledger. */
 export const parties = pgTable(
   "parties",
   {

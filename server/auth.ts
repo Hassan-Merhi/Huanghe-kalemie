@@ -71,14 +71,14 @@ export function setupSession(app: Express) {
 }
 
 export function requireAuth(req: Request, _res: Response, next: NextFunction) {
-  if (!req.user) return next(new AppError(401, "Please sign in", "UNAUTHENTICATED"));
+  if (!req.user) return next(new AppError(401, "Please sign in", "UNAUTHENTICATED", "Veuillez vous connecter"));
   next();
 }
 
 /** Allow only these roles. Owner is always allowed. */
 export function requireRole(...roles: Role[]) {
   return (req: Request, _res: Response, next: NextFunction) => {
-    if (!req.user) return next(new AppError(401, "Please sign in", "UNAUTHENTICATED"));
+    if (!req.user) return next(new AppError(401, "Please sign in", "UNAUTHENTICATED", "Veuillez vous connecter"));
     if (req.user.role === "owner" || roles.includes(req.user.role)) return next();
     next(forbidden());
   };
@@ -87,7 +87,17 @@ export function requireRole(...roles: Role[]) {
 export const loginSchema = z.object({ username: z.string().min(1).max(60), password: z.string().min(1).max(200) });
 
 export function registerAuthRoutes(app: Express) {
-  const loginLimiter = rateLimit({ windowMs: 15 * 60 * 1000, limit: 20, standardHeaders: true, legacyHeaders: false });
+  const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    limit: 20,
+    standardHeaders: true,
+    legacyHeaders: false,
+    message: {
+      message: "Too many sign-in attempts. Please wait 15 minutes and try again.",
+      messageFr: "Trop de tentatives de connexion. Patientez 15 minutes puis réessayez.",
+      code: "RATE_LIMITED",
+    },
+  });
 
   app.post(
     "/api/auth/login",
@@ -96,7 +106,7 @@ export function registerAuthRoutes(app: Express) {
       const body = loginSchema.parse(req.body);
       const [u] = await db.select().from(users).where(eq(users.username, body.username.trim().toLowerCase()));
       const ok = u && u.active && (await bcrypt.compare(body.password, u.passwordHash));
-      if (!ok) throw new AppError(401, "Wrong username or password", "BAD_LOGIN");
+      if (!ok) throw new AppError(401, "Wrong username or password", "BAD_LOGIN", "Nom d'utilisateur ou mot de passe incorrect");
       await new Promise<void>((resolve, reject) => req.session.regenerate((err) => (err ? reject(err) : resolve())));
       req.session.userId = u.id;
       res.json({ id: u.id, username: u.username, fullName: u.fullName, role: u.role, partnerId: u.partnerId, language: u.language });
@@ -111,12 +121,12 @@ export function registerAuthRoutes(app: Express) {
   });
 
   app.get("/api/auth/me", (req, res) => {
-    if (!req.user) return res.status(401).json({ message: "Please sign in" });
+    if (!req.user) return res.status(401).json({ message: "Please sign in", messageFr: "Veuillez vous connecter" });
     res.json(req.user);
   });
 }
 
 export async function hashPassword(password: string) {
-  if (password.length < 8) throw new AppError(400, "Passwords need at least 8 characters", "WEAK_PASSWORD");
+  if (password.length < 8) throw new AppError(400, "Passwords need at least 8 characters", "WEAK_PASSWORD", "Le mot de passe doit contenir au moins 8 caractères");
   return bcrypt.hash(password, 12);
 }

@@ -23,17 +23,18 @@ import {
   type PostLine,
 } from "./ledger";
 import { issueStock, linkMovementsToJournal, receiveStock } from "./stock";
+import { variantColour } from "./catalog";
 
 async function requireParty(tx: Tx, id: number | null | undefined, types: string[]) {
-  if (!id) throw badRequest("Choose who this is for");
+  if (!id) throw badRequest("Choose who this is for", "Choisissez le bénéficiaire");
   const [party] = await tx.select().from(parties).where(eq(parties.id, id));
-  if (!party || !types.includes(party.type)) throw badRequest("That customer, supplier or agent does not exist");
+  if (!party || !types.includes(party.type)) throw badRequest("That customer, supplier or agent does not exist", "Ce client, fournisseur ou agent n'existe pas");
   return party;
 }
 
 async function requirePartner(tx: Tx, id: number) {
   const [partner] = await tx.select().from(partners).where(eq(partners.id, id));
-  if (!partner) throw notFound("Partner");
+  if (!partner) throw notFound("Partner", "Associé introuvable");
   return partner;
 }
 
@@ -54,12 +55,12 @@ export interface ExpenseInput {
 /** Rent, salaries, electricity… Dr the expense account, Cr the money account (or what is owed). */
 export async function createExpense(tx: Tx, input: ExpenseInput, userId: number) {
   const [account] = await tx.select().from(accounts).where(eq(accounts.id, input.accountId));
-  if (!account || account.type !== "expense") throw badRequest("Pick an expense category");
+  if (!account || account.type !== "expense") throw badRequest("Pick an expense category", "Choisissez une catégorie de dépense");
   if (!!input.paidFromAccountId === !!input.payablePartyId) {
-    throw badRequest("Say either which account paid this or who is owed for it");
+    throw badRequest("Say either which account paid this or who is owed for it", "Indiquez soit le compte qui a payé, soit à qui c'est dû");
   }
   const amount = cents(input.amount);
-  if (amount.lte(0)) throw badRequest("Amount must be greater than zero");
+  if (amount.lte(0)) throw badRequest("Amount must be greater than zero", "Le montant doit être supérieur à zéro");
 
   let currency: "USD" | "CDF" = input.currency ?? "USD";
   let usd: string;
@@ -72,7 +73,7 @@ export async function createExpense(tx: Tx, input: ExpenseInput, userId: number)
     rate = leg.rate;
     creditLine = { accountId: leg.accountId, credit: usd, nativeAmount: leg.nativeAmount, rate: leg.rate };
   } else {
-    await requireParty(tx, input.payablePartyId, ["supplier", "agent"]);
+    await requireParty(tx, input.payablePartyId, ["supplier", "agent", "employee"]);
     usd = toUsd(currency, amount, input.rate);
     rate = currency === "CDF" ? dec(input.rate).toFixed(4) : null;
     creditLine = { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.payables), credit: usd, partyId: input.payablePartyId };
@@ -108,9 +109,9 @@ export async function createExpense(tx: Tx, input: ExpenseInput, userId: number)
 
 export async function voidExpense(tx: Tx, id: number, date: string, userId: number) {
   const [expense] = await tx.select().from(expenses).where(eq(expenses.id, id)).for("update");
-  if (!expense) throw notFound("Expense");
-  if (expense.voidedAt) throw conflict("This expense is already cancelled");
-  const voidJournalId = await reverseJournal(tx, expense.journalId!, { date, userId, memo: `Expense cancelled: ${expense.description}` });
+  if (!expense) throw notFound("Expense", "Dépense introuvable");
+  if (expense.voidedAt) throw conflict("This expense is already cancelled", "Cette dépense est déjà annulée");
+  const voidJournalId = await reverseJournal(tx, expense.journalId!, { date, userId, memo: `Dépense annulée : ${expense.description}` });
   await tx.update(expenses).set({ voidedAt: new Date(), voidJournalId }).where(eq(expenses.id, id));
 }
 
@@ -131,7 +132,7 @@ export interface TransferInput {
  * Any difference in USD value from the exchange goes to exchange differences.
  */
 export async function transferMoney(tx: Tx, input: TransferInput, userId: number) {
-  if (input.fromAccountId === input.toAccountId) throw badRequest("Pick two different accounts");
+  if (input.fromAccountId === input.toAccountId) throw badRequest("Pick two different accounts", "Choisissez deux comptes différents");
   const from = await moneyLeg(tx, { accountId: input.fromAccountId, amount: input.fromAmount, rate: input.rate });
   const to = await moneyLeg(tx, { accountId: input.toAccountId, amount: input.toAmount, rate: input.rate });
   const diff = dec(from.usd).minus(to.usd);
@@ -139,12 +140,12 @@ export async function transferMoney(tx: Tx, input: TransferInput, userId: number
   return postJournal(tx, {
     date: input.date,
     type: "transfer",
-    memo: input.memo ?? "Transfer",
+    memo: input.memo ?? "Transfert",
     userId,
     lines: [
       { accountId: to.accountId, debit: to.usd, nativeAmount: to.nativeAmount, rate: to.rate },
       { accountId: from.accountId, credit: from.usd, nativeAmount: from.nativeAmount, rate: from.rate },
-      { accountId: fx, debit: diff.isPositive() ? diff : 0, credit: diff.isNegative() ? diff.abs() : 0, memo: "Exchange difference" },
+      { accountId: fx, debit: diff.isPositive() ? diff : 0, credit: diff.isNegative() ? diff.abs() : 0, memo: "Écart de change" },
     ],
   });
 }
@@ -165,7 +166,7 @@ export async function receiveFromCustomer(tx: Tx, input: PartyPaymentInput, user
   return postJournal(tx, {
     date: input.date,
     type: "customer_receipt",
-    memo: input.memo ?? `Payment from ${party.name}`,
+    memo: input.memo ?? `Paiement de ${party.name}`,
     userId,
     lines: [
       { accountId: leg.accountId, debit: leg.usd, nativeAmount: leg.nativeAmount, rate: leg.rate },
@@ -176,12 +177,12 @@ export async function receiveFromCustomer(tx: Tx, input: PartyPaymentInput, user
 
 /** Pay a supplier or agent (container invoice, clearing agent, transporter, unpaid bills). */
 export async function payParty(tx: Tx, input: PartyPaymentInput, userId: number) {
-  const party = await requireParty(tx, input.partyId, ["supplier", "agent"]);
+  const party = await requireParty(tx, input.partyId, ["supplier", "agent", "employee"]);
   const leg = await moneyLeg(tx, input);
   return postJournal(tx, {
     date: input.date,
     type: "supplier_payment",
-    memo: input.memo ?? `Payment to ${party.name}`,
+    memo: input.memo ?? `Paiement à ${party.name}`,
     userId,
     lines: [
       { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.payables), debit: leg.usd, partyId: party.id },
@@ -206,7 +207,7 @@ export async function partnerContribution(tx: Tx, input: PartnerMoneyInput, user
   return postJournal(tx, {
     date: input.date,
     type: "partner_contribution",
-    memo: input.memo ?? `Capital from ${partner.name}`,
+    memo: input.memo ?? `Apport en capital de ${partner.name}`,
     userId,
     lines: [
       { accountId: leg.accountId, debit: leg.usd, nativeAmount: leg.nativeAmount, rate: leg.rate },
@@ -222,7 +223,7 @@ export async function partnerWithdrawal(tx: Tx, input: PartnerMoneyInput, userId
   return postJournal(tx, {
     date: input.date,
     type: "partner_withdrawal",
-    memo: input.memo ?? `Withdrawal by ${partner.name}`,
+    memo: input.memo ?? `Retrait de ${partner.name}`,
     userId,
     lines: [
       { accountId: partner.currentAccountId, debit: leg.usd },
@@ -251,16 +252,16 @@ export async function manualJournal(
   const debit = sum(input.lines.map((l) => cents(l.debit ?? 0)));
   const credit = sum(input.lines.map((l) => cents(l.credit ?? 0)));
   if (!debit.equals(credit)) {
-    throw badRequest(`Debits (${debit.toFixed(2)}) and credits (${credit.toFixed(2)}) must be equal`);
+    throw badRequest(`Debits (${debit.toFixed(2)}) and credits (${credit.toFixed(2)}) must be equal`, `Les débits (${debit.toFixed(2)}) et les crédits (${credit.toFixed(2)}) doivent être égaux`);
   }
-  if (debit.isZero()) throw badRequest("Enter some amounts");
+  if (debit.isZero()) throw badRequest("Enter some amounts", "Saisissez des montants");
   const ids = input.lines.map((l) => l.accountId);
   const rows = await tx.select().from(accounts).where(inArray(accounts.id, ids));
   const inventoryId = await systemAccountId(tx, SYSTEM_ACCOUNTS.inventory);
   const transitId = await systemAccountId(tx, SYSTEM_ACCOUNTS.goodsInTransit);
   for (const r of rows) {
     if (r.id === inventoryId || r.id === transitId) {
-      throw badRequest(`${r.name} is kept by stock and containers. Use a stock adjustment or the container screen.`);
+      throw badRequest(`${r.name} is kept by stock and containers. Use a stock adjustment or the container screen.`, `${r.name} est tenu par le stock et les conteneurs. Utilisez un ajustement de stock ou l'écran des conteneurs.`);
     }
   }
   return postJournal(tx, {
@@ -296,7 +297,7 @@ export interface AdjustmentInput {
 }
 
 export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number) {
-  if (input.lines.length === 0) throw badRequest("Add at least one item");
+  if (input.lines.length === 0) throw badRequest("Add at least one item", "Ajoutez au moins un article");
   const number = await nextNumber(tx, "adjustment", "ADJ-");
   const [adj] = await tx
     .insert(stockAdjustments)
@@ -313,20 +314,20 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
       .from(variants)
       .innerJoin(products, eq(products.id, variants.productId))
       .where(eq(variants.id, line.variantId));
-    if (!v) throw badRequest("One of the items does not exist");
-    if (v.tracksSerials && !change.isInteger()) throw badRequest("Motorcycles must be whole units");
+    if (!v) throw badRequest("One of the items does not exist", "Un des articles n'existe pas");
+    if (v.tracksSerials && !change.isInteger()) throw badRequest("Motorcycles must be whole units", "Les motos se comptent en unités entières");
 
     if (change.isPositive()) {
       if (input.kind !== "opening" && input.kind !== "found" && input.kind !== "count" && input.kind !== "other") {
-        throw badRequest("Damage and loss can only remove stock");
+        throw badRequest("Damage and loss can only remove stock", "Les dégâts et pertes ne peuvent que retirer du stock");
       }
       let unit = line.unitCost != null && line.unitCost !== "" ? dec(line.unitCost, "unit cost") : null;
       if (!unit) {
         const q = dec(v.variant.stockQty);
-        if (q.isZero()) throw badRequest(`Give a cost per unit for ${v.name} (${v.variant.sku}); it has no stock to take an average from`);
+        if (q.isZero()) throw badRequest(`Give a cost per unit for ${v.name} (${v.variant.sku}); it has no stock to take an average from`, `Indiquez un coût unitaire pour ${v.name} (${v.variant.sku}) : il n'a pas de stock pour calculer une moyenne`);
         unit = dec(v.variant.stockValue).dividedBy(q);
       }
-      if (unit.isNegative()) throw badRequest("Cost cannot be negative");
+      if (unit.isNegative()) throw badRequest("Cost cannot be negative", "Le coût ne peut pas être négatif");
       const value = cents(unit.times(change));
       await receiveStock(tx, {
         date: input.date,
@@ -343,32 +344,32 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
       gains = gains.plus(value);
       if (v.tracksSerials) {
         const serials = line.serials ?? [];
-        if (serials.length > change.toNumber()) throw badRequest("More chassis numbers than motorcycles added");
+        if (serials.length > change.toNumber()) throw badRequest("More chassis numbers than motorcycles added", "Plus de numéros de châssis que de motos ajoutées");
         const chassis = serials.map((s) => s.chassisNo?.trim().toUpperCase()).filter((c): c is string => !!c);
-        if (new Set(chassis).size !== chassis.length) throw badRequest("The same chassis number is entered twice");
+        if (new Set(chassis).size !== chassis.length) throw badRequest("The same chassis number is entered twice", "Le même numéro de châssis est saisi deux fois");
         if (chassis.length) {
           const taken = await tx.select({ chassisNo: motorcycleUnits.chassisNo }).from(motorcycleUnits).where(inArray(motorcycleUnits.chassisNo, chassis));
-          if (taken.length) throw conflict(`Chassis number ${taken[0].chassisNo} is already registered`);
+          if (taken.length) throw conflict(`Chassis number ${taken[0].chassisNo} is already registered`, `Le numéro de châssis ${taken[0].chassisNo} est déjà enregistré`);
         }
         const rows = Array.from({ length: change.toNumber() }, (_, i) => ({
           variantId: v.variant.id,
           locationId: input.locationId,
           chassisNo: serials[i]?.chassisNo?.trim().toUpperCase() || null,
           engineNo: serials[i]?.engineNo?.trim().toUpperCase() || null,
-          color: serials[i]?.color || null,
+          color: serials[i]?.color || variantColour(v.variant.attributes),
           status: "in_stock",
         }));
         await tx.insert(motorcycleUnits).values(rows);
       }
     } else {
-      if (input.kind === "opening") throw badRequest("Opening stock can only add stock");
+      if (input.kind === "opening") throw badRequest("Opening stock can only add stock", "Le stock d'ouverture ne peut qu'ajouter du stock");
       const q = change.abs();
       if (v.tracksSerials) {
         const ids = line.unitIds ?? [];
-        if (ids.length !== q.toNumber()) throw badRequest(`Pick which ${q.toString()} motorcycle(s) of ${v.name} are removed`);
+        if (ids.length !== q.toNumber()) throw badRequest(`Pick which ${q.toString()} motorcycle(s) of ${v.name} are removed`, `Choisissez quelle(s) ${q.toString()} moto(s) de ${v.name} sont retirées`);
         const units = await tx.select().from(motorcycleUnits).where(inArray(motorcycleUnits.id, ids)).for("update");
         if (units.length !== ids.length || units.some((u) => u.variantId !== v.variant.id || u.status !== "in_stock" || u.locationId !== input.locationId)) {
-          throw badRequest("One of the motorcycles picked is not in stock here");
+          throw badRequest("One of the motorcycles picked is not in stock here", "Une des motos choisies n'est pas en stock ici");
         }
         await tx.delete(motorcycleUnits).where(inArray(motorcycleUnits.id, ids));
       }
@@ -398,10 +399,10 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
     sourceId: adj.id,
     userId,
     lines: [
-      { accountId: inventory, debit: gains, memo: "Stock added" },
+      { accountId: inventory, debit: gains, memo: "Stock ajouté" },
       { accountId: offset, credit: gains },
       { accountId: offset, debit: losses },
-      { accountId: inventory, credit: losses, memo: "Stock removed" },
+      { accountId: inventory, credit: losses, memo: "Stock retiré" },
     ],
   });
   await linkMovementsToJournal(tx, "adjustment", adj.id, journalId);
@@ -411,5 +412,5 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
 
 export async function ensureAccountsExist(tx: Tx, ids: number[]) {
   const rows = await tx.select({ id: accounts.id }).from(accounts).where(and(inArray(accounts.id, ids)));
-  if (rows.length !== new Set(ids).size) throw badRequest("One of the accounts does not exist");
+  if (rows.length !== new Set(ids).size) throw badRequest("One of the accounts does not exist", "Un des comptes n'existe pas");
 }

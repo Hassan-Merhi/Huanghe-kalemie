@@ -280,8 +280,8 @@ function AddExpenseDialog({ onClose }: { onClose: () => void }) {
             </Field>
           ) : (
             <>
-              <Field label={t("Owed to (agent or supplier)", "Due à (agent ou fournisseur)")}>
-                <PartySelect types={["agent", "supplier"]} value={partyId} onChange={(id) => setPartyId(id)} />
+              <Field label={t("Owed to (employee, supplier or agent)", "Dû à (employé, fournisseur ou agent)")}>
+                <PartySelect types={["employee", "supplier", "agent"]} value={partyId} onChange={(id) => setPartyId(id)} />
               </Field>
               <Field label={t("Currency", "Devise")}>
                 <Select value={owedCurrency} onValueChange={(v) => setOwedCurrency(v as "USD" | "CDF")}>

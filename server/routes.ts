@@ -20,6 +20,7 @@ import {
   periods,
   products,
   ROLES,
+  saleReturns,
   sales,
   settings,
   stockAdjustments,
@@ -59,6 +60,11 @@ import { transferStock } from "./services/stock";
 const STAFF = ["manager"] as const; // owner is always allowed
 const READERS = ["manager", "partner"] as const;
 const SELLERS = ["manager", "cashier"] as const;
+
+/** A sale as cashiers see it: no cost of goods sold. */
+function withoutCost<S extends { cogs?: unknown; lines: { cogs?: unknown }[] }>(sale: S) {
+  return { ...sale, cogs: undefined, lines: sale.lines.map(({ cogs, ...l }) => l) };
+}
 const EVERYONE = ["manager", "cashier", "partner"] as const;
 
 const uid = (req: Request) => req.user!.id;
@@ -161,7 +167,7 @@ export function registerRoutes(app: Express) {
 
   app.post("/api/users", requireRole(), asyncHandler(async (req, res) => {
     const body = userSchema.parse(req.body);
-    if (body.role === "partner" && !body.partnerId) throw badRequest("Link a partner login to its partner");
+    if (body.role === "partner" && !body.partnerId) throw badRequest("Link a partner login to its partner", "Associez ce compte de connexion à son associé");
     const [row] = await db
       .insert(users)
       .values({
@@ -181,7 +187,7 @@ export function registerRoutes(app: Express) {
     const userId = paramId(req);
     const body = userSchema.partial().parse(req.body);
     if (userId === uid(req) && (body.active === false || (body.role && body.role !== "owner"))) {
-      throw badRequest("You cannot remove your own owner access");
+      throw badRequest("You cannot remove your own owner access", "Vous ne pouvez pas retirer votre propre accès propriétaire");
     }
     await db
       .update(users)
@@ -379,19 +385,19 @@ export function registerRoutes(app: Express) {
   const partySchema = z.object({ type: z.enum(PARTY_TYPES), name: z.string().min(1).max(120), phone: z.string().max(40).optional().nullable(), notes: z.string().max(1000).optional().nullable(), active: z.boolean().optional() });
   app.post("/api/parties", requireRole(...SELLERS), asyncHandler(async (req, res) => {
     const body = partySchema.parse(req.body);
-    if (req.user!.role === "cashier" && body.type !== "customer") throw badRequest("Cashiers can only add customers");
+    if (req.user!.role === "cashier" && body.type !== "customer") throw badRequest("Cashiers can only add customers", "Les caissiers ne peuvent ajouter que des clients");
     const [row] = await db.insert(parties).values(body).returning();
     res.status(201).json(row);
   }));
   app.patch("/api/parties/:id", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = partySchema.omit({ type: true }).partial().parse(req.body);
     const [row] = await db.update(parties).set(body).where(eq(parties.id, paramId(req))).returning();
-    if (!row) throw notFound("Contact");
+    if (!row) throw notFound("Contact", "Contact introuvable");
     res.json(row);
   }));
   app.get("/api/parties/:id/statement", requireRole(...READERS, "cashier"), asyncHandler(async (req, res) => {
     const statement = await reports.partyStatement(db, paramId(req));
-    if (req.user!.role === "cashier" && statement.party.type !== "customer") throw notFound("Customer");
+    if (req.user!.role === "cashier" && statement.party.type !== "customer") throw notFound("Customer", "Client introuvable");
     res.json(statement);
   }));
 
@@ -406,7 +412,7 @@ export function registerRoutes(app: Express) {
     const body = z
       .object({ code: z.string().min(1).max(20), name: z.string().min(1).max(120), type: z.enum(ACCOUNT_TYPES), isMoney: z.boolean().optional(), currency: z.enum(["USD", "CDF"]).optional() })
       .parse(req.body);
-    if (body.isMoney && body.type !== "asset") throw badRequest("Cash, bank and mobile money accounts are assets");
+    if (body.isMoney && body.type !== "asset") throw badRequest("Cash, bank and mobile money accounts are assets", "Les comptes caisse, banque et mobile money sont des comptes d'actif");
     const [row] = await db.insert(accounts).values(body).returning();
     await audit(req, "create", "account", row.id, body);
     res.status(201).json(row);
@@ -414,8 +420,8 @@ export function registerRoutes(app: Express) {
   app.patch("/api/accounts/:id", requireRole(), asyncHandler(async (req, res) => {
     const body = z.object({ name: z.string().min(1).max(120).optional(), active: z.boolean().optional() }).parse(req.body);
     const [existing] = await db.select().from(accounts).where(eq(accounts.id, paramId(req)));
-    if (!existing) throw notFound("Account");
-    if ((existing.systemKey || existing.partnerId) && body.active === false) throw badRequest("This account is used by the app and cannot be switched off");
+    if (!existing) throw notFound("Account", "Compte introuvable");
+    if ((existing.systemKey || existing.partnerId) && body.active === false) throw badRequest("This account is used by the app and cannot be switched off", "Ce compte est utilisé par l'application et ne peut pas être désactivé");
     const [row] = await db.update(accounts).set(body).where(eq(accounts.id, existing.id)).returning();
     res.json(row);
   }));
@@ -452,9 +458,9 @@ export function registerRoutes(app: Express) {
   app.post("/api/journals/:id/reverse", requireRole(), asyncHandler(async (req, res) => {
     const body = z.object({ date: isoDate }).parse(req.body);
     const [j] = await db.select().from(journals).where(eq(journals.id, paramId(req)));
-    if (!j) throw notFound("Journal");
+    if (!j) throw notFound("Journal", "Écriture introuvable");
     if (!["manual", "opening", "transfer", "customer_receipt", "supplier_payment", "partner_contribution", "partner_withdrawal"].includes(j.type)) {
-      throw badRequest("Cancel this from its own screen (sale, expense, container or month close)");
+      throw badRequest("Cancel this from its own screen (sale, expense, container or month close)", "Annulez ceci depuis son propre écran (vente, dépense, conteneur ou clôture du mois)");
     }
     const reversalId = await db.transaction((tx) => reverseJournal(tx, j.id, { date: body.date, userId: uid(req) }));
     await audit(req, "reverse", "journal", j.id);
@@ -526,8 +532,8 @@ export function registerRoutes(app: Express) {
       .select({
         container: containers,
         supplierName: parties.name,
-        lineCount: sql<number>`(select count(*)::int from container_lines l where l.container_id = ${containers.id})`,
-        expensesUsd: sql<string>`(select coalesce(sum(e.amount_usd), 0) from container_expenses e where e.container_id = ${containers.id})`,
+        lineCount: sql<number>`(select count(*)::int from container_lines l where l.container_id = "containers"."id")`,
+        expensesUsd: sql<string>`(select coalesce(sum(e.amount_usd), 0) from container_expenses e where e.container_id = "containers"."id")`,
       })
       .from(containers)
       .innerJoin(parties, eq(parties.id, containers.supplierId))
@@ -549,7 +555,7 @@ export function registerRoutes(app: Express) {
   app.post("/api/containers", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = containerSchema.parse(req.body);
     const [supplier] = await db.select().from(parties).where(eq(parties.id, body.supplierId));
-    if (!supplier || supplier.type !== "supplier") throw badRequest("Pick a supplier");
+    if (!supplier || supplier.type !== "supplier") throw badRequest("Pick a supplier", "Choisissez un fournisseur");
     const [row] = await db.insert(containers).values({ ...body, number: body.number.trim().toUpperCase(), currency: (body.currency ?? "USD").toUpperCase() }).returning();
     await audit(req, "create", "container", row.id);
     res.status(201).json(row);
@@ -572,10 +578,10 @@ export function registerRoutes(app: Express) {
     const body = containerSchema.partial().parse(req.body);
     const updated = await db.transaction(async (tx) => {
       const [c] = await tx.select().from(containers).where(eq(containers.id, paramId(req))).for("update");
-      if (!c) throw notFound("Container");
+      if (!c) throw notFound("Container", "Conteneur introuvable");
       if (c.status === "finalized") {
         const allowed = Object.keys(body).every((k) => ["notes", "shipDate", "arrivalDate"].includes(k));
-        if (!allowed) throw conflict("This container is finalized. Only dates and notes can change.");
+        if (!allowed) throw conflict("This container is finalized. Only dates and notes can change.", "Ce conteneur est finalisé. Seules les dates et les notes peuvent être modifiées.");
       }
       const [row] = await tx
         .update(containers)
@@ -657,7 +663,7 @@ export function registerRoutes(app: Express) {
   app.get("/api/sales/:id", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
     const sale = await salesSvc.getSale(db, paramId(req));
     if (req.user!.role === "cashier") {
-      res.json({ ...sale, cogs: undefined, lines: sale.lines.map(({ cogs, ...l }) => l) });
+      res.json(withoutCost(sale));
       return;
     }
     res.json(sale);
@@ -677,7 +683,7 @@ export function registerRoutes(app: Express) {
     // Cashiers always sell today.
     const date = req.user!.role === "cashier" || !body.date ? todayIso() : body.date;
     const sale = await db.transaction((tx) => salesSvc.createSale(tx, { ...body, date }, uid(req)));
-    res.status(201).json(sale);
+    res.status(201).json(req.user!.role === "cashier" ? withoutCost(sale) : sale);
   }));
   app.post("/api/sales/:id/void", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = z.object({ reason: z.string().min(1).max(300), date: isoDate.optional() }).parse(req.body);
@@ -708,7 +714,7 @@ export function registerRoutes(app: Express) {
       const existing = await tx.select().from(partners);
       for (const p of body.partners) {
         const row = existing.find((e) => e.id === p.id);
-        if (!row) throw notFound("Partner");
+        if (!row) throw notFound("Partner", "Associé introuvable");
         await tx.update(partners).set({ name: p.name, sharePct: dec(p.sharePct).toFixed(2), bearsOperatingExpenses: p.bearsOperatingExpenses }).where(eq(partners.id, p.id));
         await tx.update(accounts).set({ name: `${p.name}: capital` }).where(eq(accounts.id, row.capitalAccountId));
         await tx.update(accounts).set({ name: `${p.name}: profit share (current account)` }).where(eq(accounts.id, row.currentAccountId));
@@ -719,7 +725,7 @@ export function registerRoutes(app: Express) {
   }));
   app.get("/api/partners/:id/statement", requireRole(...READERS), asyncHandler(async (req, res) => {
     const partnerId = paramId(req);
-    if (req.user!.role === "partner" && req.user!.partnerId !== partnerId) throw notFound("Partner");
+    if (req.user!.role === "partner" && req.user!.partnerId !== partnerId) throw notFound("Partner", "Associé introuvable");
     res.json(await reports.partnerStatement(db, partnerId));
   }));
 
@@ -775,7 +781,50 @@ export function registerRoutes(app: Express) {
       .select({ count: sql<number>`count(*)::int`, total: sql<string>`coalesce(sum(${sales.total}), 0)`, credit: sql<string>`coalesce(sum(${sales.creditUsd}), 0)` })
       .from(sales)
       .where(and(eq(sales.date, date), eq(sales.status, "completed")));
-    res.json({ date, ...totals, byAccount: result.rows });
+    const [returns] = await db
+      .select({ count: sql<number>`count(*)::int`, total: sql<string>`coalesce(sum(${saleReturns.total}), 0)` })
+      .from(saleReturns)
+      .where(eq(saleReturns.date, date));
+    // Drawer count (not for cashiers, who do not see balances): every money account's opening
+    // balance, what came in and went out that day by kind of operation, and the expected closing.
+    let drawer: unknown = undefined;
+    if (req.user!.role !== "cashier") {
+      const moves = await db.execute<{ account_id: number; type: string; debit: string; credit: string; native: string | null }>(sql`
+        select l.account_id, j.type, sum(l.debit) as debit, sum(l.credit) as credit, sum(l.native_amount) as native
+        from journal_lines l join journals j on j.id = l.journal_id join accounts a on a.id = l.account_id
+        where a.is_money and j.date = ${date}
+        group by l.account_id, j.type
+      `);
+      const opening = await db.execute<{ account_id: number; usd: string; native: string | null }>(sql`
+        select l.account_id, sum(l.debit - l.credit) as usd, sum(l.native_amount) as native
+        from journal_lines l join journals j on j.id = l.journal_id join accounts a on a.id = l.account_id
+        where a.is_money and j.date < ${date}
+        group by l.account_id
+      `);
+      const moneyAccounts = await db.select().from(accounts).where(and(eq(accounts.isMoney, true), eq(accounts.active, true))).orderBy(asc(accounts.code));
+      drawer = moneyAccounts.map((a) => {
+        const cdf = a.currency === "CDF";
+        const o = opening.rows.find((r) => r.account_id === a.id);
+        const rows = moves.rows.filter((r) => r.account_id === a.id);
+        // For a CDF account the native amount is signed (+ in, − out).
+        const amountIn = (r: (typeof rows)[number]) => (cdf ? dec(r.native ?? 0).isPositive() ? dec(r.native ?? 0) : dec(0) : dec(r.debit));
+        const amountOut = (r: (typeof rows)[number]) => (cdf ? dec(r.native ?? 0).isNegative() ? dec(r.native ?? 0).abs() : dec(0) : dec(r.credit));
+        const openingAmt = dec(cdf ? o?.native ?? 0 : o?.usd ?? 0);
+        const totalIn = rows.reduce((s, r) => s.plus(amountIn(r)), dec(0));
+        const totalOut = rows.reduce((s, r) => s.plus(amountOut(r)), dec(0));
+        return {
+          accountId: a.id,
+          name: a.name,
+          currency: a.currency,
+          opening: openingAmt.toFixed(2),
+          totalIn: totalIn.toFixed(2),
+          totalOut: totalOut.toFixed(2),
+          closing: openingAmt.plus(totalIn).minus(totalOut).toFixed(2),
+          byType: rows.map((r) => ({ type: r.type, in: amountIn(r).toFixed(2), out: amountOut(r).toFixed(2) })),
+        };
+      });
+    }
+    res.json({ date, ...totals, returnsCount: returns.count, returnsTotal: dec(returns.total).toFixed(2), byAccount: result.rows, drawer });
   }));
   app.get("/api/audit", requireRole(), asyncHandler(async (_req, res) => {
     const rows = await db

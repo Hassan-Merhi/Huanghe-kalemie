@@ -37,14 +37,14 @@ export interface PartnerSplitResult {
 }
 
 export function validatePartnerShares(partners: PartnerShareInput[]): void {
-  if (partners.length === 0) throw new MoneyError("At least one partner is required");
+  if (partners.length === 0) throw new MoneyError("At least one partner is required", "Au moins un associé est requis");
   const total = sum(partners.map((p) => dec(p.sharePct, "share")));
-  if (!total.equals(100)) throw new MoneyError(`Partner shares must add up to 100% (now ${total.toString()}%)`);
+  if (!total.equals(100)) throw new MoneyError(`Partner shares must add up to 100% (now ${total.toString()}%)`, `Les parts des associés doivent totaliser 100 % (actuellement ${total.toString()} %)`);
   for (const p of partners) {
-    if (dec(p.sharePct).isNegative()) throw new MoneyError("A partner share cannot be negative");
+    if (dec(p.sharePct).isNegative()) throw new MoneyError("A partner share cannot be negative", "La part d'un associé ne peut pas être négative");
   }
   if (!partners.some((p) => p.bearsOperatingExpenses)) {
-    throw new MoneyError("At least one partner must bear the operating expenses");
+    throw new MoneyError("At least one partner must bear the operating expenses", "Au moins un associé doit supporter les charges d'exploitation");
   }
 }
 

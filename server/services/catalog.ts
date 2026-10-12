@@ -1,4 +1,4 @@
-import { and, asc, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, asc, eq, ilike, inArray, ne, or, sql } from "drizzle-orm";
 import { categories, locations, motorcycleUnits, products, stockLevels, variants } from "@shared/schema";
 import { dec } from "@shared/money";
 import type { Tx } from "../db";
@@ -53,9 +53,13 @@ async function insertVariant(tx: Tx, productId: number, v: VariantInput) {
     .from(variants)
     .where(barcode ? or(eq(variants.sku, sku), eq(variants.barcode, barcode)) : eq(variants.sku, sku));
   if (dup.length) {
-    throw conflict(dup[0].sku === sku ? `SKU ${sku} is already used` : `Barcode ${barcode} is already used`);
+    const skuTaken = dup[0].sku === sku;
+    throw conflict(
+      skuTaken ? `SKU ${sku} is already used` : `Barcode ${barcode} is already used`,
+      skuTaken ? `Le SKU ${sku} est déjà utilisé` : `Le code-barres ${barcode} est déjà utilisé`,
+    );
   }
-  if (dec(v.sellPrice ?? 0).isNegative()) throw badRequest("Price cannot be negative");
+  if (dec(v.sellPrice ?? 0).isNegative()) throw badRequest("Price cannot be negative", "Le prix ne peut pas être négatif");
   const [row] = await tx
     .insert(variants)
     .values({
@@ -72,11 +76,11 @@ async function insertVariant(tx: Tx, productId: number, v: VariantInput) {
 }
 
 export async function createProduct(tx: Tx, input: ProductInput & { variants: VariantInput[] }) {
-  if (!input.name.trim()) throw badRequest("Name is required");
-  if (input.variants.length === 0) throw badRequest("Add at least one variant (use one with no size if the item has none)");
+  if (!input.name.trim()) throw badRequest("Name is required", "Le nom est obligatoire");
+  if (input.variants.length === 0) throw badRequest("Add at least one variant (use one with no size if the item has none)", "Ajoutez au moins une variante (une sans taille si l'article n'en a pas)");
   if (input.categoryId) {
     const [c] = await tx.select().from(categories).where(eq(categories.id, input.categoryId));
-    if (!c) throw badRequest("Category not found");
+    if (!c) throw badRequest("Category not found", "Catégorie introuvable");
   }
   const [product] = await tx
     .insert(products)
@@ -95,13 +99,13 @@ export async function createProduct(tx: Tx, input: ProductInput & { variants: Va
 
 export async function updateProduct(tx: Tx, id: number, input: Partial<ProductInput>) {
   const [existing] = await tx.select().from(products).where(eq(products.id, id));
-  if (!existing) throw notFound("Product");
+  if (!existing) throw notFound("Product", "Article introuvable");
   if (input.tracksSerials !== undefined && input.tracksSerials !== existing.tracksSerials) {
     const [stock] = await tx
       .select({ qty: sql<string>`coalesce(sum(${variants.stockQty}), 0)` })
       .from(variants)
       .where(eq(variants.productId, id));
-    if (!dec(stock.qty).isZero()) throw conflict("Chassis tracking can only be changed while the item has no stock");
+    if (!dec(stock.qty).isZero()) throw conflict("Chassis tracking can only be changed while the item has no stock", "Le suivi par châssis ne peut être modifié que lorsque l'article n'a pas de stock");
   }
   await tx
     .update(products)
@@ -120,25 +124,25 @@ export async function updateProduct(tx: Tx, id: number, input: Partial<ProductIn
 
 export async function addVariant(tx: Tx, productId: number, input: VariantInput) {
   const [p] = await tx.select().from(products).where(eq(products.id, productId));
-  if (!p) throw notFound("Product");
+  if (!p) throw notFound("Product", "Article introuvable");
   await insertVariant(tx, productId, input);
   return getProduct(tx, productId);
 }
 
 export async function updateVariant(tx: Tx, id: number, input: VariantInput) {
   const [existing] = await tx.select().from(variants).where(eq(variants.id, id));
-  if (!existing) throw notFound("Variant");
+  if (!existing) throw notFound("Variant", "Variante introuvable");
   const sku = input.sku?.trim().toUpperCase();
   const barcode = input.barcode === undefined ? undefined : input.barcode?.trim() || null;
   if (sku && sku !== existing.sku) {
     const [d] = await tx.select({ id: variants.id }).from(variants).where(eq(variants.sku, sku));
-    if (d) throw conflict(`SKU ${sku} is already used`);
+    if (d) throw conflict(`SKU ${sku} is already used`, `Le SKU ${sku} est déjà utilisé`);
   }
   if (barcode && barcode !== existing.barcode) {
     const [d] = await tx.select({ id: variants.id }).from(variants).where(eq(variants.barcode, barcode));
-    if (d) throw conflict(`Barcode ${barcode} is already used`);
+    if (d) throw conflict(`Barcode ${barcode} is already used`, `Le code-barres ${barcode} est déjà utilisé`);
   }
-  if (input.sellPrice != null && dec(input.sellPrice).isNegative()) throw badRequest("Price cannot be negative");
+  if (input.sellPrice != null && dec(input.sellPrice).isNegative()) throw badRequest("Price cannot be negative", "Le prix ne peut pas être négatif");
   await tx
     .update(variants)
     .set({
@@ -155,7 +159,7 @@ export async function updateVariant(tx: Tx, id: number, input: VariantInput) {
 
 export async function getProduct(tx: Tx, id: number) {
   const [product] = await tx.select().from(products).where(eq(products.id, id));
-  if (!product) throw notFound("Product");
+  if (!product) throw notFound("Product", "Article introuvable");
   const vs = await tx.select().from(variants).where(eq(variants.productId, id)).orderBy(asc(variants.id));
   const levels = vs.length
     ? await tx.select().from(stockLevels).where(inArray(stockLevels.variantId, vs.map((v) => v.id)))
@@ -181,7 +185,7 @@ export async function listProducts(tx: Tx, opts: { search?: string; categoryId?:
     conds.push(
       or(
         ilike(products.name, like),
-        sql`exists (select 1 from ${variants} v where v.product_id = ${products.id} and (v.sku ilike ${like} or v.barcode ilike ${like} or v.attributes::text ilike ${like}))`,
+        sql`exists (select 1 from ${variants} v where v.product_id = "products"."id" and (v.sku ilike ${like} or v.barcode ilike ${like} or v.attributes::text ilike ${like}))`,
       ),
     );
   }
@@ -189,11 +193,11 @@ export async function listProducts(tx: Tx, opts: { search?: string; categoryId?:
     .select({
       product: products,
       categoryName: categories.name,
-      variantCount: sql<number>`(select count(*)::int from ${variants} v where v.product_id = ${products.id})`,
-      stockQty: sql<string>`(select coalesce(sum(v.stock_qty), 0) from ${variants} v where v.product_id = ${products.id})`,
-      stockValue: sql<string>`(select coalesce(sum(v.stock_value), 0) from ${variants} v where v.product_id = ${products.id})`,
-      minPrice: sql<string>`(select min(v.sell_price) from ${variants} v where v.product_id = ${products.id})`,
-      maxPrice: sql<string>`(select max(v.sell_price) from ${variants} v where v.product_id = ${products.id})`,
+      variantCount: sql<number>`(select count(*)::int from ${variants} v where v.product_id = "products"."id")`,
+      stockQty: sql<string>`(select coalesce(sum(v.stock_qty), 0) from ${variants} v where v.product_id = "products"."id")`,
+      stockValue: sql<string>`(select coalesce(sum(v.stock_value), 0) from ${variants} v where v.product_id = "products"."id")`,
+      minPrice: sql<string>`(select min(v.sell_price) from ${variants} v where v.product_id = "products"."id")`,
+      maxPrice: sql<string>`(select max(v.sell_price) from ${variants} v where v.product_id = "products"."id")`,
     })
     .from(products)
     .leftJoin(categories, eq(categories.id, products.categoryId))
@@ -236,7 +240,7 @@ export async function searchVariants(tx: Tx, opts: { search?: string; locationId
       tracksSerials: products.tracksSerials,
       categoryName: categories.name,
       locationQty: opts.locationId
-        ? sql<string>`coalesce((select qty from ${stockLevels} s where s.variant_id = ${variants.id} and s.location_id = ${opts.locationId}), 0)`
+        ? sql<string>`coalesce((select qty from ${stockLevels} s where s.variant_id = "variants"."id" and s.location_id = ${opts.locationId}), 0)`
         : sql<string>`${variants.stockQty}`,
     })
     .from(variants)
@@ -260,7 +264,7 @@ export async function searchVariants(tx: Tx, opts: { search?: string; locationId
 export async function listUnits(tx: Tx, opts: { variantId?: number; status?: string; locationId?: number; search?: string }) {
   const conds = [];
   if (opts.variantId) conds.push(eq(motorcycleUnits.variantId, opts.variantId));
-  if (opts.status) conds.push(eq(motorcycleUnits.status, opts.status));
+  conds.push(opts.status ? eq(motorcycleUnits.status, opts.status) : ne(motorcycleUnits.status, "reversed"));
   if (opts.locationId) conds.push(eq(motorcycleUnits.locationId, opts.locationId));
   if (opts.search) {
     const like = `%${opts.search}%`;
@@ -287,14 +291,14 @@ export async function listUnits(tx: Tx, opts: { variantId?: number; status?: str
 
 export async function updateUnit(tx: Tx, id: number, input: { chassisNo?: string | null; engineNo?: string | null; color?: string | null }) {
   const [unit] = await tx.select().from(motorcycleUnits).where(eq(motorcycleUnits.id, id));
-  if (!unit) throw notFound("Motorcycle");
+  if (!unit) throw notFound("Motorcycle", "Moto introuvable");
   const chassisNo = input.chassisNo === undefined ? undefined : input.chassisNo?.trim().toUpperCase() || null;
   if (chassisNo && chassisNo !== unit.chassisNo) {
     const [d] = await tx.select({ id: motorcycleUnits.id }).from(motorcycleUnits).where(eq(motorcycleUnits.chassisNo, chassisNo));
-    if (d) throw conflict(`Chassis number ${chassisNo} is already registered`);
+    if (d) throw conflict(`Chassis number ${chassisNo} is already registered`, `Le numéro de châssis ${chassisNo} est déjà enregistré`);
   }
   if (unit.status === "sold" && chassisNo !== undefined && chassisNo !== unit.chassisNo) {
-    throw conflict("The chassis number of a sold motorcycle cannot be changed");
+    throw conflict("The chassis number of a sold motorcycle cannot be changed", "Le numéro de châssis d'une moto vendue ne peut pas être modifié");
   }
   const [row] = await tx
     .update(motorcycleUnits)
@@ -306,4 +310,10 @@ export async function updateUnit(tx: Tx, id: number, input: { chassisNo?: string
     .where(eq(motorcycleUnits.id, id))
     .returning();
   return row;
+}
+
+/** The colour attribute of a variant (Colour, Color, Couleur…), used as the default colour of each bike. */
+export function variantColour(attributes: Record<string, string> | null | undefined): string | null {
+  for (const [k, v] of Object.entries(attributes ?? {})) if (/^(colou?r|couleur)$/i.test(k.trim()) && v) return v;
+  return null;
 }

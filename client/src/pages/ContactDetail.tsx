@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import { ArrowLeft, HandCoins, Pencil, Printer } from "lucide-react";
@@ -9,11 +9,11 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader } from "@/components/common";
-import { MoneyAccountSelect, useRate } from "@/components/pickers";
+import { MoneyAccountSelect, PARTY_LABELS, useRateField } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
-import { cdf, d, date as fmtDate, todayLocal, usd } from "@/lib/format";
+import { d, date as fmtDate, todayLocal, usd } from "@/lib/format";
 import type { Account, Party } from "@/lib/types";
 import { BalanceWords, PartyDialog } from "@/pages/Contacts";
 
@@ -79,7 +79,7 @@ export default function ContactDetail() {
   if (q.error || !q.data) return <ErrorText error={q.error ?? t("Not found", "Introuvable")} />;
   const { party, rows, balance } = q.data;
   const isCustomer = party.type === "customer";
-  const typeLabel = { customer: t("Customer", "Client"), supplier: t("Supplier", "Fournisseur"), agent: t("Agent", "Agent") }[party.type];
+  const typeLabel = t(PARTY_LABELS[party.type][0], PARTY_LABELS[party.type][1]);
   const canPay = isCustomer ? can("manager", "cashier") : can("manager");
 
   return (
@@ -192,12 +192,8 @@ function PaymentDialog({ party, balance, onClose }: { party: Statement["party"];
   const [day, setDay] = useState(todayLocal());
   const [account, setAccount] = useState<Account | null>(null);
   const [amount, setAmount] = useState("");
-  const [rate, setRate] = useState("");
   const [memo, setMemo] = useState("");
-  const rateQ = useRate(day);
-  useEffect(() => {
-    if (rateQ.data?.cdfPerUsd) setRate(rateQ.data.cdfPerUsd);
-  }, [rateQ.data?.cdfPerUsd]);
+  const { rate, setRate } = useRateField(day);
   const isCdf = account?.currency === "CDF";
   const usdEquivalent = isCdf && d(rate).gt(0) ? d(amount).dividedBy(d(rate)).toFixed(2) : null;
   const mutation = useApiMutation("POST", isCustomer ? "/api/money/customer-receipt" : "/api/money/party-payment", {
@@ -222,9 +218,9 @@ function PaymentDialog({ party, balance, onClose }: { party: Statement["party"];
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent className="max-h-[92vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{isCustomer ? t("Payment from customer", "Paiement du client") : t("Pay supplier or agent", "Payer le fournisseur ou l'agent")}</DialogTitle>
+          <DialogTitle>{isCustomer ? t("Payment from customer", "Paiement du client") : t(`Pay ${PARTY_LABELS[party.type][0].toLowerCase()}`, `Payer ${party.type === "agent" || party.type === "employee" ? "l'" : "le "}${PARTY_LABELS[party.type][1].toLowerCase()}`)}</DialogTitle>
           <DialogDescription>
             {party.name}
             {outstanding && (
@@ -241,7 +237,6 @@ function PaymentDialog({ party, balance, onClose }: { party: Statement["party"];
           </Field>
           <Field
             label={t(`Amount (${account?.currency ?? "USD"})`, `Montant (${account?.currency ?? "USD"})`)}
-            hint={usdEquivalent ? t(`= ${usd(usdEquivalent)}`, `= ${usd(usdEquivalent)}`) : undefined}
           >
             <div className="flex gap-2">
               <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
@@ -253,7 +248,7 @@ function PaymentDialog({ party, balance, onClose }: { party: Statement["party"];
             </div>
           </Field>
           {isCdf && (
-            <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 USD)")} hint={amount ? cdf(amount) : undefined}>
+            <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 USD)")} hint={usdEquivalent ? `= ${usd(usdEquivalent)}` : undefined}>
               <Input inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} />
             </Field>
           )}

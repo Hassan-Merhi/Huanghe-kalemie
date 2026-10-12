@@ -42,7 +42,7 @@ export async function seedDemo(): Promise<void> {
   const bike = await db.transaction((tx) =>
     catalog.createProduct(tx, {
       name: "Huanghe HH150-8",
-      categoryId: cat("Motorcycles"),
+      categoryId: cat("Motos"),
       tracksSerials: true,
       variants: [
         { attributes: { Colour: "Red" }, sellPrice: "1450" },
@@ -53,7 +53,7 @@ export async function seedDemo(): Promise<void> {
   const tyre = await db.transaction((tx) =>
     catalog.createProduct(tx, {
       name: "Tyre",
-      categoryId: cat("Tyres and tubes"),
+      categoryId: cat("Pneus et chambres à air"),
       variants: [
         { attributes: { Size: "2.75-17" }, sellPrice: "22", reorderLevel: "10", barcode: "2000000000017" },
         { attributes: { Size: "3.00-17" }, sellPrice: "25", reorderLevel: "10", barcode: "2000000000024" },
@@ -64,7 +64,7 @@ export async function seedDemo(): Promise<void> {
   const pads = await db.transaction((tx) =>
     catalog.createProduct(tx, {
       name: "Brake pads",
-      categoryId: cat("Brakes"),
+      categoryId: cat("Freins"),
       unit: "set",
       variants: [
         { attributes: { Position: "Front" }, sellPrice: "6", reorderLevel: "20" },
@@ -73,7 +73,7 @@ export async function seedDemo(): Promise<void> {
     }),
   );
   const oil = await db.transaction((tx) =>
-    catalog.createProduct(tx, { name: "Engine oil 4T", categoryId: cat("Oils and lubricants"), unit: "litre", variants: [{ attributes: { Size: "1L" }, sellPrice: "5" }] }),
+    catalog.createProduct(tx, { name: "Engine oil 4T", categoryId: cat("Huiles et lubrifiants"), unit: "litre", variants: [{ attributes: { Size: "1L" }, sellPrice: "5" }] }),
   );
 
   await db.transaction((tx) => ops.partnerContribution(tx, { date: day(40), partnerId: partnerA.id, accountId: acc("cash_usd"), amount: "60000" }, userId));

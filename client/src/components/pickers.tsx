@@ -7,8 +7,8 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field } from "@/components/common";
-import { useT } from "@/lib/i18n";
-import { usd, qty as fmtQty } from "@/lib/format";
+import { useI18n, useT } from "@/lib/i18n";
+import { d, todayLocal, usd, qty as fmtQty } from "@/lib/format";
 import { api, invalidateAll, withQuery } from "@/lib/api";
 import type { Account, Category, Location, Party, VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -88,13 +88,15 @@ export function CategorySelect({ value, onChange, allowAll }: { value: number | 
   );
 }
 
-const PARTY_LABEL = {
-  customer: ["Customer", "Client"],
-  supplier: ["Supplier", "Fournisseur"],
-  agent: ["Agent", "Agent"],
-} as const;
+/** Display names per party type: [singular EN, singular FR, "new …" EN, "new …" FR] (French gender differs). */
+export const PARTY_LABELS: Record<Party["type"], readonly [string, string, string, string]> = {
+  customer: ["Customer", "Client", "New customer", "Nouveau client"],
+  supplier: ["Supplier", "Fournisseur", "New supplier", "Nouveau fournisseur"],
+  agent: ["Agent", "Agent", "New agent", "Nouvel agent"],
+  employee: ["Employee", "Employé", "New employee", "Nouvel employé"],
+};
 
-/** Searchable customer / supplier / agent picker with quick add. */
+/** Searchable customer / supplier / agent / employee picker with quick add. */
 export function PartySelect({
   types,
   value,
@@ -166,7 +168,7 @@ function QuickPartyDialog({ type, initialName, onClose, onCreated }: { type: Par
   const [phone, setPhone] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const label = PARTY_LABEL[type];
+  const label = PARTY_LABELS[type];
   async function save() {
     setSaving(true);
     setError(null);
@@ -182,8 +184,8 @@ function QuickPartyDialog({ type, initialName, onClose, onCreated }: { type: Par
   }
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
-        <DialogHeader><DialogTitle>{t(`New ${label[0].toLowerCase()}`, `Nouveau ${label[1].toLowerCase()}`)}</DialogTitle></DialogHeader>
+      <DialogContent className="max-h-[92vh] overflow-y-auto">
+        <DialogHeader><DialogTitle>{t(label[2], label[3])}</DialogTitle></DialogHeader>
         <div className="space-y-3">
           <Field label={t("Name", "Nom")} error={error}><Input autoFocus value={name} onChange={(e) => setName(e.target.value)} /></Field>
           <Field label={t("Phone", "Téléphone")}><Input value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" /></Field>
@@ -298,7 +300,56 @@ export function VariantSearch({
   );
 }
 
+/**
+ * Month picker ("YYYY-MM"): next month plus the last 24, in the current language.
+ * Replaces <input type="month">, which Safari and Firefox desktop do not support.
+ */
+export function MonthSelect({ value, onChange, className }: { value: string; onChange: (month: string) => void; className?: string }) {
+  const { lang } = useI18n();
+  const options = useMemo(() => {
+    const [y, m] = todayLocal().split("-").map(Number);
+    const fmt = new Intl.DateTimeFormat(lang === "fr" ? "fr-FR" : "en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+    const list: { value: string; label: string }[] = [];
+    for (let i = 1; i >= -24; i--) {
+      const dt = new Date(Date.UTC(y, m - 1 + i, 1));
+      const label = fmt.format(dt);
+      list.push({ value: `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}`, label: label.charAt(0).toUpperCase() + label.slice(1) });
+    }
+    // Keep an older month chosen elsewhere (e.g. from a link) selectable.
+    if (value && !list.some((o) => o.value === value)) list.push({ value, label: value });
+    return list;
+  }, [lang, value]);
+  return (
+    <Select value={value} onValueChange={onChange}>
+      <SelectTrigger className={className}><SelectValue /></SelectTrigger>
+      <SelectContent>
+        {options.map((o) => (
+          <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 /** CDF per USD for a date (that day's rate, else the latest before it, else the default). */
 export function useRate(date: string) {
   return useQuery<{ date: string; cdfPerUsd: string; source: string }>({ queryKey: [`/api/exchange-rates/for/${date}`] });
+}
+
+/** Rate input state prefilled from the date's rate until the user edits it (a reload never overwrites a typed rate). */
+export function useRateField(day: string) {
+  const rateQ = useRate(day);
+  const [rate, setRateState] = useState("");
+  const [touched, setTouched] = useState(false);
+  useEffect(() => {
+    if (!touched && rateQ.data?.cdfPerUsd) setRateState(d(rateQ.data.cdfPerUsd).toString());
+  }, [rateQ.data?.cdfPerUsd, touched]);
+  return {
+    rate,
+    touched,
+    setRate: (v: string) => {
+      setRateState(v);
+      setTouched(true);
+    },
+  };
 }

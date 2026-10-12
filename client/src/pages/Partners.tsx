@@ -20,6 +20,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader } from "@/components/common";
+import { MonthSelect } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useI18n, useT } from "@/lib/i18n";
@@ -204,7 +205,7 @@ function MonthSection() {
               <CardDescription>{t("Choose a month to see how its profit is shared.", "Choisissez un mois pour voir le partage de son bénéfice.")}</CardDescription>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <Input type="month" className="w-44" value={month} onChange={(e) => setMonth(e.target.value)} />
+              <MonthSelect className="w-48" value={month} onChange={setMonth} />
               {p && (
                 <Badge variant={p.status === "closed" ? "default" : "secondary"}>
                   {p.status === "closed" ? t("Closed", "Clôturé") : t("Open", "Ouvert")}
@@ -536,7 +537,7 @@ function EditPartnersDialog({ partners, onClose }: { partners: Partner[]; onClos
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-lg">
+      <DialogContent className="max-h-[92vh] max-w-lg overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t("Edit partners", "Modifier les associés")}</DialogTitle>
           <DialogDescription>
