@@ -177,7 +177,7 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number)
   const journalId = await postJournal(tx, {
     date: input.date,
     type: "sale",
-    memo: `Sale ${number}`,
+    memo: `Vente ${number}`,
     sourceType: "sale",
     sourceId: sale.id,
     userId,
@@ -185,7 +185,7 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number)
       ...legs.map((l) => ({ accountId: l.accountId, debit: l.usd, nativeAmount: l.nativeAmount, rate: l.rate })),
       { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.receivables), debit: credit, partyId: input.customerId },
       { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.sales), credit: total },
-      { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.fx), credit: rounding, memo: "CDF rounding" },
+      { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.fx), credit: rounding, memo: "Arrondi CDF" },
       { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.cogs), debit: cogsTotal },
       { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.inventory), credit: cogsTotal },
     ],
@@ -241,7 +241,7 @@ export async function voidSale(tx: Tx, id: number, date: string, reason: string,
   const lines = await tx.select().from(saleLines).where(eq(saleLines.saleId, id));
 
   const voidJournalId = sale.journalId
-    ? await reverseJournal(tx, sale.journalId, { date, type: "sale_void", memo: `Sale ${sale.number} cancelled: ${reason}`, userId })
+    ? await reverseJournal(tx, sale.journalId, { date, type: "sale_void", memo: `Vente ${sale.number} annulée : ${reason}`, userId })
     : null;
   for (const line of lines) {
     await receiveStock(tx, {
@@ -349,7 +349,7 @@ export async function returnSale(tx: Tx, saleId: number, input: ReturnInput, use
   const journalId = await postJournal(tx, {
     date: input.date,
     type: "sale_return",
-    memo: `Return ${number} on sale ${sale.number}: ${input.reason}`,
+    memo: `Retour ${number} sur la vente ${sale.number} : ${input.reason}`,
     sourceType: "sale_return",
     sourceId: ret.id,
     userId,

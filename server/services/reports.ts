@@ -164,7 +164,7 @@ export async function partyBalances(tx: Tx, type?: string) {
       phone: parties.phone,
       notes: parties.notes,
       active: parties.active,
-      balance: sql<string>`coalesce((select sum(l.debit - l.credit) from ${journalLines} l where l.party_id = ${parties.id}), 0)`,
+      balance: sql<string>`coalesce((select sum(l.debit - l.credit) from ${journalLines} l where l.party_id = "parties"."id"), 0)`,
     })
     .from(parties)
     .where(type ? eq(parties.type, type as "customer") : undefined)
@@ -272,8 +272,8 @@ export async function salesByProduct(tx: Tx, from: string, to: string) {
       productName: products.name,
       categoryName: categories.name,
       qty: sql<string>`sum(${saleLines.qty} - ${saleLines.returnedQty})`,
-      revenue: sql<string>`sum(${saleLines.lineTotal} - coalesce((select sum(r.amount) from sale_return_lines r where r.sale_line_id = ${saleLines.id}), 0))`,
-      cogs: sql<string>`sum(${saleLines.cogs} - coalesce((select sum(r.cogs) from sale_return_lines r where r.sale_line_id = ${saleLines.id}), 0))`,
+      revenue: sql<string>`sum(${saleLines.lineTotal} - coalesce((select sum(r.amount) from sale_return_lines r where r.sale_line_id = "sale_lines"."id"), 0))`,
+      cogs: sql<string>`sum(${saleLines.cogs} - coalesce((select sum(r.cogs) from sale_return_lines r where r.sale_line_id = "sale_lines"."id"), 0))`,
     })
     .from(saleLines)
     .innerJoin(sales, eq(sales.id, saleLines.saleId))

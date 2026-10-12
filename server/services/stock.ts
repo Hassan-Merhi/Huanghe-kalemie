@@ -86,10 +86,14 @@ export async function receiveStock(
   });
 }
 
-/** Remove stock at average cost. Returns the value removed. */
+/**
+ * Remove stock at average cost, or at an exact value when `value` is given (used to undo a
+ * receipt: the rest of the stock keeps its own cost). The exact value is capped so the variant
+ * never keeps value without quantity or goes negative. Returns the value removed.
+ */
 export async function issueStock(
   tx: Tx,
-  input: MovementRef & { variantId: number; locationId: number; qty: DecimalInput; label?: string },
+  input: MovementRef & { variantId: number; locationId: number; qty: DecimalInput; label?: string; value?: DecimalInput },
 ): Promise<string> {
   const q = dec(input.qty, "quantity");
   if (q.lte(0)) throw badRequest("Quantity must be greater than zero");
@@ -102,7 +106,10 @@ export async function issueStock(
   }
   const totalQty = dec(variant.stockQty);
   const totalValue = dec(variant.stockValue);
-  const value = q.equals(totalQty) ? totalValue : cents(totalValue.times(q).dividedBy(totalQty));
+  let value: Decimal;
+  if (q.equals(totalQty)) value = totalValue;
+  else if (input.value !== undefined) value = Decimal.min(cents(input.value), totalValue);
+  else value = cents(totalValue.times(q).dividedBy(totalQty));
 
   await tx
     .update(variants)

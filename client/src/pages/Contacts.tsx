@@ -11,6 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { PARTY_LABELS } from "@/components/pickers";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
@@ -49,6 +50,7 @@ export default function Contacts() {
     customer: t("Customers", "Clients"),
     supplier: t("Suppliers", "Fournisseurs"),
     agent: t("Agents", "Agents"),
+    employee: t("Employees", "Employés"),
   };
 
   return (
@@ -70,10 +72,11 @@ export default function Contacts() {
 
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <Tabs value={type} onValueChange={(v) => setType(v as PartyType)}>
-          <TabsList>
+          <TabsList className="h-auto flex-wrap">
             <TabsTrigger value="customer">{labels.customer}</TabsTrigger>
             {user?.role !== "cashier" && <TabsTrigger value="supplier">{labels.supplier}</TabsTrigger>}
             {user?.role !== "cashier" && <TabsTrigger value="agent">{labels.agent}</TabsTrigger>}
+            {user?.role !== "cashier" && <TabsTrigger value="employee">{labels.employee}</TabsTrigger>}
           </TabsList>
         </Tabs>
         <div className="relative sm:w-72">
@@ -157,7 +160,7 @@ export function PartyDialog({ type, party, onClose }: { type: PartyType; party: 
   const [active, setActive] = useState(party?.active ?? true);
   const create = useApiMutation("POST", "/api/parties", { success: t("Saved", "Enregistré"), onSuccess: onClose });
   const update = useApiMutation("PATCH", `/api/parties/${party?.id}`, { success: t("Saved", "Enregistré"), onSuccess: onClose });
-  const typeLabel = { customer: t("customer", "client"), supplier: t("supplier", "fournisseur"), agent: t("agent", "agent") }[party?.type ?? type];
+  const label = PARTY_LABELS[party?.type ?? type];
   const busy = create.isPending || update.isPending;
 
   function save() {
@@ -168,9 +171,9 @@ export function PartyDialog({ type, party, onClose }: { type: PartyType; party: 
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent className="max-h-[92vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{party ? t(`Edit ${typeLabel}`, `Modifier ${typeLabel}`) : t(`New ${typeLabel}`, `Nouveau ${typeLabel}`)}</DialogTitle>
+          <DialogTitle>{party ? t(`Edit ${label[0].toLowerCase()}`, `Modifier ${label[1].toLowerCase()}`) : t(label[2], label[3])}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
           <Field label={t("Name", "Nom")}>

@@ -20,6 +20,7 @@ import {
   periods,
   products,
   ROLES,
+  saleReturns,
   sales,
   settings,
   stockAdjustments,
@@ -526,8 +527,8 @@ export function registerRoutes(app: Express) {
       .select({
         container: containers,
         supplierName: parties.name,
-        lineCount: sql<number>`(select count(*)::int from container_lines l where l.container_id = ${containers.id})`,
-        expensesUsd: sql<string>`(select coalesce(sum(e.amount_usd), 0) from container_expenses e where e.container_id = ${containers.id})`,
+        lineCount: sql<number>`(select count(*)::int from container_lines l where l.container_id = "containers"."id")`,
+        expensesUsd: sql<string>`(select coalesce(sum(e.amount_usd), 0) from container_expenses e where e.container_id = "containers"."id")`,
       })
       .from(containers)
       .innerJoin(parties, eq(parties.id, containers.supplierId))
@@ -775,7 +776,50 @@ export function registerRoutes(app: Express) {
       .select({ count: sql<number>`count(*)::int`, total: sql<string>`coalesce(sum(${sales.total}), 0)`, credit: sql<string>`coalesce(sum(${sales.creditUsd}), 0)` })
       .from(sales)
       .where(and(eq(sales.date, date), eq(sales.status, "completed")));
-    res.json({ date, ...totals, byAccount: result.rows });
+    const [returns] = await db
+      .select({ count: sql<number>`count(*)::int`, total: sql<string>`coalesce(sum(${saleReturns.total}), 0)` })
+      .from(saleReturns)
+      .where(eq(saleReturns.date, date));
+    // Drawer count (not for cashiers, who do not see balances): every money account's opening
+    // balance, what came in and went out that day by kind of operation, and the expected closing.
+    let drawer: unknown = undefined;
+    if (req.user!.role !== "cashier") {
+      const moves = await db.execute<{ account_id: number; type: string; debit: string; credit: string; native: string | null }>(sql`
+        select l.account_id, j.type, sum(l.debit) as debit, sum(l.credit) as credit, sum(l.native_amount) as native
+        from journal_lines l join journals j on j.id = l.journal_id join accounts a on a.id = l.account_id
+        where a.is_money and j.date = ${date}
+        group by l.account_id, j.type
+      `);
+      const opening = await db.execute<{ account_id: number; usd: string; native: string | null }>(sql`
+        select l.account_id, sum(l.debit - l.credit) as usd, sum(l.native_amount) as native
+        from journal_lines l join journals j on j.id = l.journal_id join accounts a on a.id = l.account_id
+        where a.is_money and j.date < ${date}
+        group by l.account_id
+      `);
+      const moneyAccounts = await db.select().from(accounts).where(and(eq(accounts.isMoney, true), eq(accounts.active, true))).orderBy(asc(accounts.code));
+      drawer = moneyAccounts.map((a) => {
+        const cdf = a.currency === "CDF";
+        const o = opening.rows.find((r) => r.account_id === a.id);
+        const rows = moves.rows.filter((r) => r.account_id === a.id);
+        // For a CDF account the native amount is signed (+ in, − out).
+        const amountIn = (r: (typeof rows)[number]) => (cdf ? dec(r.native ?? 0).isPositive() ? dec(r.native ?? 0) : dec(0) : dec(r.debit));
+        const amountOut = (r: (typeof rows)[number]) => (cdf ? dec(r.native ?? 0).isNegative() ? dec(r.native ?? 0).abs() : dec(0) : dec(r.credit));
+        const openingAmt = dec(cdf ? o?.native ?? 0 : o?.usd ?? 0);
+        const totalIn = rows.reduce((s, r) => s.plus(amountIn(r)), dec(0));
+        const totalOut = rows.reduce((s, r) => s.plus(amountOut(r)), dec(0));
+        return {
+          accountId: a.id,
+          name: a.name,
+          currency: a.currency,
+          opening: openingAmt.toFixed(2),
+          totalIn: totalIn.toFixed(2),
+          totalOut: totalOut.toFixed(2),
+          closing: openingAmt.plus(totalIn).minus(totalOut).toFixed(2),
+          byType: rows.map((r) => ({ type: r.type, in: amountIn(r).toFixed(2), out: amountOut(r).toFixed(2) })),
+        };
+      });
+    }
+    res.json({ date, ...totals, returnsCount: returns.count, returnsTotal: dec(returns.total).toFixed(2), byAccount: result.rows, drawer });
   }));
   app.get("/api/audit", requireRole(), asyncHandler(async (_req, res) => {
     const rows = await db

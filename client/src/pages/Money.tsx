@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDownToLine, ArrowLeftRight, ArrowUpFromLine, HandCoins, Landmark, Send, Wallet } from "lucide-react";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
-import { MoneyAccountSelect, PartySelect, useMoneyAccounts, useRate } from "@/components/pickers";
+import { MoneyAccountSelect, PartySelect, useMoneyAccounts, useRate, useRateField } from "@/components/pickers";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -51,7 +51,7 @@ export default function Money() {
             {can("manager") && (
               <>
                 <Button variant="outline" onClick={() => setAction("party")}>
-                  <Send className="mr-1 h-4 w-4" /> {t("Pay supplier / agent", "Payer fournisseur / agent")}
+                  <Send className="mr-1 h-4 w-4" /> {t("Pay supplier / agent / employee", "Payer fournisseur / agent / employé")}
                 </Button>
                 <Button onClick={() => setAction("transfer")}>
                   <ArrowLeftRight className="mr-1 h-4 w-4" /> {t("Transfer / exchange", "Transfert / change")}
@@ -105,16 +105,19 @@ export default function Money() {
           <div className="grid gap-3 sm:grid-cols-3">
             <StatCard label={t("All money (book value)", "Toute la trésorerie (valeur comptable)")} value={usd(totalUsd.toFixed(2))} />
             <StatCard label={t("Customers owe us", "Les clients nous doivent")} value={usd(receivables?.balance ?? 0)} />
-            <StatCard label={t("We owe suppliers / agents", "Nous devons aux fournisseurs / agents")} value={usd(d(payables?.balance ?? 0).negated().toFixed(2))} tone={d(payables?.balance ?? 0).lt(0) ? "bad" : undefined} />
+            <StatCard label={t("We owe suppliers / agents / staff", "Nous devons aux fournisseurs / agents / employés")} value={usd(d(payables?.balance ?? 0).negated().toFixed(2))} tone={d(payables?.balance ?? 0).lt(0) ? "bad" : undefined} />
           </div>
         </>
       )}
 
+      {/* min-w-0: grid items default to min-width:auto, so a wide table would push the page sideways on a phone. */}
       <div className="grid gap-5 lg:grid-cols-3">
-        <div className="lg:col-span-2">
+        <div className="min-w-0 lg:col-span-2">
           <LedgerCard accountId={selected} onAccount={setSelected} />
         </div>
-        <RatesCard />
+        <div className="min-w-0">
+          <RatesCard />
+        </div>
       </div>
 
       {action === "transfer" && <TransferDialog onClose={() => setAction(null)} />}
@@ -125,23 +128,6 @@ export default function Money() {
 }
 
 // ---------------------------------------------------------------- Shared bits
-
-/** Rate state prefilled from the day's rate until the user edits it. */
-function useRateField(day: string) {
-  const rateQ = useRate(day);
-  const [rate, setRateState] = useState("");
-  const [touched, setTouched] = useState(false);
-  useEffect(() => {
-    if (!touched && rateQ.data?.cdfPerUsd) setRateState(d(rateQ.data.cdfPerUsd).toString());
-  }, [rateQ.data?.cdfPerUsd, touched]);
-  return {
-    rate,
-    setRate: (v: string) => {
-      setRateState(v);
-      setTouched(true);
-    },
-  };
-}
 
 function AmountFields({
   account,
@@ -184,10 +170,9 @@ function TransferDialog({ onClose }: { onClose: () => void }) {
   const [toAmount, setToAmount] = useState("");
   const [toTouched, setToTouched] = useState(false);
   const [memo, setMemo] = useState("");
-  const { rate, setRate } = useRateField(day);
+  const dayRate = useRateField(day);
   const anyCdf = from?.currency === "CDF" || to?.currency === "CDF";
   const sameCurrency = from && to && from.currency === to.currency;
-  const r = d(rate);
 
   // Same currency: the "to" amount follows the "from" amount until edited.
   useEffect(() => {
@@ -196,15 +181,21 @@ function TransferDialog({ onClose }: { onClose: () => void }) {
 
   const fa = d(fromAmount);
   const ta = d(toAmount);
-  const toUsd = (acc: Account | null, x: ReturnType<typeof d>) => (acc?.currency === "CDF" ? (r.gt(0) ? x.dividedBy(r) : null) : x);
-  const fromUsd = toUsd(from, fa);
-  const toUsdV = toUsd(to, ta);
+  // Rate of this exchange, from the two amounts (USD↔CDF only).
   const implied =
     from && to && from.currency !== to.currency && fa.gt(0) && ta.gt(0)
       ? from.currency === "CDF"
         ? fa.dividedBy(ta)
         : ta.dividedBy(fa)
       : null;
+  // The book rate follows the exchange's own rate (no gain/loss) until the user types one.
+  const followsImplied = !!implied && !dayRate.touched;
+  const rate = followsImplied ? implied.toDecimalPlaces(4).toString() : dayRate.rate;
+  const setRate = dayRate.setRate;
+  const r = d(rate);
+  const toUsd = (acc: Account | null, x: ReturnType<typeof d>) => (acc?.currency === "CDF" ? (r.gt(0) ? x.dividedBy(r) : null) : x);
+  const fromUsd = toUsd(from, fa);
+  const toUsdV = toUsd(to, ta);
   const diff = fromUsd && toUsdV ? fromUsd.toDecimalPlaces(2).minus(toUsdV.toDecimalPlaces(2)) : null;
 
   const m = useApiMutation<Record<string, unknown>>("POST", "/api/money/transfer", { success: t("Transfer recorded", "Transfert enregistré"), onSuccess: onClose });
@@ -251,7 +242,14 @@ function TransferDialog({ onClose }: { onClose: () => void }) {
             <Input inputMode="decimal" value={toAmount} onChange={(e) => { setToAmount(e.target.value); setToTouched(true); }} placeholder="0" />
           </Field>
           {anyCdf && (
-            <Field label={t("Book rate (CDF per 1 USD)", "Taux comptable (CDF pour 1 USD)")} hint={t("Used to value the franc side in dollars.", "Sert à valoriser le côté francs en dollars.")}>
+            <Field
+              label={t("Book rate (CDF per 1 USD)", "Taux comptable (CDF pour 1 USD)")}
+              hint={
+                followsImplied
+                  ? t("Same as the rate of this exchange: no exchange difference.", "Identique au taux de ce change : aucune différence de change.")
+                  : t("Used to value the franc side in dollars.", "Sert à valoriser le côté francs en dollars.")
+              }
+            >
               <Input inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} />
             </Field>
           )}
@@ -262,19 +260,28 @@ function TransferDialog({ onClose }: { onClose: () => void }) {
         {(implied || (diff && !diff.isZero())) && (
           <div className="space-y-1 rounded-md border bg-muted/40 p-3 text-sm">
             {implied && (
-              <div className="flex items-center justify-between gap-2">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <span>{t("Rate of this exchange", "Taux de ce change")}</span>
                 <span className="flex items-center gap-2">
                   <Num className="font-medium">{implied.toDecimalPlaces(2).toString()} CDF / USD</Num>
-                  <Button type="button" size="sm" variant="ghost" onClick={() => setRate(implied.toDecimalPlaces(4).toString())}>
-                    {t("Use as book rate", "Utiliser comme taux")}
-                  </Button>
+                  {!followsImplied && (
+                    <Button type="button" size="sm" variant="ghost" onClick={() => setRate(implied.toDecimalPlaces(4).toString())}>
+                      {t("Use as book rate", "Utiliser comme taux")}
+                    </Button>
+                  )}
                 </span>
               </div>
             )}
             {diff && !diff.isZero() && (
-              <div className="flex justify-between">
-                <span>{t("Exchange difference (booked automatically)", "Différence de change (comptabilisée automatiquement)")}</span>
+              <div className="flex flex-wrap justify-between gap-2">
+                <span>
+                  {implied && !followsImplied
+                    ? t(
+                        `Exchange difference: the book rate (${r.toDecimalPlaces(2).toString()}) differs from this exchange's rate`,
+                        `Différence de change : le taux comptable (${r.toDecimalPlaces(2).toString()}) diffère du taux de ce change`,
+                      )
+                    : t("Exchange difference (booked automatically)", "Différence de change (comptabilisée automatiquement)")}
+                </span>
                 <Num className={diff.isPositive() ? "text-destructive" : "text-green-700 dark:text-green-400"}>
                   {diff.isPositive() ? t("loss", "perte") : t("gain", "gain")} {usd(diff.abs().toFixed(2))}
                 </Num>
@@ -328,19 +335,19 @@ function PartyPaymentDialog({ kind, onClose }: { kind: "customer" | "party"; onC
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[92vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{kind === "customer" ? t("Customer payment", "Paiement d'un client") : t("Pay a supplier or agent", "Payer un fournisseur ou un agent")}</DialogTitle>
+          <DialogTitle>{kind === "customer" ? t("Customer payment", "Paiement d'un client") : t("Pay a supplier, agent or employee", "Payer un fournisseur, agent ou employé")}</DialogTitle>
           <DialogDescription>
             {kind === "customer"
               ? t("A customer pays back what they owe from credit sales.", "Un client rembourse ce qu'il doit sur ses ventes à crédit.")
-              : t("Pay a supplier invoice, a clearing agent, a transporter or an unpaid bill.", "Payer une facture fournisseur, un agent en douane, un transporteur ou une facture impayée.")}
+              : t("Pay a supplier invoice, a clearing agent, a transporter, an employee or an unpaid bill.", "Payer une facture fournisseur, un agent en douane, un transporteur, un employé ou une facture impayée.")}
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label={t("Date", "Date")}>
             <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
           </Field>
-          <Field label={kind === "customer" ? t("Customer", "Client") : t("Supplier or agent", "Fournisseur ou agent")}>
-            <PartySelect types={kind === "customer" ? ["customer"] : ["supplier", "agent"]} value={partyId} onChange={(id) => setPartyId(id)} />
+          <Field label={kind === "customer" ? t("Customer", "Client") : t("Supplier, agent or employee", "Fournisseur, agent ou employé")}>
+            <PartySelect types={kind === "customer" ? ["customer"] : ["supplier", "agent", "employee"]} value={partyId} onChange={(id) => setPartyId(id)} />
           </Field>
           {party && (
             <div className="rounded-md border bg-muted/40 p-3 text-sm sm:col-span-2">

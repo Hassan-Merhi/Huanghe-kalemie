@@ -14,6 +14,7 @@ import type { Tx } from "../db";
 import { badRequest, conflict, notFound } from "../errors";
 import { moneyLeg, postJournal, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd } from "./ledger";
 import { issueStock, linkMovementsToJournal, receiveStock } from "./stock";
+import { variantColour } from "./catalog";
 
 export async function getContainer(tx: Tx, id: number) {
   const [container] = await tx.select().from(containers).where(eq(containers.id, id));
@@ -188,7 +189,7 @@ export async function addExpense(tx: Tx, containerId: number, input: ContainerEx
   const journalId = await postJournal(tx, {
     date: input.date,
     type: "container_expense",
-    memo: `${container.number}: ${input.type}${input.description ? ` (${input.description})` : ""}`,
+    memo: `${container.number} : ${EXPENSE_TYPE_FR[input.type] ?? input.type}${input.description ? ` (${input.description})` : ""}`,
     sourceType: "container_expense",
     sourceId: expense.id,
     userId,
@@ -206,7 +207,7 @@ export async function removeExpense(tx: Tx, containerId: number, expenseId: numb
     .from(containerExpenses)
     .where(and(eq(containerExpenses.id, expenseId), eq(containerExpenses.containerId, containerId)));
   if (!expense) throw notFound("Expense");
-  if (expense.journalId) await reverseJournal(tx, expense.journalId, { date, userId, memo: "Container expense removed" });
+  if (expense.journalId) await reverseJournal(tx, expense.journalId, { date, userId, memo: "Frais de conteneur supprimé" });
   await tx.delete(containerExpenses).where(eq(containerExpenses.id, expenseId));
 }
 
@@ -262,7 +263,7 @@ export async function finalizeContainer(tx: Tx, containerId: number, offloadDate
   const journalId = await postJournal(tx, {
     date: offloadDate,
     type: "container_finalize",
-    memo: `Offload of container ${container.number}`,
+    memo: `Déchargement du conteneur ${container.number}`,
     sourceType: "container",
     sourceId: containerId,
     userId,
@@ -272,7 +273,7 @@ export async function finalizeContainer(tx: Tx, containerId: number, offloadDate
         accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.payables),
         credit: result.fobTotalUsd,
         partyId: container.supplierId,
-        memo: `Supplier invoice ${container.number}`,
+        memo: `Facture fournisseur ${container.number}`,
       },
       { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.goodsInTransit), credit: result.expensesTotalUsd },
     ],
@@ -303,16 +304,34 @@ export async function finalizeContainer(tx: Tx, containerId: number, offloadDate
     });
     if (line.tracksSerials) {
       const n = dec(line.quantity).toNumber();
-      await tx.insert(motorcycleUnits).values(
-        Array.from({ length: n }, () => ({
-          variantId: line.variantId,
-          locationId: container.locationId,
-          containerId,
-          status: "in_stock",
-        })),
-      );
+      // Reuse the records (and chassis numbers) kept from an earlier, reversed offload.
+      const kept = await tx
+        .select({ id: motorcycleUnits.id })
+        .from(motorcycleUnits)
+        .where(and(eq(motorcycleUnits.containerId, containerId), eq(motorcycleUnits.variantId, line.variantId), eq(motorcycleUnits.status, "reversed")))
+        .orderBy(asc(motorcycleUnits.id))
+        .limit(n);
+      if (kept.length) {
+        await tx
+          .update(motorcycleUnits)
+          .set({ status: "in_stock", locationId: container.locationId })
+          .where(inArray(motorcycleUnits.id, kept.map((k) => k.id)));
+      }
+      if (n > kept.length) {
+        await tx.insert(motorcycleUnits).values(
+          Array.from({ length: n - kept.length }, () => ({
+            variantId: line.variantId,
+            locationId: container.locationId,
+            containerId,
+            color: variantColour(line.attributes),
+            status: "in_stock",
+          })),
+        );
+      }
     }
   }
+
+  await tx.delete(motorcycleUnits).where(and(eq(motorcycleUnits.containerId, containerId), eq(motorcycleUnits.status, "reversed")));
 
   await tx
     .update(containers)
@@ -334,6 +353,17 @@ export async function finalizeContainer(tx: Tx, containerId: number, offloadDate
  * Undo an offload while all of its stock is still on hand. Stock is removed at today's average
  * cost; any difference from the landed value goes to stock adjustments.
  */
+const EXPENSE_TYPE_FR: Record<string, string> = {
+  freight: "Fret",
+  duties: "Droits de douane",
+  clearing: "Dédouanement",
+  transport: "Transport",
+  handling: "Manutention",
+  offload_labour: "Main-d'œuvre de déchargement",
+  insurance: "Assurance",
+  other: "Autre",
+};
+
 export async function reverseContainer(tx: Tx, containerId: number, date: string, userId: number) {
   const [container] = await tx.select().from(containers).where(eq(containers.id, containerId)).for("update");
   if (!container) throw notFound("Container");
@@ -363,6 +393,7 @@ export async function reverseContainer(tx: Tx, containerId: number, date: string
       variantId: line.variantId,
       locationId: container.locationId,
       qty: line.quantity,
+      value: line.landedTotalUsd ?? undefined,
       sourceType: "container_reversal",
       sourceId: containerId,
       userId,
@@ -374,7 +405,7 @@ export async function reverseContainer(tx: Tx, containerId: number, date: string
   const journalId = await postJournal(tx, {
     date,
     type: "container_reversal",
-    memo: `Reversal of container ${container.number} offload`,
+    memo: `Annulation du déchargement du conteneur ${container.number}`,
     sourceType: "container",
     sourceId: containerId,
     userId,
@@ -386,12 +417,13 @@ export async function reverseContainer(tx: Tx, containerId: number, date: string
         accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.stockAdjustments),
         credit: diff.isPositive() ? diff.toFixed(2) : 0,
         debit: diff.isNegative() ? diff.abs().toFixed(2) : 0,
-        memo: "Average cost difference on reversal",
+        memo: "Écart de coût à l'annulation (le stock de ces articles a changé depuis le déchargement)",
       },
     ],
   });
   await linkMovementsToJournal(tx, "container_reversal", containerId, journalId);
-  if (units.length) await tx.delete(motorcycleUnits).where(eq(motorcycleUnits.containerId, containerId));
+  // Keep the records so chassis numbers already typed come back when the container is offloaded again.
+  if (units.length) await tx.update(motorcycleUnits).set({ status: "reversed" }).where(eq(motorcycleUnits.containerId, containerId));
   await tx
     .update(containerLines)
     .set({ fobUsd: null, allocatedUsd: null, landedTotalUsd: null, landedUnitCost: null })

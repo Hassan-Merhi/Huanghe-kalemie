@@ -318,7 +318,8 @@ function NewProductDialog({ onClose, onCreated }: { onClose: () => void; onCreat
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[92vh] max-w-4xl overflow-y-auto">
+      {/* grid-cols-[minmax(0,1fr)]: let wide rows (the variants table) scroll inside instead of widening the dialog on a phone. */}
+      <DialogContent className="max-h-[92vh] max-w-4xl grid-cols-[minmax(0,1fr)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t("New item", "Nouvel article")}</DialogTitle>
           <DialogDescription>
@@ -326,7 +327,7 @@ function NewProductDialog({ onClose, onCreated }: { onClose: () => void; onCreat
           </DialogDescription>
         </DialogHeader>
 
-        <div className="grid gap-3 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label={t("Name", "Nom")} className="sm:col-span-2">
             <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder={t("e.g. Tyre, HJ125-8 motorcycle", "ex. Pneu, Moto HJ125-8")} />
           </Field>
@@ -359,17 +360,17 @@ function NewProductDialog({ onClose, onCreated }: { onClose: () => void; onCreat
           </Field>
         </div>
 
-        <div className="mt-2 space-y-3 rounded-lg border p-3">
+        <div className="mt-2 min-w-0 space-y-3 rounded-lg border p-3">
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="font-medium">{t("Variants (sizes, colours…)", "Variantes (tailles, couleurs…)")}</p>
-            <div className="flex rounded-md border p-0.5">
+            <div className="flex flex-wrap rounded-md border p-0.5">
               <Button type="button" size="sm" variant={mode === "none" ? "default" : "ghost"} onClick={() => setMode("none")}>{t("No variants", "Sans variantes")}</Button>
               <Button type="button" size="sm" variant={mode === "variants" ? "default" : "ghost"} onClick={() => setMode("variants")}>{t("Several variants", "Plusieurs variantes")}</Button>
             </div>
           </div>
 
           {mode === "none" ? (
-            <div className="grid gap-3 sm:grid-cols-4">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Field label={t("Sell price (USD)", "Prix de vente (USD)")}><Input inputMode="decimal" value={single.sellPrice} onChange={(e) => setSingle({ ...single, sellPrice: e.target.value })} /></Field>
               <Field label={t("Reorder level", "Seuil de réappro.")}><Input inputMode="decimal" value={single.reorderLevel} onChange={(e) => setSingle({ ...single, reorderLevel: e.target.value })} /></Field>
               <Field label={t("SKU (blank = auto)", "Code (vide = auto)")}><Input value={single.sku} onChange={(e) => setSingle({ ...single, sku: e.target.value })} /></Field>
@@ -406,7 +407,7 @@ function NewProductDialog({ onClose, onCreated }: { onClose: () => void; onCreat
               </div>
 
               {rows.length > 0 && (
-                <div className="overflow-x-auto">
+                <div className="max-w-full overflow-x-auto rounded-md border">
                   <Table>
                     <TableHeader>
                       <TableRow>
@@ -439,7 +440,7 @@ function NewProductDialog({ onClose, onCreated }: { onClose: () => void; onCreat
                   </Table>
                 </div>
               )}
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <Button
                   type="button"
                   variant="outline"

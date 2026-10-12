@@ -68,7 +68,7 @@ export default function Dashboard() {
               label={t("Gross profit this month", "Marge brute du mois")}
               value={usd(data.monthPnl.grossProfit)}
               tone={d(data.monthPnl.grossProfit).lt(0) ? "bad" : "good"}
-              sub={`${t("Sales", "Ventes")} ${usd(data.monthPnl.income)} − ${t("cost", "coût")} ${usd(data.monthPnl.costOfSales)}`}
+              sub={`${t("Income", "Recettes")} ${usd(data.monthPnl.income)} − ${t("cost", "coût")} ${usd(data.monthPnl.costOfSales)}`}
             />
             <StatCard label={t("Running costs this month", "Charges du mois")} value={usd(data.monthPnl.operatingExpenses)} sub={t("Rent, salaries, electricity…", "Loyer, salaires, électricité…")} />
             <StatCard label={t("Net profit this month", "Bénéfice net du mois")} value={usd(data.monthPnl.netProfit)} tone={d(data.monthPnl.netProfit).lt(0) ? "bad" : "good"} />

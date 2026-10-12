@@ -338,7 +338,8 @@ function SalesByItem() {
 
 // ---------------------------------------------------------------- (3) Daily cash
 
-interface Daily { date: string; count: number; total: string; credit: string; byAccount: { account_id: number; name: string; currency: string; usd: string; native: string }[] }
+interface DrawerRow { accountId: number; name: string; currency: string; opening: string; totalIn: string; totalOut: string; closing: string; byType: { type: string; in: string; out: string }[] }
+interface Daily { date: string; count: number; total: string; credit: string; returnsCount: number; returnsTotal: string; byAccount: { account_id: number; name: string; currency: string; usd: string; native: string }[]; drawer?: DrawerRow[] }
 
 function DailyCash() {
   const t = useT();
@@ -364,9 +365,10 @@ function DailyCash() {
             <CardTitle className="text-base">{t("Daily cash report", "Rapport de caisse du jour")} · {fmtDate(r.date)}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <StatCard label={t("Sales", "Ventes")} value={r.count} />
               <StatCard label={t("Total sold", "Total vendu")} value={usd(r.total)} />
+              <StatCard label={t("Returns", "Retours")} value={`− ${usd(r.returnsTotal)}`} sub={t(`${r.returnsCount} return(s)`, `${r.returnsCount} retour(s)`)} />
               <StatCard label={t("Sold on credit", "Vendu à crédit")} value={usd(r.credit)} />
             </div>
             <div className="overflow-x-auto">
@@ -399,8 +401,50 @@ function DailyCash() {
               </Table>
             </div>
             <p className="text-xs text-muted-foreground">
-              {t("Only sales payments are counted here (not customer debt payments or expenses).", "Seuls les paiements des ventes sont comptés ici (pas les remboursements clients ni les dépenses).")}
+              {t("Sales payments only. The drawer count below includes everything else.", "Paiements des ventes seulement. Le comptage de caisse ci-dessous inclut tout le reste.")}
             </p>
+            {r.drawer && (
+              <div className="space-y-2">
+                <h3 className="text-sm font-semibold">{t("Drawer count", "Comptage de caisse")}</h3>
+                <p className="text-xs text-muted-foreground">
+                  {t(
+                    "Opening balance, everything in and out that day (sales, refunds, debt payments, expenses, transfers…) and what should be in each box at closing. Count the cash and compare.",
+                    "Solde d'ouverture, tout ce qui est entré et sorti ce jour-là (ventes, remboursements, paiements de dettes, dépenses, transferts…) et ce qui doit se trouver dans chaque caisse à la fermeture. Comptez l'argent et comparez.",
+                  )}
+                </p>
+                <div className="overflow-x-auto">
+                  <Table>
+                    <TableHeader>
+                      <TableRow>
+                        <TableHead>{t("Box or account", "Caisse ou compte")}</TableHead>
+                        <TableHead className="text-right">{t("Opening", "Ouverture")}</TableHead>
+                        <TableHead className="text-right">{t("In", "Entrées")}</TableHead>
+                        <TableHead className="text-right">{t("Out", "Sorties")}</TableHead>
+                        <TableHead className="text-right">{t("Expected at closing", "Attendu à la fermeture")}</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {r.drawer.map((a) => (
+                        <TableRow key={a.accountId}>
+                          <TableCell>
+                            <span className="font-medium">{a.name}</span>
+                            {a.byType.length > 0 && (
+                              <span className="block text-xs text-muted-foreground">
+                                {a.byType.map((b) => `${journalTypeLabel(b.type, t)}: ${d(b.in).gt(0) ? `+${money(b.in, a.currency)}` : ""}${d(b.in).gt(0) && d(b.out).gt(0) ? " " : ""}${d(b.out).gt(0) ? `−${money(b.out, a.currency)}` : ""}`).join(" · ")}
+                              </span>
+                            )}
+                          </TableCell>
+                          <TableCell className="text-right"><Num>{money(a.opening, a.currency)}</Num></TableCell>
+                          <TableCell className="text-right"><Num>{money(a.totalIn, a.currency)}</Num></TableCell>
+                          <TableCell className="text-right"><Num>{money(a.totalOut, a.currency)}</Num></TableCell>
+                          <TableCell className="text-right font-semibold"><Num>{money(a.closing, a.currency)}</Num></TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
+                </div>
+              </div>
+            )}
           </CardContent>
         </Card>
       )}
@@ -668,8 +712,8 @@ function ManualJournalDialog({ onClose }: { onClose: () => void }) {
   const m = useApiMutation("POST", "/api/journals", { success: t("Entry saved", "Écriture enregistrée"), onSuccess: onClose });
   const set = (key: number, patch: Partial<DraftLine>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
   const acc = (id: number | null) => accounts.find((a) => a.id === id);
-  const partyTypes = (a?: Account): ("customer" | "supplier" | "agent")[] | null =>
-    a?.systemKey === "receivables" ? ["customer"] : a?.systemKey === "payables" ? ["supplier", "agent"] : null;
+  const partyTypes = (a?: Account): ("customer" | "supplier" | "agent" | "employee")[] | null =>
+    a?.systemKey === "receivables" ? ["customer"] : a?.systemKey === "payables" ? ["supplier", "agent", "employee"] : null;
   const isCdf = (a?: Account) => !!a && a.isMoney && a.currency === "CDF";
 
   const totalDebit = lines.reduce((s, l) => s.plus(d(l.debit).toDecimalPlaces(2)), d(0));

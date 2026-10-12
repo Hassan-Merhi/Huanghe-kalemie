@@ -185,7 +185,7 @@ function UnitDialog({ unit, onClose }: { unit: Unit; onClose: () => void }) {
   const m = useApiMutation("PATCH", `/api/units/${unit.id}`, { success: t("Motorcycle saved", "Moto enregistrée"), onSuccess: onClose });
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent className="max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{unit.chassisNo ? t("Edit motorcycle", "Modifier la moto") : t("Register chassis number", "Saisir le numéro de châssis")}</DialogTitle>
           <DialogDescription>{unit.productName}{unit.label !== "Standard" ? ` · ${unit.label}` : ""} · {unit.sku}</DialogDescription>

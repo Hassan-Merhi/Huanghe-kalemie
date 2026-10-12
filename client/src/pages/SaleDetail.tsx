@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import Decimal from "decimal.js";
 import { Link, useParams } from "wouter";
 import { ArrowLeft, Ban, Printer, Undo2 } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -53,7 +54,7 @@ function ReturnDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[92vh] max-w-2xl overflow-y-auto">
+      <DialogContent className="max-h-[92vh] max-w-2xl grid-cols-[minmax(0,1fr)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t("Return items", "Retour d'articles")} · {sale.number}</DialogTitle>
           <DialogDescription>{t("Items come back into stock at the cost they left with; the refund is the price they were sold for.", "Les articles reviennent en stock au coût de leur sortie ; le remboursement est le prix de vente.")}</DialogDescription>
@@ -145,7 +146,7 @@ function VoidDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }) 
   const m = useApiMutation<unknown, SaleFull>("POST", `/api/sales/${sale.id}/void`, { success: t("Sale cancelled", "Vente annulée"), onSuccess: onClose });
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent className="max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t("Cancel sale", "Annuler la vente")} {sale.number}</DialogTitle>
           <DialogDescription>
@@ -174,6 +175,43 @@ function VoidDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }) 
   );
 }
 
+/** Credit given on the sale, what returns took off the customer's account, and what is left. */
+function CreditRows({ credit, creditedReturns, creditLeft }: { credit: Decimal; creditedReturns: Decimal; creditLeft: Decimal }) {
+  const t = useT();
+  if (creditedReturns.isZero()) {
+    return (
+      <div className="flex justify-between gap-2 py-2 text-amber-600">
+        <span>{t("On credit", "À crédit")}</span>
+        <Num className="font-medium">{usd(credit.toFixed(2))}</Num>
+      </div>
+    );
+  }
+  return (
+    <>
+      <div className="flex justify-between gap-2 py-2 text-muted-foreground">
+        <span>{t("Given on credit", "Accordé à crédit")}</span>
+        <Num>{usd(credit.toFixed(2))}</Num>
+      </div>
+      <div className="flex justify-between gap-2 py-2 text-muted-foreground">
+        <span>{t("Returns taken off the customer's balance", "Retours déduits du solde du client")}</span>
+        <Num>−{usd(creditedReturns.toFixed(2))}</Num>
+      </div>
+      <div className={cn("flex justify-between gap-2 py-2", creditLeft.gt(0) && "text-amber-600")}>
+        <span>
+          {t("Still on credit", "Reste à crédit")}
+          <span className="block text-xs text-muted-foreground">{t("Later payments show on the customer's statement.", "Les paiements ultérieurs figurent sur le relevé du client.")}</span>
+        </span>
+        <Num className="font-medium">{usd(creditLeft.toFixed(2))}</Num>
+      </div>
+      {creditedReturns.gt(credit) && (
+        <p className="py-2 text-xs text-muted-foreground">
+          {t(`The extra ${usd(creditedReturns.minus(credit).toFixed(2))} is held for the customer on their balance.`, `Les ${usd(creditedReturns.minus(credit).toFixed(2))} en plus restent en avance sur le solde du client.`)}
+        </p>
+      )}
+    </>
+  );
+}
+
 export default function SaleDetail() {
   const t = useT();
   const { id } = useParams<{ id: string }>();
@@ -191,6 +229,11 @@ export default function SaleDetail() {
   const canReturn = !voided && sale.lines.some((l) => d(l.qty).gt(l.returnedQty));
   const profit = d(sale.total).minus(sale.cogs ?? 0);
   const returnedTotal = sale.returns.reduce((s, r) => s.plus(r.total), d(0));
+  // Returns with no refund account were taken off what the customer owes, so they reduce this sale's credit.
+  const creditedReturns = sale.returns.filter((r) => !r.refundAccountId).reduce((s, r) => s.plus(r.total), d(0));
+  const credit = d(sale.creditUsd);
+  const creditLeft = Decimal.max(credit.minus(creditedReturns), 0);
+  const creditReduced = credit.gt(0) && creditedReturns.gt(0);
 
   return (
     <div>
@@ -216,7 +259,14 @@ export default function SaleDetail() {
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {voided ? <Badge variant="destructive">{t("Cancelled", "Annulée")}</Badge> : <Badge variant="secondary">{t("Completed", "Terminée")}</Badge>}
         {sale.returns.length > 0 && <Badge variant="outline">{t("Has returns", "Avec retours")}</Badge>}
-        {d(sale.creditUsd).gt(0) && <Badge variant="outline">{t("On credit", "À crédit")} {usd(sale.creditUsd)}</Badge>}
+        {credit.gt(0) &&
+          (!creditReduced ? (
+            <Badge variant="outline">{t("On credit", "À crédit")} {usd(sale.creditUsd)}</Badge>
+          ) : creditLeft.gt(0) ? (
+            <Badge variant="outline">{t("Still on credit", "Reste à crédit")} {usd(creditLeft.toFixed(2))}</Badge>
+          ) : (
+            <Badge variant="outline">{t("Credit cleared by returns", "Crédit soldé par les retours")}</Badge>
+          ))}
       </div>
       {voided && (
         <p className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
@@ -225,8 +275,8 @@ export default function SaleDetail() {
       )}
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Total", "Total")}</p><p className="text-xl font-semibold tabular">{usd(sale.total)}</p>{d(sale.discount).gt(0) && <p className="text-xs text-muted-foreground">{t("Sale discount", "Remise")} {usd(sale.discount)}</p>}</CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Paid", "Payé")}</p><p className="text-xl font-semibold tabular">{usd(sale.paidUsd)}</p><p className="text-xs text-muted-foreground">{t("Credit", "Crédit")} {usd(sale.creditUsd)}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Total", "Total")}</p><p className="text-xl font-semibold tabular">{usd(sale.total)}</p>{d(sale.discount).gt(0) && <p className="text-xs text-muted-foreground">{t("Sale discount", "Remise")} {usd(sale.discount)}</p>}{returnedTotal.gt(0) && <p className="text-xs text-muted-foreground">{t("Returned", "Retourné")} −{usd(returnedTotal.toFixed(2))} · {t("net", "net")} {usd(d(sale.total).minus(returnedTotal).toFixed(2))}</p>}</CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Paid", "Payé")}</p><p className="text-xl font-semibold tabular">{usd(sale.paidUsd)}</p><p className="text-xs text-muted-foreground">{t("Credit", "Crédit")} {usd(sale.creditUsd)}{creditReduced ? ` · ${t("after returns", "après retours")} ${usd(creditLeft.toFixed(2))}` : ""}</p></CardContent></Card>
         <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Customer", "Client")}</p>{sale.customer ? <p className="font-medium">{sale.customer.name}</p> : <p className="text-muted-foreground">{t("Walk-in", "De passage")}</p>}{sale.customer?.phone && <p className="text-xs text-muted-foreground">{sale.customer.phone}</p>}</CardContent></Card>
         {showCost && sale.cogs !== undefined && (
           <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Cost / profit", "Coût / marge")}</p><p className="text-xl font-semibold tabular">{usd(profit.toFixed(2))}</p><p className="text-xs text-muted-foreground">{t("Cost of goods", "Coût des articles")} {usd(sale.cogs)}{returnedTotal.gt(0) ? ` · ${t("before returns", "avant retours")}` : ""}</p></CardContent></Card>
@@ -291,12 +341,12 @@ export default function SaleDetail() {
                     <Num className="font-medium">{paymentText(p)}</Num>
                   </div>
                 ))}
-                {d(sale.creditUsd).gt(0) && (
-                  <div className="flex justify-between gap-2 py-2 text-amber-600">
-                    <span>{t("On credit", "À crédit")}</span>
-                    <Num className="font-medium">{usd(sale.creditUsd)}</Num>
-                  </div>
-                )}
+                {credit.gt(0) && <CreditRows credit={credit} creditedReturns={creditedReturns} creditLeft={creditLeft} />}
+              </div>
+            )}
+            {sale.payments.length === 0 && creditReduced && (
+              <div className="mt-2 divide-y text-sm">
+                <CreditRows credit={credit} creditedReturns={creditedReturns} creditLeft={creditLeft} />
               </div>
             )}
           </CardContent>

@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "
 import { EmptyState, Field, Num, PageHeader } from "@/components/common";
 import { LocationSelect, MoneyAccountSelect, PartySelect, VariantSearch, useMoneyAccounts, useRate } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
+import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
 import { cdf, d, date as fmtDate, money, qty as fmtQty, todayLocal, usd, variantText } from "@/lib/format";
 import type { Account, MotorcycleUnit, Party, Settings, VariantRow } from "@/lib/types";
@@ -204,6 +205,7 @@ interface PayRow {
 }
 
 interface SaleBody {
+  date?: string;
   locationId: number;
   customerId?: number | null;
   discount?: string;
@@ -257,7 +259,11 @@ function ChassisPicker({ line, locationId, takenUnitIds, onChange }: { line: Car
 
 export default function POS() {
   const t = useT();
+  const { can } = useAuth();
   const today = todayLocal();
+  // Managers can enter a past sale (from the paper book after a power cut); cashiers sell today.
+  const [saleDate, setSaleDate] = useState(today);
+  const backDated = saleDate !== today;
   const [locationId, setLocationId] = useState<number | null>(null);
   const [lines, setLines] = useState<CartLine[]>([]);
   const [discount, setDiscount] = useState("");
@@ -272,7 +278,7 @@ export default function POS() {
   const searchBox = useRef<HTMLDivElement>(null);
 
   const { data: moneyAccounts } = useMoneyAccounts();
-  const rateQ = useRate(today);
+  const rateQ = useRate(saleDate);
   const dayRate = rateQ.data?.cdfPerUsd ?? "";
   const accById = useCallback((id: number | null) => moneyAccounts.find((a) => a.id === id), [moneyAccounts]);
 
@@ -388,6 +394,7 @@ export default function POS() {
   function submit() {
     if (!valid || mutation.isPending || !locationId) return;
     mutation.mutate({
+      date: backDated ? saleDate : undefined,
       locationId,
       customerId: customerId ?? null,
       discount: saleDiscount.gt(0) ? saleDiscount.toFixed(2) : undefined,
@@ -433,8 +440,21 @@ export default function POS() {
         title={t("Point of sale", "Caisse")}
         description={t("Scan or search items, take payment, print the receipt. F9 or Ctrl+Enter to finish.", "Scanner ou chercher les articles, encaisser, imprimer le reçu. F9 ou Ctrl+Entrée pour valider.")}
         actions={
-          <div className="w-48">
-            <LocationSelect value={locationId} onChange={setLocationId} />
+          <div className="flex flex-wrap items-center gap-2">
+            {can("manager") && (
+              <Input
+                type="date"
+                className={cn("w-40", backDated && "border-amber-500 text-amber-700 dark:text-amber-400")}
+                value={saleDate}
+                max={today}
+                onChange={(e) => setSaleDate(e.target.value || today)}
+                aria-label={t("Sale date", "Date de la vente")}
+                title={t("Sale date", "Date de la vente")}
+              />
+            )}
+            <div className="w-48">
+              <LocationSelect value={locationId} onChange={setLocationId} />
+            </div>
           </div>
         }
       />

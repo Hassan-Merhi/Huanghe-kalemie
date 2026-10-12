@@ -1,4 +1,4 @@
-import { and, asc, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, asc, eq, ilike, inArray, ne, or, sql } from "drizzle-orm";
 import { categories, locations, motorcycleUnits, products, stockLevels, variants } from "@shared/schema";
 import { dec } from "@shared/money";
 import type { Tx } from "../db";
@@ -181,7 +181,7 @@ export async function listProducts(tx: Tx, opts: { search?: string; categoryId?:
     conds.push(
       or(
         ilike(products.name, like),
-        sql`exists (select 1 from ${variants} v where v.product_id = ${products.id} and (v.sku ilike ${like} or v.barcode ilike ${like} or v.attributes::text ilike ${like}))`,
+        sql`exists (select 1 from ${variants} v where v.product_id = "products"."id" and (v.sku ilike ${like} or v.barcode ilike ${like} or v.attributes::text ilike ${like}))`,
       ),
     );
   }
@@ -189,11 +189,11 @@ export async function listProducts(tx: Tx, opts: { search?: string; categoryId?:
     .select({
       product: products,
       categoryName: categories.name,
-      variantCount: sql<number>`(select count(*)::int from ${variants} v where v.product_id = ${products.id})`,
-      stockQty: sql<string>`(select coalesce(sum(v.stock_qty), 0) from ${variants} v where v.product_id = ${products.id})`,
-      stockValue: sql<string>`(select coalesce(sum(v.stock_value), 0) from ${variants} v where v.product_id = ${products.id})`,
-      minPrice: sql<string>`(select min(v.sell_price) from ${variants} v where v.product_id = ${products.id})`,
-      maxPrice: sql<string>`(select max(v.sell_price) from ${variants} v where v.product_id = ${products.id})`,
+      variantCount: sql<number>`(select count(*)::int from ${variants} v where v.product_id = "products"."id")`,
+      stockQty: sql<string>`(select coalesce(sum(v.stock_qty), 0) from ${variants} v where v.product_id = "products"."id")`,
+      stockValue: sql<string>`(select coalesce(sum(v.stock_value), 0) from ${variants} v where v.product_id = "products"."id")`,
+      minPrice: sql<string>`(select min(v.sell_price) from ${variants} v where v.product_id = "products"."id")`,
+      maxPrice: sql<string>`(select max(v.sell_price) from ${variants} v where v.product_id = "products"."id")`,
     })
     .from(products)
     .leftJoin(categories, eq(categories.id, products.categoryId))
@@ -236,7 +236,7 @@ export async function searchVariants(tx: Tx, opts: { search?: string; locationId
       tracksSerials: products.tracksSerials,
       categoryName: categories.name,
       locationQty: opts.locationId
-        ? sql<string>`coalesce((select qty from ${stockLevels} s where s.variant_id = ${variants.id} and s.location_id = ${opts.locationId}), 0)`
+        ? sql<string>`coalesce((select qty from ${stockLevels} s where s.variant_id = "variants"."id" and s.location_id = ${opts.locationId}), 0)`
         : sql<string>`${variants.stockQty}`,
     })
     .from(variants)
@@ -260,7 +260,7 @@ export async function searchVariants(tx: Tx, opts: { search?: string; locationId
 export async function listUnits(tx: Tx, opts: { variantId?: number; status?: string; locationId?: number; search?: string }) {
   const conds = [];
   if (opts.variantId) conds.push(eq(motorcycleUnits.variantId, opts.variantId));
-  if (opts.status) conds.push(eq(motorcycleUnits.status, opts.status));
+  conds.push(opts.status ? eq(motorcycleUnits.status, opts.status) : ne(motorcycleUnits.status, "reversed"));
   if (opts.locationId) conds.push(eq(motorcycleUnits.locationId, opts.locationId));
   if (opts.search) {
     const like = `%${opts.search}%`;
@@ -306,4 +306,10 @@ export async function updateUnit(tx: Tx, id: number, input: { chassisNo?: string
     .where(eq(motorcycleUnits.id, id))
     .returning();
   return row;
+}
+
+/** The colour attribute of a variant (Colour, Color, Couleur…), used as the default colour of each bike. */
+export function variantColour(attributes: Record<string, string> | null | undefined): string | null {
+  for (const [k, v] of Object.entries(attributes ?? {})) if (/^(colou?r|couleur)$/i.test(k.trim()) && v) return v;
+  return null;
 }

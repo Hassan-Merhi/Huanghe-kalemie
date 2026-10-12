@@ -204,7 +204,7 @@ export async function reverseJournal(
   const reversalId = await postJournal(tx, {
     date: opts.date,
     type: opts.type ?? "reversal",
-    memo: opts.memo ?? `Reversal of ${original.number}`,
+    memo: opts.memo ?? `Contre-passation de ${original.number}`,
     sourceType: original.sourceType,
     sourceId: original.sourceId,
     reversesJournalId: original.id,

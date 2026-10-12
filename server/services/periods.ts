@@ -156,7 +156,7 @@ export async function closePeriod(tx: Tx, month: string, userId: number) {
   const journalId = await postJournal(tx, {
     date: preview.to,
     type: "period_close",
-    memo: `Close ${month}: profit split between partners`,
+    memo: `Clôture ${month} : partage du bénéfice entre associés`,
     sourceType: "period",
     sourceId: period.id,
     userId,
@@ -194,7 +194,7 @@ export async function reopenPeriod(tx: Tx, month: string, userId: number) {
     await reverseJournal(tx, period.closingJournalId, {
       date: monthRange(month).to,
       type: "period_close",
-      memo: `Reopen ${month}`,
+      memo: `Réouverture ${month}`,
       userId,
       skipPeriodCheck: true,
     });

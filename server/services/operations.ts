@@ -23,6 +23,7 @@ import {
   type PostLine,
 } from "./ledger";
 import { issueStock, linkMovementsToJournal, receiveStock } from "./stock";
+import { variantColour } from "./catalog";
 
 async function requireParty(tx: Tx, id: number | null | undefined, types: string[]) {
   if (!id) throw badRequest("Choose who this is for");
@@ -72,7 +73,7 @@ export async function createExpense(tx: Tx, input: ExpenseInput, userId: number)
     rate = leg.rate;
     creditLine = { accountId: leg.accountId, credit: usd, nativeAmount: leg.nativeAmount, rate: leg.rate };
   } else {
-    await requireParty(tx, input.payablePartyId, ["supplier", "agent"]);
+    await requireParty(tx, input.payablePartyId, ["supplier", "agent", "employee"]);
     usd = toUsd(currency, amount, input.rate);
     rate = currency === "CDF" ? dec(input.rate).toFixed(4) : null;
     creditLine = { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.payables), credit: usd, partyId: input.payablePartyId };
@@ -110,7 +111,7 @@ export async function voidExpense(tx: Tx, id: number, date: string, userId: numb
   const [expense] = await tx.select().from(expenses).where(eq(expenses.id, id)).for("update");
   if (!expense) throw notFound("Expense");
   if (expense.voidedAt) throw conflict("This expense is already cancelled");
-  const voidJournalId = await reverseJournal(tx, expense.journalId!, { date, userId, memo: `Expense cancelled: ${expense.description}` });
+  const voidJournalId = await reverseJournal(tx, expense.journalId!, { date, userId, memo: `Dépense annulée : ${expense.description}` });
   await tx.update(expenses).set({ voidedAt: new Date(), voidJournalId }).where(eq(expenses.id, id));
 }
 
@@ -139,12 +140,12 @@ export async function transferMoney(tx: Tx, input: TransferInput, userId: number
   return postJournal(tx, {
     date: input.date,
     type: "transfer",
-    memo: input.memo ?? "Transfer",
+    memo: input.memo ?? "Transfert",
     userId,
     lines: [
       { accountId: to.accountId, debit: to.usd, nativeAmount: to.nativeAmount, rate: to.rate },
       { accountId: from.accountId, credit: from.usd, nativeAmount: from.nativeAmount, rate: from.rate },
-      { accountId: fx, debit: diff.isPositive() ? diff : 0, credit: diff.isNegative() ? diff.abs() : 0, memo: "Exchange difference" },
+      { accountId: fx, debit: diff.isPositive() ? diff : 0, credit: diff.isNegative() ? diff.abs() : 0, memo: "Écart de change" },
     ],
   });
 }
@@ -165,7 +166,7 @@ export async function receiveFromCustomer(tx: Tx, input: PartyPaymentInput, user
   return postJournal(tx, {
     date: input.date,
     type: "customer_receipt",
-    memo: input.memo ?? `Payment from ${party.name}`,
+    memo: input.memo ?? `Paiement de ${party.name}`,
     userId,
     lines: [
       { accountId: leg.accountId, debit: leg.usd, nativeAmount: leg.nativeAmount, rate: leg.rate },
@@ -176,12 +177,12 @@ export async function receiveFromCustomer(tx: Tx, input: PartyPaymentInput, user
 
 /** Pay a supplier or agent (container invoice, clearing agent, transporter, unpaid bills). */
 export async function payParty(tx: Tx, input: PartyPaymentInput, userId: number) {
-  const party = await requireParty(tx, input.partyId, ["supplier", "agent"]);
+  const party = await requireParty(tx, input.partyId, ["supplier", "agent", "employee"]);
   const leg = await moneyLeg(tx, input);
   return postJournal(tx, {
     date: input.date,
     type: "supplier_payment",
-    memo: input.memo ?? `Payment to ${party.name}`,
+    memo: input.memo ?? `Paiement à ${party.name}`,
     userId,
     lines: [
       { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.payables), debit: leg.usd, partyId: party.id },
@@ -206,7 +207,7 @@ export async function partnerContribution(tx: Tx, input: PartnerMoneyInput, user
   return postJournal(tx, {
     date: input.date,
     type: "partner_contribution",
-    memo: input.memo ?? `Capital from ${partner.name}`,
+    memo: input.memo ?? `Apport en capital de ${partner.name}`,
     userId,
     lines: [
       { accountId: leg.accountId, debit: leg.usd, nativeAmount: leg.nativeAmount, rate: leg.rate },
@@ -222,7 +223,7 @@ export async function partnerWithdrawal(tx: Tx, input: PartnerMoneyInput, userId
   return postJournal(tx, {
     date: input.date,
     type: "partner_withdrawal",
-    memo: input.memo ?? `Withdrawal by ${partner.name}`,
+    memo: input.memo ?? `Retrait de ${partner.name}`,
     userId,
     lines: [
       { accountId: partner.currentAccountId, debit: leg.usd },
@@ -355,7 +356,7 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
           locationId: input.locationId,
           chassisNo: serials[i]?.chassisNo?.trim().toUpperCase() || null,
           engineNo: serials[i]?.engineNo?.trim().toUpperCase() || null,
-          color: serials[i]?.color || null,
+          color: serials[i]?.color || variantColour(v.variant.attributes),
           status: "in_stock",
         }));
         await tx.insert(motorcycleUnits).values(rows);
@@ -398,10 +399,10 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
     sourceId: adj.id,
     userId,
     lines: [
-      { accountId: inventory, debit: gains, memo: "Stock added" },
+      { accountId: inventory, debit: gains, memo: "Stock ajouté" },
       { accountId: offset, credit: gains },
       { accountId: offset, debit: losses },
-      { accountId: inventory, credit: losses, memo: "Stock removed" },
+      { accountId: inventory, credit: losses, memo: "Stock retiré" },
     ],
   });
   await linkMovementsToJournal(tx, "adjustment", adj.id, journalId);

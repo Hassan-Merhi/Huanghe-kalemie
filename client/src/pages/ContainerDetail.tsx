@@ -438,8 +438,8 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
         <CardTitle className="text-lg">{t("Items in the container", "Articles du conteneur")}</CardTitle>
         <CardDescription>
           {t(
-            `Unit prices are in the supplier invoice currency (${c.currency}). Weight and volume are only needed if you split a cost by weight or volume.`,
-            `Les prix unitaires sont dans la devise de la facture fournisseur (${c.currency}). Le poids et le volume ne servent que si vous répartissez un frais par poids ou par volume.`,
+            `Unit prices are in the supplier invoice currency (${c.currency}). Weight and volume are totals for the whole line (all units together), only needed if you split a cost by weight or volume.`,
+            `Les prix unitaires sont dans la devise de la facture fournisseur (${c.currency}). Le poids et le volume sont des totaux pour toute la ligne (toutes les unités ensemble) et ne servent que si vous répartissez un frais par poids ou par volume.`,
           )}
         </CardDescription>
       </CardHeader>
@@ -469,8 +469,8 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                   <TableHead>{t("Item", "Article")}</TableHead>
                   <TableHead className="text-right">{t("Quantity", "Quantité")}</TableHead>
                   <TableHead className="text-right">{t(`Unit price (${c.currency})`, `Prix unitaire (${c.currency})`)}</TableHead>
-                  <TableHead className="text-right">{t("Weight kg", "Poids kg")}</TableHead>
-                  <TableHead className="text-right">{t("Volume m³", "Volume m³")}</TableHead>
+                  <TableHead className="text-right">{t("Total weight (kg)", "Poids total (kg)")}</TableHead>
+                  <TableHead className="text-right">{t("Total volume (m³)", "Volume total (m³)")}</TableHead>
                   <TableHead className="text-right">{t("Purchase value", "Valeur d'achat")}</TableHead>
                   {editable && <TableHead className="w-10" />}
                 </TableRow>
@@ -494,10 +494,10 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                             <Input className="ml-auto w-28 text-right" inputMode="decimal" value={r.unitPrice} placeholder="0.00" onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
                           </TableCell>
                           <TableCell className="text-right">
-                            <Input className="ml-auto w-20 text-right" inputMode="decimal" value={r.weightKg} onChange={(e) => update(r.key, { weightKg: e.target.value })} />
+                            <Input className="ml-auto w-24 text-right" inputMode="decimal" aria-label={t("Total weight for the line (kg)", "Poids total de la ligne (kg)")} placeholder={t("total kg", "kg total")} value={r.weightKg} onChange={(e) => update(r.key, { weightKg: e.target.value })} />
                           </TableCell>
                           <TableCell className="text-right">
-                            <Input className="ml-auto w-20 text-right" inputMode="decimal" value={r.volumeCbm} onChange={(e) => update(r.key, { volumeCbm: e.target.value })} />
+                            <Input className="ml-auto w-24 text-right" inputMode="decimal" aria-label={t("Total volume for the line (m³)", "Volume total de la ligne (m³)")} placeholder={t("total m³", "m³ total")} value={r.volumeCbm} onChange={(e) => update(r.key, { volumeCbm: e.target.value })} />
                           </TableCell>
                         </>
                       ) : (
@@ -721,7 +721,7 @@ function DeleteExpenseDialog({ c, e, onClose }: { c: ContainerFull; e: Container
   });
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent>
+      <DialogContent className="max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t("Delete this cost?", "Supprimer ce frais ?")}</DialogTitle>
           <DialogDescription>
@@ -1112,13 +1112,13 @@ function ReverseButton({ c }: { c: ContainerFull }) {
         <Undo2 className="mr-1 h-4 w-4" /> {t("Reverse offload", "Annuler le déchargement")}
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent>
+        <DialogContent className="max-h-[92vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t("Reverse the offload?", "Annuler le déchargement ?")}</DialogTitle>
             <DialogDescription>
               {t(
-                "The container's stock is taken back out, the supplier debt is cancelled and the container can be edited again. This only works while all of its stock is still on hand (no motorcycle sold).",
-                "Le stock du conteneur est retiré, la dette fournisseur est annulée et le conteneur redevient modifiable. Possible seulement si tout son stock est encore en magasin (aucune moto vendue).",
+                "The container's stock is taken back out, the supplier debt is cancelled and the container can be edited again. This only works while all of its stock is still on hand (no motorcycle sold). Chassis numbers already entered are kept and reused when the container is offloaded again.",
+                "Le stock du conteneur est retiré, la dette fournisseur est annulée et le conteneur redevient modifiable. Possible seulement si tout son stock est encore en magasin (aucune moto vendue). Les numéros de châssis déjà saisis sont conservés et réutilisés au prochain déchargement.",
               )}
             </DialogDescription>
           </DialogHeader>
