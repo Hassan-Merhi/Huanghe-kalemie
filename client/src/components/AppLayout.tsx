@@ -74,7 +74,7 @@ const NAV: { en: string; fr: string; items: NavItem[] }[] = [
     items: [
       { href: "/expenses", en: "Expenses", fr: "Dépenses", icon: Wallet, roles: ["manager", "partner"] },
       { href: "/money", en: "Cash and accounts", fr: "Caisse et comptes", icon: HandCoins, roles: ["manager", "partner"] },
-      { href: "/contacts", en: "Customers and suppliers", fr: "Clients et fournisseurs", icon: Users, roles: ["manager", "partner"] },
+      { href: "/contacts", en: "Customers and suppliers", fr: "Clients et fournisseurs", icon: Users, roles: ["manager", "cashier", "partner"] },
       { href: "/partners", en: "Partners and months", fr: "Associés et mois", icon: PieChart, roles: ["manager", "partner"] },
       { href: "/reports", en: "Reports", fr: "Rapports", icon: BarChart3, roles: ["manager", "partner"] },
     ],

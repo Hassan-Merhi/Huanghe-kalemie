@@ -34,7 +34,7 @@ export function BalanceWords({ balance, className }: { balance: string; classNam
 
 export default function Contacts() {
   const t = useT();
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const [, navigate] = useLocation();
   const [type, setType] = useState<PartyType>("customer");
   const [search, setSearch] = useState("");
@@ -72,8 +72,8 @@ export default function Contacts() {
         <Tabs value={type} onValueChange={(v) => setType(v as PartyType)}>
           <TabsList>
             <TabsTrigger value="customer">{labels.customer}</TabsTrigger>
-            <TabsTrigger value="supplier">{labels.supplier}</TabsTrigger>
-            <TabsTrigger value="agent">{labels.agent}</TabsTrigger>
+            {user?.role !== "cashier" && <TabsTrigger value="supplier">{labels.supplier}</TabsTrigger>}
+            {user?.role !== "cashier" && <TabsTrigger value="agent">{labels.agent}</TabsTrigger>}
           </TabsList>
         </Tabs>
         <div className="relative sm:w-72">

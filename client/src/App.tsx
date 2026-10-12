@@ -59,8 +59,8 @@ function Routes() {
         {R("/containers/:id", ["manager", "partner"], ContainerDetail)}
         {R("/expenses", ["manager", "partner"], Expenses)}
         {R("/money", ["manager", "partner"], Money)}
-        {R("/contacts", ["manager", "partner"], Contacts)}
-        {R("/contacts/:id", ["manager", "partner"], ContactDetail)}
+        {R("/contacts", ["manager", "cashier", "partner"], Contacts)}
+        {R("/contacts/:id", ["manager", "cashier", "partner"], ContactDetail)}
         {R("/partners", ["manager", "partner"], Partners)}
         {R("/reports", ["manager", "partner"], Reports)}
         {R("/settings", [], Settings)}
