@@ -5,7 +5,9 @@
   "type": "module",
   "license": "UNLICENSED",
   "description": "Huanghe Motors Kalemie: catalog with variants, containers with landed cost, POS, double-entry accounting and 75/25 partner settlement",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "dev": "NODE_ENV=development tsx server/index.ts",
     "build": "vite build && esbuild server/index.ts --platform=node --packages=external --bundle --format=esm --outfile=dist/index.js",
@@ -14,7 +16,7 @@
     "test": "vitest run",
     "test:unit": "vitest run tests/unit",
     "db:push": "drizzle-kit push --force",
-    "seed": "tsx server/seed.ts"
+    "seed:demo": "tsx server/demo.ts"
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.7",

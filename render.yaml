@@ -1,0 +1,34 @@
+services:
+  - type: web
+    name: huanghe-kalemie
+    runtime: node
+    plan: starter
+    buildCommand: npm ci && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NODE_VERSION
+        value: "22"
+      - key: DATABASE_URL
+        fromDatabase:
+          name: huanghe-kalemie-db
+          property: connectionString
+      - key: DATABASE_SSL
+        value: "false"
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: OWNER_USERNAME
+        value: admin
+      - key: OWNER_PASSWORD
+        sync: false
+      - key: PARTNER_A_NAME
+        sync: false
+      - key: PARTNER_B_NAME
+        sync: false
+
+databases:
+  - name: huanghe-kalemie-db
+    plan: basic-256mb
+    databaseName: huanghe_kalemie

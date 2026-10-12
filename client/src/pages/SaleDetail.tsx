@@ -1,5 +1,334 @@
-import { PageHeader } from "@/components/common";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Link, useParams } from "wouter";
+import { ArrowLeft, Ban, Printer, Undo2 } from "lucide-react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { EmptyState, ErrorText, Field, Loading, Num, PageHeader } from "@/components/common";
+import { MoneyAccountSelect, useMoneyAccounts, useRate } from "@/components/pickers";
+import { useApiMutation } from "@/hooks/useApiMutation";
+import { useAuth } from "@/lib/auth";
+import { useT } from "@/lib/i18n";
+import { cdf, d, date as fmtDate, qty as fmtQty, todayLocal, usd, variantText } from "@/lib/format";
+import type { Account } from "@/lib/types";
+import { cn } from "@/lib/utils";
+import { ReceiptDialog, paymentText, type SaleFull } from "./POS";
+
+function ReturnDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }) {
+  const t = useT();
+  const today = todayLocal();
+  const [date, setDate] = useState(today);
+  const [qtys, setQtys] = useState<Record<number, string>>({});
+  const [reason, setReason] = useState("");
+  const [mode, setMode] = useState<"account" | "credit">(d(sale.creditUsd).gt(0) && sale.customerId ? "credit" : "account");
+  const [accountId, setAccountId] = useState<number | null>(null);
+  const [account, setAccount] = useState<Account | null>(null);
+  const [rate, setRate] = useState<string | null>(null);
+  const rateQ = useRate(date);
+  const effRate = rate ?? rateQ.data?.cdfPerUsd ?? "";
+  const m = useApiMutation<unknown, SaleFull>("POST", `/api/sales/${sale.id}/returns`, { success: t("Return recorded", "Retour enregistré"), onSuccess: onClose });
+
+  const chosen = sale.lines
+    .map((l) => ({ line: l, q: d(qtys[l.id]), max: d(l.qty).minus(l.returnedQty) }))
+    .filter((x) => x.q.gt(0));
+  const tooMany = chosen.some((x) => x.q.gt(x.max));
+  const refund = chosen.reduce((s, x) => s.plus(d(x.line.lineTotal).times(x.q).dividedBy(x.line.qty).toDecimalPlaces(2)), d(0));
+  const isCdf = mode === "account" && account?.currency === "CDF";
+  const valid = chosen.length > 0 && !tooMany && reason.trim() && (mode === "credit" ? !!sale.customerId : !!accountId && (!isCdf || d(effRate).gt(0)));
+
+  function save() {
+    m.mutate({
+      date,
+      reason: reason.trim(),
+      refundAccountId: mode === "account" ? accountId : null,
+      ...(isCdf ? { rate: d(effRate).toString() } : {}),
+      lines: chosen.map((x) => ({ saleLineId: x.line.id, qty: x.q.toString() })),
+    });
+  }
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[92vh] max-w-2xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{t("Return items", "Retour d'articles")} · {sale.number}</DialogTitle>
+          <DialogDescription>{t("Items come back into stock at the cost they left with; the refund is the price they were sold for.", "Les articles reviennent en stock au coût de leur sortie ; le remboursement est le prix de vente.")}</DialogDescription>
+        </DialogHeader>
+        <div className="space-y-4">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t("Item", "Article")}</TableHead>
+                  <TableHead className="text-right">{t("Can return", "Retournable")}</TableHead>
+                  <TableHead className="w-28 text-right">{t("Qty back", "Qté retour")}</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sale.lines.map((l) => {
+                  const max = d(l.qty).minus(l.returnedQty);
+                  const over = d(qtys[l.id]).gt(max);
+                  return (
+                    <TableRow key={l.id}>
+                      <TableCell>
+                        <p className="font-medium">{l.productName} {variantText(l.attributes)}</p>
+                        <p className="text-xs text-muted-foreground">{l.sku}{l.chassisNo ? ` · ${l.chassisNo}` : ""} · {usd(l.lineTotal)}</p>
+                      </TableCell>
+                      <TableCell className="text-right"><Num>{fmtQty(max.toString())}</Num></TableCell>
+                      <TableCell className="text-right">
+                        <Input
+                          className={cn("h-8 text-right", over && "border-destructive")}
+                          inputMode="decimal"
+                          disabled={max.lte(0)}
+                          placeholder="0"
+                          value={qtys[l.id] ?? ""}
+                          onChange={(e) => setQtys((q) => ({ ...q, [l.id]: e.target.value }))}
+                        />
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          </div>
+          {tooMany && <p className="text-sm text-destructive">{t("You cannot return more than was sold.", "Impossible de retourner plus que la quantité vendue.")}</p>}
+          <div className="grid gap-3 sm:grid-cols-2">
+            <Field label={t("Date", "Date")}><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+            <Field label={t("Reason", "Motif")}><Input value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
+          </div>
+          <div className="space-y-2">
+            <p className="text-sm font-medium">{t("Refund", "Remboursement")}</p>
+            <div className="flex flex-wrap gap-2">
+              <Button type="button" size="sm" variant={mode === "account" ? "default" : "outline"} onClick={() => setMode("account")}>{t("Pay back from a money account", "Rendre l'argent depuis un compte")}</Button>
+              {sale.customerId && (
+                <Button type="button" size="sm" variant={mode === "credit" ? "default" : "outline"} onClick={() => setMode("credit")}>{t("Reduce what the customer owes", "Réduire la dette du client")}</Button>
+              )}
+            </div>
+            {mode === "account" ? (
+              <div className="grid gap-3 sm:grid-cols-2">
+                <Field label={t("Paid from", "Payé depuis")}>
+                  <MoneyAccountSelect value={accountId} onChange={(id, a) => { setAccountId(id); setAccount(a); }} />
+                </Field>
+                {isCdf && (
+                  <Field label={t("Rate (CDF per 1 USD)", "Taux (CDF pour 1 USD)")} hint={`${t("Pay out", "À rendre")}: ${cdf(refund.times(d(effRate)).toDecimalPlaces(2).toString())}`}>
+                    <Input inputMode="decimal" value={effRate} onChange={(e) => setRate(e.target.value)} />
+                  </Field>
+                )}
+              </div>
+            ) : (
+              <p className="text-sm text-muted-foreground">{t(`The refund comes off ${sale.customer?.name ?? "the customer"}'s balance.`, `Le remboursement est déduit du solde de ${sale.customer?.name ?? "client"}.`)}</p>
+            )}
+          </div>
+          <div className="flex justify-between rounded-md bg-muted p-3 font-medium">
+            <span>{t("Refund total", "Total remboursé")}</span>
+            <Num>{usd(refund.toFixed(2))}</Num>
+          </div>
+          <ErrorText error={m.error} />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
+          <Button onClick={save} disabled={!valid || m.isPending}>{t("Record return", "Enregistrer le retour")}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function VoidDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }) {
+  const t = useT();
+  const [reason, setReason] = useState("");
+  const [date, setDate] = useState(todayLocal());
+  const m = useApiMutation<unknown, SaleFull>("POST", `/api/sales/${sale.id}/void`, { success: t("Sale cancelled", "Vente annulée"), onSuccess: onClose });
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent>
+        <DialogHeader>
+          <DialogTitle>{t("Cancel sale", "Annuler la vente")} {sale.number}</DialogTitle>
+          <DialogDescription>
+            {t(
+              "The whole sale is undone: items go back into stock at the cost they left with, motorcycles become available again, and the money and any credit are reversed in the books.",
+              "Toute la vente est annulée : les articles reviennent en stock au coût de leur sortie, les motos redeviennent disponibles, et l'argent et le crédit sont contre-passés dans la comptabilité.",
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        {sale.returns.length > 0 && (
+          <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+            {t("This sale already has returns, so it cannot be cancelled. Return the remaining items instead.", "Cette vente a déjà des retours, elle ne peut pas être annulée. Retournez plutôt les articles restants.")}
+          </p>
+        )}
+        <div className="space-y-3">
+          <Field label={t("Reason", "Motif")}><Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
+          <Field label={t("Date", "Date")}><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
+          <ErrorText error={m.error} />
+        </div>
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>{t("Keep the sale", "Garder la vente")}</Button>
+          <Button variant="destructive" disabled={!reason.trim() || m.isPending} onClick={() => m.mutate({ reason: reason.trim(), date })}>{t("Cancel sale", "Annuler la vente")}</Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
 
 export default function SaleDetail() {
-  return <PageHeader title="SaleDetail" />;
+  const t = useT();
+  const { id } = useParams<{ id: string }>();
+  const { can, user } = useAuth();
+  const showCost = user?.role !== "cashier";
+  const q = useQuery<SaleFull>({ queryKey: [`/api/sales/${id}`] });
+  const { data: moneyAccounts } = useMoneyAccounts();
+  const accName = (accId: number | null) => moneyAccounts.find((a) => a.id === accId)?.name ?? (accId ? `#${accId}` : "");
+  const [dialog, setDialog] = useState<null | "receipt" | "return" | "void">(null);
+
+  if (q.isLoading) return <Loading />;
+  if (q.error || !q.data) return <ErrorText error={q.error ?? t("Sale not found", "Vente introuvable")} />;
+  const sale = q.data;
+  const voided = sale.status === "voided";
+  const canReturn = !voided && sale.lines.some((l) => d(l.qty).gt(l.returnedQty));
+  const profit = d(sale.total).minus(sale.cogs ?? 0);
+  const returnedTotal = sale.returns.reduce((s, r) => s.plus(r.total), d(0));
+
+  return (
+    <div>
+      <Link href="/sales" className="mb-2 inline-flex items-center text-sm text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="mr-1 h-4 w-4" /> {t("Sales", "Ventes")}
+      </Link>
+      <PageHeader
+        title={`${t("Sale", "Vente")} ${sale.number}`}
+        description={`${fmtDate(sale.date)}${sale.customer ? ` · ${sale.customer.name}` : ` · ${t("Walk-in customer", "Client de passage")}`}`}
+        actions={
+          <>
+            <Button variant="outline" onClick={() => setDialog("receipt")}><Printer className="mr-1 h-4 w-4" /> {t("Print receipt", "Imprimer le reçu")}</Button>
+            {can("manager") && canReturn && (
+              <Button variant="outline" onClick={() => setDialog("return")}><Undo2 className="mr-1 h-4 w-4" /> {t("Return items", "Retour d'articles")}</Button>
+            )}
+            {can("manager") && !voided && (
+              <Button variant="destructive" onClick={() => setDialog("void")}><Ban className="mr-1 h-4 w-4" /> {t("Cancel sale", "Annuler la vente")}</Button>
+            )}
+          </>
+        }
+      />
+
+      <div className="mb-4 flex flex-wrap items-center gap-2">
+        {voided ? <Badge variant="destructive">{t("Cancelled", "Annulée")}</Badge> : <Badge variant="secondary">{t("Completed", "Terminée")}</Badge>}
+        {sale.returns.length > 0 && <Badge variant="outline">{t("Has returns", "Avec retours")}</Badge>}
+        {d(sale.creditUsd).gt(0) && <Badge variant="outline">{t("On credit", "À crédit")} {usd(sale.creditUsd)}</Badge>}
+      </div>
+      {voided && (
+        <p className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
+          {t("Cancelled", "Annulée")}{sale.voidedAt ? ` ${fmtDate(String(sale.voidedAt))}` : ""}: {sale.voidReason}
+        </p>
+      )}
+
+      <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Total", "Total")}</p><p className="text-xl font-semibold tabular">{usd(sale.total)}</p>{d(sale.discount).gt(0) && <p className="text-xs text-muted-foreground">{t("Sale discount", "Remise")} {usd(sale.discount)}</p>}</CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Paid", "Payé")}</p><p className="text-xl font-semibold tabular">{usd(sale.paidUsd)}</p><p className="text-xs text-muted-foreground">{t("Credit", "Crédit")} {usd(sale.creditUsd)}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Customer", "Client")}</p>{sale.customer ? <p className="font-medium">{sale.customer.name}</p> : <p className="text-muted-foreground">{t("Walk-in", "De passage")}</p>}{sale.customer?.phone && <p className="text-xs text-muted-foreground">{sale.customer.phone}</p>}</CardContent></Card>
+        {showCost && sale.cogs !== undefined && (
+          <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Cost / profit", "Coût / marge")}</p><p className="text-xl font-semibold tabular">{usd(profit.toFixed(2))}</p><p className="text-xs text-muted-foreground">{t("Cost of goods", "Coût des articles")} {usd(sale.cogs)}{returnedTotal.gt(0) ? ` · ${t("before returns", "avant retours")}` : ""}</p></CardContent></Card>
+        )}
+      </div>
+
+      <Card className="mb-4">
+        <CardHeader className="p-4 pb-2"><CardTitle className="text-base">{t("Items", "Articles")}</CardTitle></CardHeader>
+        <CardContent className="p-0">
+          <div className="overflow-x-auto">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>{t("Item", "Article")}</TableHead>
+                  <TableHead>SKU</TableHead>
+                  <TableHead>{t("Chassis / engine", "Châssis / moteur")}</TableHead>
+                  <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
+                  <TableHead className="text-right">{t("Returned", "Retourné")}</TableHead>
+                  <TableHead className="text-right">{t("Price", "Prix")}</TableHead>
+                  <TableHead className="text-right">{t("Discount", "Remise")}</TableHead>
+                  <TableHead className="text-right">{t("Total", "Total")}</TableHead>
+                  {showCost && <TableHead className="text-right">{t("Cost", "Coût")}</TableHead>}
+                  {showCost && <TableHead className="text-right">{t("Profit", "Marge")}</TableHead>}
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {sale.lines.map((l) => (
+                  <TableRow key={l.id}>
+                    <TableCell><span className="font-medium">{l.productName}</span> <span className="text-muted-foreground">{variantText(l.attributes)}</span></TableCell>
+                    <TableCell className="font-mono text-xs">{l.sku}</TableCell>
+                    <TableCell className="text-xs">{l.chassisNo ?? ""}{l.engineNo ? <span className="block text-muted-foreground">{l.engineNo}</span> : null}</TableCell>
+                    <TableCell className="text-right"><Num>{fmtQty(l.qty)}</Num></TableCell>
+                    <TableCell className="text-right"><Num className={cn(d(l.returnedQty).gt(0) ? "text-amber-600" : "text-muted-foreground")}>{fmtQty(l.returnedQty)}</Num></TableCell>
+                    <TableCell className="text-right"><Num>{usd(l.unitPrice)}</Num></TableCell>
+                    <TableCell className="text-right"><Num>{d(l.lineDiscount).gt(0) ? usd(l.lineDiscount) : ""}</Num></TableCell>
+                    <TableCell className="text-right"><Num className="font-medium">{usd(l.lineTotal)}</Num></TableCell>
+                    {showCost && <TableCell className="text-right"><Num>{l.cogs !== undefined ? usd(l.cogs) : ""}</Num></TableCell>}
+                    {showCost && <TableCell className="text-right"><Num>{l.cogs !== undefined ? usd(d(l.lineTotal).minus(l.cogs).toFixed(2)) : ""}</Num></TableCell>}
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+          {d(sale.discount).gt(0) && (
+            <p className="px-4 py-2 text-xs text-muted-foreground">{t("Line discounts include each line's share of the sale discount.", "Les remises par ligne incluent la part de la remise sur la vente.")}</p>
+          )}
+          {sale.note && <p className="px-4 pb-3 text-sm"><span className="text-muted-foreground">{t("Note", "Note")}:</span> {sale.note}</p>}
+        </CardContent>
+      </Card>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader className="p-4 pb-2"><CardTitle className="text-base">{t("Payments", "Paiements")}</CardTitle></CardHeader>
+          <CardContent className="p-4 pt-0">
+            {sale.payments.length === 0 ? (
+              <EmptyState title={t("No payment: fully on credit", "Aucun paiement : tout à crédit")} />
+            ) : (
+              <div className="divide-y text-sm">
+                {sale.payments.map((p) => (
+                  <div key={p.id} className="flex justify-between gap-2 py-2">
+                    <span>{accName(p.accountId)}{p.rate ? <span className="text-xs text-muted-foreground"> · {t("rate", "taux")} {fmtQty(p.rate)}</span> : null}</span>
+                    <Num className="font-medium">{paymentText(p)}</Num>
+                  </div>
+                ))}
+                {d(sale.creditUsd).gt(0) && (
+                  <div className="flex justify-between gap-2 py-2 text-amber-600">
+                    <span>{t("On credit", "À crédit")}</span>
+                    <Num className="font-medium">{usd(sale.creditUsd)}</Num>
+                  </div>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+        <Card>
+          <CardHeader className="p-4 pb-2"><CardTitle className="text-base">{t("Returns", "Retours")}</CardTitle></CardHeader>
+          <CardContent className="p-4 pt-0">
+            {sale.returns.length === 0 ? (
+              <p className="text-sm text-muted-foreground">{t("No returns.", "Aucun retour.")}</p>
+            ) : (
+              <div className="divide-y text-sm">
+                {sale.returns.map((r) => (
+                  <div key={r.id} className="py-2">
+                    <div className="flex justify-between gap-2">
+                      <span className="font-medium">{r.number} · {fmtDate(r.date)}</span>
+                      <Num className="font-medium">{usd(r.total)}</Num>
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      {r.refundAccountId ? `${t("Refunded from", "Remboursé depuis")} ${accName(r.refundAccountId)}` : t("Taken off the customer's balance", "Déduit du solde du client")}
+                      {r.reason ? ` · ${r.reason}` : ""}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
+      {dialog === "receipt" && <ReceiptDialog sale={sale} onClose={() => setDialog(null)} />}
+      {dialog === "return" && <ReturnDialog sale={sale} onClose={() => setDialog(null)} />}
+      {dialog === "void" && <VoidDialog sale={sale} onClose={() => setDialog(null)} />}
+    </div>
+  );
 }

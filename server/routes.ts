@@ -336,7 +336,9 @@ export function registerRoutes(app: Express) {
 
   app.get("/api/parties", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
     const q = z.object({ type: z.enum(PARTY_TYPES).optional(), search: z.string().optional() }).parse(req.query);
-    let rows = await reports.partyBalances(db, q.type);
+    // Cashiers work with customers only.
+    const type = req.user!.role === "cashier" ? "customer" : q.type;
+    let rows = await reports.partyBalances(db, type);
     if (q.search) {
       const s = q.search.toLowerCase();
       rows = rows.filter((r) => r.name.toLowerCase().includes(s) || (r.phone ?? "").includes(s));
@@ -357,7 +359,9 @@ export function registerRoutes(app: Express) {
     res.json(row);
   }));
   app.get("/api/parties/:id/statement", requireRole(...READERS, "cashier"), asyncHandler(async (req, res) => {
-    res.json(await reports.partyStatement(db, paramId(req)));
+    const statement = await reports.partyStatement(db, paramId(req));
+    if (req.user!.role === "cashier" && statement.party.type !== "customer") throw notFound("Customer");
+    res.json(statement);
   }));
 
   // ---------------------------------------------------------------- Accounts & journals
