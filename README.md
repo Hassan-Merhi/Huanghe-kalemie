@@ -92,6 +92,8 @@ The integration tests reset the database they are given, so point them at an emp
 
 `render.yaml` sets up a web service and a PostgreSQL database. Set `OWNER_PASSWORD` (and partner names) in the Render dashboard before the first deploy.
 
+For a demo server, set `DEMO_DATA=true`: on start, an empty shop (no items, no sales) is filled with sample items, a container, sales and expenses. It does nothing once real items exist. Remove it before using the server for the real shop.
+
 ## Project layout
 
 ```

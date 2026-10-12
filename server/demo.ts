@@ -18,11 +18,14 @@ function day(offset: number) {
   return d.toISOString().slice(0, 10);
 }
 
-async function main() {
-  await runMigrations(db);
-  await db.transaction((tx) => ensureSetup(tx, { ownerPassword: process.env.OWNER_PASSWORD ?? "admin12345" }));
-  const [{ count }] = await db.select({ count: sql<number>`count(*)::int` }).from(sales);
-  if (count > 0) throw new Error("This database already has sales; demo data is only for an empty one.");
+/** True when the shop has no items and no sales yet, so demo data cannot mix with real records. */
+export async function isEmptyShop(): Promise<boolean> {
+  const [{ count }] = await db.select({ count: sql<number>`(select count(*) from sales) + (select count(*) from products)`.mapWith(Number) }).from(sql`(select 1) as one`);
+  return count === 0;
+}
+
+/** Adds the demo items, container, sales and expenses. Call only on an empty shop. */
+export async function seedDemo(): Promise<void> {
 
   const accs = await db.select().from(accounts);
   const acc = (key: string) => accs.find((a) => a.systemKey === key || a.code === key)!.id;
@@ -145,10 +148,19 @@ async function main() {
     await ops.createExpense(tx, { date: day(12), accountId: acc("6070"), description: "Generator fuel", amount: "196000", rate: "2800", paidFromAccountId: acc("cash_cdf") }, userId);
   });
   console.log("Demo data created.");
+}
+
+async function main() {
+  await runMigrations(db);
+  await db.transaction((tx) => ensureSetup(tx, { ownerPassword: process.env.OWNER_PASSWORD ?? "admin12345" }));
+  if (!(await isEmptyShop())) throw new Error("This database already has items or sales; demo data is only for an empty one.");
+  await seedDemo();
   process.exit(0);
 }
 
-main().catch((e) => {
-  console.error(e);
-  process.exit(1);
-});
+if (process.argv[1]?.endsWith("demo.ts")) {
+  main().catch((e) => {
+    console.error(e);
+    process.exit(1);
+  });
+}
