@@ -1,4 +1,4 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray } from "drizzle-orm";
 import {
   accounts,
   motorcycleUnits,
@@ -211,7 +211,8 @@ export async function getSale(tx: Tx, id: number) {
     .innerJoin(variants, eq(variants.id, saleLines.variantId))
     .innerJoin(products, eq(products.id, variants.productId))
     .leftJoin(motorcycleUnits, eq(motorcycleUnits.id, saleLines.unitId))
-    .where(eq(saleLines.saleId, id));
+    .where(eq(saleLines.saleId, id))
+    .orderBy(asc(saleLines.id));
   const payments = await tx.select().from(salePayments).where(eq(salePayments.saleId, id));
   const returns = await tx.select().from(saleReturns).where(eq(saleReturns.saleId, id));
   const [customer] = sale.customerId ? await tx.select().from(parties).where(eq(parties.id, sale.customerId)) : [];
@@ -339,7 +340,8 @@ export async function returnSale(tx: Tx, saleId: number, input: ReturnInput, use
     const [acc] = await tx.select().from(accounts).where(eq(accounts.id, input.refundAccountId));
     if (!acc) throw badRequest("Refund account not found", "Compte de remboursement introuvable");
     // Refund the USD value; for a CDF box, pay it out at the given rate.
-    const native = acc.currency === "CDF" ? cents(total.times(dec(input.rate, "rate"))) : total;
+    // Francs are handed back in whole notes and coins.
+    const native = acc.currency === "CDF" ? total.times(dec(input.rate, "rate")).toDecimalPlaces(0) : total;
     const leg = await moneyLeg(tx, { accountId: input.refundAccountId, amount: native, rate: input.rate });
     refundLine = { accountId: leg.accountId, credit: total, nativeAmount: leg.nativeAmount, rate: leg.rate };
   } else {

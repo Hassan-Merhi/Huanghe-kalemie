@@ -279,7 +279,7 @@ export default function POS() {
 
   const { data: moneyAccounts } = useMoneyAccounts();
   const rateQ = useRate(saleDate);
-  const dayRate = rateQ.data?.cdfPerUsd ?? "";
+  const dayRate = rateQ.data?.cdfPerUsd ? d(rateQ.data.cdfPerUsd).toString() : "";
   const accById = useCallback((id: number | null) => moneyAccounts.find((a) => a.id === id), [moneyAccounts]);
 
   // Changing location: the chosen motorcycles are at the old location, so pick again.
@@ -347,8 +347,9 @@ export default function POS() {
   for (const p of pays) {
     const acc = accById(p.accountId);
     if (!acc && d(p.amount).gt(0)) problems.push(t("Choose the account for each payment", "Choisir le compte pour chaque paiement"));
-    if (acc && d(p.amount).lte(0)) problems.push(t("Each payment needs an amount", "Chaque paiement doit avoir un montant"));
-    if (acc?.currency === "CDF" && d(p.rate ?? dayRate).lte(0)) problems.push(t("Enter the exchange rate for CDF payments", "Saisir le taux pour les paiements en CDF"));
+    // An empty payment row is simply ignored when the sale is saved.
+    if (acc && d(p.amount).lt(0)) problems.push(t("A payment cannot be negative", "Un paiement ne peut pas être négatif"));
+    if (acc?.currency === "CDF" && d(p.amount).gt(0) && d(p.rate ?? dayRate).lte(0)) problems.push(t("Enter the exchange rate for CDF payments", "Saisir le taux pour les paiements en CDF"));
   }
   if (overpaid) problems.push(t("Payments are more than the total. Enter only the money kept, not the change.", "Les paiements dépassent le total. Saisir seulement l'argent gardé, pas la monnaie rendue."));
   if (credit.gt(0) && !customerId) problems.push(t("Choose a customer to sell the rest on credit", "Choisir un client pour vendre le reste à crédit"));

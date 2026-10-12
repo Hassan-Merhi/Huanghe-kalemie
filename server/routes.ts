@@ -60,6 +60,11 @@ import { transferStock } from "./services/stock";
 const STAFF = ["manager"] as const; // owner is always allowed
 const READERS = ["manager", "partner"] as const;
 const SELLERS = ["manager", "cashier"] as const;
+
+/** A sale as cashiers see it: no cost of goods sold. */
+function withoutCost<S extends { cogs?: unknown; lines: { cogs?: unknown }[] }>(sale: S) {
+  return { ...sale, cogs: undefined, lines: sale.lines.map(({ cogs, ...l }) => l) };
+}
 const EVERYONE = ["manager", "cashier", "partner"] as const;
 
 const uid = (req: Request) => req.user!.id;
@@ -658,7 +663,7 @@ export function registerRoutes(app: Express) {
   app.get("/api/sales/:id", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
     const sale = await salesSvc.getSale(db, paramId(req));
     if (req.user!.role === "cashier") {
-      res.json({ ...sale, cogs: undefined, lines: sale.lines.map(({ cogs, ...l }) => l) });
+      res.json(withoutCost(sale));
       return;
     }
     res.json(sale);
@@ -678,7 +683,7 @@ export function registerRoutes(app: Express) {
     // Cashiers always sell today.
     const date = req.user!.role === "cashier" || !body.date ? todayIso() : body.date;
     const sale = await db.transaction((tx) => salesSvc.createSale(tx, { ...body, date }, uid(req)));
-    res.status(201).json(sale);
+    res.status(201).json(req.user!.role === "cashier" ? withoutCost(sale) : sale);
   }));
   app.post("/api/sales/:id/void", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = z.object({ reason: z.string().min(1).max(300), date: isoDate.optional() }).parse(req.body);

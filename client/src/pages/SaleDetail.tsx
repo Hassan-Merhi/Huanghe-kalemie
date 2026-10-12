@@ -115,7 +115,7 @@ function ReturnDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }
                   <MoneyAccountSelect value={accountId} onChange={(id, a) => { setAccountId(id); setAccount(a); }} />
                 </Field>
                 {isCdf && (
-                  <Field label={t("Rate (CDF per 1 USD)", "Taux (CDF pour 1 USD)")} hint={`${t("Pay out", "À rendre")}: ${cdf(refund.times(d(effRate)).toDecimalPlaces(2).toString())}`}>
+                  <Field label={t("Rate (CDF per 1 USD)", "Taux (CDF pour 1 USD)")} hint={`${t("Pay out", "À rendre")}: ${cdf(refund.times(d(effRate)).toDecimalPlaces(0).toString())}`}>
                     <Input inputMode="decimal" value={effRate} onChange={(e) => setRate(e.target.value)} />
                   </Field>
                 )}
@@ -278,7 +278,7 @@ export default function SaleDetail() {
         <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Total", "Total")}</p><p className="text-xl font-semibold tabular">{usd(sale.total)}</p>{d(sale.discount).gt(0) && <p className="text-xs text-muted-foreground">{t("Sale discount", "Remise")} {usd(sale.discount)}</p>}{returnedTotal.gt(0) && <p className="text-xs text-muted-foreground">{t("Returned", "Retourné")} −{usd(returnedTotal.toFixed(2))} · {t("net", "net")} {usd(d(sale.total).minus(returnedTotal).toFixed(2))}</p>}</CardContent></Card>
         <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Paid", "Payé")}</p><p className="text-xl font-semibold tabular">{usd(sale.paidUsd)}</p><p className="text-xs text-muted-foreground">{t("Credit", "Crédit")} {usd(sale.creditUsd)}{creditReduced ? ` · ${t("after returns", "après retours")} ${usd(creditLeft.toFixed(2))}` : ""}</p></CardContent></Card>
         <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Customer", "Client")}</p>{sale.customer ? <p className="font-medium">{sale.customer.name}</p> : <p className="text-muted-foreground">{t("Walk-in", "De passage")}</p>}{sale.customer?.phone && <p className="text-xs text-muted-foreground">{sale.customer.phone}</p>}</CardContent></Card>
-        {showCost && sale.cogs !== undefined && (
+        {showCost && sale.cogs !== undefined && !voided && (
           <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Cost / profit", "Coût / marge")}</p><p className="text-xl font-semibold tabular">{usd(profit.toFixed(2))}</p><p className="text-xs text-muted-foreground">{t("Cost of goods", "Coût des articles")} {usd(sale.cogs)}{returnedTotal.gt(0) ? ` · ${t("before returns", "avant retours")}` : ""}</p></CardContent></Card>
         )}
       </div>
