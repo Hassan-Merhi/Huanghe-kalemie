@@ -54,7 +54,7 @@ function DailySummary() {
           <div className="mt-2 grid gap-4 sm:grid-cols-[auto_1fr]">
             <div>
               <p className="text-3xl font-semibold tabular">{usd(data.total)}</p>
-              {d(data.credit).gt(0) && <p className="text-sm text-amber-600">{t("of which on credit", "dont à crédit")} {usd(data.credit)}</p>}
+              {d(data.credit).gt(0) && <p className="text-sm text-amber-600 dark:text-amber-400">{t("of which on credit", "dont à crédit")} {usd(data.credit)}</p>}
             </div>
             <div className="flex flex-wrap gap-2 sm:justify-end">
               {data.byAccount.length === 0 && <p className="text-sm text-muted-foreground">{t("No money received yet today.", "Aucun encaissement aujourd'hui.")}</p>}
@@ -149,7 +149,7 @@ export default function Sales() {
                       <TableCell>{r.customerName ?? <span className="text-muted-foreground">{t("Walk-in", "De passage")}</span>}</TableCell>
                       <TableCell className="text-right"><Num className={cn(voided && "line-through")}>{usd(r.total)}</Num></TableCell>
                       <TableCell className="text-right"><Num>{usd(r.paidUsd)}</Num></TableCell>
-                      <TableCell className="text-right"><Num className={cn(d(r.creditUsd).gt(0) && !voided && "text-amber-600")}>{d(r.creditUsd).gt(0) ? usd(r.creditUsd) : ""}</Num></TableCell>
+                      <TableCell className="text-right"><Num className={cn(d(r.creditUsd).gt(0) && !voided && "text-amber-600 dark:text-amber-400")}>{d(r.creditUsd).gt(0) ? usd(r.creditUsd) : ""}</Num></TableCell>
                       {showCost && <TableCell className="text-right"><Num>{r.cogs !== undefined ? usd(r.cogs) : ""}</Num></TableCell>}
                       {showCost && <TableCell className="text-right"><Num>{r.cogs !== undefined ? usd(d(r.total).minus(r.cogs).toFixed(2)) : ""}</Num></TableCell>}
                       <TableCell className="whitespace-nowrap text-muted-foreground">{r.cashier ?? ""}</TableCell>

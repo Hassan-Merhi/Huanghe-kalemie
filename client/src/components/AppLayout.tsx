@@ -7,12 +7,10 @@ import {
   HandCoins,
   LayoutDashboard,
   LogOut,
-  Moon,
   Package,
   Receipt,
   Settings as SettingsIcon,
   ShoppingCart,
-  Sun,
   Users,
   Wallet,
   Bike,
@@ -37,7 +35,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useAuth, type Role } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
-import { useTheme } from "@/components/ThemeProvider";
+import { ThemeToggle } from "@/components/ThemeProvider";
 import { api, queryClient } from "@/lib/api";
 
 interface NavItem {
@@ -126,7 +124,6 @@ function NavLinks() {
 export function AppLayout({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const { lang, setLang, t } = useI18n();
-  const { theme, toggleTheme } = useTheme();
 
   async function logout() {
     await api("POST", "/api/auth/logout");
@@ -159,9 +156,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
           <Button variant="ghost" size="sm" onClick={() => setLang(lang === "fr" ? "en" : "fr")} aria-label="Language">
             {lang === "fr" ? "EN" : "FR"}
           </Button>
-          <Button variant="ghost" size="icon" onClick={toggleTheme} aria-label="Theme">
-            {theme === "dark" ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
-          </Button>
+          <ThemeToggle />
           <Button variant="ghost" size="sm" onClick={logout}>
             <LogOut className="mr-1 h-4 w-4" /> {t("Sign out", "Déconnexion")}
           </Button>

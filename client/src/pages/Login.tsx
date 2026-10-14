@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Field, ErrorText } from "@/components/common";
+import { ThemeToggle } from "@/components/ThemeProvider";
 import { api, queryClient } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
 import type { User } from "@/lib/auth";
@@ -31,7 +32,10 @@ export default function Login() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-muted/40 p-4">
+    <div className="relative flex min-h-screen items-center justify-center bg-muted/40 p-4">
+      <div className="absolute right-3 top-3">
+        <ThemeToggle />
+      </div>
       <Card className="w-full max-w-sm">
         <CardHeader>
           <CardTitle>

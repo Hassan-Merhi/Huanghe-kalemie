@@ -347,15 +347,44 @@ function DailyCash() {
   const q = useQuery<Daily>({ queryKey: ["/api/reports/daily", { date: day }], enabled: validDate(day) });
   const r = q.data;
   const paidUsd = (r?.byAccount ?? []).reduce((s, a) => s.plus(a.usd), d(0));
+
+  function exportCsv() {
+    if (!r) return;
+    const rows: unknown[][] = [
+      [t("Daily cash report", "Rapport de caisse du jour"), r.date],
+      [t("Sales", "Ventes"), r.count],
+      [t("Total sold USD", "Total vendu USD"), r.total],
+      [t("Returns", "Retours"), r.returnsCount, r.returnsTotal],
+      [t("Sold on credit USD", "Vendu à crédit USD"), r.credit],
+      [],
+      [t("Received into", "Reçu dans"), t("Currency", "Devise"), t("Amount (account currency)", "Montant (devise du compte)"), t("USD value", "Valeur USD")],
+      ...r.byAccount.map((a) => [a.name, a.currency, a.native, a.usd]),
+      [t("Total received", "Total reçu"), "USD", "", paidUsd.toFixed(2)],
+    ];
+    if (r.drawer) {
+      rows.push([]);
+      rows.push([t("Drawer count", "Comptage de caisse")]);
+      rows.push([t("Box or account", "Caisse ou compte"), t("Currency", "Devise"), t("Opening", "Ouverture"), t("In", "Entrées"), t("Out", "Sorties"), t("Expected at closing", "Attendu à la fermeture")]);
+      for (const a of r.drawer) {
+        rows.push([a.name, a.currency, a.opening, a.totalIn, a.totalOut, a.closing]);
+        for (const b of a.byType) rows.push([`  ${journalTypeLabel(b.type, t)}`, a.currency, "", b.in, b.out, ""]);
+      }
+    }
+    downloadCsv(`daily-cash_${r.date}.csv`, rows);
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <Field label={t("Day", "Jour")}>
           <Input type="date" className="w-44" value={day} onChange={(e) => setDay(e.target.value)} />
         </Field>
-        <Button variant="outline" size="sm" onClick={() => window.print()} disabled={!r}>
-          <Printer className="mr-1 h-4 w-4" /> {t("Print", "Imprimer")}
-        </Button>
+        <div className="flex gap-2">
+          <CsvButton onClick={exportCsv} disabled={!r} />
+          <Button variant="outline" size="sm" onClick={() => window.print()} disabled={!r}>
+            <Printer className="mr-1 h-4 w-4" /> {t("Print", "Imprimer")}
+          </Button>
+        </div>
       </div>
       <ErrorText error={q.error} />
       {q.isLoading && <Loading />}
@@ -555,6 +584,20 @@ function Journals() {
   const rows = q.data ?? [];
   const toggle = (id: number) => setOpen((s) => { const n = new Set(s); if (n.has(id)) n.delete(id); else n.add(id); return n; });
 
+  function exportCsv() {
+    const out: unknown[][] = [[
+      t("Date", "Date"), t("No.", "N°"), t("Type", "Type"), t("Memo", "Libellé"),
+      t("Code", "Code"), t("Account", "Compte"), t("Party", "Tiers"),
+      t("Debit USD", "Débit USD"), t("Credit USD", "Crédit USD"), t("Currency", "Devise"), t("Native amount", "Montant en devise"), t("Rate", "Taux"), t("Line memo", "Libellé de ligne"),
+    ]];
+    for (const j of rows) {
+      for (const l of j.lines) {
+        out.push([j.date, j.number, journalTypeLabel(j.type, t), j.memo ?? "", l.accountCode, l.accountName, l.partyName ?? "", l.debit, l.credit, l.currency, l.nativeAmount ?? "", l.rate ?? "", l.memo ?? ""]);
+      }
+    }
+    downloadCsv(`journal_${range.from}_${range.to}${type === "all" ? "" : `_${type}`}.csv`, out);
+  }
+
   return (
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
@@ -570,11 +613,14 @@ function Journals() {
             </Select>
           </Field>
         </div>
-        {can() && (
-          <Button onClick={() => setAdding(true)}>
-            <Plus className="mr-1 h-4 w-4" /> {t("Manual entry", "Écriture manuelle")}
-          </Button>
-        )}
+        <div className="flex flex-wrap items-center gap-2">
+          <CsvButton onClick={exportCsv} disabled={!rows.length} />
+          {can() && (
+            <Button onClick={() => setAdding(true)}>
+              <Plus className="mr-1 h-4 w-4" /> {t("Manual entry", "Écriture manuelle")}
+            </Button>
+          )}
+        </div>
       </div>
       <ErrorText error={q.error} />
       {q.isLoading ? (
@@ -852,13 +898,31 @@ function Ledger() {
   const q = useQuery<LedgerData>({ queryKey: [`/api/accounts/${accountId}/ledger`, { from: range.from, to: range.to }], enabled: ok });
   const L = q.data;
   const cdfAcc = L?.account.currency === "CDF" && L.account.isMoney;
+
+  function exportCsv() {
+    if (!L) return;
+    const head = [t("Date", "Date"), t("No.", "N°"), t("Type", "Type"), t("Details", "Détails"), t("Party", "Tiers"), t("Debit USD", "Débit USD"), t("Credit USD", "Crédit USD"), t("Balance USD", "Solde USD")];
+    if (cdfAcc) head.push("CDF", t("CDF balance", "Solde CDF"));
+    const rows: unknown[][] = [
+      [`${L.account.code} · ${L.account.name}`],
+      head,
+      [L.from, "", "", t("Opening balance", "Solde d'ouverture"), "", "", "", L.openingBalance, ...(cdfAcc ? ["", L.openingNative ?? ""] : [])],
+      ...L.rows.map((r) => [r.date, r.number, journalTypeLabel(r.type, t), r.lineMemo || r.memo || "", r.partyName ?? "", r.debit, r.credit, r.balance, ...(cdfAcc ? [r.nativeAmount ?? "", r.nativeBalance ?? ""] : [])]),
+      [L.to, "", "", t("Closing balance", "Solde de clôture"), "", "", "", L.closingBalance, ...(cdfAcc ? ["", L.closingNative ?? ""] : [])],
+    ];
+    downloadCsv(`ledger_${L.account.code}_${L.from}_${L.to}.csv`, rows);
+  }
+
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-end gap-3">
-        <Field label={t("Account", "Compte")} className="w-full sm:w-72">
-          <AccountSelect value={accountId} onChange={setAccountId} />
-        </Field>
-        <RangePicker range={range} />
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div className="flex flex-wrap items-end gap-3">
+          <Field label={t("Account", "Compte")} className="w-full sm:w-72">
+            <AccountSelect value={accountId} onChange={setAccountId} />
+          </Field>
+          <RangePicker range={range} />
+        </div>
+        <CsvButton onClick={exportCsv} disabled={!L} />
       </div>
       <ErrorText error={q.error} />
       {q.isLoading && <Loading />}

@@ -166,8 +166,11 @@ export function ReceiptDialog({ sale, onClose, extraAction }: { sale: SaleFull; 
       <Dialog open onOpenChange={(o) => !o && onClose()}>
         <DialogContent className="max-h-[92vh] max-w-sm overflow-y-auto">
           <DialogHeader><DialogTitle>{t("Receipt", "Reçu")} {sale.number}</DialogTitle></DialogHeader>
-          <div className="rounded-md border bg-white p-1">
-            <SaleReceipt sale={sale} />
+          {/* Paper preview: the receipt itself stays black on white in every theme. */}
+          <div className="rounded-md border bg-muted p-3">
+            <div className="mx-auto max-w-[80mm] shadow-sm ring-1 ring-black/5">
+              <SaleReceipt sale={sale} />
+            </div>
           </div>
           <DialogFooter className="gap-2 sm:gap-0">
             <Button variant="outline" onClick={() => window.print()}><Printer className="mr-1 h-4 w-4" /> {t("Print", "Imprimer")}</Button>
@@ -315,6 +318,9 @@ export default function POS() {
   const subtotal = lines.reduce((s, l) => s.plus(lineAmount(l)), d(0));
   const saleDiscount = c2(d(discount));
   const total = subtotal.minus(saleDiscount);
+  // Shown like the receipt: subtotal before any discount, then all discounts together.
+  const grossSubtotal = lines.reduce((s, l) => s.plus(c2(d(l.qty).times(d(l.unitPrice)))), d(0));
+  const totalDiscount = grossSubtotal.minus(total);
 
   const payUsd = (p: PayRow) => {
     const acc = accById(p.accountId);
@@ -542,7 +548,7 @@ export default function POS() {
               <Field label={t("Customer (optional, required for credit)", "Client (facultatif, obligatoire pour le crédit)")}>
                 <PartySelect types={["customer"]} value={customerId} onChange={(id, p) => { setCustomerId(id); setCustomer(p ?? null); }} placeholder={t("Walk-in customer", "Client de passage")} />
                 {customer && d(customer.balance).gt(0) && (
-                  <p className="text-xs text-amber-600">{t("Already owes", "Doit déjà")} {usd(customer.balance)}</p>
+                  <p className="text-xs text-amber-600 dark:text-amber-400">{t("Already owes", "Doit déjà")} {usd(customer.balance)}</p>
                 )}
               </Field>
               <Field label={t("Sale discount $", "Remise sur la vente $")}>
@@ -561,8 +567,8 @@ export default function POS() {
             <CardHeader className="p-4 pb-2"><CardTitle className="text-base">{t("Payment", "Paiement")}</CardTitle></CardHeader>
             <CardContent className="space-y-3 p-4 pt-0">
               <div className="rounded-lg bg-muted p-3">
-                <div className="flex justify-between text-sm text-muted-foreground"><span>{t("Subtotal", "Sous-total")}</span><Num>{usd(subtotal.toFixed(2))}</Num></div>
-                {saleDiscount.gt(0) && <div className="flex justify-between text-sm text-muted-foreground"><span>{t("Discount", "Remise")}</span><Num>-{usd(saleDiscount.toFixed(2))}</Num></div>}
+                <div className="flex justify-between text-sm text-muted-foreground"><span>{t("Subtotal", "Sous-total")}</span><Num>{usd(grossSubtotal.toFixed(2))}</Num></div>
+                {!totalDiscount.isZero() && <div className="flex justify-between text-sm text-muted-foreground"><span>{t("Discount", "Remise")}</span><Num>-{usd(totalDiscount.toFixed(2))}</Num></div>}
                 <div className="flex items-baseline justify-between">
                   <span className="font-medium">{t("Total", "Total")}</span>
                   <span className="text-3xl font-bold tabular">{usd(total.toFixed(2))}</span>
@@ -610,9 +616,9 @@ export default function POS() {
                 <div className="flex justify-between"><span>{t("Paid (USD)", "Payé (USD)")}</span><Num className="font-medium">{usd(paid.toFixed(2))}</Num></div>
                 <div className="flex justify-between">
                   <span>{credit.gt(0) ? t("Remaining → on credit", "Reste → à crédit") : t("Remaining", "Reste")}</span>
-                  <Num className={cn("font-semibold", credit.gt(0) && "text-amber-600", overpaid && "text-destructive")}>{usd(remaining.toFixed(2))}</Num>
+                  <Num className={cn("font-semibold", credit.gt(0) && "text-amber-600 dark:text-amber-400", overpaid && "text-destructive")}>{usd(remaining.toFixed(2))}</Num>
                 </div>
-                {credit.gt(0) && !customerId && <p className="text-xs text-amber-600">{t("Choose a customer to sell on credit.", "Choisir un client pour vendre à crédit.")}</p>}
+                {credit.gt(0) && !customerId && <p className="text-xs text-amber-600 dark:text-amber-400">{t("Choose a customer to sell on credit.", "Choisir un client pour vendre à crédit.")}</p>}
               </div>
 
               <details className="rounded-md border p-2 text-sm">
