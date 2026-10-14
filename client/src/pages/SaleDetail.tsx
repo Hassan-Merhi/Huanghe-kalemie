@@ -180,7 +180,7 @@ function CreditRows({ credit, creditedReturns, creditLeft }: { credit: Decimal; 
   const t = useT();
   if (creditedReturns.isZero()) {
     return (
-      <div className="flex justify-between gap-2 py-2 text-amber-600">
+      <div className="flex justify-between gap-2 py-2 text-amber-600 dark:text-amber-400">
         <span>{t("On credit", "À crédit")}</span>
         <Num className="font-medium">{usd(credit.toFixed(2))}</Num>
       </div>
@@ -196,7 +196,7 @@ function CreditRows({ credit, creditedReturns, creditLeft }: { credit: Decimal; 
         <span>{t("Returns taken off the customer's balance", "Retours déduits du solde du client")}</span>
         <Num>−{usd(creditedReturns.toFixed(2))}</Num>
       </div>
-      <div className={cn("flex justify-between gap-2 py-2", creditLeft.gt(0) && "text-amber-600")}>
+      <div className={cn("flex justify-between gap-2 py-2", creditLeft.gt(0) && "text-amber-600 dark:text-amber-400")}>
         <span>
           {t("Still on credit", "Reste à crédit")}
           <span className="block text-xs text-muted-foreground">{t("Later payments show on the customer's statement.", "Les paiements ultérieurs figurent sur le relevé du client.")}</span>
@@ -309,7 +309,7 @@ export default function SaleDetail() {
                     <TableCell className="font-mono text-xs">{l.sku}</TableCell>
                     <TableCell className="text-xs">{l.chassisNo ?? ""}{l.engineNo ? <span className="block text-muted-foreground">{l.engineNo}</span> : null}</TableCell>
                     <TableCell className="text-right"><Num>{fmtQty(l.qty)}</Num></TableCell>
-                    <TableCell className="text-right"><Num className={cn(d(l.returnedQty).gt(0) ? "text-amber-600" : "text-muted-foreground")}>{fmtQty(l.returnedQty)}</Num></TableCell>
+                    <TableCell className="text-right"><Num className={cn(d(l.returnedQty).gt(0) ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground")}>{fmtQty(l.returnedQty)}</Num></TableCell>
                     <TableCell className="text-right"><Num>{usd(l.unitPrice)}</Num></TableCell>
                     <TableCell className="text-right"><Num>{d(l.lineDiscount).gt(0) ? usd(l.lineDiscount) : ""}</Num></TableCell>
                     <TableCell className="text-right"><Num className="font-medium">{usd(l.lineTotal)}</Num></TableCell>

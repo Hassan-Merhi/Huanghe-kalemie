@@ -336,6 +336,42 @@ export function registerRoutes(app: Express) {
     await audit(req, "create", "stock_adjustment", result.id, body);
     res.status(201).json(result);
   }));
+  app.get("/api/stock/transfers", requireRole(...READERS), asyncHandler(async (req, res) => {
+    const q = z.object({ from: isoDate.optional(), to: isoDate.optional() }).parse(req.query);
+    // Each transfer line is stored as a pair of movements: out of one place, then into the other.
+    const rows = await db.execute<{ id: number; date: string; qty: string; note: string | null; sku: string; attributes: Record<string, string>; product_name: string; from_name: string; to_name: string; username: string | null }>(sql`
+      select o.id, o.date, i.qty, o.note, v.sku, v.attributes, p.name as product_name, lf.name as from_name, lt.name as to_name, u.username
+      from stock_movements o
+      join stock_movements i on i.id = o.id + 1 and i.type = 'transfer_in' and i.variant_id = o.variant_id
+      join variants v on v.id = o.variant_id
+      join products p on p.id = v.product_id
+      join locations lf on lf.id = o.location_id
+      join locations lt on lt.id = i.location_id
+      left join users u on u.id = o.created_by
+      where o.type = 'transfer_out'
+        and (${q.from ?? null}::date is null or o.date >= ${q.from ?? null}::date)
+        and (${q.to ?? null}::date is null or o.date <= ${q.to ?? null}::date)
+      order by o.id desc
+      limit 500
+    `);
+    res.json(rows.rows.map((r) => ({ id: r.id, date: r.date, qty: r.qty, note: r.note, sku: r.sku, productName: r.product_name, label: catalog.variantLabel(r.attributes), fromName: r.from_name, toName: r.to_name, username: r.username })));
+  }));
+  app.get("/api/backup", requireRole(), asyncHandler(async (req, res) => {
+    // Owner only (requireRole() with no roles admits only the owner): every table as JSON, without password hashes or sessions.
+    const tables = await db.execute<{ table_name: string }>(sql`
+      select table_name from information_schema.tables
+      where table_schema = 'public' and table_type = 'BASE TABLE' and table_name <> 'user_sessions'
+      order by table_name
+    `);
+    const data: Record<string, unknown[]> = {};
+    for (const { table_name } of tables.rows) {
+      const result = await db.execute(sql`select * from ${sql.identifier(table_name)}`);
+      data[table_name] = table_name === "users" ? result.rows.map(({ password_hash, ...u }) => u) : result.rows;
+    }
+    await audit(req, "export", "backup", null, { tables: tables.rows.length });
+    res.setHeader("Content-Disposition", `attachment; filename="huanghe-kalemie-backup-${todayIso()}.json"`);
+    res.json({ exportedAt: new Date().toISOString(), tables: data });
+  }));
   app.get("/api/stock/adjustments", requireRole(...READERS), asyncHandler(async (_req, res) => {
     const rows = await db
       .select({ adjustment: stockAdjustments, locationName: locations.name })

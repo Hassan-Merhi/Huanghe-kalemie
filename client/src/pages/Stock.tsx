@@ -16,7 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
 import { LocationSelect, useLocations, VariantSearch } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
-import { d, date, qty, todayLocal, unitCost, usd, variantText } from "@/lib/format";
+import { d, date, monthStart, qty, todayLocal, unitCost, usd, variantText } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
 import type { MotorcycleUnit, VariantRow } from "@/lib/types";
@@ -104,12 +104,14 @@ export default function Stock() {
           <TabsTrigger value="valuation">{t("Valuation", "Valorisation")}</TabsTrigger>
           {isManager && <TabsTrigger value="adjust">{t("Adjust stock", "Ajuster le stock")}</TabsTrigger>}
           <TabsTrigger value="history">{t("Adjustments", "Ajustements")}</TabsTrigger>
-          {isManager && multiLocation && <TabsTrigger value="transfer">{t("Transfer", "Transfert")}</TabsTrigger>}
+          {isManager && multiLocation && <TabsTrigger value="transfer">{t("New transfer", "Nouveau transfert")}</TabsTrigger>}
+          <TabsTrigger value="transfers">{t("Transfers", "Transferts")}</TabsTrigger>
         </TabsList>
         <TabsContent value="valuation"><Valuation /></TabsContent>
         {isManager && <TabsContent value="adjust"><AdjustForm onDone={() => setTab("history")} /></TabsContent>}
         <TabsContent value="history"><AdjustmentHistory /></TabsContent>
-        {isManager && multiLocation && <TabsContent value="transfer"><TransferForm /></TabsContent>}
+        {isManager && multiLocation && <TabsContent value="transfer"><TransferForm onDone={() => setTab("transfers")} /></TabsContent>}
+        <TabsContent value="transfers"><TransferHistory /></TabsContent>
       </Tabs>
     </div>
   );
@@ -609,7 +611,7 @@ interface TransferLine {
   unitIds: number[];
 }
 
-function TransferForm() {
+function TransferForm({ onDone }: { onDone: () => void }) {
   const t = useT();
   const { data: locations = [] } = useLocations();
   const active = locations.filter((l) => l.active);
@@ -621,7 +623,7 @@ function TransferForm() {
   const [error, setError] = useState<string | null>(null);
   const m = useApiMutation("POST", "/api/stock/transfers", {
     success: t("Stock transferred", "Stock transféré"),
-    onSuccess: () => { setLines([]); setNote(""); },
+    onSuccess: () => { setLines([]); setNote(""); onDone(); },
   });
 
   useEffect(() => {
@@ -726,6 +728,80 @@ function TransferForm() {
       <div className="flex justify-end">
         <Button onClick={submit} disabled={m.isPending || lines.length === 0}>{t("Transfer", "Transférer")}</Button>
       </div>
+    </div>
+  );
+}
+
+// ------------------------------------------------------------------ Transfer history
+
+interface TransferRow {
+  id: number;
+  date: string;
+  qty: string;
+  note: string | null;
+  sku: string;
+  productName: string;
+  label: string;
+  fromName: string;
+  toName: string;
+  username: string | null;
+}
+
+const validDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
+
+function TransferHistory() {
+  const t = useT();
+  const [from, setFrom] = useState(monthStart());
+  const [to, setTo] = useState(todayLocal());
+  const ok = validDate(from) && validDate(to);
+  const q = useQuery<TransferRow[]>({ queryKey: ["/api/stock/transfers", { from, to }], enabled: ok });
+  const rows = q.data ?? [];
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end gap-2">
+        <Field label={t("From", "Du")}>
+          <Input type="date" className="w-40" value={from} onChange={(e) => setFrom(e.target.value)} />
+        </Field>
+        <Field label={t("To", "Au")}>
+          <Input type="date" className="w-40" value={to} onChange={(e) => setTo(e.target.value)} />
+        </Field>
+      </div>
+      <ErrorText error={q.error} />
+      {q.isLoading ? (
+        <Loading />
+      ) : rows.length === 0 ? (
+        <EmptyState title={t("No transfers in this period", "Aucun transfert sur cette période")} />
+      ) : (
+        <Card className="overflow-x-auto">
+          <Table>
+            <TableHeader>
+              <TableRow>
+                <TableHead>{t("Date", "Date")}</TableHead>
+                <TableHead>{t("Item", "Article")}</TableHead>
+                <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
+                <TableHead>{t("From → to", "De → vers")}</TableHead>
+                <TableHead>{t("Note", "Note")}</TableHead>
+                <TableHead>{t("User", "Utilisateur")}</TableHead>
+              </TableRow>
+            </TableHeader>
+            <TableBody>
+              {rows.map((r) => (
+                <TableRow key={r.id}>
+                  <TableCell className="whitespace-nowrap">{date(r.date)}</TableCell>
+                  <TableCell className="min-w-[180px]">
+                    <div className="font-medium">{r.productName}{r.label && r.label !== "Standard" ? ` · ${r.label}` : ""}</div>
+                    <div className="font-mono text-xs text-muted-foreground">{r.sku}</div>
+                  </TableCell>
+                  <TableCell className="text-right"><Num>{qty(r.qty)}</Num></TableCell>
+                  <TableCell className="whitespace-nowrap">{r.fromName} <span className="text-muted-foreground">→</span> {r.toName}</TableCell>
+                  <TableCell className="max-w-[260px] truncate" title={r.note ?? undefined}>{r.note || <span className="text-muted-foreground">—</span>}</TableCell>
+                  <TableCell className="whitespace-nowrap">{r.username ?? "—"}</TableCell>
+                </TableRow>
+              ))}
+            </TableBody>
+          </Table>
+        </Card>
+      )}
     </div>
   );
 }

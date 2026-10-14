@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Pencil, Plus } from "lucide-react";
+import { Download, Pencil, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -13,6 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader } from "@/components/common";
 import { useApiMutation } from "@/hooks/useApiMutation";
+import { useTheme, useThemeOptions, type ThemePreference } from "@/components/ThemeProvider";
 import { useAuth, type Role } from "@/lib/auth";
 import { useI18n, useT, type Lang } from "@/lib/i18n";
 import { cdf, d, money, usd } from "@/lib/format";
@@ -485,6 +486,8 @@ function MeTab() {
   const t = useT();
   const { lang, setLang } = useI18n();
   const { user, refresh } = useAuth();
+  const { preference, setPreference } = useTheme();
+  const themeOptions = useThemeOptions();
   const [password, setPassword] = useState("");
   const [confirm, setConfirm] = useState("");
   const langM = useApiMutation<{ language: Lang }>("PATCH", "/api/me", { success: t("Language saved", "Langue enregistrée"), onSuccess: (_r, b) => { setLang(b.language); refresh(); } });
@@ -506,6 +509,16 @@ function MeTab() {
               </SelectContent>
             </Select>
           </Field>
+          <Field label={t("Theme", "Thème")}>
+            <Select value={preference} onValueChange={(v) => setPreference(v as ThemePreference)}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                {themeOptions.map((o) => (
+                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </Field>
         </CardContent>
       </Card>
       <Card>
@@ -522,6 +535,26 @@ function MeTab() {
           </div>
         </CardContent>
       </Card>
+      {user?.role === "owner" && (
+        <Card className="md:col-span-2">
+          <CardHeader>
+            <CardTitle className="text-base">{t("Backup", "Sauvegarde")}</CardTitle>
+            <CardDescription>
+              {t(
+                "Download a file with all the data. Keep a copy every week on a USB key or a phone.",
+                "Téléchargez un fichier avec toutes les données. Gardez-en une copie chaque semaine sur une clé USB ou un téléphone.",
+              )}
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <Button asChild variant="outline">
+              <a href="/api/backup" download>
+                <Download className="mr-1 h-4 w-4" /> {t("Download a backup", "Télécharger une sauvegarde")}
+              </a>
+            </Button>
+          </CardContent>
+        </Card>
+      )}
     </div>
   );
 }

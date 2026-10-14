@@ -539,7 +539,34 @@ function LedgerCard({ accountId, onAccount }: { accountId: number | null; onAcco
             {rows.length === 0 ? (
               <EmptyState title={t("No movements in this period", "Aucun mouvement sur cette période")} />
             ) : (
-              <div className="overflow-x-auto rounded-md border">
+              <>
+              {/* Phones: one compact two-line row per movement, no sideways scroll. */}
+              <div className="divide-y rounded-md border sm:hidden">
+                {rows.map((r, i) => {
+                  const inflow = d(r.debit).gt(0);
+                  const outflow = !inflow && d(r.credit).gt(0);
+                  const native = r.nativeAmount ? d(r.nativeAmount).abs() : null;
+                  const amount = inflow ? (isCdf && native ? cdf(native.toFixed(2)) : usd(r.debit)) : outflow ? (isCdf && native ? cdf(native.toFixed(2)) : usd(r.credit)) : null;
+                  const sub = [r.partyName, r.lineMemo].filter(Boolean).join(" · ");
+                  return (
+                    <div key={`${r.journalId}-${i}`} className="px-3 py-2 text-sm">
+                      <div className="flex items-baseline justify-between gap-3">
+                        <span className="min-w-0 truncate" title={sub || undefined}>{r.memo || r.type}</span>
+                        {amount && (
+                          <Num className={cn("shrink-0 font-medium", inflow ? "text-green-700 dark:text-green-400" : "text-destructive")}>
+                            {inflow ? "+" : "−"}{amount}
+                          </Num>
+                        )}
+                      </div>
+                      <div className="flex items-baseline justify-between gap-3 text-xs text-muted-foreground">
+                        <span className="min-w-0 truncate">{date(r.date)}{sub ? ` · ${sub}` : ""}</span>
+                        <span className="shrink-0">{t("Bal.", "Solde")} <Num>{isCdf ? cdf(r.nativeBalance) : usd(r.balance)}</Num></span>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+              <div className="hidden overflow-x-auto rounded-md border sm:block">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -590,6 +617,7 @@ function LedgerCard({ accountId, onAccount }: { accountId: number | null; onAcco
                   </TableBody>
                 </Table>
               </div>
+              </>
             )}
           </>
         ) : null}
