@@ -177,6 +177,8 @@ export async function otherPartnerAccountIds(tx: Tx, viewer: number | null | und
 }
 
 const PARTNER_MONEY_TYPES = new Set(["partner_contribution", "partner_withdrawal"]);
+/** Journals whose memo is typed by hand, so it may name what another partner did. */
+export const PARTNER_MEMO_TYPES = new Set([...PARTNER_MONEY_TYPES, "manual", "opening"]);
 
 /**
  * A journal as a partner sees it: the other partners' lines are added up into one "Autres associés"
@@ -202,7 +204,7 @@ export function maskPartnerJournal<
   } as L;
   const out = net.isZero() ? kept : [...kept.slice(0, lines.slice(0, at).filter((l) => !hidden.has(l.accountId)).length), merged, ...kept.slice(lines.slice(0, at).filter((l) => !hidden.has(l.accountId)).length)];
   return {
-    journal: PARTNER_MONEY_TYPES.has(journal.type) ? { ...journal, memo: "Mouvement d'un autre associé" } : journal,
+    journal: PARTNER_MEMO_TYPES.has(journal.type) ? { ...journal, memo: "Mouvement d'un autre associé" } : journal,
     lines: out,
   };
 }

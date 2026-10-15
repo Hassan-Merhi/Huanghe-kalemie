@@ -46,6 +46,8 @@ export function registerErpRoutes(
   for (const kind of ["payment", "receipt"] as const) {
     app.post(`/api/vouchers/${kind}`, requireRole(...STAFF), asyncHandler(async (req, res) => {
       const body = voucherSchema.parse(req.body);
+      // Staff take francs at the day's rate.
+      if (req.user!.role !== "owner") body.rate = null;
       const result = await db.transaction((tx) => vouchers.postVoucher(tx, kind, body, uid(req), { owner: req.user!.role === "owner" }));
       await audit(req, "create", kind, result.id, body);
       res.status(201).json(result);

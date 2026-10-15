@@ -598,7 +598,7 @@ export function registerRoutes(app: Express) {
     if (req.user!.role === "partner") {
       // A cash line from another partner's withdrawal stays, without saying whose it was.
       const hidden = await reports.otherPartnerAccountIds(db, req.user!.partnerId);
-      const ids = ledger.rows.filter((r) => r.type === "partner_contribution" || r.type === "partner_withdrawal").map((r) => r.journalId);
+      const ids = ledger.rows.filter((r) => reports.PARTNER_MEMO_TYPES.has(r.type)).map((r) => r.journalId);
       const touched = ids.length && hidden.size
         ? new Set((await db.select({ id: journalLines.journalId }).from(journalLines).where(and(inArray(journalLines.journalId, ids), inArray(journalLines.accountId, Array.from(hidden))))).map((r) => r.id))
         : new Set<number>();
