@@ -17,6 +17,8 @@ interface DashboardData {
   /** Net of the goods brought back today (`returns`). */
   todaySales: { count: number; total: string; returns?: string };
   monthPnl: { income: string; costOfSales: string; grossProfit: string; operatingExpenses: string; netProfit: string };
+  /** The gross profit apart: margin on sales, stock losses and gains, exchange differences, the rest. */
+  monthMargin?: { sales: string; stockAdjustments: string; fx: string; other: string };
   money: { id: number; name: string; currency: "USD" | "CDF"; balance: string; nativeBalance: string }[];
   receivables: string;
   payables: string;
@@ -94,7 +96,7 @@ export default function Dashboard() {
               label={t("Gross profit this month", "Marge brute du mois")}
               value={usd(data.monthPnl.grossProfit)}
               tone={d(data.monthPnl.grossProfit).lt(0) ? "bad" : "good"}
-              sub={`${t("Income", "Recettes")} ${usd(data.monthPnl.income)} − ${t("cost", "coût")} ${usd(data.monthPnl.costOfSales)}`}
+              sub={data.monthMargin ? marginParts(t, data.monthMargin) : `${t("Income", "Recettes")} ${usd(data.monthPnl.income)} − ${t("cost", "coût")} ${usd(data.monthPnl.costOfSales)}`}
             />
             <StatCard label={t("Running costs this month", "Charges du mois")} value={usd(data.monthPnl.operatingExpenses)} sub={t("Rent, salaries, electricity…", "Loyer, salaires, électricité…")} />
             <StatCard label={t("Net profit this month", "Bénéfice net du mois")} value={usd(data.monthPnl.netProfit)} tone={d(data.monthPnl.netProfit).lt(0) ? "bad" : "good"} />
@@ -285,4 +287,15 @@ function PositionCard({ p, onTheWay }: { p: NonNullable<DashboardData["position"
       </CardContent>
     </Card>
   );
+}
+
+/** "Margin on sales 1 446,99 $ · stock −547,40 $ · exchange +0,21 $": the Sales page's margin, then what the books add to it. */
+function marginParts(t: (en: string, fr: string) => string, m: NonNullable<DashboardData["monthMargin"]>) {
+  const signed = (v: string) => `${d(v).isNegative() ? "−" : "+"}${usd(d(v).abs().toFixed(2))}`;
+  return [
+    `${t("Margin on sales", "Marge sur ventes")} ${usd(m.sales)}`,
+    !d(m.stockAdjustments).isZero() && `${t("stock losses and gains", "pertes et gains de stock")} ${signed(m.stockAdjustments)}`,
+    !d(m.fx).isZero() && `${t("exchange", "change")} ${signed(m.fx)}`,
+    !d(m.other).isZero() && `${t("other income", "autres produits")} ${signed(m.other)}`,
+  ].filter(Boolean).join(" · ");
 }

@@ -19,6 +19,7 @@ import { cdf, curLabel, d, date as fmtDate, frenchPunctuation, money, qty, today
 import { cn } from "@/lib/utils";
 import { RangePicker, useRange } from "@/pages/Reports";
 import { journalTypeLabel } from "@/pages/ContactDetail";
+import { useSystemText } from "@/lib/systemText";
 
 type T = (en: string, fr: string) => string;
 
@@ -155,6 +156,7 @@ function cashDetail(r: DaybookRow, t: T): string | null {
 }
 
 export default function Daybook() {
+  const sys = useSystemText();
   const t = useT();
   const { can } = useAuth();
   const isOwner = can();
@@ -443,7 +445,7 @@ export default function Daybook() {
                               <div className="flex flex-wrap gap-1"><TypeBadge type={r.type} t={t} /><StatusBadges r={r} t={t} /></div>
                             </TableCell>
                             <TableCell className="min-w-[200px]">
-                              <span className={cn(r.reversedByJournalId && "line-through")}>{r.memo ? frenchPunctuation(r.memo) : "—"}</span>
+                              <span className={cn(r.reversedByJournalId && "line-through")}>{r.memo ? frenchPunctuation(sys.memo(r.memo)) : "—"}</span>
                               {contacts && <span className="block text-xs text-muted-foreground">{contacts}</span>}
                             </TableCell>
                             <TableCell className="text-right font-medium">
@@ -483,7 +485,7 @@ export default function Daybook() {
                     <button type="button" className="w-full text-left" onClick={() => toggle(r.id)}>
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <p className={cn("break-words font-medium", r.reversedByJournalId && "line-through text-muted-foreground")}>{(r.memo && frenchPunctuation(r.memo)) || contacts || journalTypeLabel(r.type, t)}</p>
+                          <p className={cn("break-words font-medium", r.reversedByJournalId && "line-through text-muted-foreground")}>{(r.memo && frenchPunctuation(sys.memo(r.memo))) || contacts || journalTypeLabel(r.type, t)}</p>
                           <p className="break-words text-xs text-muted-foreground">
                             {fmtDate(r.date)} · <span className="font-mono">{r.number}</span>{contacts && r.memo ? ` · ${contacts}` : ""}
                           </p>
@@ -565,6 +567,7 @@ function RowActions({ r, t, isOwner, onReverse }: { r: DaybookRow; t: T; isOwner
 }
 
 function LinesTable({ lines, t }: { lines: DaybookLine[]; t: T }) {
+  const sys = useSystemText();
   return (
     <div className="overflow-x-auto [contain:inline-size]">
       <table className="w-full text-sm">
@@ -582,9 +585,9 @@ function LinesTable({ lines, t }: { lines: DaybookLine[]; t: T }) {
             <tr key={l.id} className="border-t border-border/60">
               <td className="py-1 pr-3">
                 <Link href={`/accounts?account=${l.accountId}`} className="hover:underline">
-                  <span className="font-mono text-xs text-muted-foreground">{l.accountCode}</span> {l.accountName}
+                  <span className="font-mono text-xs text-muted-foreground">{l.accountCode}</span> {sys.account(l.accountName)}
                 </Link>
-                {l.memo && l.memo !== l.partyName && <span className="block text-xs text-muted-foreground">{l.memo}</span>}
+                {l.memo && l.memo !== l.partyName && <span className="block text-xs text-muted-foreground">{sys.memo(l.memo)}</span>}
               </td>
               <td className="py-1 pr-3">{l.partyName ?? ""}</td>
               <td className="py-1 pr-3 text-right"><Num>{d(l.debit).isZero() ? "" : usd(l.debit)}</Num></td>
@@ -602,13 +605,14 @@ function LinesTable({ lines, t }: { lines: DaybookLine[]; t: T }) {
 }
 
 function LinesList({ lines, t }: { lines: DaybookLine[]; t: T }) {
+  const sys = useSystemText();
   return (
     <div className="rounded-md border bg-muted/30 text-sm">
       {lines.map((l) => (
         <div key={l.id} className="flex items-start justify-between gap-2 border-b px-2 py-1.5 last:border-b-0">
           <div className="min-w-0">
-            <p className="break-words"><span className="font-mono text-xs text-muted-foreground">{l.accountCode}</span> {l.accountName}</p>
-            {(l.partyName || l.memo) && <p className="break-words text-xs text-muted-foreground">{[l.partyName, l.memo].filter(Boolean).join(" · ")}</p>}
+            <p className="break-words"><span className="font-mono text-xs text-muted-foreground">{l.accountCode}</span> {sys.account(l.accountName)}</p>
+            {(l.partyName || l.memo) && <p className="break-words text-xs text-muted-foreground">{[l.partyName, sys.memo(l.memo)].filter(Boolean).join(" · ")}</p>}
           </div>
           <div className="shrink-0 text-right text-xs">
             {!d(l.debit).isZero() && <Num>{t("Dr", "D")} {usd(l.debit)}</Num>}
@@ -622,6 +626,7 @@ function LinesList({ lines, t }: { lines: DaybookLine[]; t: T }) {
 }
 
 function ReverseDialog({ row, t, onClose }: { row: DaybookRow; t: T; onClose: () => void }) {
+  const sys = useSystemText();
   const [day, setDay] = useState(todayLocal());
   const m = useApiMutation<{ date: string }>("POST", `/api/journals/${row.id}/reverse`, {
     success: t("Voucher reversed", "Pièce annulée"),
@@ -642,7 +647,7 @@ function ReverseDialog({ row, t, onClose }: { row: DaybookRow; t: T; onClose: ()
         <div className="space-y-3">
           <div className="rounded-md border p-3 text-sm">
             <p className="font-mono text-xs text-muted-foreground">{row.number} · {fmtDate(row.date)}</p>
-            <p className="font-medium">{row.memo || journalTypeLabel(row.type, t)}</p>
+            <p className="font-medium">{sys.memo(row.memo) || journalTypeLabel(row.type, t)}</p>
             <p><Num>{usd(row.amount)}</Num></p>
           </div>
           <Field label={t("Reversal date", "Date de l'annulation")} required>

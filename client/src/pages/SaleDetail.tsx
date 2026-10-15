@@ -342,6 +342,10 @@ export default function SaleDetail() {
   // Cash handed back on returns: "Payé" reads net of it, as on the Sales list.
   const refunded = sale.returns.reduce((s, r) => s.plus(d(r.refundUsd)), d(0));
   const paidNet = voided ? d(sale.paidUsd) : d(sale.paidUsd).minus(refunded);
+  const netTotal = voided ? d(sale.total) : d(sale.total).minus(returnedTotal);
+  // Francs change and refunds go in 100 FC steps, so "Payé" can differ from the total by a few cents.
+  const roundingGap = paidNet.plus(creditReduced ? creditLeft : credit).minus(netTotal);
+  const francRounding = !voided && !roundingGap.isZero() && roundingGap.abs().lt(1) && (sale.payments.some((p) => p.currency === "CDF") || sale.returns.some((r) => r.refundCurrency === "CDF")) ? roundingGap : null;
   // Columns only when a line uses them, so the margin stays in view at 1024 px.
   const hasChassis = sale.lines.some((l) => l.chassisNo || l.engineNo);
   const hasDiscount = sale.lines.some((l) => d(l.lineDiscount).gt(0));
@@ -405,7 +409,16 @@ export default function SaleDetail() {
       )}
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-        <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Total", "Total")}</p><p className="text-xl font-semibold tabular">{usd(sale.total)}</p>{d(sale.discount).gt(0) && <p className="text-xs text-muted-foreground">{t("Sale discount", "Remise")} {usd(sale.discount)}</p>}{returnedTotal.gt(0) && <p className="text-xs text-muted-foreground">{t("Returned", "Retourné")} −{usd(returnedTotal.toFixed(2))} · {t("net", "net")} {usd(d(sale.total).minus(returnedTotal).toFixed(2))}</p>}</CardContent></Card>
+        <Card>
+          <CardContent className="p-4">
+            <p className="text-xs uppercase text-muted-foreground">{t("Total", "Total")}</p>
+            {/* What the customer kept, as on the Sales list; the till's total below it. */}
+            <p className="text-xl font-semibold tabular">{usd(netTotal.toFixed(2))}</p>
+            {returnedTotal.gt(0) && <p className="text-xs text-muted-foreground">{t("of", "sur")} {usd(sale.total)} · {t("returned", "retourné")} −{usd(returnedTotal.toFixed(2))}</p>}
+            {d(sale.discount).gt(0) && <p className="text-xs text-muted-foreground">{t("Sale discount", "Remise")} {usd(sale.discount)}</p>}
+            {francRounding && <p className="text-xs text-muted-foreground">{t("franc rounding", "arrondi FC")} {francRounding.isNegative() ? "−" : "+"}{usd(francRounding.abs().toFixed(2))}</p>}
+          </CardContent>
+        </Card>
         <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Paid", "Payé")}</p><p className="text-xl font-semibold tabular">{usd(paidNet.toFixed(2))}</p>{!voided && refunded.gt(0) && <p className="text-xs text-muted-foreground">{t("refunded", "remboursé")} −{usd(refunded.toFixed(2))} · {t("of", "sur")} {usd(sale.paidUsd)}</p>}<p className="text-xs text-muted-foreground">{t("Credit", "Crédit")} {usd(sale.creditUsd)}{creditReduced ? ` · ${t("after returns", "après retours")} ${usd(creditLeft.toFixed(2))}` : ""}</p></CardContent></Card>
         <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Customer", "Client")}</p>{sale.customer ? <p className="font-medium">{sale.customer.name}</p> : <p className="text-muted-foreground">{t("Walk-in", "De passage")}</p>}{sale.customer?.phone && <p className="text-xs text-muted-foreground">{sale.customer.phone}</p>}</CardContent></Card>
         {showCost && sale.cogs !== undefined && !voided && (

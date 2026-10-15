@@ -29,6 +29,7 @@ import { d, nextMonth, pct, date as fmtDate, previousMonth, todayLocal, usd } fr
 import type { Partner } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { WIDE_PRINT_CSS, journalTypeLabel } from "@/pages/ContactDetail";
+import { useSystemText } from "@/lib/systemText";
 
 interface SplitLine {
   partnerId: number;
@@ -470,6 +471,7 @@ function Step({ label, value, minus, strong }: { label: string; value: string; m
 }
 
 function StatementSection({ partners }: { partners: Partner[] }) {
+  const sys = useSystemText();
   const t = useT();
   const [partnerId, setPartnerId] = useState<number>(partners[0].id);
   useEffect(() => {
@@ -528,7 +530,7 @@ function StatementSection({ partners }: { partners: Partner[] }) {
                     <TableRow key={`${r.journalId}-${i}`}>
                       <TableCell className="whitespace-nowrap">{fmtDate(r.date)}</TableCell>
                       <TableCell className="whitespace-nowrap">{journalTypeLabel(r.type, t)}</TableCell>
-                      <TableCell className="min-w-[160px]">{r.memo}</TableCell>
+                      <TableCell className="min-w-[160px]">{sys.memo(r.memo)}</TableCell>
                       <TableCell>
                         <Badge variant="outline">{r.account === "capital" ? t("Capital", "Capital") : t("Profit", "Bénéfices")}</Badge>
                       </TableCell>

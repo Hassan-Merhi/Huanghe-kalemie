@@ -270,3 +270,16 @@ export function variantText(attributes: Record<string, string> | null | undefine
   const values = Object.values(attributes ?? {});
   return values.length ? values.join(" / ") : "";
 }
+
+/** "7,1" for a stored USD-per-unit rate of 0.140845070423: how many of the currency one dollar buys, as it was typed. */
+export function perUsdText(rateToUsd: string | null | undefined): string {
+  const r = d(rateToUsd);
+  if (r.lte(0)) return "";
+  return d(1).dividedBy(r).toSignificantDigits(8).toDecimalPlaces(4).toString();
+}
+
+/** USD per 1 unit for "how many one dollar buys", kept to the twelve decimals the server stores: 2 808 FC stays 2 808 FC. */
+export function usdPerUnit(perUsd: string | null | undefined): string {
+  const x = d(perUsd);
+  return x.gt(0) ? d(1).dividedBy(x).toDecimalPlaces(12).toString() : "";
+}

@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field } from "@/components/common";
 import { useI18n, useT } from "@/lib/i18n";
-import { accountLabel, d, money, todayLocal, usd, qty as fmtQty } from "@/lib/format";
+import { accountLabel, d, money, perUsdText, todayLocal, usd, usdPerUnit, qty as fmtQty } from "@/lib/format";
 import { api, invalidateAll, withQuery } from "@/lib/api";
 import type { Account, Category, Location, Party, Settings, VariantRow } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
@@ -561,12 +561,8 @@ export function useRate(date: string) {
   return useQuery<{ date: string; cdfPerUsd: string; source: string; cnyPerUsd?: string | null }>({ queryKey: [`/api/exchange-rates/for/${date}`] });
 }
 
-/** "7,1" for a stored USD-per-unit rate of 0.140845: how many of the currency one dollar buys. */
-export function perUsdText(rateToUsd: string | null | undefined): string {
-  const r = d(rateToUsd);
-  if (r.lte(0)) return "";
-  return d(1).dividedBy(r).toDecimalPlaces(r.lt(0.01) ? 0 : 4).toString();
-}
+// The container rate helpers live with the formatters (tested there); re-exported for the pages that import them here.
+export { perUsdText, usdPerUnit } from "@/lib/format";
 
 /**
  * The rate of a container invoiced in yuan or francs, typed the way the dashboard's rate card asks for it:
@@ -583,7 +579,7 @@ export function ContainerRateField({ currency, value, onChange, day = todayLocal
   useEffect(() => {
     if (!text && !d(value).gt(0) && onFile && d(onFile).gt(0)) {
       setText(d(onFile).toString());
-      onChange(d(1).dividedBy(onFile).toDecimalPlaces(6).toString());
+      onChange(usdPerUnit(onFile));
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [onFile]);
@@ -618,8 +614,7 @@ export function ContainerRateField({ currency, value, onChange, day = todayLocal
         value={text}
         onChange={(e) => {
           setText(e.target.value);
-          const x = d(e.target.value);
-          onChange(x.gt(0) ? d(1).dividedBy(x).toDecimalPlaces(6).toString() : "");
+          onChange(usdPerUnit(e.target.value));
         }}
       />
     </Field>
@@ -660,7 +655,14 @@ export function RateInput({ day, value, onChange, className }: { day: string; va
   const readOnly = user?.role === "cashier";
   return (
     <div className={cn("space-y-1", className)}>
-      <Input inputMode="decimal" thousands value={value} readOnly={readOnly} onChange={(e) => onChange(e.target.value)} aria-label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} />
+      {readOnly ? (
+        // A cashier cannot change the rate: plain text, out of the Tab order, not a field that looks wrong.
+        <p className="flex h-9 items-center rounded-md bg-muted/60 px-3 text-sm tabular-nums" aria-label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")}>
+          {fmtQty(value)}{"\u00a0"}FC/$
+        </p>
+      ) : (
+        <Input inputMode="decimal" thousands value={value} onChange={(e) => onChange(e.target.value)} aria-label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} />
+      )}
       {dayRate.gt(0) && (
         <p className={cn("text-xs", gap.gt(tolerance) ? "text-destructive" : "text-muted-foreground")}>
           {gap.gt(tolerance)

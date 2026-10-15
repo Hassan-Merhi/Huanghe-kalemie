@@ -49,6 +49,8 @@ interface NavItem {
   href: string;
   en: string;
   fr: string;
+  /** What a cashier sees instead (they work with customers only). */
+  cashier?: { en: string; fr: string };
   icon: typeof LayoutDashboard;
   roles: Role[];
   /** Only highlight on this exact path (not its sub-pages). */
@@ -66,7 +68,7 @@ const NAV: { en: string; fr: string; items: NavItem[] }[] = [
       { href: "/pos", en: "Point of sale", fr: "Caisse", icon: ShoppingCart, roles: ["manager", "cashier"] },
       { href: "/sales", en: "Sales", fr: "Ventes", icon: Receipt, roles: ["manager", "cashier", "partner"] },
       { href: "/sales-tools", en: "Sales tools", fr: "Outils de vente", icon: LayoutGrid, roles: ["manager", "cashier", "partner"] },
-      { href: "/contacts", en: "Customers and suppliers", fr: "Clients et fournisseurs", icon: Users, roles: ["manager", "cashier", "partner"] },
+      { href: "/contacts", en: "Customers and suppliers", fr: "Clients et fournisseurs", cashier: { en: "Customers", fr: "Clients" }, icon: Users, roles: ["manager", "cashier", "partner"] },
     ],
   },
   {
@@ -99,11 +101,7 @@ const NAV: { en: string; fr: string; items: NavItem[] }[] = [
       { href: "/reports", en: "Reports", fr: "Rapports", icon: BarChart3, roles: ["manager", "partner"] },
     ],
   },
-  {
-    en: "Admin",
-    fr: "Admin",
-    items: [{ href: "/settings", en: "Settings", fr: "Paramètres", icon: SettingsIcon, roles: [] }],
-  },
+  // Settings (owner only) sit in the menu's footer, so the owner's whole menu fits a 1024×768 screen.
 ];
 
 const under = (location: string, href: string) => location === href || location.startsWith(href + "/");
@@ -177,8 +175,9 @@ function SectionTabs() {
 }
 
 function NavLinks() {
-  const { can } = useAuth();
+  const { can, user } = useAuth();
   const { lang } = useI18n();
+  const label = (item: NavItem) => (user?.role === "cashier" && item.cashier ? item.cashier : item);
   const [location] = useLocation();
   const { setOpenMobile } = useSidebar();
   // Keep the current page's entry in view when the menu is taller than the screen.
@@ -204,7 +203,7 @@ function NavLinks() {
                       <SidebarMenuButton asChild isActive={active}>
                         <Link href={item.href} onClick={() => setOpenMobile(false)}>
                           <item.icon className="h-4 w-4" />
-                          <span>{lang === "fr" ? item.fr : item.en}</span>
+                          <span>{lang === "fr" ? label(item).fr : label(item).en}</span>
                         </Link>
                       </SidebarMenuButton>
                     </SidebarMenuItem>
@@ -216,6 +215,29 @@ function NavLinks() {
         );
       })}
     </>
+  );
+}
+
+/** The owner's settings, beside their name at the foot of the menu. */
+function SettingsLink() {
+  const { lang } = useI18n();
+  const [location] = useLocation();
+  const { setOpenMobile } = useSidebar();
+  const active = under(location, "/settings");
+  return (
+    <Link
+      href="/settings"
+      onClick={() => setOpenMobile(false)}
+      aria-current={active ? "page" : undefined}
+      data-active={active || undefined}
+      className={cn(
+        "flex shrink-0 items-center gap-2 rounded-md px-2 py-1.5 text-sm text-sidebar-foreground outline-none ring-sidebar-ring hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:ring-2",
+        active && "bg-sidebar-accent font-medium text-sidebar-accent-foreground",
+      )}
+    >
+      <SettingsIcon className="h-4 w-4" />
+      <span>{lang === "fr" ? "Paramètres" : "Settings"}</span>
+    </Link>
   );
 }
 
@@ -274,10 +296,13 @@ export function AppLayout({ children }: { children: ReactNode }) {
           <MoreBelow />
         </SidebarContent>
         <SidebarFooter className="border-t border-sidebar-border">
-          {/* The name, then the role on its own line: "Associé(e) (lecture seule)" is too long to cut. */}
-          <div className="px-2 py-1 text-xs leading-snug text-sidebar-foreground/70">
-            {user && <div className="truncate">{user.fullName}</div>}
-            {user && user.fullName !== roleLabel(user.role, t) && <div className="break-words">{roleLabel(user.role, t)}</div>}
+          <div className="flex items-center gap-2">
+            {/* The name, then the role on its own line: "Associé(e) (lecture seule)" is too long to cut. */}
+            <div className="min-w-0 flex-1 px-2 py-1 text-xs leading-snug text-sidebar-foreground/70">
+              {user && <div className="truncate">{user.fullName}</div>}
+              {user && user.fullName !== roleLabel(user.role, t) && <div className="break-words">{roleLabel(user.role, t)}</div>}
+            </div>
+            {user?.role === "owner" && <SettingsLink />}
           </div>
         </SidebarFooter>
       </Sidebar>

@@ -444,7 +444,7 @@ export const containers = pgTable("containers", {
   /** Currency of the supplier invoice (USD, CNY…). */
   currency: varchar("currency", { length: 3 }).notNull().default("USD"),
   /** USD per 1 unit of the invoice currency. */
-  rateToUsd: numeric("rate_to_usd", { precision: 14, scale: 6 }).notNull().default("1"),
+  rateToUsd: numeric("rate_to_usd", { precision: 24, scale: 12 }).notNull().default("1"),
   locationId: integer("location_id")
     .notNull()
     .references(() => locations.id),

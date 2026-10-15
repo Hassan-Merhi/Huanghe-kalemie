@@ -470,8 +470,9 @@ export function AdjustForm({
       payload.push(line);
     }
     const body = { date: dateValue, locationId, kind, reason: reason.trim(), lines: payload };
-    // A gain or loss of 100 $ or more is asked about first: one tap should not book a 4 000 $ loss.
-    if (kind !== "opening" && found.minus(lost).abs().gte(CONFIRM_ABOVE_USD)) return setConfirming(body);
+    // A gain or loss of 100 $ or more is asked about first: one tap should not book a 4 000 $ loss,
+    // even when as much is found elsewhere (2 000 $ lost and 1 950 $ found nets only 50 $).
+    if (kind !== "opening" && (found.gte(CONFIRM_ABOVE_USD) || lost.gte(CONFIRM_ABOVE_USD))) return setConfirming(body);
     m.mutate(body);
   }
 
@@ -663,7 +664,9 @@ export function AdjustForm({
         <Dialog open onOpenChange={(o) => !o && setConfirming(null)}>
           <DialogContent>
             <DialogHeader>
-              <DialogTitle>{totalChange.isNegative() ? t(`Book a stock loss of ${usd(lost.minus(found).toFixed(2))}?`, `Passer une perte de stock de ${usd(lost.minus(found).toFixed(2))}\u00a0?`) : t(`Book a stock gain of ${usd(totalChange.toFixed(2))}?`, `Passer un gain de stock de ${usd(totalChange.toFixed(2))}\u00a0?`)}</DialogTitle>
+              <DialogTitle>{found.gt(0) && lost.gt(0)
+                ? t(`Book ${usd(found.toFixed(2))} of stock found and ${usd(lost.toFixed(2))} lost?`, `Passer ${usd(found.toFixed(2))} de stock retrouvé et ${usd(lost.toFixed(2))} de stock perdu\u00a0?`)
+                : totalChange.isNegative() ? t(`Book a stock loss of ${usd(lost.minus(found).toFixed(2))}?`, `Passer une perte de stock de ${usd(lost.minus(found).toFixed(2))}\u00a0?`) : t(`Book a stock gain of ${usd(totalChange.toFixed(2))}?`, `Passer un gain de stock de ${usd(totalChange.toFixed(2))}\u00a0?`)}</DialogTitle>
               <DialogDescription>
                 {t("It changes the gross profit both partners share at month close. Check the quantities before saving.", "Cela modifie la marge brute partagée par les deux associés à la clôture du mois. Vérifiez les quantités avant d'enregistrer.")}
               </DialogDescription>
@@ -690,7 +693,7 @@ export function AdjustForm({
   );
 }
 
-/** A stock count, loss or find worth this much (net, in dollars) asks for confirmation before it is saved. */
+/** A stock count whose stock found or stock lost is worth this much (in dollars) asks for confirmation before it is saved. */
 const CONFIRM_ABOVE_USD = 100;
 
 function UnitPicker({ variantId, locationId, needed, value, onChange }: { variantId: number; locationId: number; needed: number; value: number[]; onChange: (ids: number[]) => void }) {

@@ -21,6 +21,7 @@ import type { Account } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { CsvButton, RangePicker, accountTypeLabel, useRange } from "@/pages/Reports";
 import { WIDE_PRINT_CSS, journalTypeLabel } from "@/pages/ContactDetail";
+import { useSystemText } from "@/lib/systemText";
 
 type T = (en: string, fr: string) => string;
 type AccountType = Account["type"];
@@ -89,6 +90,7 @@ export default function Accounts() {
 // ---------------------------------------------------------------- Chart of accounts
 
 function Chart({ onOpen }: { onOpen: (id: number) => void }) {
+  const sys = useSystemText();
   const t = useT();
   const { can } = useAuth();
   const [, navigate] = useLocation();
@@ -192,7 +194,7 @@ function Chart({ onOpen }: { onOpen: (id: number) => void }) {
                   >
                     <span className="w-14 shrink-0 font-mono text-xs text-muted-foreground">{a.code}</span>
                     <span className="min-w-0 flex-1">
-                      <span className="block break-words text-sm">{a.name}</span>
+                      <span className="block break-words text-sm">{sys.account(a.name)}</span>
                       <span className="flex flex-wrap gap-1">
                         {a.isMoney && <Badge variant="outline" className="h-4 px-1 text-[10px] font-normal">{a.currency === "CDF" ? "FC" : a.currency}</Badge>}
                         {!a.active && <Badge variant="secondary" className="h-4 px-1 text-[10px] font-normal">{t("Inactive", "Inactif")}</Badge>}
@@ -231,6 +233,7 @@ function Chart({ onOpen }: { onOpen: (id: number) => void }) {
 // ---------------------------------------------------------------- One account
 
 function AccountView({ id, onBack }: { id: number; onBack: () => void }) {
+  const sys = useSystemText();
   const t = useT();
   const range = useRange();
   const [tab, setTab] = useState<"statement" | "monthly">("statement");
@@ -251,7 +254,7 @@ function AccountView({ id, onBack }: { id: number; onBack: () => void }) {
         <ArrowLeft className="h-4 w-4" /> {t("Chart of accounts", "Plan comptable")}
       </button>
       <PageHeader
-        title={acc ? `${acc.code} · ${acc.name}` : t("Account", "Compte")}
+        title={acc ? `${acc.code} · ${sys.account(acc.name)}` : t("Account", "Compte")}
         description={acc ? [accountTypeLabel(acc.type, t), acc.isMoney ? (acc.currency === "CDF" ? "FC" : acc.currency) : null, !acc.active ? t("Inactive", "Inactif") : null].filter(Boolean).join(" · ") : undefined}
         actions={
           acc && (
@@ -282,6 +285,7 @@ function AccountView({ id, onBack }: { id: number; onBack: () => void }) {
 }
 
 function Statement({ id, range, type }: { id: number; range: ReturnType<typeof useRange>; type?: string }) {
+  const sys = useSystemText();
   const t = useT();
   const ok = validDate(range.from) && validDate(range.to);
   const q = useQuery<LedgerData>({ queryKey: [`/api/accounts/${id}/ledger`, { from: range.from, to: range.to }], enabled: ok });
@@ -326,7 +330,7 @@ function Statement({ id, range, type }: { id: number; range: ReturnType<typeof u
       {L && (
         <Card className="print-area print-wide">
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">{t("Statement", "Relevé")} · {L.account.code} {L.account.name}</CardTitle>
+            <CardTitle className="text-base">{t("Statement", "Relevé")} · {L.account.code} {sys.account(L.account.name)}</CardTitle>
             <p className="text-sm text-muted-foreground">{fmtDate(range.from)} → {fmtDate(range.to)} · {count(t, L.rows.length, ["line", "lines"], ["ligne", "lignes"])}</p>
           </CardHeader>
           <CardContent className="p-0">
@@ -358,7 +362,7 @@ function Statement({ id, range, type }: { id: number; range: ReturnType<typeof u
                         <Link href={`/vouchers/${r.journalId}`} className="text-primary hover:underline">{r.number}</Link>
                       </TableCell>
                       <TableCell className="min-w-[200px]">
-                        {r.lineMemo || r.memo || "—"}
+                        {sys.memo(r.lineMemo || r.memo) || "—"}
                         <span className="block text-xs text-muted-foreground">{[journalTypeLabel(r.type, t), r.partyName].filter(Boolean).join(" · ")}</span>
                       </TableCell>
                       <TableCell className="text-right"><Num>{d(r.debit).isZero() ? "" : usd(r.debit)}</Num></TableCell>
@@ -400,7 +404,7 @@ function Statement({ id, range, type }: { id: number; range: ReturnType<typeof u
               {L.rows.map((r, i) => (
                 <div key={`${r.journalId}-${i}`} className="flex items-start justify-between gap-2 px-4 py-2 text-sm">
                   <div className="min-w-0">
-                    <p className="break-words">{r.lineMemo || r.memo || journalTypeLabel(r.type, t)}</p>
+                    <p className="break-words">{sys.memo(r.lineMemo || r.memo) || journalTypeLabel(r.type, t)}</p>
                     <p className="break-words text-xs text-muted-foreground">
                       {fmtDate(r.date)} · <Link href={`/vouchers/${r.journalId}`} className="font-mono text-primary">{r.number}</Link>
                       {r.partyName ? ` · ${r.partyName}` : ""}

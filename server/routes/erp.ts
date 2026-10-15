@@ -63,7 +63,7 @@ export function registerErpRoutes(
       .where(eq(journals.id, paramId(req)));
     if (!j) throw notFound("Voucher", "Pièce introuvable");
     const lines = await db
-      .select({ line: journalLines, accountName: accounts.name, accountCode: accounts.code, accountType: accounts.type, isMoney: accounts.isMoney, partyName: parties.name })
+      .select({ line: journalLines, accountName: accounts.name, accountCode: accounts.code, accountType: accounts.type, isMoney: accounts.isMoney, systemKey: accounts.systemKey, partyName: parties.name })
       .from(journalLines)
       .innerJoin(accounts, eq(accounts.id, journalLines.accountId))
       .leftJoin(parties, eq(parties.id, journalLines.partyId))
@@ -72,14 +72,18 @@ export function registerErpRoutes(
     const hidden = req.user!.role === "partner" ? await reports.otherPartnerAccountIds(db, req.user!.partnerId) : new Set<number>();
     const m = reports.maskPartnerJournal(
       j.journal,
-      lines.map((l) => ({ ...l.line, accountName: l.accountName, accountCode: l.accountCode, accountType: l.accountType, isMoney: l.isMoney, partyName: l.partyName })),
+      lines.map((l) => ({ ...l.line, accountName: l.accountName, accountCode: l.accountCode, accountType: l.accountType, isMoney: l.isMoney, systemKey: l.systemKey, partyName: l.partyName })),
       hidden,
     );
+    // The printed amount is the daybook's: francs at the voucher's rate, the exchange difference apart.
+    const doc = documentAmount(j.journal.type, hidden.size ? lines.filter((l) => !hidden.has(l.line.accountId)) : lines, m.lines);
     res.json({
       ...m.journal,
       createdByName: j.createdByName,
       total: m.lines.reduce((s, l) => s.plus(l.debit), dec(0)).toFixed(2),
-      lines: m.lines,
+      amount: doc.amount,
+      fxDiff: "fxDiff" in doc ? doc.fxDiff ?? null : null,
+      lines: m.lines.map((l) => (l.accountId === -1 ? { ...l, systemKey: null } : l)),
     });
   }));
 

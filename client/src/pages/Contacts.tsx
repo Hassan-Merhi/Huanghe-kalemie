@@ -75,11 +75,15 @@ export default function Contacts() {
   return (
     <div>
       <PageHeader
-        title={t("Customers and suppliers", "Clients et fournisseurs")}
-        description={t(
-          "Who owes the shop and whom the shop owes. Agents are clearing agents, transporters and similar.",
-          "Qui doit à la boutique et à qui la boutique doit. Les agents sont les transitaires, transporteurs, etc.",
-        )}
+        title={user?.role === "cashier" ? t("Customers", "Clients") : t("Customers and suppliers", "Clients et fournisseurs")}
+        description={
+          user?.role === "cashier"
+            ? t("What each customer owes the shop.", "Ce que chaque client doit à la boutique.")
+            : t(
+                "Who owes the shop and whom the shop owes. Agents are clearing agents, transporters and similar.",
+                "Qui doit à la boutique et à qui la boutique doit. Les agents sont les transitaires, transporteurs, etc.",
+              )
+        }
         actions={
           can("manager") && (
             <Button onClick={() => setEditing("new")}>
@@ -90,14 +94,17 @@ export default function Contacts() {
       />
 
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <Tabs value={type} onValueChange={(v) => setType(v as PartyType)}>
-          <TabsList className="h-auto flex-wrap">
-            <TabsTrigger value="customer">{labels.customer}</TabsTrigger>
-            {user?.role !== "cashier" && <TabsTrigger value="supplier">{labels.supplier}</TabsTrigger>}
-            {user?.role !== "cashier" && <TabsTrigger value="agent">{labels.agent}</TabsTrigger>}
-            {user?.role !== "cashier" && <TabsTrigger value="employee">{labels.employee}</TabsTrigger>}
-          </TabsList>
-        </Tabs>
+        {/* A cashier works with customers only: no tabs to choose from. */}
+        {user?.role !== "cashier" && (
+          <Tabs value={type} onValueChange={(v) => setType(v as PartyType)}>
+            <TabsList className="h-auto flex-wrap">
+              <TabsTrigger value="customer">{labels.customer}</TabsTrigger>
+              <TabsTrigger value="supplier">{labels.supplier}</TabsTrigger>
+              <TabsTrigger value="agent">{labels.agent}</TabsTrigger>
+              <TabsTrigger value="employee">{labels.employee}</TabsTrigger>
+            </TabsList>
+          </Tabs>
+        )}
         <div className="relative sm:w-72">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input className="pl-9" placeholder={t("Search name or phone", "Chercher nom ou téléphone")} value={search} onChange={(e) => setSearch(e.target.value)} />
