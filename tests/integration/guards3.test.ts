@@ -47,10 +47,13 @@ describe.skipIf(!hasDb)("Guards against the remaining bypasses", async () => {
   });
 
   it("measures a manager's rate change from the day before, so overwriting a day cannot walk it", async () => {
-    await db.transaction((tx) => ledger.setExchangeRate(tx, { date: "2026-08-02", cdfPerUsd: "2900" }, userId, staff));
-    await expect(db.transaction((tx) => ledger.setExchangeRate(tx, { date: "2026-08-02", cdfPerUsd: "3000" }, userId, staff))).rejects.toThrow(/Only the owner/);
-    await expect(db.transaction((tx) => ledger.setExchangeRate(tx, { date: "2026-08-02", cdfPerUsd: "2800", cnyPerUsd: "70" }, userId, staff))).rejects.toThrow(/first yuan rate/);
-    await db.transaction((tx) => ledger.setExchangeRate(tx, { date: "2026-08-02", cdfPerUsd: "2800" }, userId));
+    const today = ledger.shopToday();
+    await db.transaction((tx) => ledger.setExchangeRate(tx, { date: today, cdfPerUsd: "2900" }, userId, staff));
+    await expect(db.transaction((tx) => ledger.setExchangeRate(tx, { date: today, cdfPerUsd: "3000" }, userId, staff))).rejects.toThrow(/Only the owner/);
+    await expect(db.transaction((tx) => ledger.setExchangeRate(tx, { date: today, cdfPerUsd: "2800", cnyPerUsd: "70" }, userId, staff))).rejects.toThrow(/first yuan rate/);
+    // Back days are the owner's: rewriting them one by one would walk today's rate anywhere.
+    await expect(db.transaction((tx) => ledger.setExchangeRate(tx, { date: "2026-08-02", cdfPerUsd: "2800" }, userId, staff))).rejects.toThrow(/past day/);
+    await db.transaction((tx) => ledger.setExchangeRate(tx, { date: today, cdfPerUsd: "2800" }, userId));
   });
 
   it("values every franc of a staff sale at the day's rate", async () => {

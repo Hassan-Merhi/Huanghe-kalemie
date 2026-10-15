@@ -457,6 +457,11 @@ export async function setExchangeRate(
 ) {
   await assertPeriodOpen(tx, input.date);
   assertNotFuture(input.date);
+  if (!opts.owner && input.date < shopToday()) {
+    // A past day's rate values entries already made; rewriting back days one by one would also
+    // walk today's rate anywhere, so only the owner changes them.
+    throw new AppError(403, "Only the owner can change a past day's rate", "FORBIDDEN", "Seul le propriétaire peut modifier le taux d'un jour passé");
+  }
   if (!opts.owner) {
     // Every franc check compares with the day's rate, so only the owner may move it far in one step.
     const limit = Decimal.max(await rateTolerancePct(tx), 5);

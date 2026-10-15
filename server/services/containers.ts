@@ -9,6 +9,7 @@ import {
   stockLevels,
   stockMovements,
   variants,
+  parties,
 } from "@shared/schema";
 import { computeLandedCost, type AllocationMethod, type LandedCostResult } from "@shared/landedCost";
 import { cents, dec, sum, Decimal } from "@shared/money";
@@ -143,6 +144,12 @@ export async function addExpense(tx: Tx, containerId: number, input: ContainerEx
   const container = await lockEditable(tx, containerId);
   if (!!input.paidFromAccountId === !!input.payablePartyId) {
     throw badRequest("Say either which account paid this expense or who is owed for it", "Indiquez soit le compte qui a payé cette dépense, soit à qui elle est due");
+  }
+  if (input.payablePartyId) {
+    const [party] = await tx.select({ type: parties.type }).from(parties).where(eq(parties.id, input.payablePartyId));
+    if (!party || !["supplier", "agent", "employee"].includes(party.type)) {
+      throw badRequest("A container cost is owed to a supplier or an agent", "Un frais de conteneur est dû à un fournisseur ou à un agent");
+    }
   }
   if (input.method === "line") {
     if (!input.targetLineId) throw badRequest("Pick the line this expense belongs to", "Choisissez la ligne à laquelle appartient cette dépense");
@@ -320,6 +327,8 @@ export async function assertContainerRate(tx: Tx, currency: string, rateToUsd: s
 export async function finalizeContainer(tx: Tx, containerId: number, offloadDate: string, userId: number) {
   const container = await lockEditable(tx, containerId);
   await assertContainerRate(tx, container.currency, container.rateToUsd, offloadDate);
+  const [supplier] = await tx.select({ type: parties.type }).from(parties).where(eq(parties.id, container.supplierId));
+  if (supplier?.type !== "supplier") throw badRequest("The container's supplier is not a supplier", "Le fournisseur du conteneur n'est pas un fournisseur");
   const full = await getContainer(tx, containerId);
   if (full.lines.length === 0) throw badRequest("Add the container's items before offloading", "Ajoutez les articles du conteneur avant le déchargement");
   const unpinned = full.expenses.find((e) => e.method === "line" && !e.targetLineId);
@@ -439,6 +448,9 @@ export async function reverseContainer(tx: Tx, containerId: number, date: string
   const [container] = await tx.select().from(containers).where(eq(containers.id, containerId)).for("update");
   if (!container) throw notFound("Container", "Conteneur introuvable");
   if (container.status !== "finalized") throw badRequest("Only an offloaded container can be reversed", "Seul un conteneur déchargé peut être annulé");
+  if (container.offloadDate && date < container.offloadDate) {
+    throw badRequest(`The reversal cannot be dated before the offload (${container.offloadDate})`, `L'annulation ne peut pas être datée avant le déchargement (${container.offloadDate})`);
+  }
   const full = await getContainer(tx, containerId);
 
   const units = await tx.select().from(motorcycleUnits).where(eq(motorcycleUnits.containerId, containerId));
