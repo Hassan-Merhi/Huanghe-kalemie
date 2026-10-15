@@ -95,7 +95,7 @@ export default function Vouchers() {
   }, [draft, tab, navigate]);
 
   const saveDraft = useApiMutation<DraftInput & { id?: number }, VoucherDraft>("POST", "/api/voucher-drafts", {
-    success: t("Optional voucher saved: no balance has changed", "Pièce facultative enregistrée : aucun solde n'a changé"),
+    success: t("Optional voucher saved: no balance has changed", "Pièce facultative enregistrée\u00a0: aucun solde n'a changé"),
     onSuccess: (row) => {
       setPosted(null);
       if (row.id !== draftId) navigate(`/vouchers?tab=${row.kind}&draft=${row.id}`);
@@ -514,6 +514,7 @@ function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: For
   const totalCredit = lines.reduce((s, l) => s.plus(d(l.credit).toDecimalPlaces(2)), d(0));
   const diff = totalDebit.minus(totalCredit);
   const balanced = diff.isZero() && totalDebit.gt(0);
+  const empty = totalDebit.isZero() && totalCredit.isZero();
   const problems: string[] = [];
   if (!memo.trim()) problems.push(t("Add a description", "Ajoutez une description"));
   if (lines.some((l) => !l.accountId)) problems.push(t("Choose an account on every line", "Choisissez un compte sur chaque ligne"));
@@ -574,9 +575,13 @@ function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: For
       <Card>
         <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 pb-2">
           <CardTitle className="text-base">{t("Lines", "Lignes")}</CardTitle>
-          <Badge variant={balanced ? "secondary" : "destructive"} className={cn(balanced && "text-emerald-700 dark:text-emerald-400")}>
-            {balanced ? t("Balanced", "Équilibrée") : t("Unbalanced", "Déséquilibrée")}
-          </Badge>
+          {empty ? (
+            <Badge variant="outline" className="font-normal text-muted-foreground">{t("Enter amounts", "Saisissez des montants")}</Badge>
+          ) : (
+            <Badge variant={balanced ? "secondary" : "destructive"} className={cn(balanced && "text-emerald-700 dark:text-emerald-400")}>
+              {balanced ? t("Balanced", "Équilibrée") : t("Unbalanced", "Déséquilibrée")}
+            </Badge>
+          )}
         </CardHeader>
         <CardContent className="space-y-3">
           <div className="hidden gap-2 px-1 text-xs font-medium text-muted-foreground md:grid md:grid-cols-[minmax(0,1.5fr)_7rem_7rem_minmax(0,1fr)_2.5rem]">
@@ -628,10 +633,10 @@ function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: For
               <Plus className="mr-1 h-4 w-4" /> {t("Add line", "Ajouter une ligne")}
             </Button>
             <div className="flex flex-wrap justify-end gap-4 text-sm">
-              <span>{t("Debits", "Débits")}: <Num className="font-medium">{usd(totalDebit.toFixed(2))}</Num></span>
-              <span>{t("Credits", "Crédits")}: <Num className="font-medium">{usd(totalCredit.toFixed(2))}</Num></span>
-              <span className={cn("font-semibold", diff.isZero() ? "text-emerald-600 dark:text-emerald-400" : "text-destructive")}>
-                {t("Difference", "Écart")}: <Num>{usd(diff.toFixed(2))}</Num>
+              <span>{t("Debits:", "Débits\u00a0:")} <Num className="font-medium">{usd(totalDebit.toFixed(2))}</Num></span>
+              <span>{t("Credits:", "Crédits\u00a0:")} <Num className="font-medium">{usd(totalCredit.toFixed(2))}</Num></span>
+              <span className={cn("font-semibold", empty ? "text-muted-foreground" : diff.isZero() ? "text-emerald-600 dark:text-emerald-400" : "text-destructive")}>
+                {t("Difference:", "Écart\u00a0:")} <Num>{usd(diff.toFixed(2))}</Num>
               </span>
             </div>
           </div>
@@ -742,7 +747,7 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
           <Field label={t("From account", "Du compte")} hint={balOf(from) ? `${t("Balance", "Solde")} ${balOf(from)}` : undefined}>
             <MoneyAccountSelect value={fromId} onChange={(id) => setFromId(id)} />
           </Field>
-          <Field label={t(`Amount out (${from?.currency ?? "—"})`, `Montant sorti (${from?.currency ?? "—"})`)}>
+          <Field label={t(`Amount out${from ? ` (${from.currency})` : ""}`, `Montant sorti${from ? ` (${from.currency})` : ""}`)}>
             <Input inputMode="decimal" value={fromAmount} onChange={(e) => setFromAmount(e.target.value)} placeholder="0" />
           </Field>
           <Field
@@ -752,7 +757,7 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
           >
             <MoneyAccountSelect value={toId} onChange={(id) => setToId(id)} />
           </Field>
-          <Field label={t(`Amount in (${to?.currency ?? "—"})`, `Montant reçu (${to?.currency ?? "—"})`)}>
+          <Field label={t(`Amount in${to ? ` (${to.currency})` : ""}`, `Montant reçu${to ? ` (${to.currency})` : ""}`)}>
             <Input inputMode="decimal" value={toAmount} onChange={(e) => { setToAmount(e.target.value); setToTouched(true); }} placeholder="0" />
           </Field>
           {anyCdf && (
@@ -760,7 +765,7 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
               label={t("Book rate (CDF per 1 USD)", "Taux comptable (CDF pour 1 USD)")}
               hint={
                 followsImplied
-                  ? t("Same as the rate of this exchange: no exchange difference.", "Identique au taux de ce change : aucune différence de change.")
+                  ? t("Same as the rate of this exchange: no exchange difference.", "Identique au taux de ce change\u00a0: aucune différence de change.")
                   : t("Used to value the franc side in dollars.", "Sert à valoriser le côté francs en dollars.")
               }
             >

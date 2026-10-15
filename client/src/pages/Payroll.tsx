@@ -23,7 +23,7 @@ import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from
 import { AccountSelect, MoneyAccountSelect, MonthSelect, PartySelect, useRateField } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
-import { useI18n, useT } from "@/lib/i18n";
+import { useI18n, useT, count } from "@/lib/i18n";
 import { cdf, d, date as fmtDate, todayLocal, usd } from "@/lib/format";
 import type { Account, Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -306,7 +306,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
             <div>
               <CardTitle className="text-base">{t(`Payroll ${monthLabel(month)}`, `Paie de ${monthLabel(month)}`)}</CardTitle>
               <p className="mt-1 text-sm text-muted-foreground">
-                {t("Booked on", "Comptabilisée le")} {fmtDate(run.date)} · {run.lines.length} {t("employees", "employés")}
+                {t("Booked on", "Comptabilisée le")} {fmtDate(run.date)} · {count(t, run.lines.length, ["employee", "employees"], ["employé", "employés"])}
               </p>
             </div>
             {run.journalId && (
@@ -391,7 +391,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                 </TableBody>
                 <TableFooter>
                   <TableRow>
-                    <TableCell colSpan={5}>{t("Total", "Total")} · {included.length} {t("employees", "employés")}</TableCell>
+                    <TableCell colSpan={5}>{t("Total", "Total")} · {count(t, included.length, ["employee", "employees"], ["employé", "employés"])}</TableCell>
                     <TableCell className="text-right"><Num className="font-semibold">{usd(total.toFixed(2))}</Num></TableCell>
                     <TableCell />
                   </TableRow>
@@ -418,7 +418,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
       <AlertDialog open={confirmCancel} onOpenChange={setConfirmCancel}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("Cancel this payroll run?", "Annuler ce passage de paie ?")}</AlertDialogTitle>
+            <AlertDialogTitle>{t("Cancel this payroll run?", "Annuler ce passage de paie\u00a0?")}</AlertDialogTitle>
             <AlertDialogDescription>
               {t(
                 `The salary entry for ${monthLabel(month)} will be reversed. Payments already made stay on the employees' accounts.`,
@@ -582,7 +582,7 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
               </div>
             )}
             <div className="flex items-center justify-between rounded-md bg-muted/50 p-3 text-sm">
-              <span>{t("Total", "Total")} · {lines.length} {t("employees", "employés")}</span>
+              <span>{t("Total", "Total")} · {count(t, lines.length, ["employee", "employees"], ["employé", "employés"])}</span>
               <Num className="font-semibold">
                 {usd(total.toFixed(2))}
                 {isCdf && r.gt(0) && <span className="ml-2 font-normal text-muted-foreground">{cdf(total.times(r).toFixed(0))}</span>}
@@ -789,7 +789,7 @@ function HistoryTab({ runs }: { runs: PayrollRun[] }) {
             </TableBody>
             <TableFooter>
               <TableRow>
-                <TableCell colSpan={4}>{t("Total", "Total")} · {sorted.length} {t("months", "mois")}</TableCell>
+                <TableCell colSpan={4}>{t("Total", "Total")} · {count(t, sorted.length, ["month", "months"], ["mois", "mois"])}</TableCell>
                 <TableCell className="text-right"><Num className="font-semibold">{usd(grand.toFixed(2))}</Num></TableCell>
                 <TableCell />
               </TableRow>

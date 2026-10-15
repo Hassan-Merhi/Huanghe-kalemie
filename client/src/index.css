@@ -62,6 +62,7 @@
   --accent-foreground: 30 8% 10%;
 
   --destructive: 0 84% 32%;
+  --destructive-text: 0 84% 32%;
 
   --destructive-foreground: 0 20% 98%;
 
@@ -157,7 +158,9 @@
 
   --accent-foreground: 30 8% 92%;
 
-  --destructive: 0 84% 35%;
+  --destructive: 0 72% 45%;
+  /* Lighter red for text on the dark background (about 6:1 on background and card). */
+  --destructive-text: 0 90% 70%;
 
   --destructive-foreground: 0 20% 98%;
 
@@ -185,7 +188,7 @@
   --secondary-border: 30 6% 78%;
   --muted-border: 30 10% 81%;
   --accent-border: 30 12% 80%;
-  --destructive-border: 0 84% 27%;
+  --destructive-border: 0 72% 38%;
 }
 
 @layer base {
@@ -390,5 +393,20 @@
   .print-area, .print-area * { visibility: visible; }
   .print-area { position: absolute; left: 0; top: 0; width: 80mm; padding: 0; font-size: 11px; color: #000; background: #fff; }
   @page { margin: 4mm; }
+  .print-area .overflow-x-auto, .print-area .overflow-auto { overflow: visible !important; }
+}
+/* Where :has() works, only the print area and its ancestors are laid out when printing, and the
+   ancestors lose their offsets (sidebar gap, padding, centring), so the print area starts at the
+   page's left edge and flows across pages instead of being absolutely positioned inside the inset. */
+@supports selector(:has(*)) {
+  @media print {
+    body *:not(.print-area):not(.print-area *):not(:has(.print-area)) { display: none !important; }
+    body *:has(.print-area) {
+      position: static !important; display: block !important; margin: 0 !important; padding: 0 !important;
+      width: auto !important; max-width: none !important; min-width: 0 !important; height: auto !important; min-height: 0 !important;
+      overflow: visible !important; transform: none !important; border: 0 !important; box-shadow: none !important; background: transparent !important;
+    }
+    .print-area { position: static !important; margin: 0 !important; }
+  }
 }
 .tabular { font-variant-numeric: tabular-nums; }

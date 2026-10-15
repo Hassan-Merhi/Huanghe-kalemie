@@ -7,13 +7,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
 import { VariantSearch } from "@/components/pickers";
 import { useAuth } from "@/lib/auth";
-import { useI18n, useT } from "@/lib/i18n";
-import { d, date as fmtDate, money, qty, todayLocal, unitCost, usd, variantText } from "@/lib/format";
+import { useI18n, useT, count } from "@/lib/i18n";
+import { d, date as fmtDate, money, qty, qtyTotal, todayLocal, unitCost, usd, variantText } from "@/lib/format";
 import { downloadCsv } from "@/lib/sheets";
 import type { VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -100,7 +101,7 @@ function CategoryFilter({ value, onChange, names }: { value: string; onChange: (
   const t = useT();
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className="w-full sm:w-48"><SelectValue /></SelectTrigger>
+      <SelectTrigger className="w-full sm:w-56"><SelectValue /></SelectTrigger>
       <SelectContent>
         <SelectItem value={ALL}>{t("All categories", "Toutes les catégories")}</SelectItem>
         {names.map((n) => (
@@ -198,7 +199,7 @@ function ByLocationTab() {
       (category === ALL || (r.categoryName ?? none) === category) &&
       matches(search, r.productName, r.sku, variantText(r.attributes), r.categoryName),
   );
-  const totQty = rows.reduce((s, r) => s.plus(r.qty), d(0));
+  const totQty = qtyTotal(rows);
   const totValue = rows.reduce((s, r) => s.plus(r.value), d(0));
   const totRetail = rows.reduce((s, r) => s.plus(r.retailValue), d(0));
   const showLocation = location === ALL && locations.length > 1;
@@ -207,7 +208,7 @@ function ByLocationTab() {
     downloadCsv(`stock-par-emplacement-${todayLocal()}.csv`, [
       [t("Location", "Emplacement"), t("Item", "Article"), t("Variant", "Variante"), "SKU", t("Category", "Catégorie"), t("Qty", "Qté"), t("Average cost", "Coût moyen"), t("Value", "Valeur"), t("Retail value", "Valeur de vente")],
       ...rows.map((r) => [r.locationName, r.productName, variantText(r.attributes), r.sku, r.categoryName ?? "", r.qty, r.avgCost, r.value, r.retailValue]),
-      [t("Total", "Total"), "", "", "", "", totQty.toString(), "", totValue.toFixed(2), totRetail.toFixed(2)],
+      [t("Total", "Total"), "", "", "", "", totQty, "", totValue.toFixed(2), totRetail.toFixed(2)],
     ]);
   }
 
@@ -229,7 +230,7 @@ function ByLocationTab() {
                 <p className="flex items-center gap-1.5 font-medium"><MapPin className="h-4 w-4 text-muted-foreground" /> {l.name}</p>
                 <p className="mt-2 text-xl font-semibold tabular">{usd(l.value.toFixed(2))}</p>
                 <p className="mt-0.5 text-xs text-muted-foreground">
-                  {l.items} {t("items in stock", "articles en stock")} · {t("retail", "vente")} {usd(l.retail.toFixed(2))}
+                  {count(t, l.items, ["item in stock", "items in stock"], ["article en stock", "articles en stock"])} · {t("retail", "vente")} {usd(l.retail.toFixed(2))}
                 </p>
               </button>
             );
@@ -239,7 +240,7 @@ function ByLocationTab() {
 
       <div className="flex flex-wrap items-center gap-2">
         <Select value={location} onValueChange={setLocation}>
-          <SelectTrigger className="w-full sm:w-48"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-full sm:w-56"><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value={ALL}>{t("All locations", "Tous les emplacements")}</SelectItem>
             {locations.map((l) => (
@@ -296,11 +297,11 @@ function ByLocationTab() {
                 </TableBody>
                 <TableFooter>
                   <TableRow>
-                    <TableCell>{t("Total", "Total")} · {rows.length} {t("lines", "lignes")}</TableCell>
+                    <TableCell>{t("Total", "Total")} · {count(t, rows.length, ["line", "lines"], ["ligne", "lignes"])}</TableCell>
                     {showLocation && <TableCell className="hidden md:table-cell" />}
                     <TableCell className="hidden sm:table-cell" />
                     <TableCell className="hidden lg:table-cell" />
-                    <TableCell className="text-right"><Num>{qty(totQty.toString())}</Num></TableCell>
+                    <TableCell className="text-right"><Num>{totQty}</Num></TableCell>
                     <TableCell className="hidden md:table-cell" />
                     <TableCell className="text-right"><Num className="font-semibold">{usd(totValue.toFixed(2))}</Num></TableCell>
                     <TableCell className="hidden text-right sm:table-cell"><Num className="font-semibold">{usd(totRetail.toFixed(2))}</Num></TableCell>
@@ -368,7 +369,7 @@ function OnTheWayTab() {
       <div className="flex flex-wrap items-center gap-2">
         <SearchBox value={search} onChange={setSearch} placeholder={t("Container, supplier or item", "Conteneur, fournisseur ou article")} />
         <p className="text-xs text-muted-foreground">
-          {t("FOB value only: landed cost (freight, duties…) is added at offload.", "Valeur FOB seulement : le coût de revient (fret, droits…) s'ajoute au déchargement.")}
+          {t("FOB value only: landed cost (freight, duties…) is added at offload.", "Valeur FOB seulement\u00a0: le coût de revient (fret, droits…) s'ajoute au déchargement.")}
         </p>
       </div>
       {shown.length === 0 ? (
@@ -398,7 +399,7 @@ function OnTheWayTab() {
                   </span>
                   <span className="text-right text-sm">
                     <Num className="block font-semibold">{usd(gFob.toFixed(2))}</Num>
-                    <span className="block text-xs text-muted-foreground">{lines.length} {t("lines", "lignes")} · {qty(gQty.toString())} {t("pcs", "pcs")}</span>
+                    <span className="block text-xs text-muted-foreground">{count(t, lines.length, ["line", "lines"], ["ligne", "lignes"])} · {qty(gQty.toString())} {t("pcs", "pcs")}</span>
                   </span>
                 </button>
                 {isOpen && (
@@ -453,7 +454,7 @@ function AsOfTab() {
   const items = useMemo(() => q.data?.items ?? [], [q.data]);
   const cats = useMemo(() => categoryNames(items, none), [items, none]);
   const rows = items.filter((r) => (category === ALL || (r.categoryName ?? none) === category) && matches(search, r.productName, r.sku, variantText(r.attributes)));
-  const totQty = rows.reduce((s, r) => s.plus(r.qty), d(0));
+  const totQty = qtyTotal(rows);
   const totValue = rows.reduce((s, r) => s.plus(r.value), d(0));
 
   const groups = useMemo(() => {
@@ -469,7 +470,7 @@ function AsOfTab() {
     downloadCsv(`stock-au-${day}.csv`, [
       [t("Category", "Catégorie"), t("Item", "Article"), t("Variant", "Variante"), "SKU", t("Qty", "Qté"), t("Value", "Valeur")],
       ...rows.map((r) => [r.categoryName ?? "", r.productName, variantText(r.attributes), r.sku, r.qty, r.value]),
-      [t("Total", "Total"), "", "", "", totQty.toString(), totValue.toFixed(2)],
+      [t("Total", "Total"), "", "", "", totQty, totValue.toFixed(2)],
     ]);
   }
 
@@ -494,9 +495,10 @@ function AsOfTab() {
         </Field>
         <CategoryFilter value={category} onChange={setCategory} names={cats} />
         <SearchBox value={search} onChange={setSearch} placeholder={t("Search item or SKU", "Chercher article ou code")} />
-        <Button variant={grouped ? "default" : "outline"} size="sm" onClick={() => setGrouped((g) => !g)}>
+        <label className="flex h-9 items-center gap-2 text-sm">
+          <Switch checked={grouped} onCheckedChange={setGrouped} />
           {t("Group by category", "Grouper par catégorie")}
-        </Button>
+        </label>
         <div className="ml-auto"><CsvButton onClick={csv} disabled={rows.length === 0} /></div>
       </div>
       <ErrorText error={q.error} />
@@ -545,7 +547,7 @@ function AsOfTab() {
                       <TableRow>
                         <TableCell>{t("Total", "Total")}</TableCell>
                         <TableCell className="hidden sm:table-cell" />
-                        <TableCell className="text-right"><Num>{qty(totQty.toString())}</Num></TableCell>
+                        <TableCell className="text-right"><Num>{totQty}</Num></TableCell>
                         <TableCell className="text-right"><Num className="font-semibold">{usd(totValue.toFixed(2))}</Num></TableCell>
                       </TableRow>
                     </TableFooter>
@@ -575,10 +577,16 @@ function ItemHistoryTab() {
   };
   const monthNum = (m: number | string) => (typeof m === "number" ? m : Number(String(m).slice(-2)));
   const data = q.data;
-  const chart = (data?.months ?? []).map((m) => ({ name: monthName(monthNum(m.month)), qty: Number(m.closingQty) }));
-  const totIn = (data?.months ?? []).reduce((s, m) => ({ q: s.q.plus(m.inQty), v: s.v.plus(m.inValue) }), { q: d(0), v: d(0) });
-  const totOut = (data?.months ?? []).reduce((s, m) => ({ q: s.q.plus(m.outQty), v: s.v.plus(m.outValue) }), { q: d(0), v: d(0) });
-  const last = data?.months[data.months.length - 1];
+  const today = todayLocal();
+  const nowYear = Number(today.slice(0, 4));
+  const nowMonth = Number(today.slice(5, 7));
+  // Months after the current one have not happened yet: show "—" and keep them out of the chart and totals.
+  const isFuture = (m: number | string) => year > nowYear || (year === nowYear && monthNum(m) > nowMonth);
+  const pastMonths = (data?.months ?? []).filter((m) => !isFuture(m.month));
+  const chart = pastMonths.map((m) => ({ name: monthName(monthNum(m.month)), qty: Number(m.closingQty) }));
+  const totIn = pastMonths.reduce((s, m) => ({ q: s.q.plus(m.inQty), v: s.v.plus(m.inValue) }), { q: d(0), v: d(0) });
+  const totOut = pastMonths.reduce((s, m) => ({ q: s.q.plus(m.outQty), v: s.v.plus(m.outValue) }), { q: d(0), v: d(0) });
+  const last = pastMonths[pastMonths.length - 1];
   const years = Array.from({ length: 6 }, (_, i) => thisYear - i);
 
   function csv() {
@@ -586,7 +594,7 @@ function ItemHistoryTab() {
     downloadCsv(`historique-${data.variant.sku}-${year}.csv`, [
       [t("Month", "Mois"), t("In qty", "Entrées qté"), t("In value", "Entrées valeur"), t("Out qty", "Sorties qté"), t("Out value", "Sorties valeur"), t("Closing qty", "Stock final qté"), t("Closing value", "Stock final valeur")],
       [t("Opening", "Ouverture"), "", "", "", "", data.openingQty, data.openingValue],
-      ...data.months.map((m) => [monthName(monthNum(m.month)), m.inQty, m.inValue, m.outQty, m.outValue, m.closingQty, m.closingValue]),
+      ...data.months.map((m) => (isFuture(m.month) ? [monthName(monthNum(m.month)), "", "", "", "", "", ""] : [monthName(monthNum(m.month)), m.inQty, m.inValue, m.outQty, m.outValue, m.closingQty, m.closingValue])),
     ]);
   }
 
@@ -683,6 +691,19 @@ function ItemHistoryTab() {
                       <TableCell className="text-right"><Num className="font-medium">{usd(data.openingValue)}</Num></TableCell>
                     </TableRow>
                     {data.months.map((m) => {
+                      if (isFuture(m.month)) {
+                        return (
+                          <TableRow key={String(m.month)} className="text-muted-foreground">
+                            <TableCell>{monthName(monthNum(m.month))}</TableCell>
+                            <TableCell className="text-right">—</TableCell>
+                            <TableCell className="hidden text-right sm:table-cell">—</TableCell>
+                            <TableCell className="text-right">—</TableCell>
+                            <TableCell className="hidden text-right sm:table-cell">—</TableCell>
+                            <TableCell className="text-right">—</TableCell>
+                            <TableCell className="text-right">—</TableCell>
+                          </TableRow>
+                        );
+                      }
                       const empty = d(m.inQty).isZero() && d(m.outQty).isZero();
                       return (
                         <TableRow key={String(m.month)}>

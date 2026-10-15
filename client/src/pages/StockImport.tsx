@@ -18,7 +18,7 @@ import { useApiMutation } from "@/hooks/useApiMutation";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { d, qty as fmtQty, todayLocal, usd } from "@/lib/format";
-import { useI18n, useT } from "@/lib/i18n";
+import { useI18n, useT, count } from "@/lib/i18n";
 import { downloadXlsx, readSheet } from "@/lib/sheets";
 import type { Product } from "@/lib/types";
 
@@ -92,14 +92,14 @@ export function StatusBadge({ status }: { status: PreviewRow["status"] }) {
 
 function PreviewCounts({ rows }: { rows: { status: PreviewRow["status"] }[] }) {
   const t = useT();
-  const count = (s: PreviewRow["status"]) => rows.filter((r) => r.status === s).length;
+  const n = (s: PreviewRow["status"]) => rows.filter((r) => r.status === s).length;
   return (
     <div className="flex flex-wrap gap-2 text-sm">
-      <Badge variant="outline">{rows.length} {t("rows", "lignes")}</Badge>
-      <Badge variant="secondary">{count("existing")} {t("existing", "existants")}</Badge>
-      <Badge variant="outline">{count("new_variant")} {t("new variants", "nouvelles variantes")}</Badge>
-      <Badge variant="outline">{count("new_item")} {t("new items", "nouveaux articles")}</Badge>
-      {count("error") > 0 && <Badge variant="destructive">{count("error")} {t("errors", "erreurs")}</Badge>}
+      <Badge variant="outline">{count(t, rows.length, ["row", "rows"], ["ligne", "lignes"])}</Badge>
+      <Badge variant="secondary">{count(t, n("existing"), ["existing", "existing"], ["existant", "existants"])}</Badge>
+      <Badge variant="outline">{count(t, n("new_variant"), ["new variant", "new variants"], ["nouvelle variante", "nouvelles variantes"])}</Badge>
+      <Badge variant="outline">{count(t, n("new_item"), ["new item", "new items"], ["nouvel article", "nouveaux articles"])}</Badge>
+      {n("error") > 0 && <Badge variant="destructive">{count(t, n("error"), ["error", "errors"], ["erreur", "erreurs"])}</Badge>}
     </div>
   );
 }
@@ -437,7 +437,7 @@ function PricesImport() {
       {rows.length > 0 && (
         <Card>
           <CardContent className="space-y-3 p-4">
-            <p className="text-sm text-muted-foreground">{rows.length} {t("rows", "lignes")}{errors > 0 && <span className="text-destructive"> · {errors} {t("errors", "erreurs")}</span>}</p>
+            <p className="text-sm text-muted-foreground">{count(t, rows.length, ["row", "rows"], ["ligne", "lignes"])}{errors > 0 && <span className="text-destructive"> · {count(t, errors, ["error", "errors"], ["erreur", "erreurs"])}</span>}</p>
             <div className="max-h-[420px] overflow-auto rounded-md border">
               <Table>
                 <TableHeader>
@@ -545,7 +545,7 @@ function ExportItems() {
       </CardHeader>
       <CardContent className="space-y-3">
         <ErrorText error={stockQ.error} />
-        {stockQ.isLoading ? <Loading /> : <p className="text-sm text-muted-foreground">{items.length} {t("variants", "variantes")}</p>}
+        {stockQ.isLoading ? <Loading /> : <p className="text-sm text-muted-foreground">{count(t, items.length, ["variant", "variants"], ["variante", "variantes"])}</p>}
         <div className="flex flex-wrap gap-2">
           <Button onClick={() => exportXlsx(false)} disabled={!items.length}><Download className="mr-1 h-4 w-4" /> {t("Export for re-import (no quantities)", "Exporter pour réimport (sans quantités)")}</Button>
           <Button variant="outline" onClick={() => exportXlsx(true)} disabled={!items.length}><Download className="mr-1 h-4 w-4" /> {t("Export with stock and cost", "Exporter avec stock et coût")}</Button>

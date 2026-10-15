@@ -47,7 +47,7 @@ type Paper = "A5" | "A4";
 
 const printCss = (paper: Paper) => `@media print {
   @page { size: ${paper}; margin: 10mm; }
-  .print-area.voucher-print { position: absolute; left: 0; top: 0; width: 100% !important; font-size: ${paper === "A5" ? "10px" : "12px"} !important; padding: 0 !important; border: 0 !important; box-shadow: none !important; }
+  .print-area.voucher-print { position: static !important; width: 100% !important; max-width: none !important; margin: 0 !important; font-size: ${paper === "A5" ? "10px" : "12px"} !important; padding: 0 !important; border: 0 !important; box-shadow: none !important; }
   .print-area.voucher-print * { color: #000 !important; background: transparent !important; border-color: #888 !important; }
   .print-area.voucher-print table { width: 100%; border-collapse: collapse; }
   .print-area.voucher-print th, .print-area.voucher-print td { border-bottom: 1px solid #aaa; padding: 3px 4px; }
@@ -123,7 +123,7 @@ export default function VoucherPrint() {
 
           {v.memo && (
             <p className="text-sm">
-              <span className="text-muted-foreground">{t("Description", "Libellé")}: </span>
+              <span className="text-muted-foreground">{t("Description: ", "Libellé\u00a0: ")}</span>
               <span className="font-medium">{v.memo}</span>
             </p>
           )}
@@ -172,9 +172,9 @@ export default function VoucherPrint() {
           </div>
 
           <p className="text-sm">
-            <span className="text-muted-foreground">{t("Amount", "Montant")}: </span>
+            <span className="text-muted-foreground">{t("Amount: ", "Montant\u00a0: ")}</span>
             <span className="text-base font-semibold">{usd(v.total)}</span>
-            <span className="ml-4 text-muted-foreground">{t("Created by", "Saisi par")}: </span>
+            <span className="ml-4 text-muted-foreground">{t("Created by: ", "Saisi par\u00a0: ")}</span>
             <span>{v.createdByName ?? "—"}</span>
           </p>
 

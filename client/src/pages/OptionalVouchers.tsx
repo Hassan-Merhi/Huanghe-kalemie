@@ -235,7 +235,7 @@ export default function OptionalVouchers() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {confirm?.action === "finalize" ? t("Validate this voucher?", "Valider cette pièce ?") : t("Delete this optional voucher?", "Supprimer cette pièce facultative ?")}
+              {confirm?.action === "finalize" ? t("Validate this voucher?", "Valider cette pièce\u00a0?") : t("Delete this optional voucher?", "Supprimer cette pièce facultative\u00a0?")}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {confirm?.action === "finalize"

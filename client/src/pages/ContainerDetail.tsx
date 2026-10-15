@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { d, date, money, qty, todayLocal, unitCost, usd, variantText } from "@/lib/format";
-import { useT } from "@/lib/i18n";
+import { useT, count } from "@/lib/i18n";
 import type { Account, Party, VariantRow } from "@/lib/types";
 import { ContainerStatusBadge, useStatusLabel, type ContainerRow, type ContainerStatus } from "./Containers";
 import { ContainerImportButton } from "./StockImport";
@@ -178,7 +178,7 @@ export default function ContainerDetail() {
       </div>
       <PageHeader
         title={`${t("Container", "Conteneur")} ${c.number}`}
-        description={c.supplierName ? `${t("Supplier", "Fournisseur")} : ${c.supplierName}` : undefined}
+        description={c.supplierName ? t(`Supplier: ${c.supplierName}`, `Fournisseur\u00a0: ${c.supplierName}`) : undefined}
         actions={
           <>
             {editable && <OffloadButton c={c} disabledReason={linesDirty ? t("Save the lines first", "Enregistrez d'abord les lignes") : null} />}
@@ -251,13 +251,13 @@ function HeaderCard({ c }: { c: ContainerFull }) {
         <div>
           <p className="text-xs text-muted-foreground">{t("Dates", "Dates")}</p>
           <p className="mt-1 text-sm">
-            {t("Shipped", "Expédié")} : {c.shipDate ? date(c.shipDate) : "—"}
+            {t("Shipped: ", "Expédié\u00a0: ")}{c.shipDate ? date(c.shipDate) : "—"}
             <br />
-            {t("Arrival", "Arrivée")} : {c.arrivalDate ? date(c.arrivalDate) : "—"}
+            {t("Arrival: ", "Arrivée\u00a0: ")}{c.arrivalDate ? date(c.arrivalDate) : "—"}
             {c.offloadDate && (
               <>
                 <br />
-                {t("Offloaded", "Déchargé")} : {date(c.offloadDate)}
+                {t("Offloaded: ", "Déchargé\u00a0: ")}{date(c.offloadDate)}
               </>
             )}
           </p>
@@ -303,7 +303,7 @@ function EditDetailsDialog({ c, onClose }: { c: ContainerFull; onClose: () => vo
       <DialogContent className="max-h-[92vh] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t("Container details", "Détails du conteneur")}</DialogTitle>
-          {finalized && <DialogDescription>{t("This container is offloaded: only dates and notes can change.", "Ce conteneur est déchargé : seules les dates et les notes peuvent changer.")}</DialogDescription>}
+          {finalized && <DialogDescription>{t("This container is offloaded: only dates and notes can change.", "Ce conteneur est déchargé\u00a0: seules les dates et les notes peuvent changer.")}</DialogDescription>}
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
           {!finalized && (
@@ -311,7 +311,7 @@ function EditDetailsDialog({ c, onClose }: { c: ContainerFull; onClose: () => vo
               <Field label={t("Invoice currency", "Devise de la facture")}>
                 <Input value={currency} maxLength={3} onChange={(e) => setCurrency(e.target.value.toUpperCase())} />
               </Field>
-              <Field label={t(`USD for 1 ${cur || "…"}`, `USD pour 1 ${cur || "…"}`)} hint={t("Example: 1 CNY = 0.14 USD", "Exemple : 1 CNY = 0,14 USD")}>
+              <Field label={t(`USD for 1 ${cur || "…"}`, `USD pour 1 ${cur || "…"}`)} hint={t("Example: 1 CNY = 0.14 USD", "Exemple\u00a0: 1 CNY = 0,14 USD")}>
                 <Input inputMode="decimal" disabled={cur === "USD"} value={cur === "USD" ? "1" : rate} onChange={(e) => setRate(e.target.value)} />
               </Field>
             </>
@@ -456,7 +456,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        {editable && <VariantSearch onPick={add} placeholder={t("Add an item: scan or search name, size, SKU", "Ajouter un article : scanner ou chercher nom, taille, code")} />}
+        {editable && <VariantSearch onPick={add} placeholder={t("Add an item: scan or search name, size, SKU", "Ajouter un article\u00a0: scanner ou chercher nom, taille, code")} />}
         {dirty && (
           <Alert className="border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
             <AlertTriangle className="h-4 w-4" />
@@ -474,7 +474,67 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
             {editable ? t("Search above to add the items on the supplier invoice.", "Cherchez ci-dessus pour ajouter les articles de la facture fournisseur.") : null}
           </EmptyState>
         ) : (
-          <div className="overflow-x-auto rounded-md border">
+          <>
+          {/* Phone: one stacked card per line so every field can be edited. */}
+          <div className="space-y-2 md:hidden">
+            {draft.map((r, i) => {
+              const value = d(r.quantity).times(d(r.unitPrice));
+              return (
+                <div key={r.key} className="rounded-md border p-3">
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="font-medium">{itemLabel(r)}</div>
+                      <div className="text-xs text-muted-foreground">{r.sku}{r.tracksSerials ? ` · ${t("motorcycle", "moto")}` : ""}</div>
+                    </div>
+                    {editable && (
+                      <Button variant="ghost" size="icon" className="-mr-2 -mt-1 shrink-0" onClick={() => remove(r.key)} aria-label={t("Remove", "Retirer")}>
+                        <X className="h-4 w-4" />
+                      </Button>
+                    )}
+                  </div>
+                  {editable && problems[i] && <div className="mt-1 text-xs text-destructive">{problems[i]}</div>}
+                  {editable ? (
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      <Field label={t("Quantity", "Quantité")}>
+                        <Input className="text-right" inputMode="decimal" value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
+                      </Field>
+                      <Field label={t(`Unit price (${c.currency})`, `Prix unitaire (${c.currency})`)}>
+                        <Input className="text-right" inputMode="decimal" value={r.unitPrice} placeholder="0.00" onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
+                      </Field>
+                      <Field label={t("Total weight (kg)", "Poids total (kg)")}>
+                        <Input className="text-right" inputMode="decimal" placeholder={t("total kg", "kg total")} value={r.weightKg} onChange={(e) => update(r.key, { weightKg: e.target.value })} />
+                      </Field>
+                      <Field label={t("Total volume (m³)", "Volume total (m³)")}>
+                        <Input className="text-right" inputMode="decimal" placeholder={t("total m³", "m³ total")} value={r.volumeCbm} onChange={(e) => update(r.key, { volumeCbm: e.target.value })} />
+                      </Field>
+                    </div>
+                  ) : (
+                    <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
+                      <dt className="text-muted-foreground">{t("Quantity", "Quantité")}</dt><dd className="text-right"><Num>{qty(r.quantity)}</Num></dd>
+                      <dt className="text-muted-foreground">{t("Unit price", "Prix unitaire")}</dt><dd className="text-right"><Num>{fmtCur(r.unitPrice, c.currency)}</Num></dd>
+                      <dt className="text-muted-foreground">{t("Total weight (kg)", "Poids total (kg)")}</dt><dd className="text-right"><Num>{r.weightKg ? qty(r.weightKg) : "—"}</Num></dd>
+                      <dt className="text-muted-foreground">{t("Total volume (m³)", "Volume total (m³)")}</dt><dd className="text-right"><Num>{r.volumeCbm ? qty(r.volumeCbm) : "—"}</Num></dd>
+                    </dl>
+                  )}
+                  <div className="mt-2 flex items-baseline justify-between border-t pt-2 text-sm">
+                    <span className="text-muted-foreground">{t("Purchase value", "Valeur d'achat")}</span>
+                    <span className="text-right">
+                      <Num className="font-medium">{fmtCur(value.toFixed(2), c.currency)}</Num>
+                      {foreign && <span className="block text-xs text-muted-foreground"><Num>{usd(value.times(rate).toFixed(2))}</Num></span>}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+            <div className="flex items-baseline justify-between rounded-md bg-muted/50 px-3 py-2 text-sm font-medium">
+              <span>{t("Total", "Total")} ({count(t, draft.length, ["line", "lines"], ["ligne", "lignes"])}) · {qty(totalQty.toString())}</span>
+              <span className="text-right">
+                <Num className="font-semibold">{fmtCur(totalNative.toFixed(2), c.currency)}</Num>
+                {foreign && <span className="block text-xs font-normal text-muted-foreground"><Num>{usd(totalNative.times(rate).toFixed(2))}</Num></span>}
+              </span>
+            </div>
+          </div>
+          <div className="hidden overflow-x-auto rounded-md border md:block">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -537,7 +597,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
               </TableBody>
               <TableFooter>
                 <TableRow>
-                  <TableCell className="font-medium">{t("Total", "Total")} ({draft.length} {t("lines", "lignes")})</TableCell>
+                  <TableCell className="font-medium">{t("Total", "Total")} ({count(t, draft.length, ["line", "lines"], ["ligne", "lignes"])})</TableCell>
                   <TableCell className="text-right"><Num>{qty(totalQty.toString())}</Num></TableCell>
                   <TableCell colSpan={3} />
                   <TableCell className="text-right">
@@ -549,6 +609,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
               </TableFooter>
             </Table>
           </div>
+          </>
         )}
         {editable && (dirty || draft.length > 0) && (
           <div className="flex flex-wrap justify-end gap-2">
@@ -735,7 +796,7 @@ function DeleteExpenseDialog({ c, e, onClose }: { c: ContainerFull; e: Container
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[92vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>{t("Delete this cost?", "Supprimer ce frais ?")}</DialogTitle>
+          <DialogTitle>{t("Delete this cost?", "Supprimer ce frais\u00a0?")}</DialogTitle>
           <DialogDescription>
             {L.type(e.type)} · {money(e.amountNative, e.currency)} ({usd(e.amountUsd)})
           </DialogDescription>
@@ -885,7 +946,7 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
             className="sm:col-span-2"
             hint={
               method === "value"
-                ? t("Recommended: each item takes a share in proportion to what it cost.", "Recommandé : chaque article prend une part proportionnelle à son prix d'achat.")
+                ? t("Recommended: each item takes a share in proportion to what it cost.", "Recommandé\u00a0: chaque article prend une part proportionnelle à son prix d'achat.")
                 : method === "weight"
                   ? t("Needs the weight of the lines.", "Nécessite le poids des lignes.")
                   : method === "volume"
@@ -966,7 +1027,8 @@ function PreviewSection({ c, priceOf }: { c: ContainerFull; priceOf: Map<number,
               <StatCard label={t("Container costs", "Frais du conteneur")} value={usd(p.expensesTotalUsd)} sub={d(p.fobTotalUsd).gt(0) ? `+${d(p.expensesTotalUsd).dividedBy(d(p.fobTotalUsd)).times(100).toFixed(1)} %` : undefined} />
               <StatCard label={t("Landed total", "Coût de revient total")} value={usd(p.landedTotalUsd)} />
             </div>
-            <div className="overflow-x-auto rounded-md border">
+            <p className="text-xs text-muted-foreground md:hidden">{t("Swipe the table sideways to see every column →", "Faites glisser le tableau sur le côté pour voir toutes les colonnes →")}</p>
+            <div className="max-w-full overflow-x-auto rounded-md border">
               <Table>
                 <TableHeader>
                   <TableRow>
@@ -1095,7 +1157,7 @@ function OffloadButton({ c, disabledReason }: { c: ContainerFull; disabledReason
               {motos.gt(0) && (
                 <li>{t(`${motos.toString()} motorcycle records are created; add their chassis numbers before selling.`, `${motos.toString()} fiches moto sont créées ; ajoutez les numéros de châssis avant de vendre.`)}</li>
               )}
-              <li>{t("The container is locked: lines and costs can no longer change.", "Le conteneur est verrouillé : lignes et frais ne peuvent plus changer.")}</li>
+              <li>{t("The container is locked: lines and costs can no longer change.", "Le conteneur est verrouillé\u00a0: lignes et frais ne peuvent plus changer.")}</li>
             </ul>
           </div>
           <DialogFooter>
@@ -1126,7 +1188,7 @@ function ReverseButton({ c }: { c: ContainerFull }) {
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[92vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>{t("Reverse the offload?", "Annuler le déchargement ?")}</DialogTitle>
+            <DialogTitle>{t("Reverse the offload?", "Annuler le déchargement\u00a0?")}</DialogTitle>
             <DialogDescription>
               {t(
                 "The container's stock is taken back out, the supplier debt is cancelled and the container can be edited again. This only works while all of its stock is still on hand (no motorcycle sold). Chassis numbers already entered are kept and reused when the container is offloaded again.",

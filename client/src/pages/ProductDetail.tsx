@@ -329,7 +329,7 @@ function VariantDialog({ product, variant, onClose }: { product: Product; varian
         <div className="space-y-3">
           <div className="space-y-2">
             <Label>{t("Attributes (size, colour…)", "Attributs (taille, couleur…)")}</Label>
-            {attrs.length === 0 && <p className="text-xs text-muted-foreground">{t("No attributes: this is the standard variant.", "Aucun attribut : variante standard.")}</p>}
+            {attrs.length === 0 && <p className="text-xs text-muted-foreground">{t("No attributes: this is the standard variant.", "Aucun attribut\u00a0: variante standard.")}</p>}
             {attrs.map(([k, v], i) => (
               <div key={i} className="flex gap-2">
                 <Input className="w-36" placeholder={t("Size", "Taille")} value={k} onChange={(e) => setAttrs(attrs.map((x, j) => (j === i ? [e.target.value, x[1]] : x)))} />

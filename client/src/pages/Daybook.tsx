@@ -1,7 +1,7 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useSearch } from "wouter";
-import { ChevronDown, ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Layers, LayoutList, Plus, Printer, RotateCcw, Search, X } from "lucide-react";
+import { ChevronDown, ChevronLeft, ChevronRight, Download, ExternalLink, FileText, Layers, LayoutList, MoreHorizontal, Plus, Printer, RotateCcw, Search, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -214,7 +214,7 @@ export default function Daybook() {
     <div>
       <PageHeader
         title={t("Day book", "Journal du jour")}
-        description={t("Every entry posted, day by day: sales, payments, expenses, transfers…", "Toutes les écritures passées, jour par jour : ventes, paiements, dépenses, transferts…")}
+        description={t("Every entry posted, day by day: sales, payments, expenses, transfers…", "Toutes les écritures passées, jour par jour\u00a0: ventes, paiements, dépenses, transferts…")}
         actions={
           <>
             <Button variant="outline" size="sm" asChild>
@@ -375,7 +375,7 @@ export default function Daybook() {
                       <TableHead>{t("Details", "Libellé")}</TableHead>
                       <TableHead className="text-right">{t("Amount", "Montant")}</TableHead>
                       <TableHead>{t("By", "Par")}</TableHead>
-                      <TableHead className="text-right">{t("Actions", "Actions")}</TableHead>
+                      <TableHead className="w-12"><span className="sr-only">{t("Actions", "Actions")}</span></TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
@@ -399,8 +399,8 @@ export default function Daybook() {
                             </TableCell>
                             <TableCell className="text-right font-medium"><Num>{usd(r.amount)}</Num></TableCell>
                             <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{r.createdByName ?? ""}</TableCell>
-                            <TableCell className="text-right" onClick={(e) => e.stopPropagation()}>
-                              <RowActions r={r} t={t} isOwner={isOwner} onReverse={() => setReversing(r)} />
+                            <TableCell className="w-12 pl-0 text-right" onClick={(e) => e.stopPropagation()}>
+                              <RowActionsMenu r={r} t={t} isOwner={isOwner} onReverse={() => setReversing(r)} />
                             </TableCell>
                           </TableRow>
                           {expanded && (
@@ -464,8 +464,36 @@ export default function Daybook() {
   );
 }
 
+const canReverseRow = (r: DaybookRow, isOwner: boolean) => isOwner && REVERSIBLE.has(r.type) && !r.reversedByJournalId && !r.reversesJournalId;
+
+/** Desktop table: one "…" menu per row, so every row's action cell has the same width. */
+function RowActionsMenu({ r, t, isOwner, onReverse }: { r: DaybookRow; t: T; isOwner: boolean; onReverse: () => void }) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button variant="ghost" size="icon" className="h-8 w-8" aria-label={t(`Actions for ${r.number}`, `Actions pour ${r.number}`)}>
+          <MoreHorizontal className="h-4 w-4" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent align="end">
+        <DropdownMenuItem asChild>
+          <Link href={sourceHref(r)}><ExternalLink className="mr-2 h-4 w-4" /> {t("Open", "Ouvrir")}</Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem asChild>
+          <Link href={`/vouchers/${r.id}`}><Printer className="mr-2 h-4 w-4" /> {t("Print", "Imprimer")}</Link>
+        </DropdownMenuItem>
+        {canReverseRow(r, isOwner) && (
+          <DropdownMenuItem className="text-destructive focus:text-destructive" onSelect={onReverse}>
+            <RotateCcw className="mr-2 h-4 w-4" /> {t("Reverse", "Annuler")}
+          </DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  );
+}
+
 function RowActions({ r, t, isOwner, onReverse }: { r: DaybookRow; t: T; isOwner: boolean; onReverse: () => void }) {
-  const canReverse = isOwner && REVERSIBLE.has(r.type) && !r.reversedByJournalId && !r.reversesJournalId;
+  const canReverse = canReverseRow(r, isOwner);
   return (
     <div className="flex justify-end gap-1">
       <Button variant="ghost" size="sm" className="h-8 px-2" asChild>
@@ -550,7 +578,7 @@ function ReverseDialog({ row, t, onClose }: { row: DaybookRow; t: T; onClose: ()
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="sm:max-w-md">
         <DialogHeader>
-          <DialogTitle>{t("Reverse this voucher?", "Annuler cette pièce ?")}</DialogTitle>
+          <DialogTitle>{t("Reverse this voucher?", "Annuler cette pièce\u00a0?")}</DialogTitle>
           <DialogDescription>
             {t(
               "A reversal entry with the opposite debits and credits will be posted. The original stays in the books, marked as reversed.",

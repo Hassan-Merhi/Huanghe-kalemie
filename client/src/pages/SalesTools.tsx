@@ -160,7 +160,7 @@ function PriceList() {
           <Button variant="outline" onClick={() => downloadXlsx(`${t("price-list", "liste-de-prix")}_${todayLocal()}.xlsx`, table(), t("Prices", "Prix"))} disabled={!filtered.length}><Download className="mr-1 h-4 w-4" /> Excel</Button>
         </div>
       </div>
-      {serverSearch && <p className="no-print text-xs text-muted-foreground">{t("Showing up to 500 items; search to narrow down.", "Jusqu'à 500 articles affichés ; cherchez pour affiner.")}</p>}
+      {serverSearch && <p className="no-print text-xs text-muted-foreground">{t("Showing up to 500 items; search to narrow down.", "Jusqu'à 500 articles affichés\u00a0; cherchez pour affiner.")}</p>}
       <ErrorText error={error} />
       {isLoading ? (
         <Loading />
@@ -323,7 +323,7 @@ function BulkPriceDialog({ rows, onClose }: { rows: Row[]; onClose: () => void }
         </div>
         {valid && (
           <div className="space-y-2">
-            <p className="text-sm text-muted-foreground">{t(`${changes.length} prices will change.`, `${changes.length} prix vont changer.`)}</p>
+            <p className="text-sm text-muted-foreground">{changes.length === 1 ? t("1 price will change.", "1 prix va changer.") : t(`${changes.length} prices will change.`, `${changes.length} prix vont changer.`)}</p>
             <div className="max-h-64 overflow-auto rounded-md border">
               <Table>
                 <TableHeader>

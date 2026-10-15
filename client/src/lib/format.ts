@@ -26,6 +26,19 @@ export function qty(value: unknown): string {
   return qtyFmt.format(num(value));
 }
 
+/**
+ * Total quantity of rows, formatted with its unit, or "" when the rows use different units
+ * (adding sets, litres and pieces gives a meaningless number).
+ */
+export function qtyTotal(rows: { qty: unknown; unit?: string | null }[]): string {
+  if (rows.length === 0) return "";
+  const units = new Set(rows.map((r) => (r.unit ?? "").trim().toLowerCase()));
+  if (units.size > 1) return "";
+  const total = rows.reduce((s, r) => s.plus(new Decimal(num(r.qty))), new Decimal(0));
+  const unit = (rows[0].unit ?? "").trim();
+  return `${qtyFmt.format(total.toNumber())}${unit ? ` ${unit}` : ""}`;
+}
+
 /** Unit costs keep more precision. */
 export function unitCost(value: unknown): string {
   const n = num(value);

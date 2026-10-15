@@ -15,7 +15,7 @@ import { PARTY_LABELS } from "@/components/pickers";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
-import { useT } from "@/lib/i18n";
+import { useT, count } from "@/lib/i18n";
 import { d, usd } from "@/lib/format";
 import type { Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -32,6 +32,13 @@ export function BalanceWords({ balance, className }: { balance: string; classNam
   }
   return <span className={cn("font-medium text-blue-700 dark:text-blue-400", className)}>{t(`we owe ${usd(b.abs().toFixed(2))}`, `nous devons ${usd(b.abs().toFixed(2))}`)}</span>;
 }
+
+const COUNT_WORDS: Record<PartyType, [[string, string], [string, string]]> = {
+  customer: [["customer", "customers"], ["client", "clients"]],
+  supplier: [["supplier", "suppliers"], ["fournisseur", "fournisseurs"]],
+  agent: [["agent", "agents"], ["agent", "agents"]],
+  employee: [["employee", "employees"], ["employé", "employés"]],
+};
 
 export default function Contacts() {
   const t = useT();
@@ -136,7 +143,7 @@ export default function Contacts() {
                 </TableBody>
                 <TableFooter>
                   <TableRow>
-                    <TableCell colSpan={2}>{t("Total", "Total")} · {labels[type]}</TableCell>
+                    <TableCell colSpan={2}>{t("Total", "Total")} · {count(t, rows.length, ...COUNT_WORDS[type])}</TableCell>
                     <TableCell className="text-right">
                       <Num>
                         <span className="block">{t("owed to us", "à recevoir")} {usd(owedToUs.toFixed(2))}</span>

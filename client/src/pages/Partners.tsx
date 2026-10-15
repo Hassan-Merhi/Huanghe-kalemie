@@ -382,8 +382,8 @@ function MonthSection() {
             <AlertDialogTitle>{t(`Close ${monthName(month)}?`, `Clôturer ${monthName(month)} ?`)}</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2">
-                <p>{t("This locks the month: nothing dated in it can be added or changed until it is reopened.", "Cela verrouille le mois : rien de daté dans ce mois ne peut être ajouté ou modifié tant qu'il n'est pas rouvert.")}</p>
-                <p>{t("Each partner's result is posted to their profit account:", "Le résultat de chaque associé est passé à son compte de bénéfices :")}</p>
+                <p>{t("This locks the month: nothing dated in it can be added or changed until it is reopened.", "Cela verrouille le mois\u00a0: rien de daté dans ce mois ne peut être ajouté ou modifié tant qu'il n'est pas rouvert.")}</p>
+                <p>{t("Each partner's result is posted to their profit account:", "Le résultat de chaque associé est passé à son compte de bénéfices\u00a0:")}</p>
                 <ul className="list-disc pl-5">
                   {p?.split.partners.map((s) => (
                     <li key={s.partnerId}>{s.name}: <Signed value={s.net} /></li>

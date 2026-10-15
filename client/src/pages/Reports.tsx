@@ -23,17 +23,19 @@ import { WIDE_PRINT_CSS, journalTypeLabel } from "@/pages/ContactDetail";
 
 type T = (en: string, fr: string) => string;
 
-export function accountTypeLabel(type: string, t: T): string {
-  const map: Record<string, [string, string]> = {
-    asset: ["Asset", "Actif"],
-    liability: ["Liability", "Passif"],
-    equity: ["Equity", "Capitaux propres"],
-    income: ["Income", "Produits"],
-    cost_of_sales: ["Cost of sales", "Coût des ventes"],
-    expense: ["Running cost", "Charge de fonctionnement"],
+/** Name of an account type: singular for one account, `plural` for a group heading or filter ("Charges de fonctionnement"). */
+export function accountTypeLabel(type: string, t: T, plural = false): string {
+  const map: Record<string, [string, string, string, string]> = {
+    asset: ["Asset", "Actif", "Assets", "Actifs"],
+    liability: ["Liability", "Passif", "Liabilities", "Passifs"],
+    equity: ["Equity", "Capitaux propres", "Equity", "Capitaux propres"],
+    income: ["Income", "Produit", "Income", "Produits"],
+    cost_of_sales: ["Cost of sales", "Coût des ventes", "Cost of sales", "Coût des ventes"],
+    expense: ["Running cost", "Charge de fonctionnement", "Running costs", "Charges de fonctionnement"],
   };
   const m = map[type];
-  return m ? t(m[0], m[1]) : type;
+  if (!m) return type;
+  return plural ? t(m[2], m[3]) : t(m[0], m[1]);
 }
 
 // ---------------------------------------------------------------- CSV
@@ -215,7 +217,7 @@ function ProfitLoss() {
             </CardContent>
           </Card>
           <p className="text-xs text-muted-foreground">
-            {t("Month-close entries are left out, so closed months still show their real result.", "Les écritures de clôture sont exclues : les mois clôturés montrent leur vrai résultat.")}
+            {t("Month-close entries are left out, so closed months still show their real result.", "Les écritures de clôture sont exclues\u00a0: les mois clôturés montrent leur vrai résultat.")}
           </p>
         </>
       )}

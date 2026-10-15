@@ -14,7 +14,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader } from "@/components/common";
 import { useAuth } from "@/lib/auth";
-import { useI18n, useT, type Lang } from "@/lib/i18n";
+import { useI18n, useT, type Lang, count } from "@/lib/i18n";
 import { downloadCsv } from "@/lib/sheets";
 import { cdf, d, date as fmtDate, num, todayLocal, usd } from "@/lib/format";
 import type { Account } from "@/lib/types";
@@ -154,7 +154,7 @@ function Chart({ onOpen }: { onOpen: (id: number) => void }) {
             </Button>
             {TYPE_ORDER.map((type) => (
               <Button key={type} size="sm" variant={typeFilter === type ? "default" : "outline"} className="h-7 rounded-full" onClick={() => setTypeFilter(type)}>
-                {accountTypeLabel(type, t)}
+                {accountTypeLabel(type, t, true)}
               </Button>
             ))}
           </div>
@@ -169,7 +169,7 @@ function Chart({ onOpen }: { onOpen: (id: number) => void }) {
         {groups.map((g) => (
           <Card key={g.type}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-base">{accountTypeLabel(g.type, t)}</CardTitle>
+              <CardTitle className="text-base">{accountTypeLabel(g.type, t, true)}</CardTitle>
               <span className="text-sm font-semibold"><Side value={g.total} t={t} /></span>
             </CardHeader>
             <CardContent className="p-0">
@@ -200,7 +200,7 @@ function Chart({ onOpen }: { onOpen: (id: number) => void }) {
                 ))}
               </div>
               <div className="flex items-center justify-between border-t bg-muted/40 px-4 py-2 text-sm font-medium">
-                <span>{t("Total", "Total")} · {g.accounts.length} {t("accounts", "comptes")}</span>
+                <span>{t("Total", "Total")} · {count(t, g.accounts.length, ["account", "accounts"], ["compte", "comptes"])}</span>
                 <Side value={g.total} t={t} />
               </div>
             </CardContent>
@@ -209,7 +209,7 @@ function Chart({ onOpen }: { onOpen: (id: number) => void }) {
       </div>
       {q.data && (
         <p className="mt-3 text-xs text-muted-foreground">
-          {t("Balances in USD, debit minus credit: D = debit balance, C = credit balance.", "Soldes en USD, débit moins crédit : D = solde débiteur, C = solde créditeur.")}
+          {t("Balances in USD, debit minus credit: D = debit balance, C = credit balance.", "Soldes en USD, débit moins crédit\u00a0: D = solde débiteur, C = solde créditeur.")}
         </p>
       )}
     </div>
@@ -315,7 +315,7 @@ function Statement({ id, range }: { id: number; range: ReturnType<typeof useRang
         <Card className="print-area print-wide">
           <CardHeader className="pb-2">
             <CardTitle className="text-base">{t("Statement", "Relevé")} · {L.account.code} {L.account.name}</CardTitle>
-            <p className="text-sm text-muted-foreground">{fmtDate(range.from)} → {fmtDate(range.to)} · {L.rows.length} {t("lines", "lignes")}</p>
+            <p className="text-sm text-muted-foreground">{fmtDate(range.from)} → {fmtDate(range.to)} · {count(t, L.rows.length, ["line", "lines"], ["ligne", "lignes"])}</p>
           </CardHeader>
           <CardContent className="p-0">
             {/* Desktop / print table */}

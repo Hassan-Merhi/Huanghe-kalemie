@@ -62,7 +62,7 @@ export default function Expenses() {
     <div className="space-y-5">
       <PageHeader
         title={t("Expenses", "Dépenses")}
-        description={t("Shop running costs: rent, salaries, electricity, fuel, phone…", "Dépenses de fonctionnement : loyer, salaires, électricité, carburant, téléphone…")}
+        description={t("Shop running costs: rent, salaries, electricity, fuel, phone…", "Dépenses de fonctionnement\u00a0: loyer, salaires, électricité, carburant, téléphone…")}
         actions={
           can("manager") && (
             <Button onClick={() => setAdding(true)}>
@@ -184,7 +184,7 @@ function CancelDialog({ row, onClose }: { row: ExpenseRow; onClose: () => void }
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>{t("Cancel this expense?", "Annuler cette dépense ?")}</DialogTitle>
+          <DialogTitle>{t("Cancel this expense?", "Annuler cette dépense\u00a0?")}</DialogTitle>
           <DialogDescription>
             {row.accountName} · {row.description} · {money(row.amountNative, row.currency)}
           </DialogDescription>

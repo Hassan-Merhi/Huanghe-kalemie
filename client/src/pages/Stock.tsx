@@ -17,9 +17,9 @@ import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from
 import { LocationSelect, useLocations, VariantSearch } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api, withQuery } from "@/lib/api";
-import { d, date, monthStart, qty, todayLocal, unitCost, usd, variantText } from "@/lib/format";
+import { d, date, monthStart, qty, qtyTotal, todayLocal, unitCost, usd, variantText } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
-import { useT } from "@/lib/i18n";
+import { useT, count } from "@/lib/i18n";
 import type { MotorcycleUnit, VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -138,7 +138,7 @@ function Valuation() {
   }, [data, search, lowOnly, hideEmpty]);
   const shown = useMemo(
     () => ({
-      qty: rows.reduce((s, i) => s.plus(d(i.qty)), d(0)),
+      qty: qtyTotal(rows),
       value: rows.reduce((s, i) => s.plus(d(i.value)), d(0)),
       retail: rows.reduce((s, i) => s.plus(d(i.retailValue)), d(0)),
     }),
@@ -170,7 +170,7 @@ function Valuation() {
           <AlertTriangle className="h-4 w-4" />
           <AlertTitle>{t("Stock value does not match the ledger", "La valeur du stock ne correspond pas à la comptabilité")}</AlertTitle>
           <AlertDescription>
-            {t("Items", "Articles")}: {usd(data.totalValue)} · {t("Inventory account", "Compte Stock")}: {usd(data.ledgerInventory)} · {t("Difference", "Écart")}: {usd(d(data.totalValue).minus(d(data.ledgerInventory)).toFixed(2))}
+            {t("Items: ", "Articles\u00a0: ")}{usd(data.totalValue)} · {t("Inventory account: ", "Compte Stock\u00a0: ")}{usd(data.ledgerInventory)} · {t("Difference: ", "Écart\u00a0: ")}{usd(d(data.totalValue).minus(d(data.ledgerInventory)).toFixed(2))}
           </AlertDescription>
         </Alert>
       )}
@@ -210,7 +210,7 @@ function Valuation() {
                   <TableCell className="whitespace-nowrap font-mono text-xs">{i.sku}</TableCell>
                   <TableCell className="text-muted-foreground">{i.categoryName ?? "—"}</TableCell>
                   <TableCell className="whitespace-nowrap text-right">
-                    <Num className={d(i.qty).lte(0) ? "text-destructive" : undefined}>{qty(i.qty)}</Num>
+                    <Num className={d(i.qty).lte(0) ? "text-destructive" : undefined}>{qty(i.qty)}{i.unit ? ` ${i.unit}` : ""}</Num>
                     {i.low && <Badge variant="destructive" className="ml-2">{t("Low", "Bas")}</Badge>}
                   </TableCell>
                   <TableCell className="text-right"><Num>{unitCost(i.avgCost)}</Num></TableCell>
@@ -219,8 +219,8 @@ function Valuation() {
                 </TableRow>
               ))}
               <TableRow className="bg-muted/40 font-medium">
-                <TableCell colSpan={3}>{t(`Total (${rows.length} lines)`, `Total (${rows.length} lignes)`)}</TableCell>
-                <TableCell className="text-right"><Num>{qty(shown.qty.toString())}</Num></TableCell>
+                <TableCell colSpan={3}>{t("Total", "Total")} ({count(t, rows.length, ["line", "lines"], ["ligne", "lignes"])})</TableCell>
+                <TableCell className="text-right"><Num>{shown.qty}</Num></TableCell>
                 <TableCell />
                 <TableCell className="text-right"><Num>{usd(shown.value.toFixed(2))}</Num></TableCell>
                 <TableCell className="text-right"><Num>{usd(shown.retail.toFixed(2))}</Num></TableCell>
@@ -463,8 +463,8 @@ export function AdjustForm({
                 "Le stock d'ouverture est le stock déjà présent au magasin quand vous commencez à utiliser le système. Sa valeur est passée en « Soldes d'ouverture » (capital), pas en profit ni en perte.",
               )
             : t(
-                "Other adjustments count as stock losses or gains at average cost. They reduce or increase the gross profit shared by both partners at month close.",
-                "Les autres ajustements comptent comme pertes ou gains de stock au coût moyen. Ils diminuent ou augmentent la marge brute partagée par les deux associés à la clôture du mois.",
+                "Counts, damage, losses and found items are booked as stock losses or gains at average cost. They reduce or increase the gross profit shared by both partners at month close.",
+                "Les comptages, casses, pertes et articles retrouvés sont passés en pertes ou gains de stock au coût moyen. Ils diminuent ou augmentent la marge brute partagée par les deux associés à la clôture du mois.",
               )}
         </AlertDescription>
       </Alert>
@@ -523,7 +523,7 @@ export function AdjustForm({
                   {c.gt(0) && (
                     <Field
                       label={t("Cost per unit (USD)", "Coût unitaire (USD)")}
-                      hint={needsCost ? t("Required: no stock yet", "Obligatoire : pas encore de stock") : t("Blank = current average cost", "Vide = coût moyen actuel")}
+                      hint={needsCost ? t("Required: no stock yet", "Obligatoire\u00a0: pas encore de stock") : t("Blank = current average cost", "Vide = coût moyen actuel")}
                     >
                       <Input inputMode="decimal" value={l.unitCost} onChange={(e) => update(l.key, { unitCost: e.target.value })} className={cn(needsCost && !l.unitCost.trim() && "border-destructive")} />
                     </Field>
@@ -539,7 +539,7 @@ export function AdjustForm({
                 {l.variant.tracksSerials && c.gt(0) && l.serials.length > 0 && (
                   <div className="mt-3 space-y-2">
                     <p className="text-xs text-muted-foreground">
-                      {t("Chassis numbers (can be entered later in Motorcycles; a bike cannot be sold without one).", "Numéros de châssis (peuvent être saisis plus tard dans Motos ; une moto ne peut pas être vendue sans).")}
+                      {t("Chassis numbers (can be entered later in Motorcycles; a bike cannot be sold without one).", "Numéros de châssis (peuvent être saisis plus tard dans Motos\u00a0; une moto ne peut pas être vendue sans).")}
                     </p>
                     {l.serials.map((s, i) => (
                       <div key={i} className="grid grid-cols-[24px_1fr] gap-2 sm:grid-cols-[24px_1fr_1fr_140px]">
@@ -587,7 +587,7 @@ function UnitPicker({ variantId, locationId, needed, value, onChange }: { varian
   return (
     <div className="mt-3 space-y-2">
       <p className={cn("text-xs", value.length === needed ? "text-muted-foreground" : "text-destructive")}>
-        {t(`Pick the motorcycles: ${value.length} of ${needed} selected.`, `Choisissez les motos : ${value.length} sur ${needed} sélectionnée(s).`)}
+        {t(`Pick the motorcycles: ${value.length} of ${needed} selected.`, `Choisissez les motos\u00a0: ${value.length} sur ${needed} sélectionnée(s).`)}
       </p>
       {q.isLoading ? (
         <Loading />
@@ -781,7 +781,7 @@ function TransferForm({ onDone }: { onDone: () => void }) {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2 text-base"><ArrowRightLeft className="h-4 w-4" /> {t("Items to move", "Articles à déplacer")}</CardTitle>
-          <p className="text-xs text-muted-foreground">{t("A transfer moves quantity only; the stock value does not change.", "Un transfert déplace seulement la quantité ; la valeur du stock ne change pas.")}</p>
+          <p className="text-xs text-muted-foreground">{t("A transfer moves quantity only; the stock value does not change.", "Un transfert déplace seulement la quantité\u00a0; la valeur du stock ne change pas.")}</p>
         </CardHeader>
         <CardContent className="space-y-3">
           <VariantSearch
