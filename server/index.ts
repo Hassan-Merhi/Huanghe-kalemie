@@ -11,6 +11,7 @@ import { log } from "./log";
 import { runMigrations } from "./migrate";
 import { registerRoutes } from "./routes";
 import { ensureSetup } from "./setup";
+import { scheduleDailySnapshots } from "./services/backup";
 
 export async function createApp() {
   const app = express();
@@ -56,6 +57,7 @@ async function main() {
   }
   const app = await createApp();
   const server = createServer(app);
+  scheduleDailySnapshots();
 
   if (process.env.NODE_ENV === "production") {
     const dist = path.resolve(import.meta.dirname, "public");
