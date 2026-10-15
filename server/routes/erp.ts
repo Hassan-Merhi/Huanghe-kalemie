@@ -127,6 +127,16 @@ export function registerErpRoutes(
     const returns = returnIds.length ? await db.select({ id: saleReturns.id, saleId: saleReturns.saleId }).from(saleReturns).where(inArray(saleReturns.id, returnIds)) : [];
     const byJournal = new Map<number, typeof lines>();
     for (const l of lines) byJournal.set(l.line.journalId, [...(byJournal.get(l.line.journalId) ?? []), l]);
+    // Sales at 0 $ or below cost, so the daybook can flag them like the sales list does.
+    const saleIds = js.filter((j) => j.journal.sourceType === "sale" && j.journal.sourceId).map((j) => j.journal.sourceId!);
+    const flagged = saleIds.length
+      ? await db.execute<{ id: number; zero_price: boolean; below_cost: boolean }>(sql`
+          select s.id,
+            exists (select 1 from sale_lines l where l.sale_id = s.id and l.unit_price <= 0) as zero_price,
+            (s.total < s.cogs) as below_cost
+          from sales s where s.id in (${sql.join(saleIds.map((x) => sql`${x}`), sql`, `)})`)
+      : { rows: [] };
+    const flags = new Map(flagged.rows.map((r) => [Number(r.id), r]));
     let moneyIn = dec(0);
     let moneyOut = dec(0);
     const hidden = req.user!.role === "partner" ? await reports.otherPartnerAccountIds(db, req.user!.partnerId) : new Set<number>();
@@ -153,6 +163,10 @@ export function registerErpRoutes(
             : journal.sourceType === "sale_return"
               ? (returns.find((r) => r.id === journal.sourceId)?.saleId ?? null)
               : null,
+        saleFlags:
+          journal.sourceType === "sale" && journal.sourceId && flags.has(journal.sourceId)
+            ? { zeroPrice: !!flags.get(journal.sourceId)!.zero_price, belowCost: !!flags.get(journal.sourceId)!.below_cost }
+            : undefined,
         // A sale's amount is what the customer pays, not that plus the cost of the goods (cost of sales / stock lines).
         amount: ls
           .filter((l) => !(SALE_JOURNALS.has(journal.type) && (l.systemKey === "cogs" || l.systemKey === "inventory")))

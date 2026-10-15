@@ -117,7 +117,39 @@ export async function selfCheck(tx: Tx) {
   `).then((r) => r.rows);
   checks.push({ key: "franc_lines", ok: missing.n === 0, expected: "0", actual: String(missing.n), difference: String(missing.n) });
 
-  return { ok: checks.every((c) => c.ok), checks };
+  // Points to look at, which do not make the books wrong: sales at 0 $ or for less than their cost.
+  const since = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);
+  const zero = await tx.execute<{ number: string; date: string; total: string }>(sql`
+    select s.number, s.date, s.total from sales s
+    where s.status = 'completed' and s.date >= ${since}
+      and exists (select 1 from sale_lines l where l.sale_id = s.id and l.unit_price <= 0)
+    order by s.date desc, s.id desc
+  `);
+  const loss = await tx.execute<{ number: string; date: string; total: string; cogs: string }>(sql`
+    select s.number, s.date, s.total, s.cogs from sales s
+    where s.status = 'completed' and s.date >= ${since} and s.total < s.cogs
+    order by s.date desc, s.id desc
+  `);
+  const warnings: Check[] = [
+    {
+      key: "sales_zero_price",
+      ok: zero.rows.length === 0,
+      expected: "0",
+      actual: String(zero.rows.length),
+      difference: String(zero.rows.length),
+      details: zero.rows.slice(0, 20).map((r) => ({ label: `${r.number} · ${r.date}`, value: dec(r.total).toFixed(2) })),
+    },
+    {
+      key: "sales_below_cost",
+      ok: loss.rows.length === 0,
+      expected: "0",
+      actual: String(loss.rows.length),
+      difference: String(loss.rows.length),
+      details: loss.rows.slice(0, 20).map((r) => ({ label: `${r.number} · ${r.date}`, value: `${dec(r.total).toFixed(2)} < ${dec(r.cogs).toFixed(2)}` })),
+    },
+  ];
+
+  return { ok: checks.every((c) => c.ok), checks, warnings };
 }
 
 // ---------------------------------------------------------------- Customer ageing

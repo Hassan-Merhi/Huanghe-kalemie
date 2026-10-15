@@ -119,6 +119,18 @@ export function PartySelect({
   const rows = (q.data ?? []).filter((p) => types.includes(p.type) && p.active);
   const selected = rows.find((p) => p.id === value);
   const filtered = rows.filter((p) => !search || p.name.toLowerCase().includes(search.toLowerCase()) || (p.phone ?? "").includes(search)).slice(0, 50);
+  // The highlighted row: Enter picks it, the arrow keys move it. The first match is highlighted as soon as one types.
+  const [active, setActive] = useState(0);
+  useEffect(() => setActive(0), [search, open]);
+  const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    listRef.current?.querySelector<HTMLElement>(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [active]);
+  const pick = (p: Party) => {
+    onChange(p.id, p);
+    setOpen(false);
+    setSearch("");
+  };
   return (
     <>
       <Popover open={open} onOpenChange={setOpen}>
@@ -128,18 +140,50 @@ export function PartySelect({
             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
           </Button>
         </PopoverTrigger>
-        <PopoverContent className="w-[--radix-popover-trigger-width] min-w-[260px] p-2" align="start">
-          <Input autoFocus placeholder={t("Search name or phone", "Chercher nom ou téléphone")} value={search} onChange={(e) => setSearch(e.target.value)} />
-          <div className="mt-2 max-h-64 overflow-y-auto">
+        <PopoverContent className="w-[--radix-popover-trigger-width] min-w-[260px] max-w-[calc(100vw-2rem)] p-2" align="start">
+          <Input
+            autoFocus
+            placeholder={t("Search name or phone", "Chercher nom ou téléphone")}
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            role="combobox"
+            aria-expanded
+            aria-activedescendant={filtered[active] ? `party-opt-${filtered[active].id}` : undefined}
+            onKeyDown={(e) => {
+              if (e.key === "ArrowDown") {
+                e.preventDefault();
+                setActive((i) => Math.min(i + 1, filtered.length - 1));
+              } else if (e.key === "ArrowUp") {
+                e.preventDefault();
+                setActive((i) => Math.max(i - 1, 0));
+              } else if (e.key === "Enter" && filtered[active]) {
+                e.preventDefault();
+                pick(filtered[active]);
+              }
+            }}
+          />
+          <div ref={listRef} className="mt-2 max-h-64 overflow-y-auto" role="listbox">
             {value && (
               <button className="w-full rounded px-2 py-1.5 text-left text-sm text-muted-foreground hover:bg-muted" onClick={() => { onChange(null); setOpen(false); }}>
                 {t("Clear", "Effacer")}
               </button>
             )}
-            {filtered.map((p) => (
-              <button key={p.id} className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm hover:bg-muted" onClick={() => { onChange(p.id, p); setOpen(false); }}>
-                <span className="truncate">{p.name}{p.phone ? <span className="text-muted-foreground"> · {p.phone}</span> : null}</span>
-                {p.id === value && <Check className="h-4 w-4" />}
+            {filtered.map((p, i) => (
+              <button
+                key={p.id}
+                id={`party-opt-${p.id}`}
+                data-index={i}
+                role="option"
+                aria-selected={i === active}
+                className={cn("flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted", i === active && "bg-muted")}
+                onMouseEnter={() => setActive(i)}
+                onClick={() => pick(p)}
+              >
+                <span className="min-w-0">
+                  <span className="block truncate">{p.name}</span>
+                  {p.phone && <span className="block text-xs text-muted-foreground tabular">{p.phone}</span>}
+                </span>
+                {p.id === value && <Check className="h-4 w-4 shrink-0" />}
               </button>
             ))}
             {filtered.length === 0 && <p className="px-2 py-3 text-sm text-muted-foreground">{t("No match", "Aucun résultat")}</p>}

@@ -355,10 +355,13 @@ export default function POS() {
   const takenUnitIds = useMemo(() => new Set(lines.map((l) => l.unitId).filter((x): x is number => !!x)), [lines]);
 
   // ---- validation
+  // `problems` are mistakes to fix (listed in red); `todo` is what is simply not done yet (said once, in grey).
   const problems: string[] = [];
-  if (!locationId) problems.push(t("Choose the location", "Choisissez le lieu"));
-  if (lines.length === 0) problems.push(t("Add at least one item", "Ajoutez au moins un article"));
+  const todo: string[] = [];
+  if (!locationId) todo.push(t("Choose the location", "Choisissez le lieu"));
+  if (lines.length === 0) todo.push(t("Add at least one item", "Ajoutez au moins un article"));
   for (const l of lines) {
+    if (!l.unitPrice.trim() || d(l.unitPrice).lte(0)) problems.push(t(`Enter the price of ${l.variant.productName} (it is 0 $)`, `Saisissez le prix de ${l.variant.productName} (il est à 0\u00a0$)`));
     if (d(l.qty).lte(0)) problems.push(t(`Quantity of ${l.variant.productName} must be more than zero`, `La quantité de ${l.variant.productName} doit être supérieure à zéro`));
     if (lineAmount(l).lt(0)) problems.push(t(`The discount on ${l.variant.productName} is bigger than the line`, `La remise sur ${l.variant.productName} dépasse la ligne`));
     if (l.variant.tracksSerials && !l.unitId) problems.push(t(`Choose the chassis number for ${l.variant.productName}`, `Choisissez le numéro de châssis pour ${l.variant.productName}`));
@@ -388,8 +391,17 @@ export default function POS() {
     if (acc?.currency === "CDF" && d(p.amount).gt(0) && d(p.rate ?? dayRate).lte(0)) problems.push(t("Enter the exchange rate for CDF payments", "Saisissez le taux pour les paiements en francs"));
   }
   if (overpaid) problems.push(t("Payments are more than the total. Enter only the money kept, not the change.", "Les paiements dépassent le total. Saisissez seulement l'argent gardé, pas la monnaie rendue."));
-  if (credit.gt(0) && !customerId) problems.push(t("Choose a customer to sell the rest on credit", "Choisissez un client pour vendre le reste à crédit"));
-  const valid = problems.length === 0;
+  if (credit.gt(0) && !customerId && lines.length > 0) {
+    todo.push(
+      paid.gt(0)
+        ? t("Choose a customer to sell the rest on credit", "Choisissez un client pour vendre le reste à crédit")
+        : t("Enter the payment, or choose a customer to sell on credit", "Saisissez le paiement, ou choisissez un client pour vendre à crédit"),
+    );
+  }
+  const valid = problems.length === 0 && todo.length === 0;
+  const blockedReason = problems.length ? t("Fix the points above", "Corrigez les points ci-dessus") : todo[0] ?? null;
+  /** Lines sold for less than they cost: allowed (owner, clearance) but worth a second look. */
+  const belowCost = (l: CartLine) => d(l.unitPrice).gt(0) && d(l.variant.avgCost).gt(0) && lineAmount(l).lt(c2(d(l.qty).times(d(l.variant.avgCost))));
 
   // ---- payments helpers
   function findCash(currency: "USD" | "CDF") {
@@ -494,7 +506,12 @@ export default function POS() {
     <div className="pb-24 lg:pb-0">
       <PageHeader
         title={t("Point of sale", "Caisse")}
-        description={t("Scan or search items, take payment, print the receipt. F9 or Ctrl+Enter to finish.", "Scanner ou chercher les articles, encaisser, imprimer le reçu. F9 ou Ctrl+Entrée pour valider.")}
+        description={
+          <>
+            {t("Scan or search items, take payment, print the receipt.", "Scanner ou chercher les articles, encaisser, imprimer le reçu.")}
+            <span className="[@media(pointer:coarse)]:hidden"> {t("F9 or Ctrl+Enter to finish.", "F9 ou Ctrl+Entrée pour valider.")}</span>
+          </>
+        }
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {can("manager") && (
@@ -543,7 +560,7 @@ export default function POS() {
                           <div className="min-w-0">
                             <p className="truncate font-medium">{l.variant.productName}{l.variant.label !== "Standard" ? ` · ${l.variant.label}` : ""}</p>
                             <p className="text-xs text-muted-foreground">
-                              {l.variant.sku} · {t("in stock here", "en stock ici")}: <span className={cn(short && "font-semibold text-destructive")}>{fmtQty(avail.toString())}</span>
+                              {l.variant.sku} · {t("in stock here", "en stock ici")}{t(":", "\u00a0:")} <span className={cn(short && "font-semibold text-destructive")}>{fmtQty(avail.toString())}</span>
                             </p>
                             {short && (
                               <p className="mt-0.5 flex items-center gap-1 text-xs text-destructive">
@@ -584,6 +601,17 @@ export default function POS() {
                             <p className={cn("pt-1.5 font-semibold", lineAmount(l).lt(0) && "text-destructive")}><Num>{usd(lineAmount(l).toFixed(2))}</Num></p>
                           </div>
                         </div>
+                        {d(l.unitPrice).lte(0) && (
+                          <p className="flex items-center gap-1 text-xs font-medium text-destructive">
+                            <AlertTriangle className="h-3 w-3 shrink-0" /> {t("Price is 0 $: enter the selling price", "Prix à 0\u00a0$\u00a0: saisissez le prix de vente")}
+                          </p>
+                        )}
+                        {belowCost(l) && (
+                          <p className="flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400">
+                            <AlertTriangle className="h-3 w-3 shrink-0" />
+                            {t(`Sold below cost (cost ${usd(d(l.variant.avgCost).toFixed(2))} each)`, `Vente à perte (coût ${usd(d(l.variant.avgCost).toFixed(2))} l'unité)`)}
+                          </p>
+                        )}
                       </div>
                     );
                   })}
@@ -622,12 +650,12 @@ export default function POS() {
                   <span className="font-medium">{t("Total", "Total")}</span>
                   <span className="text-3xl font-bold tabular">{usd(total.toFixed(2))}</span>
                 </div>
-                {rateNum.gt(0) && <p className="text-right text-xs text-muted-foreground">≈ {cdf(total.times(rateNum).toDecimalPlaces(0, ROUND).toString())} · 1 USD = {fmtQty(dayRate)} FC</p>}
+                {rateNum.gt(0) && <p className="text-right text-xs text-muted-foreground">≈ {cdf(total.times(rateNum).toDecimalPlaces(0, ROUND).toString())} · 1 $ = {fmtQty(dayRate)} FC</p>}
               </div>
 
               <div className="grid grid-cols-2 gap-2">
                 <Button variant="secondary" size="sm" onClick={() => payAllIn("USD")} disabled={total.lte(0) || !findCash("USD")}>
-                  <Banknote className="mr-1 h-4 w-4" /> {t("All in USD cash", "Tout en cash USD")}
+                  <Banknote className="mr-1 h-4 w-4" /> {t("All in $ cash", "Tout en espèces $")}
                 </Button>
                 <Button variant="secondary" size="sm" onClick={() => payAllIn("CDF")} disabled={total.lte(0) || !findCash("CDF") || rateNum.lte(0)}>
                   <Banknote className="mr-1 h-4 w-4" /> {t("All in CDF cash", "Tout en espèces FC")}
@@ -661,7 +689,7 @@ export default function POS() {
                       )}
                     </div>
                     {acc?.currency === "CDF" && (
-                      <p className="text-xs text-muted-foreground">= {usd(payUsd(p).toFixed(2))} ({t("rate", "taux")} {fmtQty(p.rate ?? dayRate)} FC/USD)</p>
+                      <p className="text-xs text-muted-foreground">= {usd(payUsd(p).toFixed(2))} ({t("rate", "taux")} {fmtQty(p.rate ?? dayRate)} FC/$)</p>
                     )}
                   </div>
                 );
@@ -674,10 +702,9 @@ export default function POS() {
               <div className="space-y-1 text-sm">
                 <div className="flex justify-between"><span>{t("Paid (USD)", "Payé (USD)")}</span><Num className="font-medium">{usd(paid.toFixed(2))}</Num></div>
                 <div className="flex justify-between">
-                  <span>{credit.gt(0) ? t("Remaining → on credit", "Reste → à crédit") : t("Remaining", "Reste")}</span>
-                  <Num className={cn("font-semibold", credit.gt(0) && "text-amber-600 dark:text-amber-400", overpaid && "text-destructive")}>{usd(remaining.toFixed(2))}</Num>
+                  <span>{credit.gt(0) && customerId ? t("Remaining → on credit", "Reste → à crédit") : t("Left to pay", "Reste à payer")}</span>
+                  <Num className={cn("font-semibold", credit.gt(0) && customerId && "text-amber-700 dark:text-amber-400", overpaid && "text-destructive")}>{usd(remaining.toFixed(2))}</Num>
                 </div>
-                {credit.gt(0) && !customerId && <p className="text-xs text-amber-600 dark:text-amber-400">{t("Choose a customer to sell on credit.", "Choisissez un client pour vendre à crédit.")}</p>}
               </div>
 
               <details className="rounded-md border p-2 text-sm">
@@ -689,8 +716,8 @@ export default function POS() {
                     <Select value={handedCur} onValueChange={(v) => setHandedCur(v as "USD" | "CDF")}>
                       <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        <SelectItem value="USD">USD</SelectItem>
-                        <SelectItem value="CDF">CDF</SelectItem>
+                        <SelectItem value="USD">$</SelectItem>
+                        <SelectItem value="CDF">FC</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
@@ -704,21 +731,23 @@ export default function POS() {
                 </div>
               </details>
 
-              {!valid && (lines.length > 0 || tried) && (
+              {problems.length > 0 && (
                 <ul className="space-y-0.5 text-xs text-destructive">
                   {Array.from(new Set(problems)).map((p) => <li key={p}>• {p}</li>)}
                 </ul>
               )}
-              {/* With the cart filled the problems are listed just above; otherwise say the first one. */}
+              {/* Mistakes are listed just above; otherwise the button says what is still to do. On a phone the
+                  bar at the bottom is the button, so only the reason shows here. */}
               <SubmitButton
-                className="sm:flex-col sm:items-stretch [&>button]:h-12 [&>button]:w-full [&>button]:text-base [&>p]:text-center"
-                blocked={!valid && (lines.length > 0 || tried ? t("Fix the points above", "Corrigez les points ci-dessus") : problems[0])}
+                className="hidden lg:flex lg:flex-col lg:items-stretch [&>button]:h-12 [&>button]:w-full [&>button]:text-base [&>p]:text-center"
+                blocked={blockedReason}
                 pending={mutation.isPending}
                 onClick={submit}
               >
                 {t(`Finish sale ${usd(total.toFixed(2))}`, `Valider la vente ${usd(total.toFixed(2))}`)}
               </SubmitButton>
-              <p className="hidden text-center text-xs text-muted-foreground lg:block">F9 / Ctrl+Entrée</p>
+              {blockedReason && (lines.length > 0 || tried) && <p className="text-center text-xs text-muted-foreground lg:hidden" role="status">{blockedReason}</p>}
+              <p className="hidden text-center text-xs text-muted-foreground lg:block [@media(pointer:coarse)]:hidden">F9 / Ctrl+Entrée</p>
             </CardContent>
           </Card>
         </div>

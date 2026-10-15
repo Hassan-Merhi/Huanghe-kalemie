@@ -24,6 +24,7 @@ interface SaleListRow {
   cogs?: string;
   customerName: string | null;
   cashier: string | null;
+  zeroPrice?: boolean;
 }
 
 interface Daily {
@@ -77,6 +78,18 @@ function DailySummary() {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/** "Prix nul" and "Vente à perte": sales worth a second look (a price typed wrong, a sale below cost). */
+export function SaleFlags({ zeroPrice, total, cogs }: { zeroPrice?: boolean; total: string; cogs?: string }) {
+  const t = useT();
+  const loss = cogs !== undefined && d(cogs).gt(0) && d(total).lt(d(cogs));
+  return (
+    <>
+      {zeroPrice && <Badge variant="destructive" className="ml-1">{t("Price 0", "Prix nul")}</Badge>}
+      {loss && <Badge variant="outline" className="ml-1 border-amber-600 text-amber-800 dark:border-amber-400 dark:text-amber-300">{t("Below cost", "Vente à perte")}</Badge>}
+    </>
   );
 }
 
@@ -151,6 +164,7 @@ export default function Sales() {
                     <TableRow key={r.id} className={cn("cursor-pointer", voided && "text-muted-foreground")} onClick={() => navigate(`/sales/${r.id}`)}>
                       <TableCell className="whitespace-nowrap font-medium">
                         {r.number} {voided && <Badge variant="destructive" className="ml-1">{t("Cancelled", "Annulée")}</Badge>}
+                        {!voided && <SaleFlags zeroPrice={r.zeroPrice} total={r.total} cogs={r.cogs} />}
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{fmtDate(r.date)}</TableCell>
                       <TableCell>{r.customerName ?? <span className="text-muted-foreground">{t("Walk-in", "De passage")}</span>}</TableCell>

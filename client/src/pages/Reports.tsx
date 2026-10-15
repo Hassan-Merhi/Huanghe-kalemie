@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "wouter";
+import { Link, useSearch } from "wouter";
 import { ChevronDown, ChevronRight, Download, Plus, Printer, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -106,7 +106,8 @@ function TabNote({ children }: { children: string }) {
 
 export default function Reports() {
   const t = useT();
-  const [tab, setTab] = useState("pnl");
+  const search = useSearch();
+  const [tab, setTab] = useState(() => new URLSearchParams(search).get("tab") ?? "pnl");
   return (
     <div>
       <style>{WIDE_PRINT_CSS}</style>
@@ -583,12 +584,14 @@ const CHECK_TEXT: Record<string, { title: [string, string]; what: [string, strin
   payables: { title: ["Suppliers add up", "Les fournisseurs concordent"], what: ["What we owe each supplier, agent and employee adds up to the payables account.", "Ce que l'on doit à chaque fournisseur, agent et employé égale le compte Fournisseurs."], money: true, expected: ["Account", "Compte"], actual: ["Contacts", "Contacts"] },
   goods_in_transit: { title: ["Container costs add up", "Les frais de conteneur concordent"], what: ["Costs of containers not yet offloaded equal Goods in transit.", "Les frais des conteneurs pas encore déchargés égalent Marchandises en transit."], money: true, expected: ["Account", "Compte"], actual: ["Containers", "Conteneurs"] },
   money_not_negative: { title: ["No cash box below zero", "Aucune caisse sous zéro"], what: ["No cash box, bank or mobile money account holds less than nothing.", "Aucune caisse, banque ou mobile money n'a un solde négatif."], money: false, expected: ["Expected", "Attendu"], actual: ["Accounts below zero", "Comptes sous zéro"] },
+  sales_zero_price: { title: ["No sale at 0 $", "Aucune vente à prix nul"], what: ["Completed sales of the last 90 days with an item sold at 0 $: usually a price typed wrong.", "Ventes des 90 derniers jours avec un article vendu à 0\u00a0$\u00a0: souvent un prix mal saisi."], money: false, expected: ["Expected", "Attendu"], actual: ["Sales at 0 $", "Ventes à prix nul"] },
+  sales_below_cost: { title: ["No sale below cost", "Aucune vente à perte"], what: ["Completed sales of the last 90 days sold for less than the cost of their items.", "Ventes des 90 derniers jours vendues moins cher que le coût de leurs articles."], money: false, expected: ["Expected", "Attendu"], actual: ["Sales below cost", "Ventes à perte"] },
   franc_lines: { title: ["Francs are counted", "Les francs sont comptés"], what: ["Every movement of a franc account carries its amount in francs and its rate.", "Chaque mouvement d'un compte en francs porte son montant en FC et son taux."], money: false, expected: ["Expected", "Attendu"], actual: ["Lines without francs", "Lignes sans francs"] },
 };
 
 function SelfCheck() {
   const t = useT();
-  const q = useQuery<{ ok: boolean; checks: CheckRow[] }>({ queryKey: ["/api/reports/self-check"] });
+  const q = useQuery<{ ok: boolean; checks: CheckRow[]; warnings?: CheckRow[] }>({ queryKey: ["/api/reports/self-check"] });
   if (q.isLoading) return <Loading />;
   if (q.error) return <ErrorText error={q.error} />;
   const data = q.data!;
@@ -603,14 +606,14 @@ function SelfCheck() {
         </Button>
       </div>
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        {data.checks.map((c) => {
+        {[...data.checks, ...(data.warnings ?? []).map((w) => ({ ...w, warning: true }))].map((c: CheckRow & { warning?: boolean }) => {
           const text = CHECK_TEXT[c.key];
           const show = (v: string) => (text?.money ? usd(v) : v);
           return (
-            <Card key={c.key} className={cn(!c.ok && "border-destructive/50")}>
+            <Card key={c.key} className={cn(!c.ok && (c.warning ? "border-amber-500/60" : "border-destructive/50"))}>
               <CardContent className="space-y-1 p-4">
-                <p className={cn("font-medium", c.ok ? "text-green-700 dark:text-green-400" : "text-destructive")}>
-                  {c.ok ? "✓" : "✗"} {text ? t(text.title[0], text.title[1]) : c.key}
+                <p className={cn("font-medium", c.ok ? "text-green-700 dark:text-green-400" : c.warning ? "text-amber-700 dark:text-amber-400" : "text-destructive")}>
+                  {c.ok ? "✓" : c.warning ? "!" : "✗"} {text ? t(text.title[0], text.title[1]) : c.key}
                 </p>
                 {text && <p className="text-xs text-muted-foreground">{t(text.what[0], text.what[1])}</p>}
                 {text?.money ? (
@@ -619,11 +622,16 @@ function SelfCheck() {
                     {!c.ok && <span className="ml-1 font-medium text-destructive">({t("difference", "écart")} {show(c.difference)})</span>}
                   </p>
                 ) : (
-                  !c.ok && text && <p className="text-sm text-destructive">{t(text.actual[0], text.actual[1])} : {c.actual}</p>
+                  !c.ok && text && <p className={cn("text-sm", c.warning ? "text-amber-700 dark:text-amber-400" : "text-destructive")}>{t(text.actual[0], text.actual[1])}{t(":", "\u00a0:")} {c.actual}</p>
                 )}
                 {c.details?.length ? (
                   <ul className="mt-1 space-y-0.5 text-xs">
-                    {c.details.map((x, i) => <li key={i} className="flex justify-between gap-2"><span>{x.label}</span><span className="tabular">{x.value}</span></li>)}
+                    {c.details.map((x, i) => (
+                      <li key={i} className="flex justify-between gap-2">
+                        <span>{c.warning ? x.label.replace(/\d{4}-\d{2}-\d{2}/, (iso) => fmtDate(iso)) : x.label}</span>
+                        <span className="tabular">{c.warning ? x.value.split(" < ").map((v) => usd(v)).join(" < ") : x.value}</span>
+                      </li>
+                    ))}
                   </ul>
                 ) : null}
               </CardContent>

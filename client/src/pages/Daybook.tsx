@@ -45,6 +45,7 @@ interface DaybookRow {
   memo: string | null;
   sourceType: string | null;
   saleId?: number | null;
+  saleFlags?: { zeroPrice: boolean; belowCost: boolean };
   sourceId: number | null;
   reversedByJournalId: number | null;
   reversesJournalId: number | null;
@@ -108,6 +109,8 @@ function StatusBadges({ r, t }: { r: DaybookRow; t: T }) {
     <>
       {r.reversedByJournalId && <Badge variant="destructive" className="whitespace-nowrap">{t("Reversed", "Annulée")}</Badge>}
       {r.reversesJournalId && <Badge variant="secondary" className="whitespace-nowrap">{t("Reversal entry", "Contre-passation")}</Badge>}
+      {r.saleFlags?.zeroPrice && <Badge variant="destructive" className="whitespace-nowrap">{t("Price 0", "Prix nul")}</Badge>}
+      {r.saleFlags?.belowCost && <Badge variant="outline" className="whitespace-nowrap border-amber-600 text-amber-800 dark:border-amber-400 dark:text-amber-300">{t("Below cost", "Vente à perte")}</Badge>}
     </>
   );
 }
@@ -161,7 +164,6 @@ export default function Daybook() {
   const lastActive = useQuery<{ date: string | null }>({ queryKey: ["/api/daybook/active-day", { date: day }], enabled: mode === "day" && validDate(day) });
   const data = dq.data;
   const rows = data?.rows ?? [];
-  const total = useMemo(() => rows.reduce((s, r) => s.plus(r.amount), d(0)), [rows]);
 
   const groups = useMemo(() => {
     const m = new Map<string, { type: string; count: number; total: ReturnType<typeof d> }>();
@@ -312,7 +314,13 @@ export default function Daybook() {
         <StatCard label={t("Vouchers", "Pièces")} value={rows.length} sub={mode === "day" ? fmtDate(day) : `${fmtDate(from)} → ${fmtDate(to)}`} />
         <StatCard label={t("Money in", "Entrées d'argent")} value={usd(data?.moneyIn ?? 0)} tone="good" sub={t("Cash, bank, mobile money", "Caisse, banque, mobile money")} />
         <StatCard label={t("Money out", "Sorties d'argent")} value={usd(data?.moneyOut ?? 0)} tone="bad" />
-        <StatCard label={t("Total", "Total")} value={usd(total)} sub={t("Sum of voucher amounts", "Somme des montants des pièces")} />
+        {/* Net money movement; adding money in and money out together would mean nothing. */}
+        <StatCard
+          label={t("Net (in − out)", "Net (entrées − sorties)")}
+          value={usd(d(data?.moneyIn ?? 0).minus(d(data?.moneyOut ?? 0)).toFixed(2))}
+          tone={d(data?.moneyIn ?? 0).minus(d(data?.moneyOut ?? 0)).lt(0) ? "bad" : "neutral"}
+          sub={t("Cash, bank, mobile money", "Caisse, banque, mobile money")}
+        />
       </div>
 
       <ErrorText error={dq.error} />
@@ -356,9 +364,9 @@ export default function Daybook() {
               </TableBody>
               <TableFooter>
                 <TableRow>
-                  <TableCell>{t("Total", "Total")}</TableCell>
+                  <TableCell>{t("Vouchers", "Pièces")}</TableCell>
                   <TableCell className="text-right"><Num>{rows.length}</Num></TableCell>
-                  <TableCell className="text-right"><Num>{usd(total)}</Num></TableCell>
+                  <TableCell />
                 </TableRow>
               </TableFooter>
             </Table>

@@ -91,6 +91,8 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
     if (q.lte(0)) throw badRequest("Quantities must be greater than zero", "Les quantités doivent être supérieures à zéro");
     const price = cents(l.unitPrice);
     if (price.isNegative()) throw badRequest("Prices cannot be negative", "Les prix ne peuvent pas être négatifs");
+    // 0 $ is almost always a price typed wrong ("4,50" read as nothing); a gift is a 100 % line discount instead.
+    if (price.isZero()) throw badRequest(`${v.name} (${v.sku}): enter the selling price (it is 0 $)`, `${v.name} (${v.sku}) : saisissez le prix de vente (il est à 0 $)`);
     const lineDiscount = cents(l.lineDiscount ?? 0);
     if (lineDiscount.isNegative()) throw badRequest("A discount cannot be negative", "Une remise ne peut pas être négative");
     const amount = cents(q.times(price)).minus(lineDiscount);

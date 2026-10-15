@@ -40,6 +40,9 @@ export default function Dashboard() {
   const data = q.data;
   const monthName = data ? new Date(`${data.month}-01T00:00:00`).toLocaleDateString("fr-FR", { month: "long", year: "numeric" }) : "";
   const moneyTotal = (data?.money ?? []).reduce((s, m) => s.plus(d(m.balance)), d(0));
+  // Sales at 0 $ or below cost in the last 90 days (from Rapports > Contrôles).
+  const checksQ = useQuery<{ warnings?: { key: string; ok: boolean; actual: string }[] }>({ queryKey: ["/api/reports/self-check"], enabled: can("manager", "partner"), staleTime: 60_000 });
+  const flagged = (checksQ.data?.warnings ?? []).filter((w) => !w.ok);
 
   return (
     <div>
@@ -63,6 +66,19 @@ export default function Dashboard() {
         <ErrorText error={q.error} />
       ) : (
         <div className="space-y-4">
+          {flagged.length > 0 && (
+            <Link href="/reports?tab=checks" className="flex items-start gap-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm text-amber-900 hover:bg-amber-500/15 dark:text-amber-200">
+              <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+              <span>
+                {flagged.map((w) =>
+                  w.key === "sales_zero_price"
+                    ? count(t, Number(w.actual), ["sale at 0 $", "sales at 0 $"], ["vente à prix nul", "ventes à prix nul"])
+                    : count(t, Number(w.actual), ["sale below cost", "sales below cost"], ["vente à perte", "ventes à perte"]),
+                ).join(" · ")}
+                {t(" in the last 90 days: check them.", " ces 90 derniers jours\u00a0: à vérifier.")}
+              </span>
+            </Link>
+          )}
           <div className="flex flex-wrap gap-2">
             {can("manager") && <Button asChild size="sm" variant="secondary"><Link href="/vouchers"><FilePlus2 className="mr-1 h-4 w-4" /> {t("New voucher", "Nouvelle pièce")}</Link></Button>}
             <Button asChild size="sm" variant="secondary"><Link href="/daybook"><BookOpen className="mr-1 h-4 w-4" /> {t("Day book", "Journal du jour")}</Link></Button>

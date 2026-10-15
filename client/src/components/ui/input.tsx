@@ -2,7 +2,7 @@ import * as React from "react";
 import { CalendarDays } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { formatLang } from "@/lib/format";
+import { formatLang, inputText, parseNumberInput } from "@/lib/format";
 
 const BASE =
   "flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 aria-[invalid=true]:border-destructive aria-[invalid=true]:ring-destructive/20 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none md:text-sm";
@@ -11,6 +11,8 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
   ({ className, type, ...props }, ref) => {
     // Dates are always shown dd/mm/yyyy, whatever language the phone or browser is set to.
     if (type === "date") return <DateInput className={className} {...props} ref={ref} />;
+    // Amounts and quantities accept "4,50" as well as "4.50" and read French-style.
+    if (props.inputMode === "decimal" && (!type || type === "text")) return <DecimalInput className={className} {...props} ref={ref} />;
     // h-9 to match icon buttons and default buttons.
     return <input type={type} className={cn(BASE, className)} ref={ref} {...props} />;
   },
@@ -95,4 +97,45 @@ const DateInput = React.forwardRef<HTMLInputElement, React.ComponentProps<"input
 });
 DateInput.displayName = "DateInput";
 
-export { Input, DateInput };
+/**
+ * A number field that reads the way people write: "4,50", "4.50" or "1 234,5" all mean the same.
+ * Its value and onChange carry the plain number text ("4.5", or "" when empty), so pages keep
+ * working with exact decimals; what is shown is French-style ("1 234,5") once the field is left.
+ * Text that is not a number is passed on as typed so the page can say what is wrong.
+ */
+const DecimalInput = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(({ className, value, onChange, onBlur, ...props }, ref) => {
+  const plain = value === undefined || value === null ? "" : String(value);
+  const [text, setText] = React.useState(() => inputText(plain));
+  // The value this field last sent up: when it comes back unchanged, keep what the person typed ("4," stays "4,").
+  const sent = React.useRef<string | null>(null);
+  React.useEffect(() => {
+    if (plain !== sent.current) setText(inputText(plain));
+    sent.current = null;
+  }, [plain]);
+  return (
+    <input
+      {...props}
+      ref={ref}
+      type="text"
+      autoComplete="off"
+      className={cn(BASE, className)}
+      value={text}
+      onChange={(e) => {
+        const typed = e.target.value;
+        setText(typed);
+        const parsed = parseNumberInput(typed);
+        const out = parsed === null ? typed : parsed;
+        sent.current = out;
+        if (out === plain) sent.current = null;
+        onChange?.({ ...e, target: { value: out, name: e.target.name }, currentTarget: { value: out, name: e.target.name } } as unknown as React.ChangeEvent<HTMLInputElement>);
+      }}
+      onBlur={(e) => {
+        setText(inputText(plain));
+        onBlur?.(e);
+      }}
+    />
+  );
+});
+DecimalInput.displayName = "DecimalInput";
+
+export { Input, DateInput, DecimalInput };

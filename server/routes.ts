@@ -828,7 +828,13 @@ export function registerRoutes(app: Express) {
     if (q.customerId) conds.push(eq(sales.customerId, q.customerId));
     if (q.search) conds.push(or(ilike(sales.number, `%${q.search}%`), ilike(parties.name, `%${q.search}%`))!);
     const rows = await db
-      .select({ sale: sales, customerName: parties.name, cashier: users.fullName })
+      .select({
+        sale: sales,
+        customerName: parties.name,
+        cashier: users.fullName,
+        // A line sold at 0 $: almost always a price typed wrong, so the list flags it.
+        zeroPrice: sql<boolean>`exists (select 1 from sale_lines sl where sl.sale_id = ${sales.id} and sl.unit_price <= 0)`,
+      })
       .from(sales)
       .leftJoin(parties, eq(parties.id, sales.customerId))
       .leftJoin(users, eq(users.id, sales.createdBy))
@@ -836,7 +842,7 @@ export function registerRoutes(app: Express) {
       .orderBy(desc(sales.date), desc(sales.id))
       .limit(500);
     const showCost = req.user!.role !== "cashier";
-    res.json(rows.map((r) => ({ ...r.sale, cogs: showCost ? r.sale.cogs : undefined, customerName: r.customerName, cashier: r.cashier })));
+    res.json(rows.map((r) => ({ ...r.sale, cogs: showCost ? r.sale.cogs : undefined, customerName: r.customerName, cashier: r.cashier, zeroPrice: !!r.zeroPrice })));
   }));
   app.get("/api/sales/:id", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
     const sale = await salesSvc.getSale(db, paramId(req));
