@@ -132,7 +132,7 @@ function Body({ a }: { a: Analytics }) {
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <StatCard label={t("Sales (before returns)", "Ventes (avant retours)")} value={usd(a.sales.total)} sub={count(t, a.sales.count, ["sale", "sales"], ["vente", "ventes"])} />
-        <StatCard label={t("Gross profit", "Marge brute")} value={usd(a.totals.grossProfit)} tone={d(a.totals.grossProfit).lt(0) ? "bad" : "good"} sub={marginPct ? `${pct(marginPct)} ${t("of income", "des recettes")}` : undefined} />
+        <StatCard label={t("Gross profit", "Marge brute")} value={usd(a.totals.grossProfit)} tone={d(a.totals.grossProfit).lt(0) ? "bad" : "good"} sub={marginPct ? `${pct(marginPct, 1, 1)} ${t("of income", "des recettes")}` : undefined} />
         <StatCard label={t("Running costs", "Charges")} value={usd(a.totals.operatingExpenses)} />
         <StatCard label={t("Net profit", "Bénéfice net")} value={usd(a.totals.netProfit)} tone={d(a.totals.netProfit).lt(0) ? "bad" : "good"} />
         <StatCard label={t("Credit sales", "Ventes à crédit")} value={usd(a.sales.credit)} sub={d(a.sales.total).gt(0) ? `${pct(d(a.sales.credit).div(d(a.sales.total)).times(100).toNumber(), 0)} ${t("of sales", "des ventes")}` : undefined} />
@@ -243,7 +243,7 @@ function Body({ a }: { a: Analytics }) {
                         <TableCell className="text-right"><Num>{usd(i.revenue)}</Num></TableCell>
                         <TableCell className="text-right">
                           <Num className={cn(d(i.profit).lt(0) ? "text-destructive" : "text-emerald-800 dark:text-emerald-400")}>{usd(i.profit)}</Num>
-                          {d(i.revenue).gt(0) && <div className="text-xs text-muted-foreground tabular">{pct(d(i.profit).div(d(i.revenue)).times(100).toNumber(), 0)}</div>}
+                          {d(i.revenue).gt(0) && <div className="text-xs text-muted-foreground tabular">{pct(d(i.profit).div(d(i.revenue)).times(100).toNumber(), 1, 1)}</div>}
                         </TableCell>
                       </TableRow>
                     ))}

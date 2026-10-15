@@ -523,7 +523,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                 <p className="flex flex-wrap items-center gap-2 px-6 text-sm">
                   <Badge variant="destructive">{t("Cancelled", "Annulé")}</Badge>
                   {t("Saved on", "Enregistré le")} {fmtDate(r.date)}
-                  {r.cancelledAt && <> · {t("cancelled on", "annulé le")} {fmtDate(r.cancelledAt.slice(0, 10))}</>}
+                  {r.cancelledAt && <> · {t("cancelled on", "annulé le")} {fmtDate(r.cancelledAt)}</>}
                   {r.cancelJournalId && <Link href={`/vouchers/${r.cancelJournalId}`} className="text-primary hover:underline">{t("cancelling entry", "écriture d'annulation")}</Link>}
                 </p>
                 <RunLinesTable run={r} />
@@ -659,6 +659,34 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
   };
   const keyOf = (e: Party) => `${e.id}:${isCdf ? "CDF" : "USD"}`;
   const amountOf = (e: Party) => amounts[keyOf(e)] ?? suggested(e);
+  /** What they are owed in the paying account's currency, as the suggestion counts it (unrounded). */
+  const owedHere = (e: Party) => {
+    if (!isCdf) return owedOf(e);
+    const fc = owedFc(e);
+    const dollars = owedOf(e).minus(fc.usd);
+    return fc.native.plus(dollars.gt(0) && r.gt(0) ? dollars.times(r) : 0).toDecimalPlaces(0);
+  };
+  // More than is owed becomes an advance: "7 520 000" typed for 752 000 FC is said in words and confirmed
+  // before paying. In francs the suggestion's rounding up to 100 FC is not an overpayment.
+  const excessOf = (e: Party) => {
+    const a = d(amountOf(e));
+    if (!typedNumberOk(amountOf(e)) || !a.gt(0)) return null;
+    const owed = owedHere(e);
+    const allowed = isCdf ? Decimal.max(owed, d(suggested(e))) : owed;
+    return a.gt(allowed) ? { paid: a, owed, excess: a.minus(owed) } : null;
+  };
+  const fmtPay = (x: Decimal) => (isCdf ? cdf(x.toFixed(0)) : usd(x.toFixed(2)));
+  const overText = (e: Party) => {
+    const x = excessOf(e);
+    if (!x) return null;
+    return x.owed.gt(0)
+      ? t(
+          `${e.name} gets ${fmtPay(x.paid)}; they are owed ${fmtPay(x.owed)}: the extra ${fmtPay(x.excess)} becomes an advance`,
+          `${e.name} reçoit ${fmtPay(x.paid)}\u00a0; on lui doit ${fmtPay(x.owed)}\u00a0: l'excédent de ${fmtPay(x.excess)} devient une avance`,
+        )
+      : t(`${e.name} gets ${fmtPay(x.paid)}; nothing is owed to them: all of it becomes an advance`, `${e.name} reçoit ${fmtPay(x.paid)}\u00a0; on ne lui doit rien\u00a0: tout devient une avance`);
+  };
+  const [confirmOver, setConfirmOver] = useState(false);
 
   /** Amount in the paying account's currency, and its dollar value. */
   const lines = rows
@@ -740,6 +768,7 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
                           <Input className="w-28 text-right" inputMode="decimal" usd={!isCdf} thousands={isCdf} aria-label={t(`Amount paid to ${e.name}`, `Montant payé à ${e.name}`)} aria-invalid={(isCdf && !!francDecimalsError(t, "CDF", amountOf(e))) || undefined} value={amountOf(e)} onChange={(ev) => setAmounts((p) => ({ ...p, [keyOf(e)]: ev.target.value }))} />
                           <span className="w-6 text-left text-xs text-muted-foreground">{isCdf ? "FC" : "$"}</span>
                         </div>
+                        {overText(e) && <p role="alert" className="mt-1 max-w-[18rem] text-right text-xs font-medium text-amber-800 dark:text-amber-400">{overText(e)}</p>}
                         {isCdf && francDecimalsError(t, "CDF", amountOf(e)) ? (
                           <p className="mt-1 text-xs text-destructive">{t("No centimes in francs", "Pas de centimes en FC")}</p>
                         ) : isCdf && d(amountOf(e)).gt(0) && !d(amountOf(e)).mod(100).isZero() && (
@@ -763,7 +792,7 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
           <Button variant="outline" onClick={onClose}>{doneId ? t("Close", "Fermer") : t("Cancel", "Annuler")}</Button>
           {!doneId && (
             <SubmitButton
-              onClick={submit}
+              onClick={() => (rows.some((e) => excessOf(e)) ? setConfirmOver(true) : submit())}
               blocked={
                 !account
                   ? t("Choose the account to pay from", "Choisissez le compte de paiement")
@@ -782,6 +811,30 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
           )}
         </DialogFooter>
       </DialogContent>
+      <AlertDialog open={confirmOver} onOpenChange={setConfirmOver}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("Pay more than is owed?", "Payer plus que ce qui est dû\u00a0?")}</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                {rows.filter((e) => excessOf(e)).map((e) => <p key={e.id}>{overText(e)}.</p>)}
+                <p>{t("The advance is deducted from their next salary. Check for an extra zero before paying.", "L'avance sera déduite de son prochain salaire. Vérifiez qu'il n'y a pas un zéro de trop avant de payer.")}</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmOver(false);
+                submit();
+              }}
+            >
+              {t(`Pay ${isCdf ? cdf(total.toFixed(0)) : usd(total.toFixed(2))}`, `Payer ${isCdf ? cdf(total.toFixed(0)) : usd(total.toFixed(2))}`)}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

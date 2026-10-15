@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { parseTypedNumber } from "@shared/money";
+import { ambiguousTypedMeasure, parseTypedNumber } from "@shared/money";
 
 /*
  * Spreadsheet helpers: CSV download, Excel templates and reading an uploaded .xlsx / .xls / .csv.
@@ -78,12 +78,13 @@ async function readWorkbook(file: File) {
 /**
  * Read the first sheet of a file into objects keyed by our field names.
  * `fields` maps a field to the header names it accepts (any case, accents and spaces ignored).
- * Returns the rows and the fields whose column was found.
+ * Returns the rows, the fields whose column was found, and each row's number cells as they were in the
+ * file (a page that knows the unit reads "2,250" litres again as 2,25: see parseTypedNumber).
  */
 export async function readSheet<F extends string>(file: File, fields: Record<F, string[]>) {
   const wb = await readWorkbook(file);
   const ws = wb.Sheets[wb.SheetNames[0]];
-  if (!ws) return { rows: [] as Record<F, string | null>[], found: [] as F[] };
+  if (!ws) return { rows: [] as Record<F, string | null>[], found: [] as F[], cells: [] as Partial<Record<F, string | number>>[] };
   const grid = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true, defval: null, blankrows: false });
   const header = (grid[0] ?? []).map((h) => strip(String(h ?? "")));
   const colOf = {} as Record<F, number>;
@@ -93,16 +94,32 @@ export async function readSheet<F extends string>(file: File, fields: Record<F, 
     colOf[field] = idx;
     if (idx >= 0) found.push(field);
   }
+  const cells: Partial<Record<F, string | number>>[] = [];
   const rows = grid
     .slice(1)
     .filter((r) => r.some((c) => c !== null && String(c).trim() !== ""))
     .map((r) => {
       const o = {} as Record<F, string | null>;
+      const raw: Partial<Record<F, string | number>> = {};
       for (const f of Object.keys(fields) as F[]) {
         const v = colOf[f] >= 0 ? r[colOf[f]] : null;
-        o[f] = v === null || v === undefined || String(v).trim() === "" ? null : NUMBER_FIELDS.has(f) ? parseTypedNumber(v) : String(v).trim();
+        const empty = v === null || v === undefined || String(v).trim() === "";
+        if (!empty && NUMBER_FIELDS.has(f)) raw[f] = typeof v === "number" ? v : String(v).trim();
+        o[f] = empty ? null : NUMBER_FIELDS.has(f) ? parseTypedNumber(v) : String(v).trim();
       }
+      cells.push(raw);
       return o;
     });
-  return { rows, found };
+  return { rows, found, cells };
+}
+
+/**
+ * A number cell read for what it holds: a measure (litres, metres, kilos, and every weight and volume) reads
+ * "2,250" as 2,25 as a form field does, and asks about "1.000" (`unsure`: 1 000 or 1); pieces and money read
+ * as parseTypedNumber always has ("1,250" pieces is 1 250).
+ */
+export function readNumberCell(raw: string | number | null | undefined, measured: boolean): { value: string | null; unsure: [string, string] | null } {
+  if (raw === null || raw === undefined) return { value: null, unsure: null };
+  if (!measured) return { value: parseTypedNumber(raw), unsure: null };
+  return { value: parseTypedNumber(raw, { measured: true }), unsure: ambiguousTypedMeasure(raw) };
 }

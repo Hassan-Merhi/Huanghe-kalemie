@@ -18,9 +18,10 @@ import { LocationSelect } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { curLabel, d, qty as fmtQty, todayLocal, usd } from "@/lib/format";
+import { curLabel, d, money, number, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import { useI18n, useT, count } from "@/lib/i18n";
-import { downloadXlsx, readSheet } from "@/lib/sheets";
+import { downloadXlsx, readNumberCell, readSheet } from "@/lib/sheets";
+import { wholeUnit } from "@/lib/units";
 import type { Product } from "@/lib/types";
 
 type T = (en: string, fr: string) => string;
@@ -79,6 +80,8 @@ export interface PreviewRow {
   variantId: number | null;
   sku: string | null;
   status: "existing" | "new_variant" | "new_item" | "error";
+  /** The unit of the item the row matched. */
+  unit?: string | null;
   error?: string;
   errorFr?: string;
 }
@@ -134,6 +137,49 @@ function FilePicker({ onFile, busy }: { onFile: (f: File) => void; busy?: boolea
 }
 
 const variantOf = (r: { size?: string | null; colour?: string | null }) => [r.size, r.colour].filter(Boolean).join(" / ");
+
+type Cells = Partial<Record<string, string | number>>;
+
+/**
+ * Number cells read again now that each row's unit is known (see readNumberCell): `fields` are always
+ * measures (weight, volume), `qtyField` only when the row's item is not counted in whole units. A row's
+ * unit is its item's own when the item exists (the file cannot change it), else the file's unit for that
+ * item (its first row naming one), else pieces.
+ * Returns the rows to show and send, and per row the question to ask about a "1.000".
+ */
+function remeasure<R extends { name: string | null; unit: string | null }>(
+  t: T,
+  rows: R[],
+  cells: Cells[],
+  preview: PreviewRow[],
+  qtyField: keyof R & string,
+  fields: { key: keyof R & string; en: string; fr: string }[],
+): { rows: R[]; unsure: (string | null)[] } {
+  const fileUnit = new Map<string, string>();
+  for (const r of rows) {
+    const k = (r.name ?? "").trim().toLowerCase();
+    if (r.unit?.trim() && !fileUnit.has(k)) fileUnit.set(k, r.unit.trim());
+  }
+  const unsure: (string | null)[] = [];
+  const out = rows.map((r, i) => {
+    const unit = preview[i]?.unit ?? fileUnit.get((r.name ?? "").trim().toLowerCase()) ?? "pcs";
+    const all = [{ key: qtyField, en: "Quantity", fr: "Quantité", measured: !wholeUnit(unit) }, ...fields.map((f) => ({ ...f, measured: true }))];
+    const next = { ...r };
+    let question: string | null = null;
+    for (const f of all) {
+      if (cells[i]?.[f.key] === undefined) continue;
+      const { value, unsure: u } = readNumberCell(cells[i][f.key], f.measured);
+      (next as Record<string, string | null>)[f.key] = value;
+      if (u && !question) {
+        const text = String(cells[i][f.key]).trim();
+        question = t(`${f.en} "${text}": ${fmtQty(u[0])} or ${fmtQty(u[1])}? Correct the file`, `${f.fr} «\u00a0${text}\u00a0»\u00a0: ${fmtQty(u[0])} ou ${fmtQty(u[1])}\u00a0? Corrigez le fichier`);
+      }
+    }
+    unsure.push(question);
+    return next;
+  });
+  return { rows: out, unsure };
+}
 const rowError = (p: PreviewRow | undefined, lang: string) => (p ? (lang === "fr" ? p.errorFr ?? p.error : p.error ?? p.errorFr) : undefined);
 
 // ---------------------------------------------------------------- Page
@@ -189,7 +235,8 @@ interface ImportResult {
 function ItemsImport() {
   const t = useT();
   const { lang } = useI18n();
-  const [rows, setRows] = useState<StockRow[]>([]);
+  const [fileRows, setRows] = useState<StockRow[]>([]);
+  const [cells, setCells] = useState<Cells[]>([]);
   const [preview, setPreview] = useState<PreviewRow[]>([]);
   const [fileError, setFileError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -215,7 +262,7 @@ function ItemsImport() {
     setRows([]);
     setPreview([]);
     try {
-      const { rows: raw, found } = await readSheet(file, STOCK_FIELDS);
+      const { rows: raw, found, cells: rawCells } = await readSheet(file, STOCK_FIELDS);
       if (!found.includes("name")) {
         setFileError(t("No item name column found. Name a column \"Article\" (or \"Item\", \"Désignation\").", "Aucune colonne de nom d'article trouvée. Nommez une colonne «\u00a0Article\u00a0» (ou «\u00a0Item\u00a0», «\u00a0Désignation\u00a0»)."));
         return;
@@ -226,6 +273,7 @@ function ItemsImport() {
       }
       const clean = raw.map((r) => ({ ...r, sellPrice: numCell(r.sellPrice), reorderLevel: numCell(r.reorderLevel), qty: numCell(r.qty), unitCost: numCell(r.unitCost) }));
       setRows(clean);
+      setCells(rawCells);
       setBusy(true);
       const p = await api<PreviewRow[]>("POST", "/api/import/items/preview", { rows: clean.map(({ qty: _q, unitCost: _c, ...r }) => r) });
       setPreview(p);
@@ -244,9 +292,11 @@ function ItemsImport() {
     if (q && q.gt(0) && !r.unitCost) return t("Give the unit cost for the opening quantity", "Indiquez le coût unitaire de la quantité d'ouverture");
     return null;
   };
+  // Litres and kilos: "2,250" is 2,25 once the row's unit is known.
+  const { rows, unsure } = useMemo(() => remeasure(t, fileRows, cells, preview, "qty", []), [t, fileRows, cells, preview]);
   const merged = rows.map((r, i) => {
     const p = preview[i];
-    const err = rowError(p?.status === "error" ? p : undefined, lang) ?? localError(r);
+    const err = rowError(p?.status === "error" ? p : undefined, lang) ?? unsure[i] ?? localError(r);
     return { r, p, err, status: (err ? "error" : p?.status ?? "existing") as PreviewRow["status"] };
   });
   const errors = merged.filter((m) => m.err).length;
@@ -585,7 +635,8 @@ export function ContainerImportButton({ containerId, currency, linesDirty, onImp
 function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onImported }: { containerId: number; currency: string; linesDirty: boolean; onClose: () => void; onImported: () => void }) {
   const t = useT();
   const { lang } = useI18n();
-  const [rows, setRows] = useState<ContainerRowIn[]>([]);
+  const [fileRows, setRows] = useState<ContainerRowIn[]>([]);
+  const [cells, setCells] = useState<Cells[]>([]);
   const [preview, setPreview] = useState<PreviewRow[]>([]);
   const [fileError, setFileError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -610,7 +661,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
     setRows([]);
     setPreview([]);
     try {
-      const { rows: raw, found } = await readSheet(file, CONTAINER_FIELDS);
+      const { rows: raw, found, cells: rawCells } = await readSheet(file, CONTAINER_FIELDS);
       if (!found.includes("name")) {
         setFileError(t("No item name column found. Name a column \"Article\" (or \"Item\").", "Aucune colonne de nom d'article trouvée. Nommez une colonne «\u00a0Article\u00a0» (ou «\u00a0Item\u00a0»)."));
         return;
@@ -621,6 +672,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
       }
       const clean = raw.map((r) => ({ ...r, quantity: numCell(r.quantity), unitPrice: numCell(r.unitPrice), weightKg: numCell(r.weightKg), volumeCbm: numCell(r.volumeCbm), sellPrice: numCell(r.sellPrice) }));
       setRows(clean);
+      setCells(rawCells);
       setBusy(true);
       setPreview(await api<PreviewRow[]>("POST", "/api/import/items/preview", { rows: clean.map(({ quantity: _q, unitPrice: _p, weightKg: _w, volumeCbm: _v, ...r }) => r) }));
     } catch (e) {
@@ -635,9 +687,14 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
     if (!r.unitPrice || !/^\d+(\.\d+)?$/.test(r.unitPrice)) return t("Enter the unit price", "Entrez le prix unitaire");
     return null;
   };
+  // Weights and volumes always, and quantities in litres or kilos: "12,375" kg is 12,375 kg, as typed by hand.
+  const { rows, unsure } = useMemo(
+    () => remeasure(t, fileRows, cells, preview, "quantity", [{ key: "weightKg", en: "Weight", fr: "Poids" }, { key: "volumeCbm", en: "Volume", fr: "Volume" }]),
+    [t, fileRows, cells, preview],
+  );
   const merged = rows.map((r, i) => {
     const p = preview[i];
-    const err = rowError(p?.status === "error" ? p : undefined, lang) ?? localError(r);
+    const err = rowError(p?.status === "error" ? p : undefined, lang) ?? unsure[i] ?? localError(r);
     return { r, p, err, status: (err ? "error" : p?.status ?? "existing") as PreviewRow["status"] };
   });
   const errors = merged.filter((m) => m.err).length;
@@ -689,6 +746,8 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
                       <TableHead>{t("Item", "Article")}</TableHead>
                       <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
                       <TableHead className="text-right">{t(`Price (${curLabel(currency)})`, `Prix (${curLabel(currency)})`)}</TableHead>
+                      <TableHead className="text-right">{t("Weight (kg)", "Poids (kg)")}</TableHead>
+                      <TableHead className="text-right">{t("Volume (m³)", "Volume (m³)")}</TableHead>
                       <TableHead>{t("Status", "Statut")}</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -702,14 +761,16 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
                           {err && <div className="text-xs text-destructive">{err}</div>}
                         </TableCell>
                         <TableCell className="text-right"><Num>{r.quantity ? fmtQty(r.quantity) : "—"}</Num></TableCell>
-                        <TableCell className="text-right"><Num>{r.unitPrice ?? "—"}</Num></TableCell>
+                        <TableCell className="text-right"><Num>{r.unitPrice && /^\d+(\.\d+)?$/.test(r.unitPrice) ? number(r.unitPrice, 4, 2) : r.unitPrice ?? "—"}</Num></TableCell>
+                        <TableCell className="text-right"><Num>{r.weightKg ? fmtQty(r.weightKg) : "—"}</Num></TableCell>
+                        <TableCell className="text-right"><Num>{r.volumeCbm ? fmtQty(r.volumeCbm) : "—"}</Num></TableCell>
                         <TableCell><StatusBadge status={status} /></TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
                 </Table>
               </div>
-              <p className="text-sm text-muted-foreground">{t("Purchase value", "Valeur d'achat")} : <span className="font-medium text-foreground tabular">{total.toFixed(2)} {currency}</span></p>
+              <p className="text-sm text-muted-foreground">{t("Purchase value:", "Valeur d'achat\u00a0:")} <span className="font-medium text-foreground tabular">{money(total.toFixed(2), currency)}</span></p>
               <div className="flex flex-wrap gap-4">
                 <label className="flex items-center gap-2 text-sm">
                   <input type="radio" name="import-mode" checked={mode === "append"} onChange={() => setMode("append")} /> {t("Add to the lines", "Ajouter aux lignes")}

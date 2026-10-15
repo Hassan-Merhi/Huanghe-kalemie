@@ -126,6 +126,11 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
   const cdfRate = sale.payments.find((p) => p.currency === "CDF")?.rate ?? saleRate ?? null;
   const gross = sale.lines.reduce((s, l) => s.plus(c2(d(l.qty).times(l.unitPrice))), d(0));
   const discount = gross.minus(sale.total);
+  // Franc change goes in 100 FC steps, so the payment lines can miss what the sale counts as paid by a few
+  // cents (35,61 − 8,62 for 27,00 $): the receipt shows that rounding as its own line.
+  const paymentsUsd = sale.payments.reduce((s, p) => s.plus(d(p.amountUsd)), d(0));
+  const roundingGap = d(sale.paidUsd).minus(paymentsUsd);
+  const francRounding = !roundingGap.isZero() && roundingGap.abs().lt(1) && sale.payments.some((p) => p.currency === "CDF") ? roundingGap : null;
   // The shop's clock (Kalemie), whatever time zone the phone or computer is set to.
   const time = sale.createdAt ? new Date(sale.createdAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", timeZone: "Africa/Lubumbashi" }) : "";
   const dash = <div className="my-1.5 border-t border-dashed border-black" />;
@@ -169,6 +174,7 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
           right={p.currency === "CDF" ? `${cdf(p.amountNative)} (${usd(p.amountUsd)})` : usd(p.amountUsd)}
         />
       ))}
+      {francRounding && <ReceiptRow left={t("FC rounding", "Arrondi FC")} right={`${francRounding.isNegative() ? "−" : "+"}${usd(francRounding.abs().toFixed(2))}`} />}
       {sale.payments.length > 0 && <ReceiptRow left={t("Paid", "Payé")} right={usd(sale.paidUsd)} />}
       {d(sale.creditUsd).gt(0) && <ReceiptRow bold left={t("On credit (to pay)", "À crédit (reste à payer)")} right={usd(sale.creditUsd)} />}
       {cdfRate && d(cdfRate).gt(0) && (

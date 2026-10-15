@@ -144,7 +144,10 @@ export function RatesCard() {
                       )}
                     </p>
                   )}
-                  <p>{t("Every franc amount at the till and in the books is converted at this rate. Save it only if it is right.", "Chaque montant en francs, à la caisse comme dans les comptes, est converti à ce taux. Enregistrez-le seulement s'il est juste.")}</p>
+                  {/* Said of the rate in question: the yuan rate only restates what suppliers are owed in yuan. */}
+                  {cdfFar && <p>{t("Every franc amount at the till and in the books is converted at this rate.", "Chaque montant en francs, à la caisse comme dans les comptes, est converti à ce taux.")}</p>}
+                  {cnyFar && <p>{t("What suppliers are owed in yuan is restated at the yuan rate at month end.", "Ce qui est dû en yuans aux fournisseurs est réévalué au taux du yuan en fin de mois.")}</p>}
+                  <p>{cdfFar && cnyFar ? t("Save them only if they are right.", "Enregistrez-les seulement s'ils sont justes.") : t("Save it only if it is right.", "Enregistrez-le seulement s'il est juste.")}</p>
                 </div>
               </AlertDialogDescription>
             </AlertDialogHeader>
