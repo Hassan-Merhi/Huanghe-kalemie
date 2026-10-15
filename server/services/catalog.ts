@@ -4,6 +4,7 @@ import { dec } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, notFound } from "../errors";
 import { nextNumber } from "./ledger";
+import { wholeUnit } from "@shared/units";
 
 export interface VariantInput {
   sku?: string | null;
@@ -113,6 +114,19 @@ export async function updateProduct(tx: Tx, id: number, input: Partial<ProductIn
       .from(variants)
       .where(eq(variants.productId, id));
     if (!dec(stock.qty).isZero()) throw conflict("Chassis tracking can only be changed while the item has no stock", "Le suivi par châssis ne peut être modifié que lorsque l'article n'a pas de stock");
+  }
+  if (input.unit !== undefined && wholeUnit(input.unit?.trim() || "pcs") && !wholeUnit(existing.unit)) {
+    // Pieces are counted whole: a part of a litre on hand could then never be sold or counted.
+    const [part] = await tx
+      .select({ n: sql<number>`count(*)::int` })
+      .from(variants)
+      .where(and(eq(variants.productId, id), sql`${variants.stockQty} <> trunc(${variants.stockQty})`));
+    if (part.n > 0) {
+      throw conflict(
+        "Some variants hold part of a unit. Adjust the stock to whole numbers before switching to a unit counted in whole pieces.",
+        "Certaines variantes ont une fraction d'unité en stock. Ajustez le stock en nombres entiers avant de passer à une unité comptée à la pièce.",
+      );
+    }
   }
   if (input.active === false && existing.active) {
     const [stock] = await tx

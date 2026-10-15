@@ -17,7 +17,7 @@ import type { Tx } from "../db";
 import { badRequest, conflict, notFound, wholeUnitError, francDecimalsError } from "../errors";
 import { wholeUnit } from "@shared/units";
 import { moneyLeg, postJournal, rateFor, rateTolerancePct, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type ForeignCurrency } from "./ledger";
-import { advanceToYuanLines, assertSameCurrency } from "./operations";
+import { applyAdvances, assertSameCurrency } from "./operations";
 import { issueStock, linkMovementsToJournal, receiveStock, stockQty } from "./stock";
 import { variantColour } from "./catalog";
 
@@ -433,12 +433,8 @@ export async function finalizeContainer(tx: Tx, containerId: number, offloadDate
     .where(eq(containers.id, containerId));
   // A dollar deposit already paid to the supplier settles the yuan invoice now, so the yuan owed is
   // what is really left to pay.
-  if (container.currency === "CNY") {
-    const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
-    const lines = await advanceToYuanLines(tx, payables, container.supplierId, offloadDate);
-    if (lines.length) {
-      await postJournal(tx, { date: offloadDate, type: "supplier_payment", memo: `Avance imputée sur le conteneur ${container.number}`, sourceType: "container", sourceId: containerId, userId, lines });
-    }
+  if (container.currency === "CNY" || container.currency === "CDF") {
+    await applyAdvances(tx, container.supplierId, offloadDate, `Avance imputée sur le conteneur ${container.number}`, userId);
   }
   return result;
 }

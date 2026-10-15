@@ -287,6 +287,36 @@ export async function advanceToYuanLines(tx: Tx, payables: number, partyId: numb
   return lines;
 }
 
+/** Lines applying a dollar advance to francs a supplier or employee is owed, at the day's franc rate. */
+export async function advanceToFrancLines(tx: Tx, payables: number, partyId: number, date: string): Promise<PostLine[]> {
+  const fc = await foreignBalance(tx, payables, partyId, "CDF", date);
+  if (!fc.native.isNegative() || !fc.usd.isNegative()) return [];
+  const advance = Decimal.max((await foreignBalance(tx, payables, partyId, "USD", date)).usd, 0);
+  if (advance.isZero()) return [];
+  const fcRate = (await rateFor(tx, date)).rate;
+  const owedNative = fc.native.abs();
+  const owedUsd = cents(owedNative.dividedBy(fcRate));
+  const applyUsd = Decimal.min(advance, owedUsd);
+  const francs = applyUsd.equals(owedUsd) ? owedNative : cents(applyUsd.times(fcRate));
+  if (applyUsd.lte(0) || francs.lte(0)) return [];
+  return [
+    { accountId: payables, partyId, debit: applyUsd, currency: "CDF", nativeAmount: francs, rate: fcRate.toFixed(4), memo: "Avance imputée" },
+    { accountId: payables, partyId, credit: applyUsd, memo: "Avance imputée" },
+  ];
+}
+
+/**
+ * Apply what was paid ahead to a contact (dollars, or francs for yuan) to what they are now owed in
+ * yuan or francs, in one journal, so the same money is not paid twice. Used when a bill is booked.
+ */
+export async function applyAdvances(tx: Tx, partyId: number, date: string, memo: string, userId: number): Promise<number | null> {
+  const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
+  const lines = await advanceToYuanLines(tx, payables, partyId, date);
+  if (!lines.length) lines.push(...(await advanceToFrancLines(tx, payables, partyId, date)));
+  if (!lines.length) return null;
+  return postJournal(tx, { date, type: "supplier_payment", memo, userId, lines });
+}
+
 /**
  * The payables side of money paid to a supplier, agent or employee. When they are owed in yuan (and
  * not in francs), the money settles, after any dollars owed, the yuan: as many yuan as the money

@@ -453,8 +453,12 @@ export async function returnSale(tx: Tx, saleId: number, input: ReturnInput, use
     const prior = await tx.select().from(saleReturnLines).where(eq(saleReturnLines.saleLineId, line.id));
     const priorAmount = sum(prior.map((p) => p.amount));
     const priorCogs = sum(prior.map((p) => p.cogs));
-    const amount = isLast ? dec(line.lineTotal).minus(priorAmount) : cents(dec(line.lineTotal).times(q).dividedBy(line.qty));
-    const cogs = isLast ? dec(line.cogs).minus(priorCogs) : cents(dec(line.cogs).times(q).dividedBy(line.qty));
+    // Each return takes its share of the running total, rounded once, so many small returns of a
+    // decimal item add up to the same cents as one big return.
+    const doneQty = dec(line.returnedQty).plus(q);
+    const shareOf = (whole: string) => cents(dec(whole).times(doneQty).dividedBy(line.qty));
+    const amount = isLast ? dec(line.lineTotal).minus(priorAmount) : Decimal.max(shareOf(line.lineTotal).minus(priorAmount), 0);
+    const cogs = isLast ? dec(line.cogs).minus(priorCogs) : Decimal.max(shareOf(line.cogs).minus(priorCogs), 0);
 
     await tx.insert(saleReturnLines).values({ returnId: ret.id, saleLineId: line.id, qty: q.toFixed(3), amount: amount.toFixed(2), cogs: cogs.toFixed(2) });
     await tx.update(saleLines).set({ returnedQty: dec(line.returnedQty).plus(q).toFixed(3) }).where(eq(saleLines.id, line.id));

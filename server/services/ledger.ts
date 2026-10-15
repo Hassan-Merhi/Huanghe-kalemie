@@ -504,10 +504,23 @@ export async function setExchangeRate(
       if (!cnyRefs.length) {
         throw new AppError(403, "Only the owner can set the first yuan rate", "FORBIDDEN", "Seul le propriétaire peut saisir le premier taux du yuan");
       }
-      if (!cnyRefs.some((r) => near(r, dec(input.cnyPerUsd!)))) {
-        throw new AppError(403, "Only the owner can move the yuan rate that far", "FORBIDDEN", "Seul le propriétaire peut modifier autant le taux du yuan");
+      const nextCny = dec(input.cnyPerUsd);
+      if (!cnyRefs.some((r) => near(r, nextCny))) {
+        const ref = cnyRefs.reduce((best, r) => (r.minus(nextCny).abs().lt(best.minus(nextCny).abs()) ? r : best));
+        throw new AppError(
+          403,
+          `${nextCny.toString()} CNY is more than ${limit.toString()}% away from the last yuan rate (${ref.toString()}). Only the owner can make that change.`,
+          "FORBIDDEN",
+          `${nextCny.toString()} CNY s'écarte de plus de ${limit.toString()} % du dernier taux du yuan (${ref.toString()}). Seul le propriétaire peut faire ce changement.`,
+        );
       }
     }
+  }
+  // Saving a day's rates as they are changes nothing, and keeps who set them: an owner's rate stays
+  // the owner's, so a manager re-saving it does not take away the owner's reference.
+  const [current] = await tx.select().from(exchangeRates).where(eq(exchangeRates.date, input.date));
+  if (current && dec(current.cdfPerUsd).equals(dec(input.cdfPerUsd)) && (!input.cnyPerUsd || (current.cnyPerUsd != null && dec(current.cnyPerUsd).equals(dec(input.cnyPerUsd))))) {
+    return current;
   }
   const cny = input.cnyPerUsd ? { cnyPerUsd: input.cnyPerUsd } : {};
   const [row] = await tx

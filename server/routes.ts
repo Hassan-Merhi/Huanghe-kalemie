@@ -659,7 +659,8 @@ export function registerRoutes(app: Express) {
   const partyPayment = z.object({ date: isoDate, partyId: id, accountId: id, amount: positiveDecimal, rate: optionalDecimal, memo: z.string().max(300).optional().nullable(), settleNative: optionalDecimal });
   app.post("/api/money/customer-receipt", requireRole(...SELLERS), asyncHandler(async (req, res) => {
     const body = partyPayment.parse(req.body);
-    // Cashiers take francs at the day's rate and record today's money.
+    // Staff take francs at the day's rate; cashiers also record today's money only.
+    if (req.user!.role !== "owner") body.rate = null;
     if (req.user!.role === "cashier") Object.assign(body, { rate: null, date: todayIso() });
     res.status(201).json({ id: await db.transaction((tx) => ops.receiveFromCustomer(tx, body, uid(req))) });
   }));
@@ -915,6 +916,8 @@ export function registerRoutes(app: Express) {
     const body = z
       .object({ date: isoDate.optional(), reason: z.string().min(1).max(300), refundAccountId: optionalId, rate: optionalDecimal, lines: z.array(z.object({ saleLineId: id, qty: positiveDecimal })).min(1) })
       .parse(req.body);
+    // Staff hand francs back at the day's rate.
+    if (req.user!.role !== "owner") body.rate = null;
     const sale = await db.transaction((tx) => salesSvc.returnSale(tx, paramId(req), { ...body, date: body.date ?? todayIso() }, uid(req)));
     await audit(req, "return", "sale", sale.id, body);
     res.json(sale);
