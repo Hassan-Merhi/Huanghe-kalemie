@@ -15,7 +15,7 @@ import { dateTime, formatLang, number, usd } from "@/lib/format";
 interface Snapshot { id: number; kind: "daily" | "before_restore"; day: string; size: number; createdAt: string }
 interface Status { snapshots: Snapshot[]; lastDownloadAt: string | null; empty: boolean }
 interface Totals { rows: Record<string, number>; debit: string; credit: string; stockValue: string; stockQty: string }
-interface Inspect { exportedAt: string; migrations: number; totals: Totals; empty: boolean }
+interface Inspect { exportedAt: string; migrations: number; totals: Totals; empty: boolean; sealed?: boolean }
 interface Check { label: string; expected: string; actual: string; ok: boolean }
 
 const kb = (n: number) => (n < 1024 * 1024 ? `${number(Math.ceil(n / 1024))} Ko` : `${number((n / 1024 / 1024).toFixed(1))} Mo`);
@@ -125,6 +125,7 @@ function RestoreCard({ empty }: { empty: boolean }) {
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [replace, setReplace] = useState(false);
+  const [unsealedOk, setUnsealedOk] = useState(false);
   const [typed, setTyped] = useState("");
   const [password, setPassword] = useState("");
   const [result, setResult] = useState<{ rows: number; checks: Check[] } | null>(null);
@@ -133,6 +134,7 @@ function RestoreCard({ empty }: { empty: boolean }) {
   async function pick(f: File | undefined) {
     setFile(f ?? null);
     setInfo(null);
+    setUnsealedOk(false);
     setResult(null);
     setError(null);
     if (!f) return;
@@ -151,7 +153,7 @@ function RestoreCard({ empty }: { empty: boolean }) {
     setBusy(true);
     setError(null);
     try {
-      const r = await send<{ rows: number; checks: Check[] }>(`/api/backup/restore${info?.empty ? "" : "?replace=1"}`, file, { "X-Current-Password": password });
+      const r = await send<{ rows: number; checks: Check[] }>(`/api/backup/restore?${[info?.empty ? "" : "replace=1", info?.sealed === false ? "unsealed=1" : ""].filter(Boolean).join("&")}`, file, { "X-Current-Password": password });
       setResult(r);
       // Everyone, including you, signs in again against the restored users.
       setTimeout(() => (window.location.href = "/"), 6000);
@@ -167,6 +169,8 @@ function RestoreCard({ empty }: { empty: boolean }) {
     ? t("Choose a backup file", "Choisissez un fichier de sauvegarde")
     : !info
       ? t("The file is being checked", "Le fichier est en cours de vérification")
+      : info.sealed === false && !unsealedOk
+        ? t("Confirm the file is yours", "Confirmez que le fichier est bien le vôtre")
       : needsReplace && !replace
         ? t("Tick the box to replace the current data", "Cochez la case pour remplacer les données actuelles")
         : needsReplace && typed.trim().toUpperCase() !== WORD
@@ -207,6 +211,20 @@ function RestoreCard({ empty }: { empty: boolean }) {
             <p className="text-muted-foreground">
               {number(rowsIn(info.totals))} {t("records", "enregistrements")} · {number(info.totals.rows.journals ?? 0)} {t("postings", "écritures")} · {number(info.totals.rows.sales ?? 0)} {t("sales", "ventes")} · {t("stock", "stock")} {usd(info.totals.stockValue)}
             </p>
+          </div>
+        )}
+        {info && info.sealed === false && !result && (
+          <div className="space-y-2 rounded-md border border-amber-500/50 bg-amber-500/10 p-3 text-sm">
+            <p className="font-medium text-amber-800 dark:text-amber-300">
+              {t("This file was not made by this server, or it was changed after it was downloaded.", "Ce fichier n'a pas été créé par ce serveur, ou il a été modifié après son téléchargement.")}
+            </p>
+            <p className="text-muted-foreground">
+              {t("That is normal for a backup from another server or an older version. If nobody should have edited it, do not restore it.", "C'est normal pour une sauvegarde d'un autre serveur ou d'une ancienne version. Si personne n'aurait dû le modifier, ne le restaurez pas.")}
+            </p>
+            <label className="flex items-start gap-2">
+              <Checkbox checked={unsealedOk} onCheckedChange={(v) => setUnsealedOk(v === true)} className="mt-0.5" />
+              <span>{t("I know where this file comes from: restore it anyway.", "Je sais d'où vient ce fichier : le restaurer quand même.")}</span>
+            </label>
           </div>
         )}
         {needsReplace && !result && (
