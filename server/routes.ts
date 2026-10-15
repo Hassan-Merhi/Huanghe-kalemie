@@ -10,6 +10,7 @@ import {
   CONTAINER_STATUSES,
   containers,
   exchangeRates,
+  stockLevels,
   expenses,
   journalLines,
   journals,
@@ -32,7 +33,7 @@ import { ALLOCATION_METHODS } from "@shared/landedCost";
 import { validatePartnerShares } from "@shared/partnerSplit";
 import { dec } from "@shared/money";
 import { db } from "./db";
-import { badRequest, conflict, forbidden, notFound } from "./errors";
+import { AppError, badRequest, conflict, forbidden, notFound } from "./errors";
 import { checkPassword, hashPassword, requireAuth, requireRole } from "./auth";
 import {
   asyncHandler,
@@ -164,7 +165,7 @@ export function registerRoutes(app: Express) {
 
   app.post("/api/exchange-rates", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = z.object({ date: isoDate, cdfPerUsd: positiveDecimal, cnyPerUsd: positiveDecimal.nullish() }).parse(req.body);
-    const row = await db.transaction((tx) => setExchangeRate(tx, body, uid(req)));
+    const row = await db.transaction((tx) => setExchangeRate(tx, body, uid(req), { owner: req.user!.role === "owner" }));
     await audit(req, "set_rate", "exchange_rate", null, body);
     res.json(row);
   }));
@@ -254,6 +255,11 @@ export function registerRoutes(app: Express) {
   }));
   app.patch("/api/locations/:id", requireRole(), asyncHandler(async (req, res) => {
     const body = z.object({ name: z.string().min(1).max(80).optional(), active: z.boolean().optional() }).parse(req.body);
+    if (body.active === false) {
+      // Stock in a switched-off place could no longer be sold, counted or moved.
+      const [held] = await db.select({ n: sql<number>`count(*)::int` }).from(stockLevels).where(and(eq(stockLevels.locationId, paramId(req)), sql`${stockLevels.qty} <> 0`));
+      if (held.n > 0) throw badRequest("Move the stock out of this place before switching it off", "Transférez le stock hors de cet emplacement avant de le désactiver");
+    }
     const [row] = await db.update(locations).set(body).where(eq(locations.id, paramId(req))).returning();
     await audit(req, "update", "location", paramId(req), body);
     res.json(row);
@@ -393,7 +399,7 @@ export function registerRoutes(app: Express) {
     if (body.kind === "opening" && req.user!.role !== "owner") {
       throw forbidden("Only the owner can enter opening stock", "Seul le propriétaire peut saisir le stock d'ouverture");
     }
-    const result = await db.transaction((tx) => ops.adjustStock(tx, body, uid(req)));
+    const result = await db.transaction((tx) => ops.adjustStock(tx, body, uid(req), { owner: req.user!.role === "owner" }));
     await audit(req, "create", "stock_adjustment", result.id, body);
     res.status(201).json(result);
   }));
@@ -444,18 +450,26 @@ export function registerRoutes(app: Express) {
   const rawBody = express.raw({ type: () => true, limit: "200mb" });
   app.post("/api/backup/inspect", requireRole(), rawBody, asyncHandler(async (req, res) => {
     const file = backup.parseBackup(req.body as Buffer);
-    res.json({ exportedAt: file.exportedAt, migrations: file.migrations, totals: file.totals, empty: await backup.isEmptyShop(db) });
+    res.json({ exportedAt: file.exportedAt, migrations: file.migrations, totals: file.totals, sealed: file.sealed, empty: await backup.isEmptyShop(db) });
   }));
   app.post("/api/backup/restore", requireRole(), rawBody, asyncHandler(async (req, res) => {
     // The current password travels in a header because the body is the file itself.
     await checkPassword(uid(req), req.get("X-Current-Password") ?? "");
     const replace = req.query.replace === "1";
     const file = backup.parseBackup(req.body as Buffer);
+    if (!file.sealed && req.query.unsealed !== "1") {
+      throw new AppError(
+        422,
+        "This file was not made by this server, or it was changed after. Confirm to restore it anyway.",
+        "BACKUP_UNSEALED",
+        "Ce fichier n'a pas été créé par ce serveur, ou il a été modifié depuis. Confirmez pour le restaurer quand même.",
+      );
+    }
     // Before replacing anything, keep what is there now so the restore itself can be undone.
     if (replace && !(await backup.isEmptyShop(db))) await backup.saveSnapshot("before_restore");
     const result = await db.transaction((tx) => backup.restore(tx, file, { replace }));
     // The restored users may not include whoever restored, so their name is kept with the id.
-    await db.insert(auditLog).values({ userId: uid(req), action: "restore", entity: "backup", entityId: null, data: { exportedAt: file.exportedAt, rows: result.rows, replace, by: req.user!.username } });
+    await db.insert(auditLog).values({ userId: uid(req), action: "restore", entity: "backup", entityId: null, data: { exportedAt: file.exportedAt, rows: result.rows, replace, sealed: file.sealed, by: req.user!.username } });
     res.json(result);
   }));
   app.get("/api/stock/adjustments", requireRole(...READERS), asyncHandler(async (_req, res) => {
@@ -729,6 +743,7 @@ export function registerRoutes(app: Express) {
     const body = containerSchema.parse(req.body);
     const [supplier] = await db.select().from(parties).where(eq(parties.id, body.supplierId));
     if (!supplier || supplier.type !== "supplier") throw badRequest("Pick a supplier", "Choisissez un fournisseur");
+    if (body.rateToUsd) await containerSvc.assertContainerRate(db, body.currency ?? "USD", body.rateToUsd, todayIso());
     const [row] = await db.insert(containers).values({ ...body, number: body.number.trim().toUpperCase(), currency: (body.currency ?? "USD").toUpperCase() }).returning();
     await audit(req, "create", "container", row.id);
     res.status(201).json(row);
@@ -756,6 +771,7 @@ export function registerRoutes(app: Express) {
         const allowed = Object.keys(body).every((k) => ["notes", "shipDate", "arrivalDate"].includes(k));
         if (!allowed) throw conflict("This container is finalized. Only dates and notes can change.", "Ce conteneur est finalisé. Seules les dates et les notes peuvent être modifiées.");
       }
+      if (body.rateToUsd) await containerSvc.assertContainerRate(tx, body.currency ?? c.currency, body.rateToUsd, todayIso());
       const [row] = await tx
         .update(containers)
         .set({ ...body, ...(body.number && { number: body.number.trim().toUpperCase() }), ...(body.currency && { currency: body.currency.toUpperCase() }) })
@@ -919,11 +935,27 @@ export function registerRoutes(app: Express) {
     res.json(await reports.partnerStatement(db, partnerId));
   }));
 
-  app.get("/api/periods", requireRole(...READERS), asyncHandler(async (_req, res) => {
-    res.json(await db.select().from(periods).orderBy(desc(periods.month)));
+  /** A partner sees the other partners of a month's split without their names. */
+  const maskSplit = <T,>(req: Request, value: T): T => {
+    if (req.user!.role !== "partner" || !value) return value;
+    const me = req.user!.partnerId;
+    const rename = (p: { partnerId?: number; id?: number; name: string }) => ((p.partnerId ?? p.id) === me ? p : { ...p, name: "Autre associé" });
+    const v = value as Record<string, unknown>;
+    const split = v.split as { partners?: { partnerId: number; name: string }[] } | undefined;
+    const result = v.result as { split?: { partners?: { partnerId: number; name: string }[] } } | null | undefined;
+    return {
+      ...v,
+      ...(split?.partners ? { split: { ...split, partners: split.partners.map(rename) } } : {}),
+      ...(result?.split?.partners ? { result: { ...result, split: { ...result.split, partners: result.split.partners.map(rename) } } } : {}),
+      ...(Array.isArray(v.shares) ? { shares: (v.shares as { id: number; name: string }[]).map(rename) } : {}),
+    } as T;
+  };
+  app.get("/api/periods", requireRole(...READERS), asyncHandler(async (req, res) => {
+    const rows = await db.select().from(periods).orderBy(desc(periods.month));
+    res.json(rows.map((r) => maskSplit(req, r)));
   }));
   app.get("/api/periods/:month", requireRole(...READERS), asyncHandler(async (req, res) => {
-    res.json(await periodSvc.previewPeriod(db, month.parse(req.params.month)));
+    res.json(maskSplit(req, await periodSvc.previewPeriod(db, month.parse(req.params.month))));
   }));
   app.post("/api/periods/:month/close", requireRole(), asyncHandler(async (req, res) => {
     const m = month.parse(req.params.month);

@@ -1,3 +1,4 @@
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { gunzipSync, gzipSync } from "zlib";
 import { and, desc, eq, notInArray, sql } from "drizzle-orm";
 import { backups, type BACKUP_KINDS } from "@shared/schema";
@@ -104,7 +105,30 @@ export async function snapshot(tx: Tx): Promise<string> {
   }
   const [mig] = (await tx.execute<{ n: number }>(sql`select count(*)::int as n from drizzle.__drizzle_migrations`)).rows;
   const totals = await totalsOf(tx, names);
-  return `{"format":${BACKUP_FORMAT},"exportedAt":${JSON.stringify(new Date().toISOString())},"migrations":${mig.n},"totals":${JSON.stringify(totals)},"tables":{${parts.join(",")}}}`;
+  return sign(`{"format":${BACKUP_FORMAT},"exportedAt":${JSON.stringify(new Date().toISOString())},"migrations":${mig.n},"totals":${JSON.stringify(totals)},"tables":{${parts.join(",")}}}`);
+}
+
+/*
+ * A backup carries a seal made with this server's secret, so a file edited by hand (capital moved
+ * from one partner to the other, say) is noticed before it replaces the books.
+ */
+const SEAL = ',"signature":"';
+function sealKey(): string {
+  return process.env.BACKUP_KEY || process.env.SESSION_SECRET || "huanghe-kalemie-dev";
+}
+function seal(body: string): string {
+  return createHmac("sha256", sealKey()).update(body).digest("hex");
+}
+function sign(body: string): string {
+  return `${body.slice(0, -1)}${SEAL}${seal(body)}"}`;
+}
+/** True when the text carries a seal from this server and nothing changed since. */
+export function verifySeal(text: string): boolean {
+  const at = text.lastIndexOf(SEAL);
+  if (at < 0) return false;
+  const given = text.slice(at + SEAL.length, -2);
+  const expected = seal(`${text.slice(0, at)}}`);
+  return given.length === expected.length && timingSafeEqual(Buffer.from(given), Buffer.from(expected));
 }
 
 export function takeSnapshot(): Promise<string> {
@@ -114,7 +138,7 @@ export function takeSnapshot(): Promise<string> {
 const bad = (en: string, fr: string) => new AppError(400, en, "BAD_BACKUP", fr);
 
 /** Reads a backup file (plain or gzipped) and checks it looks like one of ours. */
-export function parseBackup(raw: Buffer | string): BackupFile {
+export function parseBackup(raw: Buffer | string): BackupFile & { sealed: boolean } {
   let text: string;
   try {
     const buf = typeof raw === "string" ? Buffer.from(raw) : raw;
@@ -135,7 +159,7 @@ export function parseBackup(raw: Buffer | string): BackupFile {
       "Cette sauvegarde vient d'une ancienne version, sans utilisateurs ni totaux ; elle ne peut pas être restaurée automatiquement",
     );
   }
-  return file;
+  return Object.assign(file, { sealed: verifySeal(text.trimEnd()) });
 }
 
 /** True when the shop has no business data yet (only what setup creates). */

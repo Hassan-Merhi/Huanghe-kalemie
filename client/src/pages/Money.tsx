@@ -652,13 +652,19 @@ function RatesCard() {
   const { can } = useAuth();
   const today = todayLocal();
   const todayQ = useRate(today);
-  const listQ = useQuery<{ date: string; cdfPerUsd: string }[]>({ queryKey: ["/api/exchange-rates"] });
+  const listQ = useQuery<{ date: string; cdfPerUsd: string; cnyPerUsd: string | null }[]>({ queryKey: ["/api/exchange-rates"] });
+  const lastCny = (listQ.data ?? []).find((r) => r.cnyPerUsd)?.cnyPerUsd ?? null;
+  const [cnyTyped, setCny] = useState<string | null>(null);
+  const cny = cnyTyped ?? (lastCny ? d(lastCny).toString() : "");
   const [day, setDay] = useState(today);
   // The field starts at the current rate (a real value, not a grey hint) until someone types.
   const [typed, setValue] = useState<string | null>(null);
-  const m = useApiMutation<{ date: string; cdfPerUsd: string }>("POST", "/api/exchange-rates", {
+  const m = useApiMutation<{ date: string; cdfPerUsd: string; cnyPerUsd?: string | null }>("POST", "/api/exchange-rates", {
     success: t("Rate saved", "Taux enregistré"),
-    onSuccess: () => setValue(null),
+    onSuccess: () => {
+      setValue(null);
+      setCny(null);
+    },
   });
   const current = todayQ.data;
   const value = typed ?? (current ? d(current.cdfPerUsd).toString() : "");
@@ -670,7 +676,7 @@ function RatesCard() {
         <CardTitle className="flex items-center gap-2 text-lg">
           <Landmark className="h-4 w-4" /> {t("Exchange rate", "Taux de change")}
         </CardTitle>
-        <CardDescription>{t("Francs (CDF) for 1 US dollar.", "Francs (FC) pour 1 dollar US.")}</CardDescription>
+        <CardDescription>{t("Francs (CDF) for 1 US dollar. The yuan rate, when given, restates what suppliers are owed in yuan at month end.", "Francs (FC) pour 1 dollar US. Le taux du yuan, s'il est donné, sert à réévaluer en fin de mois ce qui est dû en yuans aux fournisseurs.")}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div>
@@ -692,11 +698,14 @@ function RatesCard() {
             <Field label={t("FC per $1", "FC pour 1 $")} required className="min-w-[7rem] flex-1">
               <Input inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} />
             </Field>
+            <Field label={t("Yuan per $1 (optional)", "Yuans pour 1 $ (facultatif)")} className="min-w-[7rem] flex-1">
+              <Input inputMode="decimal" value={cny} onChange={(e) => setCny(e.target.value)} placeholder="7,1" />
+            </Field>
             <SubmitButton
               className="w-full sm:flex-col sm:items-stretch [&>button]:w-full"
-              blocked={!day ? t("Choose a date", "Choisissez une date") : !d(value).gt(0) ? t("Enter a rate above zero", "Saisissez un taux supérieur à zéro") : null}
+              blocked={!day ? t("Choose a date", "Choisissez une date") : !d(value).gt(0) ? t("Enter a rate above zero", "Saisissez un taux supérieur à zéro") : cny && !d(cny).gt(0) ? t("The yuan rate must be above zero", "Le taux du yuan doit être supérieur à zéro") : null}
               pending={m.isPending}
-              onClick={() => m.mutate({ date: day, cdfPerUsd: d(value).toString() })}
+              onClick={() => m.mutate({ date: day, cdfPerUsd: d(value).toString(), cnyPerUsd: cny && d(cny).gt(0) ? d(cny).toString() : null })}
             >
               {t("Set rate", "Enregistrer le taux")}
             </SubmitButton>
@@ -711,7 +720,7 @@ function RatesCard() {
               {(listQ.data ?? []).slice(0, 15).map((r) => (
                 <div key={r.date} className="flex justify-between py-1">
                   <span>{date(r.date)}</span>
-                  <Num>{cdf(r.cdfPerUsd)}</Num>
+                  <Num>{cdf(r.cdfPerUsd)}{r.cnyPerUsd ? ` · ${fmtQty(r.cnyPerUsd)} CNY` : ""}</Num>
                 </div>
               ))}
             </div>

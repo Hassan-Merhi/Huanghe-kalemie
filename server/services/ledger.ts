@@ -198,7 +198,7 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
   const tiny = netted.find((l) => l.debit.isZero() && l.credit.isZero() && l.nativeAmount != null && !cents(l.nativeAmount).isZero());
   if (tiny && !input.skipPeriodCheck && !input.exactValues) {
     const [account] = await tx.select({ name: accounts.name, isMoney: accounts.isMoney }).from(accounts).where(eq(accounts.id, tiny.accountId));
-    if (account?.isMoney || !l0(netted)) {
+    if (account) {
       throw badRequest(
         `${cents(tiny.nativeAmount!).toFixed(2)} is worth less than one cent: enter a larger amount`,
         `${cents(tiny.nativeAmount!).toFixed(2)} vaut moins d'un centime de dollar : saisissez un montant plus grand`,
@@ -293,11 +293,6 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
     data: { number, date: input.date, memo: input.memo ?? null, total: total.toFixed(2), sourceType: input.sourceType ?? null, sourceId: input.sourceId ?? null },
   });
   return journal.id;
-}
-
-/** True when the journal has any line with a USD amount. */
-function l0(lines: { debit: Decimal; credit: Decimal }[]): boolean {
-  return lines.some((l) => !l.debit.isZero() || !l.credit.isZero());
 }
 
 /** Today in Kalemie (UTC+2). */
@@ -443,9 +438,40 @@ export async function rateFor(tx: Tx, date: string): Promise<{ rate: Decimal; so
 }
 
 /** Set the rate of a day. A closed month's balances were valued at its rates, so they cannot change after. */
-export async function setExchangeRate(tx: Tx, input: { date: string; cdfPerUsd: string; cnyPerUsd?: string | null }, userId: number) {
+export async function setExchangeRate(
+  tx: Tx,
+  input: { date: string; cdfPerUsd: string; cnyPerUsd?: string | null },
+  userId: number,
+  opts: { owner: boolean } = { owner: true },
+) {
   await assertPeriodOpen(tx, input.date);
   assertNotFuture(input.date);
+  if (!opts.owner) {
+    // Every franc check compares with the day's rate, so only the owner may move it far in one step.
+    const limit = Decimal.max(await rateTolerancePct(tx), 5);
+    const [prevRow] = await tx.select().from(exchangeRates).where(lte(exchangeRates.date, input.date)).orderBy(desc(exchangeRates.date)).limit(1);
+    const prev = prevRow ? dec(prevRow.cdfPerUsd) : (await rateFor(tx, input.date)).rate;
+    const next = dec(input.cdfPerUsd);
+    if (next.minus(prev).abs().dividedBy(prev).times(100).gt(limit)) {
+      throw new AppError(
+        403,
+        `${next.toString()} is more than ${limit.toString()}% away from the last rate (${prev.toString()}). Only the owner can make that change.`,
+        "FORBIDDEN",
+        `${next.toString()} s'écarte de plus de ${limit.toString()} % du dernier taux (${prev.toString()}). Seul le propriétaire peut faire ce changement.`,
+      );
+    }
+    if (input.cnyPerUsd) {
+      const [cnyRow] = await tx
+        .select({ rate: exchangeRates.cnyPerUsd })
+        .from(exchangeRates)
+        .where(and(lte(exchangeRates.date, input.date), sql`${exchangeRates.cnyPerUsd} is not null`))
+        .orderBy(desc(exchangeRates.date))
+        .limit(1);
+      if (cnyRow?.rate && dec(input.cnyPerUsd).minus(cnyRow.rate).abs().dividedBy(cnyRow.rate).times(100).gt(limit)) {
+        throw new AppError(403, "Only the owner can move the yuan rate that far", "FORBIDDEN", "Seul le propriétaire peut modifier autant le taux du yuan");
+      }
+    }
+  }
   const cny = input.cnyPerUsd ? { cnyPerUsd: input.cnyPerUsd } : {};
   const [row] = await tx
     .insert(exchangeRates)
@@ -521,7 +547,8 @@ export async function contactLines(
   tx: Tx,
   input: {
     accountId: number;
-    partyId: number;
+    /** Null for a balance sheet account with no contact (withholdings, deposits). */
+    partyId: number | null;
     side: "debit" | "credit";
     usd: DecimalInput;
     money: { currency: string; nativeAmount: string | null; rate: string | null };

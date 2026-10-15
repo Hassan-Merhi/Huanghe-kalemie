@@ -153,7 +153,7 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
       {sale.payments.map((p) => (
         <ReceiptRow
           key={p.id}
-          left={accName(p.accountId, p.currency)}
+          left={d(p.amountUsd).isNegative() ? `${t("Change given", "Monnaie rendue")} (${accName(p.accountId, p.currency)})` : accName(p.accountId, p.currency)}
           right={p.currency === "CDF" ? `${cdf(p.amountNative)} (${usd(p.amountUsd)})` : usd(p.amountUsd)}
         />
       ))}
@@ -226,6 +226,7 @@ interface SaleBody {
   note?: string | null;
   lines: { variantId: number; unitId?: number | null; qty: string; unitPrice: string; lineDiscount?: string }[];
   payments: { accountId: number; amount: string; rate?: string }[];
+  change?: { accountId: number; amount: string; rate?: string } | null;
 }
 
 function ChassisPicker({ line, locationId, takenUnitIds, onChange }: { line: CartLine; locationId: number | null; takenUnitIds: Set<number>; onChange: (unitId: number | null) => void }) {
@@ -290,6 +291,9 @@ export default function POS() {
   const [note, setNote] = useState("");
   const [pays, setPays] = useState<PayRow[]>([]);
   const [handed, setHanded] = useState("");
+  /** Change handed back from another drawer (francs taken, dollars given back). Empty amount: worked out. */
+  const [changeAccId, setChangeAccId] = useState<number | null>(null);
+  const [changeAmt, setChangeAmt] = useState("");
   const [handedCur, setHandedCur] = useState<"USD" | "CDF">("USD");
   const [receipt, setReceipt] = useState<SaleFull | null>(null);
   const keyRef = useRef(1);
@@ -347,11 +351,25 @@ export default function POS() {
     }
     return amount;
   };
-  const paid = pays.reduce((s, p) => s.plus(payUsd(p)), d(0));
-  const remaining = total.minus(paid);
-  const overpaid = remaining.lt(d("-0.10"));
-  const credit = remaining.gt(0) ? remaining : d(0);
+  const received = pays.reduce((s, p) => s.plus(payUsd(p)), d(0));
   const rateNum = d(dayRate);
+  // Francs cannot be counted to the cent of a dollar: up to 100 FC over or under is rounding (as on the server).
+  const francs = pays.some((p) => accById(p.accountId)?.currency === "CDF" && d(p.amount).gt(0));
+  const tolerance = francs && rateNum.gt(0) ? d(100).dividedBy(rateNum).toDecimalPlaces(2, Decimal.ROUND_UP) : d(0);
+  const excess = received.minus(total);
+  const changeAcc = accById(changeAccId) ?? (excess.gt(tolerance) ? findCash("USD") : undefined);
+  const autoChange = changeAcc
+    ? changeAcc.currency === "CDF"
+      ? excess.times(rateNum).toDecimalPlaces(0, Decimal.ROUND_DOWN)
+      : c2(excess)
+    : d(0);
+  const showChange = excess.gt(tolerance) || !!changeAmt;
+  const changeNative = showChange && changeAcc ? (changeAmt ? c2(d(changeAmt)) : Decimal.max(autoChange, 0)) : d(0);
+  const changeUsd = changeAcc?.currency === "CDF" ? (rateNum.gt(0) ? c2(changeNative.dividedBy(rateNum)) : d(0)) : changeNative;
+  const paid = received.minus(changeUsd);
+  const remaining = total.minus(paid);
+  const overpaid = remaining.lt(tolerance.negated());
+  const credit = remaining.gt(tolerance) ? remaining : d(0);
 
   const takenUnitIds = useMemo(() => new Set(lines.map((l) => l.unitId).filter((x): x is number => !!x)), [lines]);
 
@@ -391,7 +409,8 @@ export default function POS() {
     if (acc && d(p.amount).lt(0)) problems.push(t("A payment cannot be negative", "Un paiement ne peut pas être négatif"));
     if (acc?.currency === "CDF" && d(p.amount).gt(0) && d(p.rate ?? dayRate).lte(0)) problems.push(t("Enter the exchange rate for CDF payments", "Saisissez le taux pour les paiements en francs"));
   }
-  if (overpaid) problems.push(t("Payments are more than the total. Enter only the money kept, not the change.", "Les paiements dépassent le total. Saisissez seulement l'argent gardé, pas la monnaie rendue."));
+  if (overpaid) problems.push(t("Payments are more than the total, even after the change given back.", "Les paiements dépassent le total, même après la monnaie rendue."));
+  if (changeUsd.gt(0) && changeUsd.gte(received)) problems.push(t("The change is more than the money received", "La monnaie rendue dépasse l'argent reçu"));
   if (credit.gt(0) && !customerId && lines.length > 0) {
     todo.push(
       paid.gt(0)
@@ -444,6 +463,8 @@ export default function POS() {
     setNote("");
     setPays([]);
     setHanded("");
+    setChangeAccId(null);
+    setChangeAmt("");
   }
   const mutation = useApiMutation<SaleBody, SaleFull>("POST", "/api/sales", {
     success: t("Sale recorded", "Vente enregistrée"),
@@ -473,6 +494,9 @@ export default function POS() {
           const acc = accById(p.accountId)!;
           return { accountId: acc.id, amount: c2(d(p.amount)).toFixed(2), ...(acc.currency === "CDF" ? { rate: d(p.rate ?? dayRate).toString() } : {}) };
         }),
+      change: changeAcc && changeNative.gt(0)
+        ? { accountId: changeAcc.id, amount: changeNative.toFixed(2), ...(changeAcc.currency === "CDF" ? { rate: rateNum.toString() } : {}) }
+        : null,
     });
   }
   const submitRef = useRef(submit);
@@ -699,8 +723,33 @@ export default function POS() {
                 <Plus className="mr-1 h-4 w-4" /> {t("Add payment", "Ajouter un paiement")}
               </Button>
 
+              {showChange && (
+                <div className="space-y-2 rounded-md border border-dashed p-2">
+                  <p className="text-sm font-medium">{t("Change given back", "Monnaie rendue")}</p>
+                  <div className="grid grid-cols-2 gap-2">
+                    <MoneyAccountSelect value={changeAcc?.id ?? null} onChange={(id) => { setChangeAccId(id); setChangeAmt(""); }} />
+                    <div className="relative">
+                      <Input
+                        inputMode="decimal"
+                        className="pr-10"
+                        aria-label={t("Change given back", "Monnaie rendue")}
+                        placeholder={autoChange.gt(0) ? autoChange.toFixed(changeAcc?.currency === "CDF" ? 0 : 2).replace(".", ",") : t("Amount", "Montant")}
+                        value={changeAmt}
+                        onChange={(e) => setChangeAmt(e.target.value)}
+                      />
+                      <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm font-medium text-muted-foreground">{changeAcc?.currency === "CDF" ? "FC" : "$"}</span>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    {t("Taken from this drawer and handed to the customer.", "Pris dans cette caisse et rendu au client.")} {changeAcc?.currency === "CDF" ? `= ${usd(changeUsd.toFixed(2))}` : ""}
+                  </p>
+                </div>
+              )}
+
               <Separator />
               <div className="space-y-1 text-sm">
+                {changeUsd.gt(0) && <div className="flex justify-between"><span>{t("Received ($)", "Reçu ($)")}</span><Num>{usd(received.toFixed(2))}</Num></div>}
+                {changeUsd.gt(0) && <div className="flex justify-between"><span>{t("Change given back", "Monnaie rendue")}</span><Num>−{usd(changeUsd.toFixed(2))}</Num></div>}
                 <div className="flex justify-between"><span>{t("Paid ($)", "Payé ($)")}</span><Num className="font-medium">{usd(paid.toFixed(2))}</Num></div>
                 <div className="flex justify-between">
                   <span>{credit.gt(0) && customerId ? t("Remaining → on credit", "Reste → à crédit") : t("Left to pay", "Reste à payer")}</span>

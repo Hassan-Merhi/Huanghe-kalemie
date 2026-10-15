@@ -137,7 +137,7 @@ describe.skipIf(!hasDb)("Guards on amounts, rates and privacy", async () => {
   });
 
   it("refuses an adjustment that changes nothing", async () => {
-    await expect(db.transaction((tx) => ops.adjustStock(tx, { date: "2026-08-12", locationId, kind: "count", reason: "Comptage", lines: [{ variantId: oil, qtyChange: "0" }] }, userId))).rejects.toThrow(/Nothing to adjust/);
+    await expect(db.transaction((tx) => ops.adjustStock(tx, { date: "2026-08-12", locationId, kind: "damage", reason: "Casse", lines: [{ variantId: oil, qtyChange: "0" }] }, userId))).rejects.toThrow(/Nothing to adjust/);
   });
 
   it("shows a balanced balance sheet and counts every debt in the net position", async () => {

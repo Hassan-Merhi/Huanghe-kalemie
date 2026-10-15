@@ -425,7 +425,7 @@ export default function SaleDetail() {
               <div className="divide-y text-sm">
                 {sale.payments.map((p) => (
                   <div key={p.id} className="flex justify-between gap-2 py-2">
-                    <span>{accName(p.accountId)}{p.rate ? <span className="text-xs text-muted-foreground"> · {t("rate", "taux")} {fmtQty(p.rate)}</span> : null}</span>
+                    <span>{d(p.amountUsd).isNegative() ? `${t("Change given", "Monnaie rendue")} · ` : ""}{accName(p.accountId)}{p.rate ? <span className="text-xs text-muted-foreground"> · {t("rate", "taux")} {fmtQty(p.rate)}</span> : null}</span>
                     <Num className="font-medium">{paymentText(p)}</Num>
                   </div>
                 ))}

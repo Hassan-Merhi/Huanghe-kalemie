@@ -1,6 +1,8 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, inArray, lte, sql } from "drizzle-orm";
 import {
   accounts,
+  journalLines,
+  journals,
   motorcycleUnits,
   parties,
   products,
@@ -17,7 +19,7 @@ import {
 import { allocateCents, cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, forbidden, notFound } from "../errors";
-import { moneyLeg, nextNumber, postJournal, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId } from "./ledger";
+import { moneyLeg, nextNumber, postJournal, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
 import { issueStock, linkMovementsToJournal, receiveStock, stockQty } from "./stock";
 
 /**
@@ -433,19 +435,38 @@ export async function returnSale(tx: Tx, saleId: number, input: ReturnInput, use
     cogsTotal = cogsTotal.plus(cogs);
   }
 
-  let refundLine;
-  if (input.refundAccountId) {
-    const [acc] = await tx.select().from(accounts).where(eq(accounts.id, input.refundAccountId));
+  const receivables = await systemAccountId(tx, SYSTEM_ACCOUNTS.receivables);
+  // Goods sold on credit and not yet paid come off what the customer owes before any cash goes back:
+  // a refund in cash of something never paid for would hand out money and leave the debt.
+  let toDebt = new Decimal(0);
+  if (sale.customerId && dec(sale.creditUsd).gt(0)) {
+    const [prior] = await tx
+      .select({ usd: sql<string>`coalesce(sum(${journalLines.credit}), 0)` })
+      .from(journalLines)
+      .innerJoin(journals, eq(journals.id, journalLines.journalId))
+      .innerJoin(saleReturns, and(eq(journals.sourceType, "sale_return"), eq(journals.sourceId, saleReturns.id)))
+      .where(and(eq(saleReturns.saleId, saleId), eq(journalLines.accountId, receivables)));
+    const [owed] = await tx
+      .select({ usd: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)` })
+      .from(journalLines)
+      .innerJoin(journals, eq(journals.id, journalLines.journalId))
+      .where(and(eq(journalLines.accountId, receivables), eq(journalLines.partyId, sale.customerId), lte(journals.date, input.date)));
+    const unpaidOnSale = Decimal.max(dec(sale.creditUsd).minus(prior.usd), 0);
+    toDebt = Decimal.min(total, unpaidOnSale, Decimal.max(dec(owed.usd), 0));
+  }
+  const toCash = input.refundAccountId ? total.minus(toDebt) : new Decimal(0);
+  const refundLines: PostLine[] = [];
+  if (toCash.gt(0)) {
+    const [acc] = await tx.select().from(accounts).where(eq(accounts.id, input.refundAccountId!));
     if (!acc) throw badRequest("Refund account not found", "Compte de remboursement introuvable");
     // Refund the USD value; for a CDF box, pay it out at the given rate.
     // Francs are handed back in whole notes and coins.
     const rate = acc.currency === "CDF" ? await resolveRate(tx, input.date, input.rate) : null;
-    const native = rate ? total.times(rate).toDecimalPlaces(0) : total;
-    const leg = await moneyLeg(tx, { accountId: input.refundAccountId, amount: native, rate, date: input.date });
-    refundLine = { accountId: leg.accountId, credit: total, nativeAmount: leg.nativeAmount, rate: leg.rate };
-  } else {
-    refundLine = { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.receivables), credit: total, partyId: sale.customerId };
+    const native = rate ? toCash.times(rate).toDecimalPlaces(0) : toCash;
+    const leg = await moneyLeg(tx, { accountId: input.refundAccountId!, amount: native, rate, date: input.date });
+    refundLines.push({ accountId: leg.accountId, credit: toCash, nativeAmount: leg.nativeAmount, rate: leg.rate });
   }
+  if (total.gt(toCash)) refundLines.push({ accountId: receivables, credit: total.minus(toCash), partyId: sale.customerId });
 
   const journalId = await postJournal(tx, {
     date: input.date,
@@ -456,7 +477,7 @@ export async function returnSale(tx: Tx, saleId: number, input: ReturnInput, use
     userId,
     lines: [
       { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.sales), debit: total },
-      refundLine,
+      ...refundLines,
       { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.inventory), debit: cogsTotal },
       { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.cogs), credit: cogsTotal },
     ],
