@@ -132,7 +132,7 @@ export default function ContactDetail() {
         <Card className="sm:col-span-2">
           <CardContent className="space-y-1 p-4 text-sm">
             <p>
-              <span className="text-muted-foreground">{t("Phone", "Téléphone")}: </span>
+              <span className="text-muted-foreground">{t("Phone:", "Téléphone\u00a0:")} </span>
               {party.phone || "—"}
               {!party.active && <Badge variant="secondary" className="ml-2">{t("Inactive", "Inactif")}</Badge>}
             </p>
@@ -147,7 +147,7 @@ export default function ContactDetail() {
             {t("Statement", "Relevé de compte")} · {party.name}
           </CardTitle>
           <p className="text-sm text-muted-foreground">
-            {t("Printed", "Imprimé le")} {fmtDate(todayLocal())} · {t("Balance", "Solde")}: <BalanceWords balance={balance} />
+            {t("Printed", "Imprimé le")} {fmtDate(todayLocal())} · {t("Balance:", "Solde\u00a0:")} <BalanceWords balance={balance} />
           </p>
         </CardHeader>
         <CardContent className="p-0">
@@ -278,7 +278,7 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
             required
           >
             <div className="flex gap-2">
-              <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
+              <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
               {outstanding && !isCdf && !cnyOwed && (
                 <Button type="button" variant="outline" size="sm" className="h-10" onClick={() => setAmount(outstanding.toFixed(2))}>
                   {t("All", "Tout")}

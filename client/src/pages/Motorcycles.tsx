@@ -28,7 +28,8 @@ export default function Motorcycles() {
   const [debounced, setDebounced] = useState("");
   const [model, setModel] = useState("all");
   const [editing, setEditing] = useState<Unit | null>(null);
-  const [bulk, setBulk] = useState(false);
+  const [bulk, setBulk] = useState<Unit[] | null>(null);
+  const [oneByOne, setOneByOne] = useState(false);
   const { data: locations = [] } = useLocations();
   useEffect(() => {
     const id = setTimeout(() => setDebounced(search.trim()), 250);
@@ -41,6 +42,15 @@ export default function Motorcycles() {
   const rows = all.filter((u) => model === "all" || u.productName === model);
   const missing = rows.filter((u) => !u.chassisNo && u.status === "in_stock");
   const others = rows.filter((u) => !(!u.chassisNo && u.status === "in_stock"));
+  // Bikes still to register, one row per model, colour and place (not twenty identical rows).
+  const missingGroups = useMemo(() => {
+    const m = new Map<string, Unit[]>();
+    for (const u of missing) {
+      const k = `${u.sku}|${u.locationId}`;
+      m.set(k, [...(m.get(k) ?? []), u]);
+    }
+    return Array.from(m.values());
+  }, [missing]);
   const locName = (id: number) => locations.find((l) => l.id === id)?.name ?? `#${id}`;
   const isManager = can("manager");
 
@@ -92,7 +102,7 @@ export default function Motorcycles() {
             {isManager && (
               <TableCell className="text-right">
                 {highlight ? (
-                  <Button size="sm" onClick={() => setEditing(u)}>{t("Register", "Saisir")}</Button>
+                  <Button size="sm" variant="outline" onClick={() => setEditing(u)}>{t("Register", "Saisir")}</Button>
                 ) : (
                   <Button variant="ghost" size="icon" onClick={() => setEditing(u)}><Pencil className="h-4 w-4" /></Button>
                 )}
@@ -141,7 +151,7 @@ export default function Motorcycles() {
         <div className="mb-4 flex flex-wrap gap-2">
           {countByModel.map(([name, n]) => (
             <Badge key={name} variant={model === name ? "default" : "outline"} className="cursor-pointer" onClick={() => setModel(model === name ? "all" : name)}>
-              {name}: {n} {t("in stock", "en stock")}
+              {name}{t(":", "\u00a0:")} {n} {t("in stock", "en stock")}
             </Badge>
           ))}
         </div>
@@ -168,12 +178,40 @@ export default function Motorcycles() {
                     : t("Ask a manager to register the chassis number before selling these motorcycles.", "Demandez à un gérant de saisir le numéro de châssis avant de vendre ces motos.")}
                 </AlertDescription>
               </Alert>
-              {isManager && missing.length > 1 && (
-                <Button onClick={() => setBulk(true)}>
-                  <ListPlus className="mr-1 h-4 w-4" /> {t("Enter several chassis numbers", "Saisir plusieurs numéros de châssis")}
+              <Card>
+                <CardContent className="divide-y p-0">
+                  {missingGroups.map((g) => {
+                    const u = g[0];
+                    return (
+                      <div key={`${u.sku}|${u.locationId}`} className="flex flex-wrap items-center justify-between gap-2 px-4 py-3">
+                        <div className="min-w-0">
+                          <p className="font-medium">{u.productName}{u.label !== "Standard" ? ` · ${u.label}` : ""}</p>
+                          <p className="text-xs text-muted-foreground">{u.sku} · {locName(u.locationId)}</p>
+                        </div>
+                        <div className="flex items-center gap-3">
+                          <span className="text-sm font-medium text-amber-800 dark:text-amber-300">{count(t, g.length, ["to register", "to register"], ["à saisir", "à saisir"])}</span>
+                          {isManager && (
+                            <Button size="sm" variant="outline" onClick={() => (g.length === 1 ? setEditing(u) : setBulk(g))}>
+                              <ListPlus className="mr-1 h-4 w-4" /> {t("Enter chassis numbers", "Saisir les châssis")}
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </CardContent>
+              </Card>
+              <div className="flex flex-wrap gap-2">
+                {isManager && missingGroups.length > 1 && (
+                  <Button onClick={() => setBulk(missing)}>
+                    <ListPlus className="mr-1 h-4 w-4" /> {t("Enter all chassis numbers", "Saisir tous les numéros de châssis")}
+                  </Button>
+                )}
+                <Button variant="ghost" onClick={() => setOneByOne((v) => !v)}>
+                  {oneByOne ? t("Hide the list", "Masquer la liste") : t("Show them one by one", "Voir une par une")}
                 </Button>
-              )}
-              <Card className="overflow-x-auto">{table(missing, true)}</Card>
+              </div>
+              {oneByOne && <Card className="overflow-x-auto">{table(missing, true)}</Card>}
             </div>
           )}
           {others.length > 0 && (
@@ -186,7 +224,7 @@ export default function Motorcycles() {
       )}
 
       {editing && <UnitDialog unit={editing} onClose={() => setEditing(null)} />}
-      {bulk && <BulkDialog units={missing} onClose={() => setBulk(false)} />}
+      {bulk && <BulkDialog units={bulk} onClose={() => setBulk(null)} />}
     </div>
   );
 }

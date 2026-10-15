@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { SectionLinks } from "@/components/AppLayout";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
 import { LocationSelect } from "@/components/pickers";
@@ -154,6 +155,7 @@ export default function StockImport() {
             <TabsTrigger value="items">{t("Items and opening stock", "Articles et stock d'ouverture")}</TabsTrigger>
             <TabsTrigger value="prices">{t("Prices", "Prix")}</TabsTrigger>
             <TabsTrigger value="export">{t("Export", "Exporter")}</TabsTrigger>
+            <SectionLinks />
           </TabsList>
         </div>
         <TabsContent value="items"><ItemsImport /></TabsContent>
@@ -169,7 +171,7 @@ export default function StockImport() {
 function itemHeaders(t: T) {
   return [
     t("Category", "Catégorie"), t("Item", "Article"), t("Brand", "Marque"), t("Unit", "Unité"), t("Size", "Taille"), t("Colour", "Couleur"),
-    "SKU", t("Barcode", "Code-barres"), t("Sell price", "Prix de vente"), t("Reorder level", "Seuil de réapprovisionnement"),
+    t("SKU", "Code"), t("Barcode", "Code-barres"), t("Sell price", "Prix de vente"), t("Reorder level", "Seuil de réapprovisionnement"),
     t("Motorcycle (yes/no)", "Moto (oui/non)"), t("Quantity", "Quantité"), t("Unit cost", "Coût unitaire"),
   ];
 }
@@ -215,7 +217,7 @@ function ItemsImport() {
     try {
       const { rows: raw, found } = await readSheet(file, STOCK_FIELDS);
       if (!found.includes("name")) {
-        setFileError(t("No item name column found. Name a column \"Article\" (or \"Item\", \"Désignation\").", "Aucune colonne de nom d'article trouvée. Nommez une colonne « Article » (ou « Item », « Désignation »)."));
+        setFileError(t("No item name column found. Name a column \"Article\" (or \"Item\", \"Désignation\").", "Aucune colonne de nom d'article trouvée. Nommez une colonne «\u00a0Article\u00a0» (ou «\u00a0Item\u00a0», «\u00a0Désignation\u00a0»)."));
         return;
       }
       if (!raw.length) {
@@ -266,7 +268,7 @@ function ItemsImport() {
           <CardDescription>
             {t(
               "One row per variant (size or colour). Rows with a quantity are booked as opening stock (Dr stock, Cr opening balances); if one row is wrong the whole file is refused.",
-              "Une ligne par variante (taille ou couleur). Les lignes avec une quantité sont enregistrées comme stock d'ouverture (Débit stock, Crédit soldes d'ouverture) ; si une ligne est fausse, tout le fichier est refusé.",
+              "Une ligne par variante (taille ou couleur). Les lignes avec une quantité sont enregistrées comme stock de départ\u00a0; si une ligne est fausse, tout le fichier est refusé.",
             )}
           </CardDescription>
         </CardHeader>
@@ -312,7 +314,7 @@ function ItemsImport() {
                     <TableHead className="w-12">#</TableHead>
                     <TableHead>{t("Item", "Article")}</TableHead>
                     <TableHead>{t("Variant", "Variante")}</TableHead>
-                    <TableHead>SKU</TableHead>
+                    <TableHead>{t("SKU", "Code")}</TableHead>
                     <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
                     <TableHead className="text-right">{t("Cost", "Coût")}</TableHead>
                     <TableHead>{t("Status", "Statut")}</TableHead>
@@ -378,7 +380,7 @@ function PricesImport() {
 
   function template() {
     downloadXlsx(t("prices-template.xlsx", "modele-prix.xlsx"), [
-      ["SKU", t("Barcode", "Code-barres"), t("Sell price", "Prix de vente")],
+      [t("SKU", "Code"), t("Barcode", "Code-barres"), t("Sell price", "Prix de vente")],
       ["HH150-RED", "", 1350],
       ["", "6901234567890", 25],
     ], t("Prices", "Prix"));
@@ -391,7 +393,7 @@ function PricesImport() {
     try {
       const { rows: raw, found } = await readSheet(file, PRICE_FIELDS);
       if (!found.includes("sellPrice") || (!found.includes("sku") && !found.includes("barcode"))) {
-        setFileError(t("The file needs a SKU or barcode column and a price column.", "Le fichier doit avoir une colonne SKU ou code-barres et une colonne de prix."));
+        setFileError(t("The file needs a SKU or barcode column and a price column.", "Le fichier doit avoir une colonne Code (SKU) ou code-barres et une colonne de prix."));
         return;
       }
       setRows(raw.map((r) => ({ ...r, sellPrice: numCell(r.sellPrice) })));
@@ -401,7 +403,7 @@ function PricesImport() {
   }
 
   const problem = (r: PriceRow) => {
-    if (!r.sku && !r.barcode) return t("SKU or barcode missing", "SKU ou code-barres manquant");
+    if (!r.sku && !r.barcode) return t("SKU or barcode missing", "Code ou code-barres manquant");
     if (!r.sellPrice || !/^\d+(\.\d+)?$/.test(r.sellPrice)) return t("Price is not a valid number", "Le prix n'est pas un nombre valide");
     return null;
   };
@@ -420,7 +422,7 @@ function PricesImport() {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-lg">{t("Update sell prices", "Mettre à jour les prix de vente")}</CardTitle>
-          <CardDescription>{t("Items are found by SKU or barcode. Nothing else changes.", "Les articles sont trouvés par SKU ou code-barres. Rien d'autre ne change.")}</CardDescription>
+          <CardDescription>{t("Items are found by SKU or barcode. Nothing else changes.", "Les articles sont trouvés par leur code ou code-barres. Rien d'autre ne change.")}</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={template}><Download className="mr-1 h-4 w-4" /> {t("Download the template", "Télécharger le modèle")}</Button>
@@ -443,7 +445,7 @@ function PricesImport() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-12">#</TableHead>
-                    <TableHead>SKU</TableHead>
+                    <TableHead>{t("SKU", "Code")}</TableHead>
                     <TableHead>{t("Barcode", "Code-barres")}</TableHead>
                     <TableHead className="text-right">{t("New price", "Nouveau prix")}</TableHead>
                   </TableRow>
@@ -539,7 +541,7 @@ function ExportItems() {
         <CardDescription>
           {t(
             "Same columns as the import template: edit prices or details in Excel, then load it again. Leave Quantity empty when re-importing, otherwise it is added as opening stock.",
-            "Mêmes colonnes que le modèle d'import : modifiez les prix ou les détails dans Excel, puis rechargez le fichier. Laissez la quantité vide pour réimporter, sinon elle est ajoutée comme stock d'ouverture.",
+            "Mêmes colonnes que le modèle d'import\u00a0: modifiez les prix ou les détails dans Excel, puis rechargez le fichier. Laissez la quantité vide pour réimporter, sinon elle est ajoutée comme stock d'ouverture.",
           )}
         </CardDescription>
       </CardHeader>
@@ -594,7 +596,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
     const no = t("no", "non");
     downloadXlsx(t("packing-list-template.xlsx", "modele-colisage.xlsx"), [
       [
-        t("Category", "Catégorie"), t("Item", "Article"), t("Size", "Taille"), t("Colour", "Couleur"), "SKU", t("Motorcycle (yes/no)", "Moto (oui/non)"),
+        t("Category", "Catégorie"), t("Item", "Article"), t("Size", "Taille"), t("Colour", "Couleur"), t("SKU", "Code"), t("Motorcycle (yes/no)", "Moto (oui/non)"),
         t("Quantity", "Quantité"), t("Unit price (invoice currency)", "Prix unitaire (devise de la facture)"),
         t("Total weight (kg)", "Poids total (kg)"), t("Total volume (m³)", "Volume total (m³)"), t("Sell price", "Prix de vente"),
       ],
@@ -610,7 +612,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
     try {
       const { rows: raw, found } = await readSheet(file, CONTAINER_FIELDS);
       if (!found.includes("name")) {
-        setFileError(t("No item name column found. Name a column \"Article\" (or \"Item\").", "Aucune colonne de nom d'article trouvée. Nommez une colonne « Article » (ou « Item »)."));
+        setFileError(t("No item name column found. Name a column \"Article\" (or \"Item\").", "Aucune colonne de nom d'article trouvée. Nommez une colonne «\u00a0Article\u00a0» (ou «\u00a0Item\u00a0»)."));
         return;
       }
       if (!found.includes("quantity") || !found.includes("unitPrice")) {
@@ -655,7 +657,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
           <DialogDescription>
             {t(
               `One row per item and size. Unit prices are in the invoice currency (${currency}); weight and volume are totals for the line. Missing items are created.`,
-              `Une ligne par article et taille. Les prix unitaires sont dans la devise de la facture (${currency}) ; le poids et le volume sont des totaux pour la ligne. Les articles manquants sont créés.`,
+              `Une ligne par article et taille. Les prix unitaires sont dans la devise de la facture (${currency})\u00a0; le poids et le volume sont des totaux pour la ligne. Les articles manquants sont créés.`,
             )}
           </DialogDescription>
         </DialogHeader>

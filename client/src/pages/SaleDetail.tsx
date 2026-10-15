@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import Decimal from "decimal.js";
 import { Link, useParams } from "wouter";
@@ -16,23 +17,27 @@ import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
 import { cdf, d, date as fmtDate, qty as fmtQty, todayLocal, usd, variantText } from "@/lib/format";
-import type { Account } from "@/lib/types";
+import type { Account, Settings } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ReceiptDialog, paymentText, type SaleFull } from "./POS";
+import { SaleFlags } from "./Sales";
 
-function ReturnDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }) {
+function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () => void; onDone: (sale: SaleFull) => void }) {
   const t = useT();
   const today = todayLocal();
   const [date, setDate] = useState(today);
   const [qtys, setQtys] = useState<Record<number, string>>({});
   const [reason, setReason] = useState("");
   const [mode, setMode] = useState<"account" | "credit">(d(sale.creditUsd).gt(0) && sale.customerId ? "credit" : "account");
-  const [accountId, setAccountId] = useState<number | null>(null);
-  const [account, setAccount] = useState<Account | null>(null);
+  // Pay back from the account the customer paid into, unless someone picks another.
+  const { data: moneyAccounts } = useMoneyAccounts();
+  const paidInto = [...sale.payments].sort((a, b) => d(b.amountUsd).comparedTo(d(a.amountUsd)))[0]?.accountId ?? null;
+  const [accountId, setAccountId] = useState<number | null>(paidInto);
+  const account: Account | null = moneyAccounts.find((a) => a.id === accountId) ?? null;
   const [rate, setRate] = useState<string | null>(null);
   const rateQ = useRate(date);
   const effRate = rate ?? rateQ.data?.cdfPerUsd ?? "";
-  const m = useApiMutation<unknown, SaleFull>("POST", `/api/sales/${sale.id}/returns`, { success: t("Return recorded", "Retour enregistré"), onSuccess: onClose });
+  const m = useApiMutation<unknown, SaleFull>("POST", `/api/sales/${sale.id}/returns`, { success: t("Return recorded", "Retour enregistré"), onSuccess: (s) => onDone(s) });
 
   const chosen = sale.lines
     .map((l) => ({ line: l, q: d(qtys[l.id]), max: d(l.qty).minus(l.returnedQty) }))
@@ -122,11 +127,11 @@ function ReturnDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }
             </div>
             {mode === "account" ? (
               <div className="grid gap-3 sm:grid-cols-2">
-                <Field label={t("Paid from", "Payé depuis")} required>
-                  <MoneyAccountSelect value={accountId} onChange={(id, a) => { setAccountId(id); setAccount(a); }} />
+                <Field label={t("Refund from", "Rembourser depuis")} required hint={accountId && accountId === paidInto ? t("The account the customer paid into", "Le compte où le client a payé") : undefined}>
+                  <MoneyAccountSelect value={accountId} onChange={(id) => setAccountId(id)} />
                 </Field>
                 {isCdf && (
-                  <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 $)")} hint={`${t("Pay out", "À rendre")}: ${cdf(refund.times(d(effRate)).toDecimalPlaces(0).toString())}`} required>
+                  <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 $)")} hint={`${t("Pay out:", "À rendre\u00a0:")} ${cdf(refund.times(d(effRate)).toDecimalPlaces(0).toString())}`} required>
                     <Input inputMode="decimal" value={effRate} onChange={(e) => setRate(e.target.value)} />
                   </Field>
                 )}
@@ -150,6 +155,63 @@ function ReturnDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }
   );
 }
 
+/** A return slip for the customer (and the cash box): what came back and how it was refunded. 80 mm paper. */
+function ReturnSlip({ sale, ret, accName }: { sale: SaleFull; ret: SaleFull["returns"][number]; accName: (id: number | null) => string }) {
+  const t = useT();
+  const shopName = useQuery<Settings>({ queryKey: ["/api/settings"] }).data?.shopName;
+  const dash = <div className="my-1.5 border-t border-dashed border-black" />;
+  return (
+    <div className="mx-auto w-full max-w-[80mm] bg-white p-2 font-mono text-[11px] leading-snug text-black">
+      <div className="text-center">
+        <p className="text-sm font-bold uppercase">{shopName || "Huanghe Kalemie"}</p>
+        <p>{t("Return slip", "Bon de retour")}</p>
+      </div>
+      {dash}
+      <div className="flex justify-between gap-2"><span>{t("No.", "N°")}</span><span>{ret.number}</span></div>
+      <div className="flex justify-between gap-2"><span>{t("Date", "Date")}</span><span>{fmtDate(ret.date)}</span></div>
+      <div className="flex justify-between gap-2"><span>{t("Sale", "Vente")}</span><span>{sale.number} · {fmtDate(sale.date)}</span></div>
+      {sale.customer && <div className="flex justify-between gap-2"><span>{t("Customer", "Client")}</span><span>{sale.customer.name}</span></div>}
+      {dash}
+      {(ret.lines ?? []).map((rl) => {
+        const l = sale.lines.find((x) => x.id === rl.saleLineId);
+        return (
+          <div key={rl.saleLineId} className="mb-1">
+            <p className="font-semibold">{l ? `${l.productName} ${variantText(l.attributes)}` : `#${rl.saleLineId}`}</p>
+            <div className="flex justify-between gap-2"><span>{fmtQty(rl.qty)} x</span><span className="tabular">{usd(rl.amount)}</span></div>
+          </div>
+        );
+      })}
+      {dash}
+      <div className="flex justify-between gap-2 font-bold"><span>{t("REFUND", "REMBOURSÉ")}</span><span className="tabular">{usd(ret.total)}</span></div>
+      <p>{ret.refundAccountId ? `${t("Paid back from", "Rendu depuis")} ${accName(ret.refundAccountId)}` : t("Taken off the customer's balance", "Déduit du solde du client")}</p>
+      {ret.reason && <p>{t("Reason", "Motif")}{"\u00a0"}: {ret.reason}</p>}
+      {dash}
+      <p className="mt-6">{t("Customer signature", "Signature du client")}{"\u00a0"}: ____________</p>
+    </div>
+  );
+}
+
+function ReturnSlipDialog({ sale, ret, accName, onClose }: { sale: SaleFull; ret: SaleFull["returns"][number]; accName: (id: number | null) => string; onClose: () => void }) {
+  const t = useT();
+  return (
+    <>
+      <Dialog open onOpenChange={(o) => !o && onClose()}>
+        <DialogContent className="max-h-[92vh] max-w-sm overflow-y-auto">
+          <DialogHeader><DialogTitle>{t("Return slip", "Bon de retour")} {ret.number}</DialogTitle></DialogHeader>
+          <div className="rounded-md border bg-muted p-3">
+            <div className="mx-auto max-w-[80mm] shadow-sm ring-1 ring-black/5"><ReturnSlip sale={sale} ret={ret} accName={accName} /></div>
+          </div>
+          <DialogFooter className="gap-2 sm:gap-0">
+            <Button variant="outline" onClick={onClose}>{t("Close", "Fermer")}</Button>
+            <Button onClick={() => window.print()}><Printer className="mr-1 h-4 w-4" /> {t("Print", "Imprimer")}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+      {createPortal(<div className="print-area hidden print:block"><ReturnSlip sale={sale} ret={ret} accName={accName} /></div>, document.body)}
+    </>
+  );
+}
+
 function VoidDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }) {
   const t = useT();
   const [reason, setReason] = useState("");
@@ -163,7 +225,7 @@ function VoidDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }) 
           <DialogDescription>
             {t(
               "The whole sale is undone: items go back into stock at the cost they left with, motorcycles become available again, and the money and any credit are reversed in the books.",
-              "Toute la vente est annulée : les articles reviennent en stock au coût de leur sortie, les motos redeviennent disponibles, et l'argent et le crédit sont contre-passés dans la comptabilité.",
+              "Toute la vente est annulée\u00a0: les articles reviennent en stock au coût de leur sortie, les motos redeviennent disponibles, et l'argent et le crédit sont contre-passés dans la comptabilité.",
             )}
           </DialogDescription>
         </DialogHeader>
@@ -191,7 +253,7 @@ function CreditRows({ credit, creditedReturns, creditLeft }: { credit: Decimal; 
   const t = useT();
   if (creditedReturns.isZero()) {
     return (
-      <div className="flex justify-between gap-2 py-2 text-amber-600 dark:text-amber-400">
+      <div className="flex justify-between gap-2 py-2 text-amber-700 dark:text-amber-400">
         <span>{t("On credit", "À crédit")}</span>
         <Num className="font-medium">{usd(credit.toFixed(2))}</Num>
       </div>
@@ -207,7 +269,7 @@ function CreditRows({ credit, creditedReturns, creditLeft }: { credit: Decimal; 
         <span>{t("Returns taken off the customer's balance", "Retours déduits du solde du client")}</span>
         <Num>−{usd(creditedReturns.toFixed(2))}</Num>
       </div>
-      <div className={cn("flex justify-between gap-2 py-2", creditLeft.gt(0) && "text-amber-600 dark:text-amber-400")}>
+      <div className={cn("flex justify-between gap-2 py-2", creditLeft.gt(0) && "text-amber-700 dark:text-amber-400")}>
         <span>
           {t("Still on credit", "Reste à crédit")}
           <span className="block text-xs text-muted-foreground">{t("Later payments show on the customer's statement.", "Les paiements ultérieurs figurent sur le relevé du client.")}</span>
@@ -232,14 +294,17 @@ export default function SaleDetail() {
   const { data: moneyAccounts } = useMoneyAccounts();
   const accName = (accId: number | null) => moneyAccounts.find((a) => a.id === accId)?.name ?? (accId ? `#${accId}` : "");
   const [dialog, setDialog] = useState<null | "receipt" | "return" | "void">(null);
+  const [slipId, setSlipId] = useState<number | null>(null);
 
   if (q.isLoading) return <Loading />;
   if (q.error || !q.data) return <ErrorText error={q.error ?? t("Sale not found", "Vente introuvable")} />;
   const sale = q.data;
   const voided = sale.status === "voided";
   const canReturn = !voided && sale.lines.some((l) => d(l.qty).gt(l.returnedQty));
-  const profit = d(sale.total).minus(sale.cogs ?? 0);
   const returnedTotal = sale.returns.reduce((s, r) => s.plus(r.total), d(0));
+  const returnedCost = sale.returns.reduce((s, r) => s.plus(d(r.cogs)), d(0));
+  // Margin on what the customer kept: returned items come off both the price and the cost.
+  const profit = d(sale.total).minus(returnedTotal).minus(d(sale.cogs ?? 0).minus(returnedCost));
   // Returns with no refund account were taken off what the customer owes, so they reduce this sale's credit.
   const creditedReturns = sale.returns.filter((r) => !r.refundAccountId).reduce((s, r) => s.plus(r.total), d(0));
   const credit = d(sale.creditUsd);
@@ -260,16 +325,28 @@ export default function SaleDetail() {
             {can("manager") && canReturn && (
               <Button variant="outline" onClick={() => setDialog("return")}><Undo2 className="mr-1 h-4 w-4" /> {t("Return items", "Retour d'articles")}</Button>
             )}
-            {can("manager") && !voided && (
+            {can("manager") && !voided && sale.returns.length === 0 && (
               <Button variant="destructive" onClick={() => setDialog("void")}><Ban className="mr-1 h-4 w-4" /> {t("Cancel sale", "Annuler la vente")}</Button>
+            )}
+            {can("manager") && !voided && sale.returns.length > 0 && (
+              <SubmitButton
+                variant="outline"
+                blocked={t("Has returns: it cannot be cancelled; use Return items for the rest", "A des retours\u00a0: annulation impossible, utilisez Retour d'articles pour le reste")}
+              >
+                <Ban className="mr-1 h-4 w-4" /> {t("Cancel sale", "Annuler la vente")}
+              </SubmitButton>
             )}
           </>
         }
       />
 
+      {!can("manager") && !voided && (
+        <p className="mb-3 text-sm text-muted-foreground">{t("To return items or cancel this sale, ask a manager or the owner.", "Pour un retour ou une annulation, demandez à un gérant ou au propriétaire.")}</p>
+      )}
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {voided ? <Badge variant="destructive">{t("Cancelled", "Annulée")}</Badge> : <Badge variant="secondary">{t("Completed", "Terminée")}</Badge>}
         {sale.returns.length > 0 && <Badge variant="outline">{t("Has returns", "Avec retours")}</Badge>}
+        {!voided && <SaleFlags zeroPrice={sale.lines.some((l) => d(l.unitPrice).lte(0))} total={sale.total} cogs={sale.cogs} />}
         {credit.gt(0) &&
           (!creditReduced ? (
             <Badge variant="outline">{t("On credit", "À crédit")} {usd(sale.creditUsd)}</Badge>
@@ -290,7 +367,7 @@ export default function SaleDetail() {
         <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Paid", "Payé")}</p><p className="text-xl font-semibold tabular">{usd(sale.paidUsd)}</p><p className="text-xs text-muted-foreground">{t("Credit", "Crédit")} {usd(sale.creditUsd)}{creditReduced ? ` · ${t("after returns", "après retours")} ${usd(creditLeft.toFixed(2))}` : ""}</p></CardContent></Card>
         <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Customer", "Client")}</p>{sale.customer ? <p className="font-medium">{sale.customer.name}</p> : <p className="text-muted-foreground">{t("Walk-in", "De passage")}</p>}{sale.customer?.phone && <p className="text-xs text-muted-foreground">{sale.customer.phone}</p>}</CardContent></Card>
         {showCost && sale.cogs !== undefined && !voided && (
-          <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Cost / profit", "Coût / marge")}</p><p className="text-xl font-semibold tabular">{usd(profit.toFixed(2))}</p><p className="text-xs text-muted-foreground">{t("Cost of goods", "Coût des articles")} {usd(sale.cogs)}{returnedTotal.gt(0) ? ` · ${t("before returns", "avant retours")}` : ""}</p></CardContent></Card>
+          <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Cost / profit", "Coût / marge")}</p><p className="text-xl font-semibold tabular">{usd(profit.toFixed(2))}</p><p className="text-xs text-muted-foreground">{t("Cost of goods", "Coût des articles")} {usd(d(sale.cogs).minus(returnedCost).toFixed(2))}{returnedTotal.gt(0) ? ` · ${t("after returns", "après retours")}` : ""}</p></CardContent></Card>
         )}
       </div>
 
@@ -302,7 +379,7 @@ export default function SaleDetail() {
               <TableHeader>
                 <TableRow>
                   <TableHead>{t("Item", "Article")}</TableHead>
-                  <TableHead>SKU</TableHead>
+                  <TableHead>{t("SKU", "Code")}</TableHead>
                   <TableHead>{t("Chassis / engine", "Châssis / moteur")}</TableHead>
                   <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
                   <TableHead className="text-right">{t("Returned", "Retourné")}</TableHead>
@@ -320,7 +397,7 @@ export default function SaleDetail() {
                     <TableCell className="font-mono text-xs">{l.sku}</TableCell>
                     <TableCell className="text-xs">{l.chassisNo ?? ""}{l.engineNo ? <span className="block text-muted-foreground">{l.engineNo}</span> : null}</TableCell>
                     <TableCell className="text-right"><Num>{fmtQty(l.qty)}</Num></TableCell>
-                    <TableCell className="text-right"><Num className={cn(d(l.returnedQty).gt(0) ? "text-amber-600 dark:text-amber-400" : "text-muted-foreground")}>{fmtQty(l.returnedQty)}</Num></TableCell>
+                    <TableCell className="text-right"><Num className={cn(d(l.returnedQty).gt(0) ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>{fmtQty(l.returnedQty)}</Num></TableCell>
                     <TableCell className="text-right"><Num>{usd(l.unitPrice)}</Num></TableCell>
                     <TableCell className="text-right"><Num>{d(l.lineDiscount).gt(0) ? usd(l.lineDiscount) : ""}</Num></TableCell>
                     <TableCell className="text-right"><Num className="font-medium">{usd(l.lineTotal)}</Num></TableCell>
@@ -334,7 +411,7 @@ export default function SaleDetail() {
           {d(sale.discount).gt(0) && (
             <p className="px-4 py-2 text-xs text-muted-foreground">{t("Line discounts include each line's share of the sale discount.", "Les remises par ligne incluent la part de la remise sur la vente.")}</p>
           )}
-          {sale.note && <p className="px-4 pb-3 text-sm"><span className="text-muted-foreground">{t("Note", "Note")}:</span> {sale.note}</p>}
+          {sale.note && <p className="px-4 pb-3 text-sm"><span className="text-muted-foreground">{t("Note", "Note")}{t(":", "\u00a0:")}</span> {sale.note}</p>}
         </CardContent>
       </Card>
 
@@ -371,9 +448,14 @@ export default function SaleDetail() {
               <div className="divide-y text-sm">
                 {sale.returns.map((r) => (
                   <div key={r.id} className="py-2">
-                    <div className="flex justify-between gap-2">
+                    <div className="flex items-center justify-between gap-2">
                       <span className="font-medium">{r.number} · {fmtDate(r.date)}</span>
-                      <Num className="font-medium">{usd(r.total)}</Num>
+                      <span className="flex items-center gap-1">
+                        <Num className="font-medium">{usd(r.total)}</Num>
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => setSlipId(r.id)} aria-label={t("Print return slip", "Imprimer le bon de retour")} title={t("Print return slip", "Imprimer le bon de retour")}>
+                          <Printer className="h-4 w-4" />
+                        </Button>
+                      </span>
                     </div>
                     <p className="text-xs text-muted-foreground">
                       {r.refundAccountId ? `${t("Refunded from", "Remboursé depuis")} ${accName(r.refundAccountId)}` : t("Taken off the customer's balance", "Déduit du solde du client")}
@@ -388,7 +470,21 @@ export default function SaleDetail() {
       </div>
 
       {dialog === "receipt" && <ReceiptDialog sale={sale} onClose={() => setDialog(null)} />}
-      {dialog === "return" && <ReturnDialog sale={sale} onClose={() => setDialog(null)} />}
+      {dialog === "return" && (
+        <ReturnDialog
+          sale={sale}
+          onClose={() => setDialog(null)}
+          onDone={(s) => {
+            setDialog(null);
+            // Offer the slip of the return just recorded.
+            const last = [...(s.returns ?? [])].sort((a, b) => b.id - a.id)[0];
+            if (last) setSlipId(last.id);
+          }}
+        />
+      )}
+      {slipId && sale.returns.find((r) => r.id === slipId) && (
+        <ReturnSlipDialog sale={sale} ret={sale.returns.find((r) => r.id === slipId)!} accName={accName} onClose={() => setSlipId(null)} />
+      )}
       {dialog === "void" && <VoidDialog sale={sale} onClose={() => setDialog(null)} />}
     </div>
   );

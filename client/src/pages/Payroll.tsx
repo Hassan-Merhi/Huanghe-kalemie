@@ -117,7 +117,7 @@ export default function Payroll() {
         title={t("Payroll", "Paie")}
         description={t(
           "Staff, monthly salaries, advances and payments. Salaries are booked as a running cost; payments and advances go through the employee's account.",
-          "Le personnel, les salaires du mois, les avances et les paiements. Les salaires sont une charge ; paiements et avances passent par le compte de l'employé.",
+          "Le personnel, les salaires du mois, les avances et les paiements. Les salaires sont une charge\u00a0; paiements et avances passent par le compte de l'employé.",
         )}
       />
 
@@ -373,7 +373,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Field label={t("Expense account", "Compte de charge")} required>
-                <AccountSelect value={effectiveAccount} onChange={setAccountId} types={["expense"]} />
+                <AccountSelect hideCode value={effectiveAccount} onChange={setAccountId} types={["expense"]} />
               </Field>
               <Field label={t("Date", "Date")} error={dayInMonth ? null : t("The date must be inside the month", "La date doit être dans le mois")} required>
                 <Input type="date" value={effectiveDay} onChange={(e) => setDay(e.target.value)} />
@@ -396,7 +396,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
             <p className="text-xs text-muted-foreground">
               {t(
                 "Withheld: kept from the pay but owed to someone else (tax, social security); it stays a salary cost. Penalty: a fine, it lowers the cost.",
-                "Retenue : gardée sur la paie mais due à un tiers (impôt, sécurité sociale) ; elle reste une charge de salaire. Pénalité : une amende, elle réduit la charge.",
+                "Retenue\u00a0: gardée sur la paie mais due à un tiers (impôt, sécurité sociale)\u00a0; elle reste une charge de salaire. Pénalité\u00a0: une amende, elle réduit la charge.",
               )}
             </p>
             <div className="-mx-6 overflow-x-auto">
@@ -661,7 +661,7 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
           <DialogDescription>
             {t(
               "Prefilled with what each employee is owed; advances already given are deducted. Amounts are in the currency of the account paid from.",
-              "Prérempli avec ce qui est dû à chaque employé ; les avances déjà données sont déduites. Montants dans la monnaie du compte qui paie.",
+              "Prérempli avec ce qui est dû à chaque employé\u00a0; les avances déjà données sont déduites. Montants dans la monnaie du compte qui paie.",
             )}
           </DialogDescription>
         </DialogHeader>
@@ -805,7 +805,7 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
                 hint={isCdf && a.gt(0) && r.gt(0) ? `≈ ${usd(a.div(r).toFixed(2))}` : undefined}
                 required
               >
-                <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
+                <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
               </Field>
               {isCdf && (
                 <Field label={t("Rate (CDF per USD)", "Taux (FC pour 1 USD)")} required>

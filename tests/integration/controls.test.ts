@@ -123,6 +123,10 @@ describe.skipIf(!hasDb)("Controls and permissions", async () => {
     await owner("PATCH", "/api/settings", { managerBelowCost: true });
     expect((await sell(manager, "10")).status).toBe(201);
     expect((await sell(cashier, "10")).status).toBe(403);
+    // Nobody sells at 0 $: it is a price typed wrong, not a sale.
+    const free = await owner("POST", "/api/sales", { locationId, lines: [{ variantId, qty: "1", unitPrice: "0" }], payments: [] });
+    expect(free.status).toBe(400);
+    expect(free.body.message).toMatch(/prix|price/i);
   });
 
   it("sells today for a cashier and hides the cost of returns", async () => {

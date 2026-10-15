@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,9 @@ export default function Login() {
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [show, setShow] = useState(false);
+  useEffect(() => {
+    document.title = `${t("Sign in", "Connexion")} · Huanghe Kalemie`;
+  }, [t]);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();

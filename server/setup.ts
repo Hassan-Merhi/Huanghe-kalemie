@@ -107,7 +107,7 @@ export async function ensureSetup(tx: Tx, opts: SetupOptions = {}) {
 
   await tx.insert(settings).values({ key: "shopName", value: "Huanghe Motors Kalemie" }).onConflictDoNothing();
   await tx.insert(settings).values({ key: "defaultCdfRate", value: "2800" }).onConflictDoNothing();
-  await tx.insert(settings).values({ key: "receiptFooter", value: "Merci pour votre achat!" }).onConflictDoNothing();
+  await tx.insert(settings).values({ key: "receiptFooter", value: "Merci pour votre achat\u00a0!" }).onConflictDoNothing();
 
   const [{ count: userCount }] = await tx.select({ count: sql<number>`count(*)::int` }).from(users);
   if (userCount === 0) {
@@ -117,7 +117,7 @@ export async function ensureSetup(tx: Tx, opts: SetupOptions = {}) {
     await tx.insert(users).values({
       username,
       passwordHash: await bcrypt.hash(password, 12),
-      fullName: "Owner",
+      fullName: "Propriétaire",
       role: "owner",
       language: "fr",
     });

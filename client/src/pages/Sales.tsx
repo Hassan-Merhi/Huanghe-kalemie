@@ -24,6 +24,7 @@ interface SaleListRow {
   cogs?: string;
   customerName: string | null;
   cashier: string | null;
+  zeroPrice?: boolean;
 }
 
 interface Daily {
@@ -61,7 +62,7 @@ function DailySummary() {
                   {count(t, data.voidsCount, ["sale cancelled", "sales cancelled"], ["vente annulée", "ventes annulées"])} (−{usd(data.voidsTotal)})
                 </p>
               )}
-              {d(data.credit).gt(0) && <p className="text-sm text-amber-600 dark:text-amber-400">{t("of which on credit", "dont à crédit")} {usd(data.credit)}</p>}
+              {d(data.credit).gt(0) && <p className="text-sm text-amber-700 dark:text-amber-400">{t("of which on credit", "dont à crédit")} {usd(data.credit)}</p>}
             </div>
             <div className="flex flex-wrap gap-2 sm:justify-end">
               {data.byAccount.length === 0 && <p className="text-sm text-muted-foreground">{t("No money received yet today.", "Aucun encaissement aujourd'hui.")}</p>}
@@ -77,6 +78,18 @@ function DailySummary() {
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/** "Prix nul" and "Vente à perte": sales worth a second look (a price typed wrong, a sale below cost). */
+export function SaleFlags({ zeroPrice, total, cogs }: { zeroPrice?: boolean; total: string; cogs?: string }) {
+  const t = useT();
+  const loss = cogs !== undefined && d(cogs).gt(0) && d(total).lt(d(cogs));
+  return (
+    <>
+      {zeroPrice && <Badge variant="destructive" className="ml-1 whitespace-nowrap">{t("Price 0", "Prix nul")}</Badge>}
+      {loss && <Badge variant="outline" className="ml-1 whitespace-nowrap border-amber-600 text-amber-800 dark:border-amber-400 dark:text-amber-300">{t("Below cost", "Vente à perte")}</Badge>}
+    </>
   );
 }
 
@@ -129,7 +142,7 @@ export default function Sales() {
         <EmptyState title={t("No sales", "Aucune vente")}>{t("Sales made at the till appear here.", "Les ventes faites à la caisse apparaissent ici.")}</EmptyState>
       ) : (
         <Card>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto [contain:inline-size]">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -141,7 +154,7 @@ export default function Sales() {
                   <TableHead className="text-right">{t("Credit", "Crédit")}</TableHead>
                   {showCost && <TableHead className="text-right">{t("Cost", "Coût")}</TableHead>}
                   {showCost && <TableHead className="text-right">{t("Profit", "Marge")}</TableHead>}
-                  <TableHead>{t("Cashier", "Caissier")}</TableHead>
+                  <TableHead>{t("Sold by", "Vendu par")}</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -149,14 +162,15 @@ export default function Sales() {
                   const voided = r.status === "voided";
                   return (
                     <TableRow key={r.id} className={cn("cursor-pointer", voided && "text-muted-foreground")} onClick={() => navigate(`/sales/${r.id}`)}>
-                      <TableCell className="whitespace-nowrap font-medium">
-                        {r.number} {voided && <Badge variant="destructive" className="ml-1">{t("Cancelled", "Annulée")}</Badge>}
+                      <TableCell className="font-medium">
+                        <span className="whitespace-nowrap">{r.number}</span> {voided && <Badge variant="destructive" className="ml-1">{t("Cancelled", "Annulée")}</Badge>}
+                        {!voided && <SaleFlags zeroPrice={r.zeroPrice} total={r.total} cogs={r.cogs} />}
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{fmtDate(r.date)}</TableCell>
                       <TableCell>{r.customerName ?? <span className="text-muted-foreground">{t("Walk-in", "De passage")}</span>}</TableCell>
                       <TableCell className="text-right"><Num className={cn(voided && "line-through")}>{usd(r.total)}</Num></TableCell>
                       <TableCell className="text-right"><Num>{usd(r.paidUsd)}</Num></TableCell>
-                      <TableCell className="text-right"><Num className={cn(d(r.creditUsd).gt(0) && !voided && "text-amber-600 dark:text-amber-400")}>{d(r.creditUsd).gt(0) ? usd(r.creditUsd) : ""}</Num></TableCell>
+                      <TableCell className="text-right"><Num className={cn(d(r.creditUsd).gt(0) && !voided && "text-amber-700 dark:text-amber-400")}>{d(r.creditUsd).gt(0) ? usd(r.creditUsd) : ""}</Num></TableCell>
                       {showCost && <TableCell className="text-right"><Num>{r.cogs !== undefined ? usd(r.cogs) : ""}</Num></TableCell>}
                       {showCost && <TableCell className="text-right"><Num>{r.cogs !== undefined ? usd(d(r.total).minus(r.cogs).toFixed(2)) : ""}</Num></TableCell>}
                       <TableCell className="whitespace-nowrap text-muted-foreground">{r.cashier ?? ""}</TableCell>

@@ -1,4 +1,4 @@
-import type { ComponentProps, ReactNode } from "react";
+import { cloneElement, isValidElement, useEffect, useId, type ComponentProps, type ReactElement, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/lib/i18n";
@@ -6,7 +6,11 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 
-export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
+export function PageHeader({ title, description, actions }: { title: string; description?: ReactNode; actions?: ReactNode }) {
+  // Each page gets its own browser tab title: "Caisse · Huanghe Kalemie".
+  useEffect(() => {
+    document.title = `${title} · Huanghe Kalemie`;
+  }, [title]);
   return (
     <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
       <div className="min-w-0">
@@ -21,6 +25,8 @@ export function PageHeader({ title, description, actions }: { title: string; des
 /**
  * A labelled form field. `required` puts a star after the label; `error` replaces the hint.
  * Every form uses this, so required fields and mistakes look the same everywhere.
+ * A text field inside is tied to the label and marked required for screen readers (said once, not
+ * "star" and then "required"); other controls get the word "required" as hidden text instead.
  */
 export function Field({
   label,
@@ -38,21 +44,34 @@ export function Field({
   className?: string;
 }) {
   const t = useT();
+  const id = useId();
+  const noteId = `${id}-note`;
+  const isTextField =
+    isValidElement(children) && typeof children.type === "object" && TEXT_FIELDS.has((children.type as { displayName?: string }).displayName ?? "");
+  const props = isTextField ? (children.props as Record<string, unknown>) : null;
+  const fieldId = (props?.id as string | undefined) ?? id;
+  const control = isTextField
+    ? cloneElement(children as ReactElement<Record<string, unknown>>, {
+        id: fieldId,
+        "aria-required": required || undefined,
+        "aria-invalid": error ? true : props?.["aria-invalid"],
+        "aria-describedby": hint || error ? noteId : props?.["aria-describedby"],
+      })
+    : children;
   return (
     <div className={cn("space-y-1.5", className)}>
-      <Label>
+      <Label htmlFor={isTextField ? fieldId : undefined}>
         {label}
-        {required && (
-          <span className="ml-0.5 text-destructive" aria-hidden title={t("Required", "Obligatoire")}>*</span>
-        )}
-        {required && <span className="sr-only"> ({t("required", "obligatoire")})</span>}
+        {required && <span className="ml-0.5 text-destructive" aria-hidden>*</span>}
+        {required && !isTextField && <span className="sr-only"> ({t("required", "obligatoire")})</span>}
       </Label>
-      {children}
-      {hint && !error && <p className="text-xs text-muted-foreground">{hint}</p>}
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {control}
+      {hint && !error && <p id={noteId} className="text-xs text-muted-foreground">{hint}</p>}
+      {error && <p id={noteId} className="text-xs text-destructive">{error}</p>}
     </div>
   );
 }
+const TEXT_FIELDS = new Set(["Input", "Textarea", "DateInput", "DecimalInput"]);
 
 /**
  * A button that says why it cannot be pressed. While `blocked` holds a reason the button is disabled
@@ -82,7 +101,7 @@ export function StatCard({ label, value, sub, tone }: { label: string; value: Re
     <Card>
       <CardContent className="p-3 sm:p-4">
         <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:text-xs">{label}</p>
-        <p className={cn("mt-1 break-words text-lg font-semibold tabular sm:text-2xl", tone === "good" && "text-green-600 dark:text-green-400", tone === "bad" && "text-destructive")}>{value}</p>
+        <p className={cn("mt-1 break-words text-lg font-semibold tabular sm:text-2xl", tone === "good" && "text-green-700 dark:text-green-400", tone === "bad" && "text-destructive")}>{value}</p>
         {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
       </CardContent>
     </Card>

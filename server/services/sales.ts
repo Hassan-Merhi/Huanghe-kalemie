@@ -91,6 +91,8 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
     if (q.lte(0)) throw badRequest("Quantities must be greater than zero", "Les quantités doivent être supérieures à zéro");
     const price = cents(l.unitPrice);
     if (price.isNegative()) throw badRequest("Prices cannot be negative", "Les prix ne peuvent pas être négatifs");
+    // 0 $ is almost always a price typed wrong ("4,50" read as nothing); a gift is a 100 % line discount instead.
+    if (price.isZero()) throw badRequest(`${v.name} (${v.sku}): enter the selling price (it is 0 $)`, `${v.name} (${v.sku}) : saisissez le prix de vente (il est à 0 $)`);
     const lineDiscount = cents(l.lineDiscount ?? 0);
     if (lineDiscount.isNegative()) throw badRequest("A discount cannot be negative", "Une remise ne peut pas être négative");
     const amount = cents(q.times(price)).minus(lineDiscount);
@@ -293,7 +295,16 @@ export async function getSale(tx: Tx, id: number) {
     .where(eq(saleLines.saleId, id))
     .orderBy(asc(saleLines.id));
   const payments = await tx.select().from(salePayments).where(eq(salePayments.saleId, id));
-  const returns = await tx.select().from(saleReturns).where(eq(saleReturns.saleId, id));
+  const returnRows = await tx.select().from(saleReturns).where(eq(saleReturns.saleId, id));
+  // What came back on each return, for the return slip (no cost: cashiers read this too).
+  const returnLines = returnRows.length
+    ? await tx
+        .select({ returnId: saleReturnLines.returnId, saleLineId: saleReturnLines.saleLineId, qty: saleReturnLines.qty, amount: saleReturnLines.amount })
+        .from(saleReturnLines)
+        .where(inArray(saleReturnLines.returnId, returnRows.map((r) => r.id)))
+        .orderBy(asc(saleReturnLines.id))
+    : [];
+  const returns = returnRows.map((r) => ({ ...r, lines: returnLines.filter((l) => l.returnId === r.id).map(({ returnId: _r, ...l }) => l) }));
   const [customer] = sale.customerId ? await tx.select().from(parties).where(eq(parties.id, sale.customerId)) : [];
   const [cashier] = sale.createdBy ? await tx.select({ fullName: users.fullName, username: users.username }).from(users).where(eq(users.id, sale.createdBy)) : [];
   return {

@@ -156,7 +156,7 @@ function PartnerCards({ partners }: { partners: Partner[] }) {
                   {current.isNegative()
                     ? t(
                         "Owes the business: running costs were higher than this partner's share of the profit, or more was taken out than earned.",
-                        "Doit à l'entreprise : les frais ont dépassé sa part du bénéfice, ou il a retiré plus que gagné.",
+                        "Doit à l'entreprise\u00a0: les frais ont dépassé sa part du bénéfice, ou il a retiré plus que gagné.",
                       )
                     : current.isZero()
                       ? t("Nothing owed either way.", "Rien à devoir.")
@@ -242,13 +242,13 @@ function MonthSection() {
                 <p className="mt-1">
                   {t(
                     "Gross profit is split 75/25. Rent, salaries and other running costs are then taken only from the 75% partner.",
-                    "La marge brute est partagée 75/25. Le loyer, les salaires et les autres frais de fonctionnement sont ensuite pris uniquement chez l'associé à 75 %.",
+                    "La marge brute est partagée 75/25. Le loyer, les salaires et les autres frais de fonctionnement sont ensuite pris uniquement chez l'associé à 75\u00a0%.",
                   )}
                 </p>
                 <p className="mt-1 text-muted-foreground">
                   {t(
                     "Container costs (freight, duties, transport…) are already inside the cost of the items, so both partners share them.",
-                    "Les frais de conteneur (fret, douane, transport…) sont déjà dans le coût des articles : les deux associés les partagent.",
+                    "Les frais de conteneur (fret, douane, transport…) sont déjà dans le coût des articles\u00a0: les deux associés les partagent.",
                   )}
                 </p>
               </div>
@@ -560,7 +560,7 @@ function EditPartnersDialog({ partners, onClose }: { partners: Partner[]; onClos
             </div>
           ))}
           <p className={cn("text-sm", okTotal ? "text-muted-foreground" : "text-destructive")}>
-            {t(`Total: ${total.toString()}% (must be 100%)`, `Total : ${total.toString()} % (doit faire 100 %)`)}
+            {t(`Total: ${total.toString()}% (must be 100%)`, `Total\u00a0: ${pct(total.toString(), 2)} (doit faire 100\u00a0%)`)}
           </p>
           {!anyBearer && <p className="text-sm text-destructive">{t("At least one partner must pay the running costs.", "Au moins un associé doit payer les frais de fonctionnement.")}</p>}
         </div>

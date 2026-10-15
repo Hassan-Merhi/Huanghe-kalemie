@@ -225,7 +225,7 @@ export function PartyDialog({ type, party, onClose }: { type: PartyType; party: 
               </Field>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field label={t("Monthly salary (USD)", "Salaire mensuel (USD)")}>
-                  <Input inputMode="decimal" value={monthlySalary} onChange={(e) => setMonthlySalary(e.target.value)} placeholder="0.00" />
+                  <Input inputMode="decimal" value={monthlySalary} onChange={(e) => setMonthlySalary(e.target.value)} placeholder="0" />
                 </Field>
                 <Field label={t("Start date", "Date d'embauche")}>
                   <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />

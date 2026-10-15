@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import { AlertTriangle, ArrowLeft, Printer } from "lucide-react";
@@ -7,7 +7,7 @@ import { Table } from "@/components/ui/table";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ErrorText, Loading, Num } from "@/components/common";
-import { cdf, d, date, usd } from "@/lib/format";
+import { cdf, d, date, qty, usd } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import type { Settings } from "@/lib/types";
 import { journalTypeLabel } from "@/pages/ContactDetail";
@@ -62,6 +62,9 @@ export default function VoucherPrint() {
   const q = useQuery<Voucher>({ queryKey: [`/api/vouchers/${id}`] });
   const settings = useQuery<Settings>({ queryKey: ["/api/settings"] });
   const v = q.data;
+  useEffect(() => {
+    document.title = `${t("Voucher", "Pièce")} ${v?.number ?? ""} · Huanghe Kalemie`;
+  }, [t, v?.number]);
 
   if (q.isLoading) return <Loading />;
   if (q.error || !v) return <ErrorText error={q.error ?? t("Voucher not found", "Pièce introuvable")} />;
@@ -152,7 +155,7 @@ export default function VoucherPrint() {
                         {l.nativeAmount && d(l.nativeAmount).abs().gt(0) ? (
                           <Num>
                             {cdf(d(l.nativeAmount).abs().toString())}
-                            {l.rate && <span className="block text-xs text-muted-foreground">@ {d(l.rate).toDecimalPlaces(2).toString()}</span>}
+                            {l.rate && <span className="block text-xs text-muted-foreground">{t("rate", "taux")} {qty(d(l.rate).toDecimalPlaces(2).toString())}{"\u00a0"}FC/$</span>}
                           </Num>
                         ) : ""}
                       </td>

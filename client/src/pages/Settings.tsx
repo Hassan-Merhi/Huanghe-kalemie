@@ -89,9 +89,9 @@ function ShopTab() {
     : !d(rate).gt(0)
       ? t("Enter a default rate above zero", "Saisissez un taux par défaut supérieur à zéro")
       : !toleranceOk
-        ? t("Enter the allowed gap (0 to 99 %)", "Saisissez l'écart permis (0 à 99\u00a0%)")
+        ? t("Enter the allowed gap (0 to 99\u00a0%)", "Saisissez l'écart permis (0 à 99\u00a0%)")
         : !pctOk(cashierPct) || !pctOk(managerPct)
-          ? t("Enter the biggest discounts (0 to 100 %)", "Saisissez les remises maximales (0 à 100\u00a0%)")
+          ? t("Enter the biggest discounts (0 to 100\u00a0%)", "Saisissez les remises maximales (0 à 100\u00a0%)")
           : null;
   if (q.isLoading) return <Loading />;
   return (
@@ -105,7 +105,7 @@ function ShopTab() {
         <Field label={t("Shop name", "Nom de la boutique")} required><Input value={shopName} onChange={(e) => setShopName(e.target.value)} /></Field>
         <Field
           label={t("Default CDF rate (CDF per 1 USD)", "Taux par défaut (FC pour 1 $)")}
-          hint={q.data?.latestRate ? t(`Latest daily rate: ${cdf(q.data.latestRate.cdfPerUsd)} on ${fmtDate(q.data.latestRate.date)}. The default is used only for days before any daily rate.`, `Dernier taux du jour : ${cdf(q.data.latestRate.cdfPerUsd)} le ${fmtDate(q.data.latestRate.date)}. Le taux par défaut sert seulement s'il n'y a aucun taux du jour.`) : undefined}
+          hint={q.data?.latestRate ? t(`Latest daily rate: ${cdf(q.data.latestRate.cdfPerUsd)} on ${fmtDate(q.data.latestRate.date)}. The default is used only for days before any daily rate.`, `Dernier taux du jour\u00a0: ${cdf(q.data.latestRate.cdfPerUsd)} le ${fmtDate(q.data.latestRate.date)}. Le taux par défaut sert seulement s'il n'y a aucun taux du jour.`) : undefined}
           error={rate.trim() && !d(rate).gt(0) ? t("Enter a rate above zero", "Saisissez un taux supérieur à zéro") : null}
           required
         >
@@ -417,7 +417,7 @@ function AccountsTab() {
       <p className="text-sm text-muted-foreground">
         {t(
           "Add a running cost (e.g. “Security guard”) as type Running cost, or a new mobile money wallet as an Asset with “money account” on.",
-          "Ajoutez un frais (ex. « Gardiennage ») avec le type Charge de fonctionnement, ou un nouveau portefeuille mobile money comme Actif avec « compte d'argent » activé.",
+          "Ajoutez un frais (ex. «\u00a0Gardiennage\u00a0») avec le type Charge de fonctionnement, ou un nouveau portefeuille mobile money comme Actif avec «\u00a0compte d'argent\u00a0» activé.",
         )}
       </p>
       <ErrorText error={q.error} />
@@ -599,7 +599,7 @@ const ENTITY_LABELS: Record<string, [string, string]> = {
   partners: ["Partners", "Associés"],
   period: ["Month", "Mois"],
   payroll_run: ["Payroll", "Paie"],
-  voucher_draft: ["Optional voucher", "Pièce facultative"],
+  voucher_draft: ["Pending voucher", "Pièce en attente"],
   items: ["Items", "Articles"],
   prices: ["Prices", "Prix"],
   container_lines: ["Container lines", "Lignes de conteneur"],

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { roleLabel } from "@/lib/labels";
 import { Link, useLocation } from "wouter";
 import {
@@ -101,8 +101,8 @@ const NAV: { en: string; fr: string; items: NavItem[] }[] = [
     ],
   },
   {
-    en: "Analysis",
-    fr: "Analyses",
+    en: "Figures",
+    fr: "Chiffres",
     items: [
       { href: "/analytics", en: "Analytics", fr: "Analyses", icon: TrendingUp, roles: ["manager", "partner"] },
       { href: "/reports", en: "Reports", fr: "Rapports", icon: BarChart3, roles: ["manager", "partner"] },
@@ -126,15 +126,41 @@ const SECTIONS: { href: string; en: string; fr: string; roles: Role[] }[][] = [
   ],
   [
     { href: "/vouchers", en: "Vouchers", fr: "Pièces", roles: ["manager", "partner"] },
-    { href: "/optional-vouchers", en: "Optional vouchers", fr: "Pièces facultatives", roles: ["manager", "partner"] },
+    { href: "/optional-vouchers", en: "Pending vouchers", fr: "Pièces en attente", roles: ["manager", "partner"] },
   ],
 ];
+
+/** The stock pages each have their own tab bar; their sister pages are links at the end of it (one row, not two). */
+const INLINE_SECTION = "/stock";
+
+/** Links to the other pages of the stock section, for the end of a page's own tab bar. */
+export function SectionLinks() {
+  const { can } = useAuth();
+  const { lang } = useI18n();
+  const [location] = useLocation();
+  const section = SECTIONS.find((tabs) => tabs[0].href === INLINE_SECTION)!;
+  const tabs = section.filter((tab) => can(...tab.roles) && tab.href !== location);
+  return (
+    <>
+      <span className="mx-1 h-5 w-px self-center bg-border" aria-hidden />
+      {tabs.map((tab) => (
+        <Link
+          key={tab.href}
+          href={tab.href}
+          className="inline-flex items-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium text-primary hover:underline dark:text-orange-400"
+        >
+          {lang === "fr" ? tab.fr : tab.en} →
+        </Link>
+      ))}
+    </>
+  );
+}
 
 function SectionTabs() {
   const { can } = useAuth();
   const { lang } = useI18n();
   const [location] = useLocation();
-  const section = SECTIONS.find((tabs) => tabs.some((tab) => tab.href === location));
+  const section = SECTIONS.find((tabs) => tabs[0].href !== INLINE_SECTION && tabs.some((tab) => tab.href === location));
   const tabs = section?.filter((tab) => can(...tab.roles)) ?? [];
   if (tabs.length < 2) return null;
   return (
@@ -164,6 +190,10 @@ function NavLinks() {
   const { lang } = useI18n();
   const [location] = useLocation();
   const { setOpenMobile } = useSidebar();
+  // Keep the current page's entry in view when the menu is taller than the screen.
+  useEffect(() => {
+    document.querySelector<HTMLElement>('[data-sidebar="content"] [data-active="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [location]);
   return (
     <>
       {NAV.map((group) => {
@@ -216,20 +246,21 @@ export function AppLayout({ children }: { children: ReactNode }) {
             <p className="text-xs text-sidebar-foreground/70">Kalemie</p>
           </div>
         </SidebarHeader>
-        <SidebarContent>
+        {/* The menu scrolls on its own above the footer, so a short screen never hides an entry under it. */}
+        <SidebarContent className="[scrollbar-color:hsl(var(--sidebar-border))_transparent] [scrollbar-width:thin]">
           <NavLinks />
         </SidebarContent>
-        <SidebarFooter>
-          <div className="px-2 pb-2 text-xs text-sidebar-foreground/70">
+        <SidebarFooter className="border-t border-sidebar-border">
+          <div className="truncate px-2 py-1 text-xs text-sidebar-foreground/70">
             {user?.fullName} · {user ? roleLabel(user.role, t) : ""}
           </div>
         </SidebarFooter>
       </Sidebar>
-      <SidebarInset>
+      <SidebarInset className="min-w-0">
         <header className="sticky top-0 z-20 flex h-14 items-center gap-2 border-b bg-background/95 px-3 backdrop-blur">
           <SidebarTrigger />
           <div className="flex-1" />
-          <Button variant="ghost" size="sm" onClick={() => setLang(lang === "fr" ? "en" : "fr")} aria-label="Language">
+          <Button variant="ghost" size="sm" onClick={() => setLang(lang === "fr" ? "en" : "fr")} aria-label={t("Language: switch to French", "Langue\u00a0: passer en anglais")}>
             {lang === "fr" ? "EN" : "FR"}
           </Button>
           <ThemeToggle />
@@ -238,10 +269,11 @@ export function AppLayout({ children }: { children: ReactNode }) {
             <LogOut className="h-4 w-4 sm:mr-1" /> <span className="hidden sm:inline">{t("Sign out", "Déconnexion")}</span>
           </Button>
         </header>
-        <main className="mx-auto w-full max-w-7xl flex-1 p-4 md:p-6">
+        {/* SidebarInset is the page's <main>; this is only the content width. */}
+        <div className="mx-auto w-full max-w-7xl flex-1 p-4 md:p-6">
           <SectionTabs />
           {children}
-        </main>
+        </div>
       </SidebarInset>
     </SidebarProvider>
   );

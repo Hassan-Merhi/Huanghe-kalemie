@@ -77,7 +77,7 @@ export default function Expenses() {
         <AlertDescription>
           {t(
             "These running costs are charged to the 75% partner at month close. Container costs (freight, duties, transport…) are entered on the container, not here.",
-            "Ces dépenses de fonctionnement sont imputées à l'associé à 75 % lors de la clôture du mois. Les frais de conteneur (fret, douane, transport…) se saisissent sur le conteneur, pas ici.",
+            "Ces dépenses de fonctionnement sont imputées à l'associé à 75\u00a0% lors de la clôture du mois. Les frais de conteneur (fret, douane, transport…) se saisissent sur le conteneur, pas ici.",
           )}
         </AlertDescription>
       </Alert>
@@ -192,7 +192,7 @@ function CancelDialog({ row, onClose }: { row: ExpenseRow; onClose: () => void }
         <p className="text-sm">
           {t(
             "A reversal is posted on the date below: the money goes back to the account it was paid from (or the debt is cancelled). The expense stays in the list, marked cancelled.",
-            "Une écriture d'annulation est passée à la date ci-dessous : l'argent revient au compte qui a payé (ou la dette est annulée). La dépense reste dans la liste, marquée annulée.",
+            "Une écriture d'annulation est passée à la date ci-dessous\u00a0: l'argent revient au compte qui a payé (ou la dette est annulée). La dépense reste dans la liste, marquée annulée.",
           )}
         </p>
         <Field label={t("Cancellation date", "Date d'annulation")} required>
@@ -263,7 +263,7 @@ function AddExpenseDialog({ onClose }: { onClose: () => void }) {
         <DialogHeader>
           <DialogTitle>{t("Add a running cost", "Ajouter une dépense")}</DialogTitle>
           <DialogDescription>
-            {t("Charged to the 75% partner at month close. Container costs go on the container.", "Imputée à l'associé à 75 % à la clôture du mois. Les frais de conteneur se saisissent sur le conteneur.")}
+            {t("Charged to the 75% partner at month close. Container costs go on the container.", "Imputée à l'associé à 75\u00a0% à la clôture du mois. Les frais de conteneur se saisissent sur le conteneur.")}
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
@@ -271,7 +271,7 @@ function AddExpenseDialog({ onClose }: { onClose: () => void }) {
             <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
           </Field>
           <Field label={t("Category", "Catégorie")} required>
-            <AccountSelect types={["expense"]} value={accountId} onChange={setAccountId} placeholder={t("Choose category", "Choisir la catégorie")} />
+            <AccountSelect hideCode types={["expense"]} value={accountId} onChange={setAccountId} placeholder={t("Choose category", "Choisir la catégorie")} />
           </Field>
           <Field label={t("Description", "Description")} className="sm:col-span-2" required>
             <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder={t("e.g. October rent", "ex. loyer d'octobre")} />

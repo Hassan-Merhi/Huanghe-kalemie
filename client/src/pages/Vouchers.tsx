@@ -95,7 +95,7 @@ export default function Vouchers() {
   }, [draft, tab, navigate]);
 
   const saveDraft = useApiMutation<DraftInput & { id?: number }, VoucherDraft>("POST", "/api/voucher-drafts", {
-    success: t("Optional voucher saved: no balance has changed", "Pièce facultative enregistrée\u00a0: aucun solde n'a changé"),
+    success: t("Pending voucher saved: no balance has changed", "Pièce en attente enregistrée\u00a0: aucun solde n'a changé"),
     onSuccess: (row) => {
       setPosted(null);
       if (row.id !== draftId) navigate(`/vouchers?tab=${row.kind}&draft=${row.id}`);
@@ -155,7 +155,7 @@ export default function Vouchers() {
       )}
       {missingDraft && (
         <div className="mb-4">
-          <ErrorText error={t("This optional voucher no longer exists (validated or deleted). The form below is empty.", "Cette pièce facultative n'existe plus (validée ou supprimée). Le formulaire ci-dessous est vide.")} />
+          <ErrorText error={t("This pending voucher no longer exists (validated or deleted). The form below is empty.", "Cette pièce en attente n'existe plus (validée ou supprimée). Le formulaire ci-dessous est vide.")} />
         </div>
       )}
       <Tabs value={tab} onValueChange={(v) => { setPosted(null); navigate(`/vouchers?tab=${v}`); }}>
@@ -174,7 +174,7 @@ export default function Vouchers() {
                 <AlertDescription>
                   {t(
                     "Journal entries change the books directly, so only the owner can post them. Use a payment, receipt or transfer voucher instead.",
-                    "Les écritures modifient directement les comptes : seul le propriétaire peut les passer. Utilisez plutôt une pièce de paiement, de recette ou un transfert.",
+                    "Les écritures modifient directement les comptes\u00a0: seul le propriétaire peut les passer. Utilisez plutôt une pièce de paiement, de recette ou un transfert.",
                   )}
                 </AlertDescription>
               </Alert>
@@ -209,11 +209,11 @@ function DraftBanner({ draft }: { draft: VoucherDraft }) {
   return (
     <Alert>
       <FileClock className="h-4 w-4" />
-      <AlertTitle>{t("Editing an optional voucher", "Modification d'une pièce facultative")}</AlertTitle>
+      <AlertTitle>{t("Editing a pending voucher", "Modification d'une pièce en attente")}</AlertTitle>
       <AlertDescription>
         {t(
-          `Saved by ${draft.createdByName ?? "—"}. "Save as optional" updates it; "Save" posts it for real and removes it from the optional list.`,
-          `Enregistrée par ${draft.createdByName ?? "—"}. « Enregistrer comme facultative » la met à jour ; « Enregistrer » la passe pour de bon et la retire de la liste des facultatives.`,
+          `Saved by ${draft.createdByName ?? "—"}. "Save as pending" updates it; "Save" posts it for real and removes it from the optional list.`,
+          `Enregistrée par ${draft.createdByName ?? "—"}. «\u00a0Mettre en attente\u00a0» la met à jour\u00a0; «\u00a0Enregistrer\u00a0» la passe pour de bon et la retire de la liste des pièces en attente.`,
         )}
       </AlertDescription>
     </Alert>
@@ -360,7 +360,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted 
                 ? `${t("Balance", "Solde")} ${money(current.toFixed(2), currency)} → ${t("after", "après")} ${money(after!.toFixed(2), currency)}`
                 : undefined
             }
-            error={after && after.lt(0) && kind === "payment" ? t(`Not enough money: the balance would be ${money(after.toFixed(2), currency)}`, `Fonds insuffisants : le solde serait de ${money(after.toFixed(2), currency)}`) : null}
+            error={after && after.lt(0) && kind === "payment" ? t(`Not enough money: the balance would be ${money(after.toFixed(2), currency)}`, `Fonds insuffisants\u00a0: le solde serait de ${money(after.toFixed(2), currency)}`) : null}
             required
           >
             <MoneyAccountSelect value={accountId} onChange={(id) => setAccountId(id)} />
@@ -446,7 +446,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted 
       {error && <ErrorText error={error} />}
       <ActionBar canSave={canSave}>
         <Button variant="outline" disabled={savingDraft} onClick={() => onSaveDraft({ kind, date: day, memo: memo.trim() || null, payload: payload(false)! })}>
-          {t("Save as optional", "Enregistrer comme facultative")}
+          {t("Save as pending", "Mettre en attente")}
         </Button>
         <SubmitButton onClick={save} pending={m.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
       </ActionBar>
@@ -641,7 +641,7 @@ function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: For
 
       <ActionBar canSave={canSave}>
         <Button variant="outline" disabled={savingDraft} onClick={() => onSaveDraft({ kind: "journal", date: day, memo: memo.trim() || null, payload: payload() })}>
-          {t("Save as optional", "Enregistrer comme facultative")}
+          {t("Save as pending", "Mettre en attente")}
         </Button>
         <SubmitButton blocked={problems[0]} pending={m.isPending} onClick={() => m.mutate({ date: day, ...payload() })}>{t("Save", "Enregistrer")}</SubmitButton>
       </ActionBar>
@@ -793,7 +793,7 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
       </Card>
       <ActionBar canSave={canSave}>
         <Button variant="outline" disabled={savingDraft} onClick={() => onSaveDraft({ kind: "transfer", date: day, memo: memo.trim() || null, payload: payload() })}>
-          {t("Save as optional", "Enregistrer comme facultative")}
+          {t("Save as pending", "Mettre en attente")}
         </Button>
         <SubmitButton onClick={() => m.mutate({ date: day, ...payload() })} blocked={blocked} pending={m.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
       </ActionBar>

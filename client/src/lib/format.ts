@@ -1,8 +1,63 @@
 import Decimal from "decimal.js";
 
+/**
+ * A number typed by a person, French or English style: "4,50", "4.50", "1 234,5", "1.234,5", "1,234.5", "0,1389".
+ * Spaces group thousands. With both "," and "." the last one is the decimal mark. With only one kind:
+ * one mark is the decimal mark ("2,5" = 2.5, "1.234" = 1.234 as the server writes quantities), several
+ * group thousands ("1.234.567"); in English a single "," before exactly three digits groups thousands.
+ * Returns the plain number text ("4.5"), "" for an empty field, or null when it is not a number.
+ */
+export function parseNumberInput(value: unknown): string | null {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : null;
+  let s = String(value).replace(/[\s\u00a0\u202f]/g, "").replace(/\$|FC|CDF|USD|%/gi, "");
+  if (s === "") return "";
+  let neg = false;
+  if (s.startsWith("-")) {
+    neg = true;
+    s = s.slice(1);
+  }
+  const commas = (s.match(/,/g) ?? []).length;
+  const dots = (s.match(/\./g) ?? []).length;
+  let out: string;
+  if (commas && dots) {
+    const mark = s.lastIndexOf(",") > s.lastIndexOf(".") ? "," : ".";
+    const i = s.lastIndexOf(mark);
+    out = `${s.slice(0, i).replace(/[.,]/g, "")}.${s.slice(i + 1)}`;
+  } else if (commas + dots === 0) {
+    out = s;
+  } else {
+    const mark = commas ? "," : ".";
+    const count = commas || dots;
+    const i = s.indexOf(mark);
+    if (count > 1) out = s.split(mark).join("");
+    else if (mark === "," && lang === "en" && /^\d{1,3},\d{3}$/.test(s)) out = s.replace(",", "");
+    else out = `${s.slice(0, i) || "0"}.${s.slice(i + 1)}`;
+  }
+  if (out.endsWith(".")) out = out.slice(0, -1);
+  if (!/^\d+(\.\d+)?$/.test(out)) return null;
+  return `${neg ? "-" : ""}${out}`;
+}
+
 export function num(value: unknown): number {
+  if (typeof value === "string" && /[,\s\u00a0\u202f]/.test(value)) value = parseNumberInput(value);
   const n = Number(value ?? 0);
   return Number.isFinite(n) ? n : 0;
+}
+
+/**
+ * A plain number ("1234.5") as it reads inside a form field: "1 234,5" in French, "1234.5" in English.
+ * Whole numbers lose their ",00". Anything that is not a plain number is shown as it is.
+ */
+export function inputText(value: string | null | undefined): string {
+  const v = (value ?? "").trim();
+  const m = /^(-?)(\d+)(?:\.(\d+))?$/.exec(v);
+  if (!m) return value ?? "";
+  const [, sign, int, frac] = m;
+  const fraction = frac && /[1-9]/.test(frac) ? frac : "";
+  if (lang === "en") return `${sign}${int}${fraction ? `.${fraction}` : ""}`;
+  const grouped = int.length > 3 ? int.replace(/\B(?=(\d{3})+(?!\d))/g, "\u00a0") : int;
+  return `${sign}${grouped}${fraction ? `,${fraction}` : ""}`;
 }
 
 /*
@@ -23,13 +78,18 @@ function nf(min: number, max: number): Intl.NumberFormat {
   const key = `${lang}:${min}:${max}`;
   let f = cache.get(key);
   if (!f) {
-    f = new Intl.NumberFormat(lang === "fr" ? "fr-FR" : "en-US", { minimumFractionDigits: min, maximumFractionDigits: max });
+    const intl = new Intl.NumberFormat(lang === "fr" ? "fr-FR" : "en-US", { minimumFractionDigits: min, maximumFractionDigits: max });
+    // fr-FR groups thousands with U+202F; use the ordinary no-break space everywhere.
+    f = { format: (n: number) => intl.format(n).replace(/\u202f/g, NB) } as Intl.NumberFormat;
     cache.set(key, f);
   }
   return f;
 }
-/** Narrow no-break space: keeps "1 415,51 $" on one line. */
-const NB = "\u202f";
+/**
+ * No-break space: keeps "1 415,51 $" on one line. The ordinary one (U+00A0), not the narrow U+202F,
+ * which some phone fonts draw with no width at all ("1761,00 $").
+ */
+const NB = "\u00a0";
 
 /** A plain number in the interface language, e.g. 1 415,5 or 1,415.5. */
 export function number(value: unknown, maxDecimals = 2, minDecimals = 0): string {
@@ -54,6 +114,17 @@ export function money(value: unknown, currency: string = "USD"): string {
   if (currency === "CDF") return cdf(value);
   if (currency === "USD") return usd(value);
   return `${nf(2, 2).format(num(value))}${NB}${currency === "CNY" ? "¥" : currency}`;
+}
+
+/** How a currency is written in the shop: FC and $, never CDF / USD. */
+export function curLabel(currency: string | null | undefined): string {
+  return currency === "CDF" ? "FC" : currency === "USD" ? "$" : currency === "CNY" ? "¥" : currency ?? "";
+}
+
+/** An account name with its currency, unless the name already says it: "M-Pesa ($)", "Caisse FC". */
+export function accountLabel(name: string, currency: string | null | undefined): string {
+  if (/\b(FC|CDF|USD|\$|CNY|RMB)\b|\$/i.test(name)) return name;
+  return `${name} (${curLabel(currency)})`;
 }
 
 export function qty(value: unknown): string {
@@ -125,11 +196,19 @@ export function previousMonth(day: string = todayLocal()): string {
 /** Exact decimal arithmetic for money typed in forms. */
 export function d(value: unknown): Decimal {
   try {
-    const x = new Decimal(String(value ?? 0).trim() || 0);
+    let text = String(value ?? 0).trim();
+    if (/[,\s\u00a0\u202f]/.test(text)) text = parseNumberInput(text) ?? "NaN";
+    const x = new Decimal(text || 0);
     return x.isFinite() ? x : new Decimal(0);
   } catch {
     return new Decimal(0);
   }
+}
+
+/** French spacing before ! ? ; : in text people typed ("Merci pour votre achat!" → "Merci pour votre achat !"). */
+export function frenchPunctuation(text: string): string {
+  if (lang !== "fr") return text;
+  return text.replace(/([^\s\d/])[ \u202f]?([!?;:])(?=\s|$)/g, "$1\u00a0$2");
 }
 
 export function variantText(attributes: Record<string, string> | null | undefined): string {

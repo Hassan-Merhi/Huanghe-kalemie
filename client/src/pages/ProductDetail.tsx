@@ -105,8 +105,8 @@ export default function ProductDetail() {
         {p.tracksSerials && (
           <Badge variant="outline" className="gap-1"><Bike className="h-3 w-3" /> {t("Motorcycle — chassis numbers tracked", "Moto — numéros de châssis suivis")}</Badge>
         )}
-        <Badge variant="outline">{t("In stock", "En stock")}: {qty(totalQty.toString())}</Badge>
-        {showCost && <Badge variant="outline">{t("Stock value", "Valeur du stock")}: {usd(totalValue.toFixed(2))}</Badge>}
+        <Badge variant="outline">{t("In stock:", "En stock\u00a0:")} {qty(totalQty.toString())}</Badge>
+        {showCost && <Badge variant="outline">{t("Stock value:", "Valeur du stock\u00a0:")} {usd(totalValue.toFixed(2))}</Badge>}
       </div>
       {p.description && <p className="mb-4 whitespace-pre-line text-sm text-muted-foreground">{p.description}</p>}
 
@@ -194,7 +194,7 @@ export default function ProductDetail() {
                     <TableRow key={u.id} className={!u.chassisNo ? "bg-amber-50 dark:bg-amber-950/30" : undefined}>
                       <TableCell>{u.label}</TableCell>
                       <TableCell className="whitespace-nowrap font-mono text-xs">
-                        {u.chassisNo ?? <span className="font-sans text-amber-700 dark:text-amber-400">{t("Missing — register in Motorcycles", "Manquant — à saisir dans Motos")}</span>}
+                        {u.chassisNo ?? <Link href="/motorcycles" className="font-sans text-amber-700 underline underline-offset-2 hover:text-amber-900 dark:text-amber-400">{t("Missing — register in Motorcycles", "Manquant — à saisir dans Motos")}</Link>}
                       </TableCell>
                       <TableCell className="whitespace-nowrap font-mono text-xs">{u.engineNo ?? "—"}</TableCell>
                       <TableCell>{u.color ?? "—"}</TableCell>

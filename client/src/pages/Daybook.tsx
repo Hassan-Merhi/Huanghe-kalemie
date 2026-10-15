@@ -15,7 +15,7 @@ import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
 import { downloadCsv } from "@/lib/sheets";
-import { cdf, d, date as fmtDate, todayLocal, usd } from "@/lib/format";
+import { cdf, d, date as fmtDate, frenchPunctuation, qty, todayLocal, usd } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { RangePicker, useRange } from "@/pages/Reports";
 import { journalTypeLabel } from "@/pages/ContactDetail";
@@ -45,6 +45,7 @@ interface DaybookRow {
   memo: string | null;
   sourceType: string | null;
   saleId?: number | null;
+  saleFlags?: { zeroPrice: boolean; belowCost: boolean };
   sourceId: number | null;
   reversedByJournalId: number | null;
   reversesJournalId: number | null;
@@ -108,6 +109,8 @@ function StatusBadges({ r, t }: { r: DaybookRow; t: T }) {
     <>
       {r.reversedByJournalId && <Badge variant="destructive" className="whitespace-nowrap">{t("Reversed", "Annulée")}</Badge>}
       {r.reversesJournalId && <Badge variant="secondary" className="whitespace-nowrap">{t("Reversal entry", "Contre-passation")}</Badge>}
+      {r.saleFlags?.zeroPrice && <Badge variant="destructive" className="whitespace-nowrap">{t("Price 0", "Prix nul")}</Badge>}
+      {r.saleFlags?.belowCost && <Badge variant="outline" className="whitespace-nowrap border-amber-600 text-amber-800 dark:border-amber-400 dark:text-amber-300">{t("Below cost", "Vente à perte")}</Badge>}
     </>
   );
 }
@@ -161,7 +164,6 @@ export default function Daybook() {
   const lastActive = useQuery<{ date: string | null }>({ queryKey: ["/api/daybook/active-day", { date: day }], enabled: mode === "day" && validDate(day) });
   const data = dq.data;
   const rows = data?.rows ?? [];
-  const total = useMemo(() => rows.reduce((s, r) => s.plus(r.amount), d(0)), [rows]);
 
   const groups = useMemo(() => {
     const m = new Map<string, { type: string; count: number; total: ReturnType<typeof d> }>();
@@ -312,7 +314,13 @@ export default function Daybook() {
         <StatCard label={t("Vouchers", "Pièces")} value={rows.length} sub={mode === "day" ? fmtDate(day) : `${fmtDate(from)} → ${fmtDate(to)}`} />
         <StatCard label={t("Money in", "Entrées d'argent")} value={usd(data?.moneyIn ?? 0)} tone="good" sub={t("Cash, bank, mobile money", "Caisse, banque, mobile money")} />
         <StatCard label={t("Money out", "Sorties d'argent")} value={usd(data?.moneyOut ?? 0)} tone="bad" />
-        <StatCard label={t("Total", "Total")} value={usd(total)} sub={t("Sum of voucher amounts", "Somme des montants des pièces")} />
+        {/* Net money movement; adding money in and money out together would mean nothing. */}
+        <StatCard
+          label={t("Net (in − out)", "Net (entrées − sorties)")}
+          value={usd(d(data?.moneyIn ?? 0).minus(d(data?.moneyOut ?? 0)).toFixed(2))}
+          tone={d(data?.moneyIn ?? 0).minus(d(data?.moneyOut ?? 0)).lt(0) ? "bad" : "neutral"}
+          sub={t("Cash, bank, mobile money", "Caisse, banque, mobile money")}
+        />
       </div>
 
       <ErrorText error={dq.error} />
@@ -356,9 +364,9 @@ export default function Daybook() {
               </TableBody>
               <TableFooter>
                 <TableRow>
-                  <TableCell>{t("Total", "Total")}</TableCell>
+                  <TableCell>{t("Vouchers", "Pièces")}</TableCell>
                   <TableCell className="text-right"><Num>{rows.length}</Num></TableCell>
-                  <TableCell className="text-right"><Num>{usd(total)}</Num></TableCell>
+                  <TableCell />
                 </TableRow>
               </TableFooter>
             </Table>
@@ -401,7 +409,7 @@ export default function Daybook() {
                               <div className="flex flex-wrap gap-1"><TypeBadge type={r.type} t={t} /><StatusBadges r={r} t={t} /></div>
                             </TableCell>
                             <TableCell className="min-w-[200px]">
-                              <span className={cn(r.reversedByJournalId && "line-through")}>{r.memo || "—"}</span>
+                              <span className={cn(r.reversedByJournalId && "line-through")}>{r.memo ? frenchPunctuation(r.memo) : "—"}</span>
                               {contacts && <span className="block text-xs text-muted-foreground">{contacts}</span>}
                             </TableCell>
                             <TableCell className="text-right font-medium"><Num>{usd(r.amount)}</Num></TableCell>
@@ -438,7 +446,7 @@ export default function Daybook() {
                     <button type="button" className="w-full text-left" onClick={() => toggle(r.id)}>
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <p className={cn("truncate font-medium", r.reversedByJournalId && "line-through text-muted-foreground")}>{r.memo || contacts || journalTypeLabel(r.type, t)}</p>
+                          <p className={cn("truncate font-medium", r.reversedByJournalId && "line-through text-muted-foreground")}>{(r.memo && frenchPunctuation(r.memo)) || contacts || journalTypeLabel(r.type, t)}</p>
                           <p className="truncate text-xs text-muted-foreground">
                             {fmtDate(r.date)} · <span className="font-mono">{r.number}</span>{contacts && r.memo ? ` · ${contacts}` : ""}
                           </p>
@@ -545,7 +553,7 @@ function LinesTable({ lines, t }: { lines: DaybookLine[]; t: T }) {
               <td className="py-1 pr-3 text-right"><Num>{d(l.credit).isZero() ? "" : usd(l.credit)}</Num></td>
               <td className="py-1 text-right text-xs">
                 <Num>{l.nativeAmount != null ? cdf(l.nativeAmount) : ""}</Num>
-                {l.nativeAmount != null && l.rate && <span className="block text-muted-foreground">@ {l.rate}</span>}
+                {l.nativeAmount != null && l.rate && <span className="block text-muted-foreground">{t("rate", "taux")} {qty(l.rate)}{"\u00a0"}FC/$</span>}
               </td>
             </tr>
           ))}

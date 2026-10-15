@@ -1,6 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { Link } from "wouter";
+import { Link, useSearch } from "wouter";
 import { ChevronDown, ChevronRight, Download, Plus, Printer, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -106,7 +106,8 @@ function TabNote({ children }: { children: string }) {
 
 export default function Reports() {
   const t = useT();
-  const [tab, setTab] = useState("pnl");
+  const search = useSearch();
+  const [tab, setTab] = useState(() => new URLSearchParams(search).get("tab") ?? "pnl");
   return (
     <div>
       <style>{WIDE_PRINT_CSS}</style>
@@ -125,11 +126,11 @@ export default function Reports() {
             <TabsTrigger value="checks">{t("Self-check", "Contrôles")}</TabsTrigger>
           </TabsList>
         </div>
-        <TabsContent value="pnl"><TabNote>{t("What the shop earned in the period: sales minus the cost of the goods sold and the running costs.", "Ce que la boutique a gagné sur la période : les ventes moins le coût des articles vendus et les frais de fonctionnement.")}</TabNote><ProfitLoss /></TabsContent>
+        <TabsContent value="pnl"><TabNote>{t("What the shop earned in the period: sales minus the cost of the goods sold and the running costs.", "Ce que la boutique a gagné sur la période\u00a0: les ventes moins le coût des articles vendus et les frais de fonctionnement.")}</TabNote><ProfitLoss /></TabsContent>
         <TabsContent value="items"><TabNote>{t("Which items sold, how many, and what each one earned after its cost.", "Quels articles se sont vendus, combien, et ce que chacun a rapporté après son coût.")}</TabNote><SalesByItem /></TabsContent>
-        <TabsContent value="daily"><TabNote>{t("One day at the till: sales by payment type, then what each cash box and account should hold at closing.", "Une journée de caisse : les ventes par moyen de paiement, puis ce que chaque caisse et compte doit contenir à la fermeture.")}</TabNote><DailyCash /></TabsContent>
+        <TabsContent value="daily"><TabNote>{t("One day at the till: sales by payment type, then what each cash box and account should hold at closing.", "Une journée de caisse\u00a0: les ventes par moyen de paiement, puis ce que chaque caisse et compte doit contenir à la fermeture.")}</TabNote><DailyCash /></TabsContent>
         <TabsContent value="bs"><TabNote>{t("What the shop owns, what it owes, and what is left for the partners, on a date.", "Ce que la boutique possède, ce qu'elle doit, et ce qui revient aux associés, à une date.")}</TabNote><BalanceSheet /></TabsContent>
-        <TabsContent value="tb"><TabNote>{t("Every account's balance on a date. Both columns must be equal: that proves nothing is missing from the books.", "Le solde de chaque compte à une date. Les deux colonnes doivent être égales : cela prouve que rien ne manque dans les comptes.")}</TabNote><TrialBalance /></TabsContent>
+        <TabsContent value="tb"><TabNote>{t("Every account's balance on a date. Both columns must be equal: that proves nothing is missing from the books.", "Le solde de chaque compte à une date. Les deux colonnes doivent être égales\u00a0: cela prouve que rien ne manque dans les comptes.")}</TabNote><TrialBalance /></TabsContent>
         <TabsContent value="journal"><TabNote>{t("Every entry in date order, with the accounts each one moved.", "Toutes les écritures par date, avec les comptes que chacune a touchés.")}</TabNote><Journals /></TabsContent>
         <TabsContent value="ledger"><TabNote>{t("Everything that went through one account, line by line, with the running balance.", "Tout ce qui est passé par un compte, ligne par ligne, avec le solde au fur et à mesure.")}</TabNote><Ledger /></TabsContent>
         <TabsContent value="ageing"><TabNote>{t("Each customer who owes money, split by how long it has been owed. Payments clear the oldest amounts first.", "Chaque client qui doit de l'argent, réparti selon depuis combien de temps. Les paiements soldent d'abord les montants les plus anciens.")}</TabNote><Ageing /></TabsContent>
@@ -258,7 +259,7 @@ function SalesByItem() {
 
   function exportCsv() {
     downloadCsv(`sales-by-item_${range.from}_${range.to}.csv`, [
-      [t("Item", "Article"), t("Size / variant", "Taille / variante"), "SKU", t("Category", "Catégorie"), t("Qty", "Qté"), t("Revenue", "Ventes"), t("Cost", "Coût"), t("Profit", "Bénéfice"), t("Margin %", "Marge %")],
+      [t("Item", "Article"), t("Size / variant", "Taille / variante"), t("SKU", "Code"), t("Category", "Catégorie"), t("Qty", "Qté"), t("Revenue", "Ventes"), t("Cost", "Coût"), t("Profit", "Bénéfice"), t("Margin %", "Marge %")],
       ...rows.map((r) => [r.productName, variantText(r.attributes), r.sku, r.categoryName ?? "", r.qty, r.revenue, r.cogs, r.profit, margin(r) ?? ""]),
       [t("Total", "Total"), "", "", "", "", tot.revenue.toFixed(2), tot.cogs.toFixed(2), tot.profit.toFixed(2), totMargin ?? ""],
     ]);
@@ -583,12 +584,14 @@ const CHECK_TEXT: Record<string, { title: [string, string]; what: [string, strin
   payables: { title: ["Suppliers add up", "Les fournisseurs concordent"], what: ["What we owe each supplier, agent and employee adds up to the payables account.", "Ce que l'on doit à chaque fournisseur, agent et employé égale le compte Fournisseurs."], money: true, expected: ["Account", "Compte"], actual: ["Contacts", "Contacts"] },
   goods_in_transit: { title: ["Container costs add up", "Les frais de conteneur concordent"], what: ["Costs of containers not yet offloaded equal Goods in transit.", "Les frais des conteneurs pas encore déchargés égalent Marchandises en transit."], money: true, expected: ["Account", "Compte"], actual: ["Containers", "Conteneurs"] },
   money_not_negative: { title: ["No cash box below zero", "Aucune caisse sous zéro"], what: ["No cash box, bank or mobile money account holds less than nothing.", "Aucune caisse, banque ou mobile money n'a un solde négatif."], money: false, expected: ["Expected", "Attendu"], actual: ["Accounts below zero", "Comptes sous zéro"] },
+  sales_zero_price: { title: ["No sale at 0 $", "Aucune vente à prix nul"], what: ["Completed sales of the last 90 days with an item sold at 0 $: usually a price typed wrong.", "Ventes des 90 derniers jours avec un article vendu à 0\u00a0$\u00a0: souvent un prix mal saisi."], money: false, expected: ["Expected", "Attendu"], actual: ["Sales at 0 $", "Ventes à prix nul"] },
+  sales_below_cost: { title: ["No sale below cost", "Aucune vente à perte"], what: ["Completed sales of the last 90 days sold for less than the cost of their items.", "Ventes des 90 derniers jours vendues moins cher que le coût de leurs articles."], money: false, expected: ["Expected", "Attendu"], actual: ["Sales below cost", "Ventes à perte"] },
   franc_lines: { title: ["Francs are counted", "Les francs sont comptés"], what: ["Every movement of a franc account carries its amount in francs and its rate.", "Chaque mouvement d'un compte en francs porte son montant en FC et son taux."], money: false, expected: ["Expected", "Attendu"], actual: ["Lines without francs", "Lignes sans francs"] },
 };
 
 function SelfCheck() {
   const t = useT();
-  const q = useQuery<{ ok: boolean; checks: CheckRow[] }>({ queryKey: ["/api/reports/self-check"] });
+  const q = useQuery<{ ok: boolean; checks: CheckRow[]; warnings?: CheckRow[] }>({ queryKey: ["/api/reports/self-check"] });
   if (q.isLoading) return <Loading />;
   if (q.error) return <ErrorText error={q.error} />;
   const data = q.data!;
@@ -596,21 +599,22 @@ function SelfCheck() {
     <div className="space-y-3">
       <div className={cn("rounded-md border p-3 text-sm font-medium", data.ok ? "border-green-600/30 bg-green-600/10 text-green-800 dark:text-green-300" : "border-destructive/40 bg-destructive/10 text-destructive")}>
         {data.ok
-          ? t("Everything agrees.", "Tout concorde.")
+          ? `${t("Everything agrees.", "Tout concorde.")}${(data.warnings ?? []).some((w) => !w.ok) ? ` ${t("Some sales are worth a look below.", "Quelques ventes sont à regarder ci-dessous.")}` : ""}`
           : t(`${data.checks.filter((c) => !c.ok).length} check(s) need a look.`, count(t, data.checks.filter((c) => !c.ok).length, ["", ""], ["contrôle à vérifier", "contrôles à vérifier"]))}
         <Button variant="ghost" size="sm" className="ml-2 h-7" onClick={() => q.refetch()}>
           <RotateCcw className="mr-1 h-3.5 w-3.5" /> {t("Check again", "Recontrôler")}
         </Button>
       </div>
       <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-        {data.checks.map((c) => {
+        {[...data.checks, ...(data.warnings ?? []).map((w) => ({ ...w, warning: true }))].map((c: CheckRow & { warning?: boolean }) => {
           const text = CHECK_TEXT[c.key];
           const show = (v: string) => (text?.money ? usd(v) : v);
           return (
-            <Card key={c.key} className={cn(!c.ok && "border-destructive/50")}>
+            <Card key={c.key} className={cn(!c.ok && (c.warning ? "border-amber-500/60" : "border-destructive/50"))}>
               <CardContent className="space-y-1 p-4">
-                <p className={cn("font-medium", c.ok ? "text-green-700 dark:text-green-400" : "text-destructive")}>
-                  {c.ok ? "✓" : "✗"} {text ? t(text.title[0], text.title[1]) : c.key}
+                <p className={cn("font-medium", c.ok ? "text-green-700 dark:text-green-400" : c.warning ? "text-amber-700 dark:text-amber-400" : "text-destructive")}>
+                  {c.ok ? "✓" : c.warning ? "!" : "✗"}{" "}
+                  {text && c.warning && !c.ok ? `${t(text.actual[0], text.actual[1])}${t(":", "\u00a0:")} ${c.actual}` : text ? t(text.title[0], text.title[1]) : c.key}
                 </p>
                 {text && <p className="text-xs text-muted-foreground">{t(text.what[0], text.what[1])}</p>}
                 {text?.money ? (
@@ -619,11 +623,16 @@ function SelfCheck() {
                     {!c.ok && <span className="ml-1 font-medium text-destructive">({t("difference", "écart")} {show(c.difference)})</span>}
                   </p>
                 ) : (
-                  !c.ok && text && <p className="text-sm text-destructive">{t(text.actual[0], text.actual[1])} : {c.actual}</p>
+                  !c.ok && text && !c.warning && <p className={cn("text-sm", "text-destructive")}>{t(text.actual[0], text.actual[1])}{t(":", "\u00a0:")} {c.actual}</p>
                 )}
                 {c.details?.length ? (
                   <ul className="mt-1 space-y-0.5 text-xs">
-                    {c.details.map((x, i) => <li key={i} className="flex justify-between gap-2"><span>{x.label}</span><span className="tabular">{x.value}</span></li>)}
+                    {c.details.map((x, i) => (
+                      <li key={i} className="flex justify-between gap-2">
+                        <span>{c.warning ? x.label.replace(/\d{4}-\d{2}-\d{2}/, (iso) => fmtDate(iso)) : x.label}</span>
+                        <span className="tabular">{c.warning ? x.value.split(" < ").map((v) => usd(v)).join(" < ") : x.value}</span>
+                      </li>
+                    ))}
                   </ul>
                 ) : null}
               </CardContent>
@@ -722,10 +731,10 @@ function BalanceSheet() {
       {q.isLoading && <Loading />}
       {bs && (
         <div className="grid gap-4 lg:grid-cols-2">
-          {section(t("Assets: what the shop owns", "Actif : ce que la boutique possède"), bs.assets, bs.totalAssets, t("Total assets", "Total actif"))}
+          {section(t("Assets: what the shop owns", "Actif\u00a0: ce que la boutique possède"), bs.assets, bs.totalAssets, t("Total assets", "Total actif"))}
           <div className="space-y-4">
-            {section(t("Liabilities: what the shop owes", "Dettes : ce que la boutique doit"), bs.liabilities, bs.totalLiabilities, t("Total liabilities", "Total dettes"))}
-            {section(t("Equity: what belongs to the partners", "Capitaux propres : ce qui revient aux associés"), bs.equity, bs.totalEquity, t("Total equity", "Total capitaux propres"))}
+            {section(t("Liabilities: what the shop owes", "Dettes\u00a0: ce que la boutique doit"), bs.liabilities, bs.totalLiabilities, t("Total liabilities", "Total dettes"))}
+            {section(t("Equity: what belongs to the partners", "Capitaux propres\u00a0: ce qui revient aux associés"), bs.equity, bs.totalEquity, t("Total equity", "Total capitaux propres"))}
           </div>
         </div>
       )}
@@ -939,7 +948,7 @@ function Journals() {
                                       <TableCell className="text-right"><Num>{d(l.debit).isZero() ? "" : usd(l.debit)}</Num></TableCell>
                                       <TableCell className="text-right"><Num>{d(l.credit).isZero() ? "" : usd(l.credit)}</Num></TableCell>
                                       <TableCell className="text-right text-xs text-muted-foreground">
-                                        <Num>{l.nativeAmount != null ? `${cdf(l.nativeAmount)}${l.rate ? ` @ ${qty(l.rate)}` : ""}` : ""}</Num>
+                                        <Num>{l.nativeAmount != null ? `${cdf(l.nativeAmount)}${l.rate ? ` · ${t("rate", "taux")} ${qty(l.rate)}\u00a0FC/$` : ""}` : ""}</Num>
                                       </TableCell>
                                     </TableRow>
                                   ))}
@@ -1109,10 +1118,10 @@ function ManualJournalDialog({ onClose }: { onClose: () => void }) {
           </Button>
         </div>
         <div className="flex flex-wrap justify-end gap-4 rounded-lg bg-muted p-3 text-sm">
-          <span>{t("Debits", "Débits")}: <Num className="font-medium">{usd(totalDebit.toFixed(2))}</Num></span>
-          <span>{t("Credits", "Crédits")}: <Num className="font-medium">{usd(totalCredit.toFixed(2))}</Num></span>
+          <span>{t("Debits:", "Débits\u00a0:")} <Num className="font-medium">{usd(totalDebit.toFixed(2))}</Num></span>
+          <span>{t("Credits:", "Crédits\u00a0:")} <Num className="font-medium">{usd(totalCredit.toFixed(2))}</Num></span>
           <span className={cn("font-semibold", diff.isZero() ? "text-green-700 dark:text-green-400" : "text-destructive")}>
-            {t("Difference", "Écart")}: <Num>{usd(diff.toFixed(2))}</Num>
+            {t("Difference:", "Écart\u00a0:")} <Num>{usd(diff.toFixed(2))}</Num>
           </span>
         </div>
         <DialogFooter>

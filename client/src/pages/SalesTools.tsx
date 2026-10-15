@@ -127,7 +127,7 @@ function PriceList() {
       .sort((a, b) => (a.categoryName ?? "").localeCompare(b.categoryName ?? "") || a.productName.localeCompare(b.productName) || a.sku.localeCompare(b.sku));
   }, [rows, category, search, serverSearch]);
 
-  const header = [t("Category", "Catégorie"), t("Item", "Article"), t("Variant", "Variante"), "SKU", t("Price USD", "Prix USD"), t("Stock", "Stock")];
+  const header = [t("Category", "Catégorie"), t("Item", "Article"), t("Variant", "Variante"), t("SKU", "Code"), t("Price USD", "Prix USD"), t("Stock", "Stock")];
   const table = () => [header, ...filtered.map((r) => [r.categoryName ?? "", r.productName, variantText(r.attributes), r.sku, Number(r.sellPrice), Number(r.qty)])];
   const catLabel = (c: string) => (c === NO_CAT ? t("No category", "Sans catégorie") : c);
 
@@ -137,7 +137,7 @@ function PriceList() {
         <Field label={t("Search", "Rechercher")} className="min-w-[200px] flex-1">
           <div className="relative">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input className="pl-8" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("Name, size, SKU…", "Nom, taille, SKU…")} />
+            <Input className="pl-8" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("Name, size, SKU…", "Nom, taille, code…")} />
           </div>
         </Field>
         <Field label={t("Category", "Catégorie")} className="w-48">
@@ -183,8 +183,8 @@ function PriceList() {
                   <TableRow>
                     <TableHead>{t("Item", "Article")}</TableHead>
                     <TableHead className="hidden sm:table-cell print:table-cell">{t("Variant", "Variante")}</TableHead>
-                    <TableHead className="hidden md:table-cell print:table-cell">SKU</TableHead>
-                    <TableHead className="text-right">{t("Price", "Prix")}</TableHead>
+                    <TableHead className="hidden md:table-cell print:table-cell">{t("SKU", "Code")}</TableHead>
+                    <TableHead className="text-right">{t("Price ($)", "Prix ($)")}</TableHead>
                     <TableHead className="text-right">{t("Stock", "Stock")}</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -202,7 +202,7 @@ function PriceList() {
                         {canEdit ? <PriceCell row={r} /> : <Num className="font-medium">{usd(r.sellPrice)}</Num>}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Num className={cn(d(r.qty).lte(0) && "text-destructive", r.low && d(r.qty).gt(0) && "text-amber-600 dark:text-amber-400")}>{fmtQty(r.qty)}</Num>
+                        <Num className={cn(d(r.qty).lte(0) && "text-destructive", r.low && d(r.qty).gt(0) && "text-amber-700 dark:text-amber-400")}>{fmtQty(r.qty)}</Num>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -412,7 +412,7 @@ function Reorder() {
 
   function exportXlsx() {
     downloadXlsx(`${t("restocking", "reapprovisionnement")}_${todayLocal()}.xlsx`, [
-      [t("Category", "Catégorie"), t("Item", "Article"), t("Variant", "Variante"), "SKU", t("Qty", "Qté"), t("Reorder level", "Seuil"), t("Suggested order", "Commande suggérée"), t("Average cost", "Coût moyen")],
+      [t("Category", "Catégorie"), t("Item", "Article"), t("Variant", "Variante"), t("SKU", "Code"), t("Qty", "Qté"), t("Reorder level", "Seuil"), t("Suggested order", "Commande suggérée"), t("Average cost", "Coût moyen")],
       ...rows.map((r) => [r.categoryName ?? "", r.productName, variantText(r.attributes), r.sku, Number(r.qty), Number(r.reorderLevel), Number(r.suggested.toString()), Number(r.avgCost)]),
     ], t("Restocking", "Réappro"));
   }
@@ -452,7 +452,7 @@ function Reorder() {
                         <div className="text-xs text-muted-foreground">{[variantText(r.attributes), r.sku].filter(Boolean).join(" · ")}</div>
                       </TableCell>
                       <TableCell className="text-right">
-                        {d(r.qty).lte(0) ? <Badge variant="destructive">{fmtQty(r.qty)}</Badge> : <Num className="text-amber-600 dark:text-amber-400">{fmtQty(r.qty)}</Num>}
+                        {d(r.qty).lte(0) ? <Badge variant="destructive">{fmtQty(r.qty)}</Badge> : <Num className="text-amber-700 dark:text-amber-400">{fmtQty(r.qty)}</Num>}
                       </TableCell>
                       <TableCell className="text-right"><Num>{fmtQty(r.reorderLevel)}</Num></TableCell>
                       <TableCell className="text-right"><Num className="font-semibold">{fmtQty(r.suggested.toString())}</Num></TableCell>
@@ -528,7 +528,7 @@ function TodaySales() {
                   {s.status === "voided" ? (
                     <Badge variant="destructive">{t("Cancelled", "Annulée")}</Badge>
                   ) : d(s.creditUsd).gt(0) ? (
-                    <span className="text-xs text-amber-600 dark:text-amber-400">{t("credit", "crédit")} {usd(s.creditUsd)}</span>
+                    <span className="text-xs text-amber-700 dark:text-amber-400">{t("credit", "crédit")} {usd(s.creditUsd)}</span>
                   ) : null}
                 </span>
               </Link>
