@@ -14,7 +14,7 @@ import {
 } from "@shared/schema";
 import { cents, dec, sum, Decimal, type DecimalInput } from "@shared/money";
 import type { Tx } from "../db";
-import { AppError, badRequest } from "../errors";
+import { AppError, badRequest, francDecimalsError } from "../errors";
 
 export const SYSTEM_ACCOUNTS = {
   cashUsd: "cash_usd",
@@ -542,6 +542,8 @@ export async function moneyLeg(
   if (!account.active) throw badRequest(`${account.name} is inactive`, `Le compte ${account.name} est inactif`);
   const amount = cents(leg.amount);
   if (amount.lte(0)) throw badRequest("Amounts must be greater than zero", "Les montants doivent être supérieurs à zéro");
+  // Francs change hands in whole notes: "12 500,50 FC" is a typing slip, not an amount.
+  if (account.currency === "CDF" && !amount.isInteger()) throw francDecimalsError(amount);
   const rate = account.currency === "CDF" ? await resolveRate(tx, leg.date, leg.rate) : null;
   const usd = toUsd(account.currency, amount, rate);
   return {

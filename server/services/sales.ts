@@ -18,7 +18,8 @@ import {
 } from "@shared/schema";
 import { allocateCents, cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
-import { badRequest, conflict, forbidden, notFound } from "../errors";
+import { badRequest, conflict, forbidden, notFound, wholeUnitError } from "../errors";
+import { wholeUnit } from "@shared/units";
 import { moneyLeg, nextNumber, postJournal, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
 import { issueStock, linkMovementsToJournal, receiveStock, stockQty } from "./stock";
 
@@ -72,7 +73,7 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
 
   const variantIds = Array.from(new Set(input.lines.map((l) => l.variantId)));
   const variantRows = await tx
-    .select({ id: variants.id, sku: variants.sku, name: products.name, tracksSerials: products.tracksSerials, active: variants.active, sellPrice: variants.sellPrice })
+    .select({ id: variants.id, sku: variants.sku, name: products.name, tracksSerials: products.tracksSerials, unit: products.unit, active: variants.active, sellPrice: variants.sellPrice })
     .from(variants)
     .innerJoin(products, eq(products.id, variants.productId))
     .where(inArray(variants.id, variantIds));
@@ -91,6 +92,7 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
     if (!v.active) throw badRequest(`${v.name} (${v.sku}) is inactive`, `${v.name} (${v.sku}) est inactif`);
     const q = stockQty(l.qty);
     if (q.lte(0)) throw badRequest("Quantities must be greater than zero", "Les quantités doivent être supérieures à zéro");
+    if (!q.isInteger() && wholeUnit(v.unit)) throw wholeUnitError(`${v.name} (${v.sku})`);
     const price = cents(l.unitPrice);
     if (price.isNegative()) throw badRequest("Prices cannot be negative", "Les prix ne peuvent pas être négatifs");
     // 0 $ is almost always a price typed wrong ("4,50" read as nothing); a gift is a 100 % line discount instead.
@@ -413,6 +415,10 @@ export async function returnSale(tx: Tx, saleId: number, input: ReturnInput, use
     const q = stockQty(req.qty);
     const remaining = dec(line.qty).minus(line.returnedQty);
     if (q.lte(0) || q.gt(remaining)) throw badRequest(`You can return at most ${remaining.toString()} of that item`, `Vous pouvez retourner au maximum ${remaining.toString()} de cet article`);
+    if (!q.isInteger()) {
+      const [p] = await tx.select({ unit: products.unit, name: products.name, sku: variants.sku }).from(variants).innerJoin(products, eq(products.id, variants.productId)).where(eq(variants.id, line.variantId));
+      if (p && wholeUnit(p.unit)) throw wholeUnitError(`${p.name} (${p.sku})`);
+    }
     const isLast = q.equals(remaining);
     // Amount and cost already returned on this line, so the last return takes exactly what is left.
     const prior = await tx.select().from(saleReturnLines).where(eq(saleReturnLines.saleLineId, line.id));

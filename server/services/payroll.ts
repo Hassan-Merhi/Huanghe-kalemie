@@ -2,7 +2,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { accounts, journals, parties, payrollRuns, type PayrollLine } from "@shared/schema";
 import { cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
-import { badRequest, conflict, notFound } from "../errors";
+import { badRequest, conflict, francDecimalsError, notFound } from "../errors";
 import { postJournal, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
 import { monthRange } from "./periods";
 import { partyBalances } from "./reports";
@@ -82,6 +82,8 @@ export async function runPayroll(tx: Tx, input: PayrollRunInput, userId: number)
     // Older screens send one "deduction": it always lowered the cost, so it is a penalty.
     const penalty = cents(l.penalty || (l.withheld == null ? l.deduction : null) || 0);
     if ([salary, bonus, withheld, penalty].some((x) => x.isNegative())) throw badRequest("Amounts cannot be negative", "Les montants ne peuvent pas être négatifs");
+    const fractional = rate ? [salary, bonus, withheld, penalty].find((x) => !x.isInteger()) : undefined;
+    if (fractional) throw francDecimalsError(fractional);
     const net = salary.plus(bonus).minus(withheld).minus(penalty);
     if (net.isNegative()) throw badRequest(`${p.name}: deductions are more than the salary`, `${p.name} : les retenues dépassent le salaire`);
     if (net.isZero() && withheld.isZero()) continue;

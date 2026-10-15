@@ -14,7 +14,8 @@ import {
 } from "@shared/schema";
 import { cents, dec, sum, Decimal, type DecimalInput } from "@shared/money";
 import type { Tx } from "../db";
-import { badRequest, conflict, forbidden, notFound } from "../errors";
+import { badRequest, conflict, forbidden, notFound, wholeUnitError, francDecimalsError } from "../errors";
+import { wholeUnit } from "@shared/units";
 import {
   cnyRateFor,
   contactLines,
@@ -107,6 +108,7 @@ export async function createExpense(tx: Tx, input: ExpenseInput, userId: number)
     creditLine = { accountId: leg.accountId, credit: usd, nativeAmount: leg.nativeAmount, rate: leg.rate };
   } else {
     await requireParty(tx, input.payablePartyId, ["supplier", "agent", "employee"]);
+    if (currency === "CDF" && !amount.isInteger()) throw francDecimalsError(amount);
     rate = currency === "CDF" ? await resolveRate(tx, input.date, input.rate) : null;
     usd = toUsd(currency, amount, rate);
     // A bill in francs stays owed in francs on the contact.
@@ -486,12 +488,13 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
     const change = dec(line.qtyChange, "quantity");
     if (change.isZero()) continue;
     const [v] = await tx
-      .select({ variant: variants, tracksSerials: products.tracksSerials, name: products.name })
+      .select({ variant: variants, tracksSerials: products.tracksSerials, name: products.name, unit: products.unit })
       .from(variants)
       .innerJoin(products, eq(products.id, variants.productId))
       .where(eq(variants.id, line.variantId));
     if (!v) throw badRequest("One of the items does not exist", "Un des articles n'existe pas");
     if (v.tracksSerials && !change.isInteger()) throw badRequest("Motorcycles must be whole units", "Les motos se comptent en unités entières");
+    if (!change.isInteger() && wholeUnit(v.unit)) throw wholeUnitError(`${v.name} (${v.variant.sku})`);
 
     if (change.isPositive()) {
       if (input.kind !== "opening" && input.kind !== "found" && input.kind !== "count" && input.kind !== "other") {
