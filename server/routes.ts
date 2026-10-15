@@ -343,6 +343,25 @@ export function registerRoutes(app: Express) {
     const q = z.object({ variantId: optionalId, status: z.string().optional(), locationId: optionalId, search: z.string().optional() }).parse(req.query);
     res.json(await catalog.listUnits(db, { variantId: q.variantId ?? undefined, status: q.status, locationId: q.locationId ?? undefined, search: q.search }));
   }));
+  app.post("/api/units/bulk", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    const body = z
+      .object({ units: z.array(z.object({ id, chassisNo: z.string().min(1).max(60), engineNo: z.string().max(60).nullable().optional(), color: z.string().max(40).nullable().optional() })).min(1).max(500) })
+      .parse(req.body);
+    const seen = new Set<string>();
+    for (const u of body.units) {
+      const key = u.chassisNo.trim().toUpperCase();
+      if (seen.has(key)) throw conflict(`Chassis number ${key} is typed twice`, `Le numéro de châssis ${key} est saisi deux fois`);
+      seen.add(key);
+    }
+    // All or nothing: one duplicate stops the whole list, so nothing is half saved.
+    const saved = await db.transaction(async (tx) => {
+      const out = [];
+      for (const u of body.units) out.push(await catalog.updateUnit(tx, u.id, u));
+      return out;
+    });
+    await audit(req, "update", "motorcycle", null, { bulk: saved.length, chassis: saved.map((u) => u.chassisNo) });
+    res.json({ saved: saved.length });
+  }));
   app.patch("/api/units/:id", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = z.object({ chassisNo: z.string().max(60).nullable().optional(), engineNo: z.string().max(60).nullable().optional(), color: z.string().max(40).nullable().optional() }).parse(req.body);
     const unit = await db.transaction((tx) => catalog.updateUnit(tx, paramId(req), body));

@@ -2,7 +2,7 @@ import bcrypt from "bcryptjs";
 import connectPg from "connect-pg-simple";
 import session from "express-session";
 import type { Express, NextFunction, Request, Response } from "express";
-import rateLimit from "express-rate-limit";
+import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { users, type Role } from "@shared/schema";
@@ -38,6 +38,7 @@ export function setupSession(app: Express) {
   const secret = process.env.SESSION_SECRET;
   if (!secret && process.env.NODE_ENV === "production") throw new Error("SESSION_SECRET is required in production");
   const PgStore = connectPg(session);
+  // Render puts exactly one proxy in front of the app; its address list's last entry is the visitor.
   app.set("trust proxy", 1);
   app.use(
     session({
@@ -87,9 +88,13 @@ export function requireRole(...roles: Role[]) {
 export const loginSchema = z.object({ username: z.string().min(1).max(60), password: z.string().min(1).max(200) });
 
 export function registerAuthRoutes(app: Express) {
+  // Only failed attempts count, per address and username: a wrong password on one account
+  // never locks out the other staff signing in from the same shop connection.
   const loginLimiter = rateLimit({
     windowMs: 15 * 60 * 1000,
-    limit: 20,
+    limit: 10,
+    skipSuccessfulRequests: true,
+    keyGenerator: (req) => `${ipKeyGenerator(req.ip ?? "")}|${String(req.body?.username ?? "").trim().toLowerCase().slice(0, 60)}`,
     standardHeaders: true,
     legacyHeaders: false,
     message: {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { AlertTriangle, Pencil, Search } from "lucide-react";
+import { AlertTriangle, ListPlus, Pencil, Search } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,8 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState, ErrorText, Field, Loading, PageHeader } from "@/components/common";
+import { EmptyState, ErrorText, Field, Loading, PageHeader, SubmitButton } from "@/components/common";
+import { Textarea } from "@/components/ui/textarea";
 import { useLocations } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
@@ -27,6 +28,7 @@ export default function Motorcycles() {
   const [debounced, setDebounced] = useState("");
   const [model, setModel] = useState("all");
   const [editing, setEditing] = useState<Unit | null>(null);
+  const [bulk, setBulk] = useState(false);
   const { data: locations = [] } = useLocations();
   useEffect(() => {
     const id = setTimeout(() => setDebounced(search.trim()), 250);
@@ -166,6 +168,11 @@ export default function Motorcycles() {
                     : t("Ask a manager to register the chassis number before selling these motorcycles.", "Demandez à un gérant de saisir le numéro de châssis avant de vendre ces motos.")}
                 </AlertDescription>
               </Alert>
+              {isManager && missing.length > 1 && (
+                <Button onClick={() => setBulk(true)}>
+                  <ListPlus className="mr-1 h-4 w-4" /> {t("Enter several chassis numbers", "Saisir plusieurs numéros de châssis")}
+                </Button>
+              )}
               <Card className="overflow-x-auto">{table(missing, true)}</Card>
             </div>
           )}
@@ -179,6 +186,7 @@ export default function Motorcycles() {
       )}
 
       {editing && <UnitDialog unit={editing} onClose={() => setEditing(null)} />}
+      {bulk && <BulkDialog units={missing} onClose={() => setBulk(false)} />}
     </div>
   );
 }
@@ -226,6 +234,92 @@ function UnitDialog({ unit, onClose }: { unit: Unit; onClose: () => void }) {
           >
             {t("Save", "Enregistrer")}
           </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+interface BulkRow { chassisNo: string; engineNo: string; color: string }
+
+/** Chassis numbers for many motorcycles at once, typed or pasted from a spreadsheet (one bike per line). */
+function BulkDialog({ units, onClose }: { units: Unit[]; onClose: () => void }) {
+  const t = useT();
+  const [rows, setRows] = useState<BulkRow[]>(() => units.map((u) => ({ chassisNo: "", engineNo: u.engineNo ?? "", color: u.color ?? "" })));
+  const [paste, setPaste] = useState("");
+  const m = useApiMutation<{ units: { id: number; chassisNo: string; engineNo: string | null; color: string | null }[] }>("POST", "/api/units/bulk", {
+    success: t("Chassis numbers saved", "Numéros de châssis enregistrés"),
+    onSuccess: onClose,
+  });
+  const set = (i: number, k: keyof BulkRow, v: string) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
+
+  function applyPaste() {
+    const lines = paste.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    setRows((rs) =>
+      rs.map((r, i) => {
+        const cells = lines[i]?.split(/\t|;|,/).map((c) => c.trim());
+        if (!cells) return r;
+        return { chassisNo: cells[0] ?? r.chassisNo, engineNo: cells[1] || r.engineNo, color: cells[2] || r.color };
+      }),
+    );
+    setPaste("");
+  }
+
+  const filled = rows.map((r, i) => ({ ...r, unit: units[i] })).filter((r) => r.chassisNo.trim());
+  const keys = filled.map((r) => r.chassisNo.trim().toUpperCase());
+  const dupe = keys.find((k, i) => keys.indexOf(k) !== i);
+  const blocked = !filled.length
+    ? t("Enter at least one chassis number", "Saisissez au moins un numéro de châssis")
+    : dupe
+      ? t(`${dupe} is typed twice`, `${dupe} est saisi deux fois`)
+      : null;
+
+  return (
+    <Dialog open onOpenChange={(o) => !o && onClose()}>
+      <DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto">
+        <DialogHeader>
+          <DialogTitle>{t("Enter chassis numbers", "Saisir les numéros de châssis")}</DialogTitle>
+          <DialogDescription>
+            {t(
+              "Fill in the bikes you have checked; empty lines are left for later. Everything is saved together, or nothing if a number is already used.",
+              "Remplissez les motos vérifiées\u00a0; les lignes vides restent pour plus tard. Tout est enregistré ensemble, ou rien si un numéro est déjà utilisé.",
+            )}
+          </DialogDescription>
+        </DialogHeader>
+        <Field
+          label={t("Paste from a spreadsheet (optional)", "Coller depuis un tableur (facultatif)")}
+          hint={t("One bike per line: chassis, then engine and colour if you have them.", "Une moto par ligne\u00a0: châssis, puis moteur et couleur si vous les avez.")}
+        >
+          <Textarea rows={3} className="font-mono text-xs" value={paste} onChange={(e) => setPaste(e.target.value)} placeholder={"LHJ123456789\tEN1234\tRouge"} />
+        </Field>
+        {paste.trim() && (
+          <div className="flex justify-end">
+            <Button variant="outline" size="sm" onClick={applyPaste}>{t("Fill the lines below", "Remplir les lignes ci-dessous")}</Button>
+          </div>
+        )}
+        <div className="space-y-2">
+          {rows.map((r, i) => (
+            <div key={units[i].id} className="grid grid-cols-2 gap-2 rounded-md border p-2 sm:grid-cols-[1.2fr_1.4fr_1fr_0.8fr] sm:items-center sm:border-0 sm:p-0">
+              <div className="col-span-2 text-sm sm:col-span-1">
+                <span className="font-medium">{units[i].productName}</span>
+                <span className="text-xs text-muted-foreground"> · {units[i].label !== "Standard" ? units[i].label : units[i].sku}</span>
+              </div>
+              <Input className="col-span-2 font-mono uppercase placeholder:normal-case placeholder:font-sans sm:col-span-1" aria-label={t("Chassis no.", "N° de châssis")} placeholder={t("Chassis no.", "N° de châssis")} value={r.chassisNo} onChange={(e) => set(i, "chassisNo", e.target.value)} />
+              <Input className="font-mono uppercase placeholder:normal-case placeholder:font-sans" aria-label={t("Engine no.", "N° de moteur")} placeholder={t("Engine no.", "N° de moteur")} value={r.engineNo} onChange={(e) => set(i, "engineNo", e.target.value)} />
+              <Input aria-label={t("Colour", "Couleur")} placeholder={t("Colour", "Couleur")} value={r.color} onChange={(e) => set(i, "color", e.target.value)} />
+            </div>
+          ))}
+        </div>
+        {m.error && <ErrorText error={m.error} />}
+        <DialogFooter>
+          <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
+          <SubmitButton
+            blocked={blocked}
+            pending={m.isPending}
+            onClick={() => m.mutate({ units: filled.map((r) => ({ id: r.unit.id, chassisNo: r.chassisNo.trim(), engineNo: r.engineNo.trim() || null, color: r.color.trim() || null })) })}
+          >
+            {filled.length > 0 ? t(`Save ${filled.length}`, `Enregistrer ${filled.length}`) : t("Save", "Enregistrer")}
+          </SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

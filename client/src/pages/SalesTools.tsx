@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Download, Percent, Printer, Search, ShoppingCart } from "lucide-react";
+import { Check, Download, Percent, Printer, Search, ShoppingCart, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -160,6 +160,11 @@ function PriceList() {
           <Button variant="outline" onClick={() => downloadXlsx(`${t("price-list", "liste-de-prix")}_${todayLocal()}.xlsx`, table(), t("Prices", "Prix"))} disabled={!filtered.length}><Download className="mr-1 h-4 w-4" /> Excel</Button>
         </div>
       </div>
+      {canEdit && filtered.length > 0 && (
+        <p className="no-print text-xs text-muted-foreground">
+          {t("Change a price, then press Enter or the tick to save it. Each price is saved on its own.", "Modifiez un prix puis appuyez sur Entrée ou sur la coche pour l'enregistrer. Chaque prix est enregistré séparément.")}
+        </p>
+      )}
       {serverSearch && <p className="no-print text-xs text-muted-foreground">{t("Showing up to 500 items; search to narrow down.", "Jusqu'à 500 articles affichés\u00a0; cherchez pour affiner.")}</p>}
       <ErrorText error={error} />
       {isLoading ? (
@@ -241,19 +246,30 @@ function PriceCell({ row }: { row: Row }) {
 
   return (
     <>
-      <Input
-        className={cn("no-print ml-auto h-8 w-24 text-right tabular print:hidden", !valid && "border-destructive", changed && "border-primary")}
-        inputMode="decimal"
-        value={value}
-        disabled={saving}
-        aria-label={t("Sell price", "Prix de vente")}
-        onChange={(e) => setValue(e.target.value)}
-        onBlur={save}
-        onKeyDown={(e) => {
-          if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-          if (e.key === "Escape") setValue(d(row.sellPrice).toFixed(2));
-        }}
-      />
+      <div className="no-print flex items-center justify-end gap-1 print:hidden">
+        <Input
+          className={cn("h-8 w-24 text-right tabular", !valid && "border-destructive", changed && "border-primary")}
+          inputMode="decimal"
+          value={value}
+          disabled={saving}
+          aria-label={t("Sell price", "Prix de vente")}
+          onChange={(e) => setValue(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") save();
+            if (e.key === "Escape") setValue(d(row.sellPrice).toFixed(2));
+          }}
+        />
+        {(changed || !valid) && (
+          <>
+            <Button size="icon" className="h-8 w-8" disabled={!changed || saving} onClick={save} aria-label={t("Save price", "Enregistrer le prix")} title={t("Save", "Enregistrer")}>
+              <Check className="h-4 w-4" />
+            </Button>
+            <Button size="icon" variant="ghost" className="h-8 w-8" disabled={saving} onClick={() => setValue(d(row.sellPrice).toFixed(2))} aria-label={t("Undo", "Annuler")} title={t("Undo", "Annuler")}>
+              <X className="h-4 w-4" />
+            </Button>
+          </>
+        )}
+      </div>
       <Num className="hidden font-medium print:inline">{usd(row.sellPrice)}</Num>
     </>
   );

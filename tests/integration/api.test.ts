@@ -132,4 +132,11 @@ describe.skipIf(!hasDb)("API", async () => {
     const r = await owner("POST", `/api/periods/${today.slice(0, 7)}/close`);
     expect(r.status).toBe(400);
   });
+
+  it("slows down password guessing on one account without locking out the others", async () => {
+    const guesser = client();
+    for (let i = 0; i < 10; i++) expect((await guesser("POST", "/api/auth/login", { username: "ghost", password: `guess-${i}` })).status).toBe(401);
+    expect((await guesser("POST", "/api/auth/login", { username: "ghost", password: "guess-x" })).status).toBe(429);
+    expect((await client()("POST", "/api/auth/login", { username: "admin", password: "test-password-123" })).status).toBe(200);
+  });
 });

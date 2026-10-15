@@ -372,7 +372,14 @@ export async function dashboard(tx: Tx, today: string) {
     .from(variants)
     .where(and(eq(variants.active, true), sql`${variants.reorderLevel} > 0`, sql`${variants.stockQty} <= ${variants.reorderLevel}`));
   const openContainers = await tx
-    .select({ id: containers.id, number: containers.number, status: containers.status, arrivalDate: containers.arrivalDate })
+    .select({
+      id: containers.id,
+      number: containers.number,
+      status: containers.status,
+      arrivalDate: containers.arrivalDate,
+      // Purchase value at the container's rate; it reaches the books (stock and supplier debt) on offload.
+      purchaseUsd: sql<string>`coalesce((select round(sum(l.quantity * l.unit_price) * ${containers.rateToUsd}, 2) from container_lines l where l.container_id = ${containers.id}), 0)::text`,
+    })
     .from(containers)
     .where(ne(containers.status, "finalized"))
     .orderBy(asc(containers.arrivalDate));

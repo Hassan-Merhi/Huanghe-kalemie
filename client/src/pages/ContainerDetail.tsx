@@ -5,6 +5,7 @@ import { AlertTriangle, ArrowLeft, Bike, Info, Lock, PackageCheck, Pencil, Plus,
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
 import { MoneyAccountSelect, PartySelect, useRate, VariantSearch } from "@/components/pickers";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -1141,6 +1142,8 @@ function OffloadButton({ c, disabledReason }: { c: ContainerFull; disabledReason
           ? t("A cost charged to one line has no line", "Un frais affecté à une ligne n'a pas de ligne")
           : null);
   const motos = c.lines.filter((l) => l.tracksSerials).reduce((s, l) => s.plus(d(l.quantity)), d(0));
+  const noCosts = !!p && d(p.expensesTotalUsd).isZero();
+  const [noCostsOk, setNoCostsOk] = useState(false);
   return (
     <>
       <SubmitButton onClick={() => setOpen(true)} blocked={blocked} title={blocked ?? undefined}>
@@ -1162,6 +1165,24 @@ function OffloadButton({ c, disabledReason }: { c: ContainerFull; disabledReason
               <div className="flex justify-between border-t pt-1 font-semibold"><span>{t("Landed total into stock", "Total de revient en stock")}</span><Num>{usd(p.landedTotalUsd)}</Num></div>
             </div>
           )}
+          {noCosts && (
+            <Alert className="border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>{t("No container costs entered", "Aucun frais de conteneur saisi")}</AlertTitle>
+              <AlertDescription className="space-y-2">
+                <p>
+                  {t(
+                    "Freight, customs and transport are usually part of the cost. Without them the stock is valued at the purchase price only, and margins look higher than they are. Costs cannot be added after the offload unless it is reversed.",
+                    "Fret, douane et transport font normalement partie du coût. Sans eux le stock est valorisé au seul prix d'achat et les marges paraissent plus hautes qu'en réalité. Les frais ne peuvent plus être ajoutés après le déchargement, sauf en l'annulant.",
+                  )}
+                </p>
+                <label className="flex items-start gap-2">
+                  <Checkbox checked={noCostsOk} onCheckedChange={(v) => setNoCostsOk(v === true)} className="mt-0.5" />
+                  <span>{t("This container really has no costs", "Ce conteneur n'a vraiment aucun frais")}</span>
+                </label>
+              </AlertDescription>
+            </Alert>
+          )}
           <div className="text-sm">
             <p className="mb-1 font-medium">{t("What will happen", "Ce qui va se passer")}</p>
             <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
@@ -1179,7 +1200,7 @@ function OffloadButton({ c, disabledReason }: { c: ContainerFull; disabledReason
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>{t("Cancel", "Annuler")}</Button>
-            <SubmitButton onClick={() => finalize.mutate({ offloadDate })} blocked={!offloadDate && t("Choose the offload date", "Choisissez la date de déchargement")} pending={finalize.isPending}>
+            <SubmitButton onClick={() => finalize.mutate({ offloadDate })} blocked={!offloadDate ? t("Choose the offload date", "Choisissez la date de déchargement") : noCosts && !noCostsOk ? t("Confirm there are no costs, or add them first", "Confirmez l'absence de frais, ou ajoutez-les d'abord") : null} pending={finalize.isPending}>
               <Lock className="mr-1 h-4 w-4" /> {t("Confirm offload", "Confirmer le déchargement")}
             </SubmitButton>
           </DialogFooter>

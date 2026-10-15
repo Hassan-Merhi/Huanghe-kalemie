@@ -106,3 +106,21 @@ export function allocateCents(total: DecimalInput, weights: DecimalInput[]): Dec
   }
   return result.map((c) => c.times(sign).dividedBy(100));
 }
+
+/**
+ * A number typed in a spreadsheet, in French or English style: "1 415,51", "1,415.51", "12,5 $", "2.800 FC".
+ * The last "," or "." followed by one or two digits is the decimal mark; any other "," "." or space groups thousands.
+ * Returns the plain number text ("1415.51"), or null for an empty cell.
+ */
+export function parseTypedNumber(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (typeof value === "number") return Number.isFinite(value) ? String(value) : null;
+  let s = String(value).replace(/[\s  ]/g, "").replace(/\$|FC|CDF|USD/gi, "");
+  if (s === "") return null;
+  const neg = s.startsWith("-");
+  if (neg) s = s.slice(1);
+  const m = s.match(/^(.*?)[.,](\d{1,2})$/);
+  const whole = (m ? m[1] : s).replace(/[.,]/g, "");
+  const out = m ? `${whole || "0"}.${m[2]}` : whole;
+  return `${neg ? "-" : ""}${out}`;
+}

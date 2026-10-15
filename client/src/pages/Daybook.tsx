@@ -158,6 +158,7 @@ export default function Daybook() {
     enabled: ok,
   });
   const draftsQ = useQuery<{ id: number }[]>({ queryKey: ["/api/voucher-drafts"] });
+  const lastActive = useQuery<{ date: string | null }>({ queryKey: ["/api/daybook/active-day", { date: day }], enabled: mode === "day" && validDate(day) });
   const data = dq.data;
   const rows = data?.rows ?? [];
   const total = useMemo(() => rows.reduce((s, r) => s.plus(r.amount), d(0)), [rows]);
@@ -322,8 +323,14 @@ export default function Daybook() {
       )}
       {dq.isLoading && <Loading />}
       {data && !rows.length && (
-        <EmptyState title={t("No vouchers for this period", "Aucune pièce pour cette période")}>
-          {t("Change the date or the filters.", "Changez la date ou les filtres.")}
+        <EmptyState title={mode === "day" ? t("No vouchers on this day", "Aucune pièce ce jour-là") : t("No vouchers for this period", "Aucune pièce pour cette période")}>
+          {mode === "day" && lastActive.data?.date ? (
+            <Button variant="outline" className="mt-1" onClick={() => setDay(lastActive.data!.date!)}>
+              <ChevronLeft className="mr-1 h-4 w-4" /> {t(`Last active day: ${fmtDate(lastActive.data.date)}`, `Dernier jour actif\u00a0: ${fmtDate(lastActive.data.date)}`)}
+            </Button>
+          ) : (
+            t("Change the date or the filters.", "Changez la date ou les filtres.")
+          )}
         </EmptyState>
       )}
 
