@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDownToLine, ArrowLeftRight, ArrowUpFromLine, HandCoins, Landmark, MoreHorizontal, Send, Wallet } from "lucide-react";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
+import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
 import { MoneyAccountSelect, PartySelect, RateInput, useMoneyAccounts, useRate, useRateField } from "@/components/pickers";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
-import { cdf, d, pct, date, money, monthStart, qty as fmtQty, todayLocal, usd } from "@/lib/format";
+import { curLabel, cdf, d, pct, date, money, monthStart, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import type { Account, Partner, Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -166,7 +166,7 @@ function AmountFields({
         <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
       </Field>
       {isCdf && (
-        <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 $)")} hint={usdValue ? `= ${usd(usdValue.toFixed(2))}` : undefined} required>
+        <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} hint={usdValue ? `= ${usd(usdValue.toFixed(2))}` : undefined} required>
           <RateInput day={day} value={rate} onChange={setRate} />
         </Field>
       )}
@@ -258,13 +258,13 @@ function TransferDialog({ onClose }: { onClose: () => void }) {
           <Field label={t("From account", "Du compte")} required>
             <MoneyAccountSelect value={from?.id ?? null} onChange={(_, a) => setFrom(a)} />
           </Field>
-          <Field label={t(`Amount out${from ? ` (${from.currency})` : ""}`, `Montant sorti${from ? ` (${from.currency})` : ""}`)} required>
+          <Field label={t(`Amount out${from ? ` (${curLabel(from.currency)})` : ""}`, `Montant sorti${from ? ` (${curLabel(from.currency)})` : ""}`)} error={francDecimalsError(t, from?.currency, fromAmount)} required>
             <Input inputMode="decimal" value={fromAmount} onChange={(e) => setFromAmount(e.target.value)} placeholder="0" />
           </Field>
           <Field label={t("To account", "Vers le compte")} error={from && to && from.id === to.id ? t("Pick two different accounts", "Choisissez deux comptes différents") : null} required>
             <MoneyAccountSelect value={to?.id ?? null} onChange={(_, a) => setTo(a)} />
           </Field>
-          <Field label={t(`Amount in${to ? ` (${to.currency})` : ""}`, `Montant reçu${to ? ` (${to.currency})` : ""}`)} required>
+          <Field label={t(`Amount in${to ? ` (${curLabel(to.currency)})` : ""}`, `Montant reçu${to ? ` (${curLabel(to.currency)})` : ""}`)} error={francDecimalsError(t, to?.currency, toAmount)} required>
             <Input inputMode="decimal" value={toAmount} onChange={(e) => { setToAmount(e.target.value); setToTouched(true); }} placeholder="0" />
           </Field>
           <Field label={t("Note (optional)", "Note (facultatif)")} className="sm:col-span-2">
@@ -282,7 +282,7 @@ function TransferDialog({ onClose }: { onClose: () => void }) {
             {diff && !diff.isZero() && (
               <div className="flex flex-wrap justify-between gap-2">
                 <span>{t("Exchange difference against what the francs cost", "Différence de change par rapport au coût des francs")}</span>
-                <Num className={diff.isPositive() ? "text-destructive" : "text-green-700 dark:text-green-400"}>
+                <Num className={diff.isPositive() ? "text-destructive" : "text-green-800 dark:text-green-400"}>
                   {diff.isPositive() ? t("loss", "perte") : t("gain", "gain")} {usd(diff.abs().toFixed(2))}
                 </Num>
               </div>
@@ -572,7 +572,7 @@ function LedgerCard({ accountId, onAccount }: { accountId: number | null; onAcco
                       <div className="flex items-baseline justify-between gap-3">
                         <span className="min-w-0 truncate" title={sub || undefined}>{r.memo || r.type}</span>
                         {amount && (
-                          <Num className={cn("shrink-0 font-medium", inflow ? "text-green-700 dark:text-green-400" : "text-destructive")}>
+                          <Num className={cn("shrink-0 font-medium", inflow ? "text-green-800 dark:text-green-400" : "text-destructive")}>
                             {inflow ? "+" : "−"}{amount}
                           </Num>
                         )}
@@ -613,7 +613,7 @@ function LedgerCard({ accountId, onAccount }: { accountId: number | null; onAcco
                           <TableCell className="text-right">
                             {inflow && (
                               <>
-                                <Num className="text-green-700 dark:text-green-400">{isCdf && native ? cdf(native.toFixed(2)) : usd(r.debit)}</Num>
+                                <Num className="text-green-800 dark:text-green-400">{isCdf && native ? cdf(native.toFixed(2)) : usd(r.debit)}</Num>
                                 {isCdf && <div className="text-xs text-muted-foreground"><Num>{usd(r.debit)}</Num></div>}
                               </>
                             )}
@@ -676,14 +676,14 @@ function RatesCard() {
         <CardTitle className="flex items-center gap-2 text-lg">
           <Landmark className="h-4 w-4" /> {t("Exchange rate", "Taux de change")}
         </CardTitle>
-        <CardDescription>{t("Francs (CDF) for 1 US dollar. The yuan rate, when given, restates what suppliers are owed in yuan at month end.", "Francs (FC) pour 1 dollar US. Le taux du yuan, s'il est donné, sert à réévaluer en fin de mois ce qui est dû en yuans aux fournisseurs.")}</CardDescription>
+        <CardDescription>{t("Francs (FC) for 1 US dollar. The yuan rate, when given, restates what suppliers are owed in yuan at month end.", "Francs (FC) pour 1 dollar US. Le taux du yuan, s'il est donné, sert à réévaluer en fin de mois ce qui est dû en yuans aux fournisseurs.")}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div>
           <p className="text-xs text-muted-foreground">{t("Today", "Aujourd'hui")}</p>
           <p className="text-2xl font-semibold tabular">{current ? `${money(current.cdfPerUsd, "CDF")}` : "…"}</p>
           {current && !isToday && (
-            <p className="text-xs text-amber-700 dark:text-amber-400">
+            <p className="text-xs text-amber-800 dark:text-amber-400">
               {current.source === "default"
                 ? t("No rate set yet: using the default rate.", "Aucun taux saisi\u00a0: taux par défaut utilisé.")
                 : t(`Not set today: using the rate of ${date(current.source)}.`, `Pas saisi aujourd'hui\u00a0: taux du ${date(current.source)} utilisé.`)}
@@ -698,8 +698,12 @@ function RatesCard() {
             <Field label={t("FC per $1", "FC pour 1 $")} required className="min-w-[7rem] flex-1">
               <Input inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} />
             </Field>
-            <Field label={t("Yuan per $1 (optional)", "Yuans pour 1 $ (facultatif)")} className="min-w-[7rem] flex-1">
-              <Input inputMode="decimal" value={cny} onChange={(e) => setCny(e.target.value)} placeholder="7,1" />
+            <Field
+              label={t("CNY per $1 (optional)", "CNY pour 1 $ (facultatif)")}
+              hint={lastCny ? undefined : t("About 7.1", "Environ 7,1")}
+              className="min-w-[7rem] flex-1"
+            >
+              <Input inputMode="decimal" value={cny} onChange={(e) => setCny(e.target.value)} />
             </Field>
             <SubmitButton
               className="w-full sm:flex-col sm:items-stretch [&>button]:w-full"

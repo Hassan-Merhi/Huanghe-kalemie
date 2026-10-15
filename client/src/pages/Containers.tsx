@@ -3,7 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { Plus } from "lucide-react";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
-import { LocationSelect, PartySelect } from "@/components/pickers";
+import { ContainerRateField, LocationSelect, PartySelect } from "@/components/pickers";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -14,7 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
-import { d, date, formatLang, qty, usd } from "@/lib/format";
+import { d, date, qty, usd } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -145,7 +145,8 @@ export default function Containers() {
   );
 }
 
-const CURRENCIES = ["USD", "CNY", "EUR", "AED", "INR", "TZS", "KES", "ZAR"];
+/** The currencies the books keep (the server refuses others). */
+const CURRENCIES = ["USD", "CNY", "CDF"];
 
 function NewContainerDialog({ onClose, onCreated }: { onClose: () => void; onCreated: (id: number) => void }) {
   const t = useT();
@@ -155,6 +156,10 @@ function NewContainerDialog({ onClose, onCreated }: { onClose: () => void; onCre
   const [locationId, setLocationId] = useState<number | null>(null);
   const [currency, setCurrency] = useState("USD");
   const [rateToUsd, setRateToUsd] = useState("");
+  const pickCurrency = (c: string) => {
+    setCurrency(c);
+    setRateToUsd("");
+  };
   const [shipDate, setShipDate] = useState("");
   const [arrivalDate, setArrivalDate] = useState("");
   const [status, setStatus] = useState<Exclude<ContainerStatus, "finalized">>("draft");
@@ -172,7 +177,7 @@ function NewContainerDialog({ onClose, onCreated }: { onClose: () => void; onCre
       : !locationId
         ? t("Choose where to unload", "Choisissez le lieu de déchargement")
         : !rateOk
-          ? t("Enter the rate to USD", "Saisissez le taux en USD")
+          ? t(`Enter how many ${currency === "CDF" ? "FC" : currency} one dollar buys`, `Saisissez le taux (${currency === "CDF" ? "FC" : currency} pour 1 $)`)
           : null;
 
   function save() {
@@ -217,24 +222,17 @@ function NewContainerDialog({ onClose, onCreated }: { onClose: () => void; onCre
             </Select>
           </Field>
           <Field label={t("Invoice currency", "Devise de la facture")}>
-            <Select value={currency} onValueChange={setCurrency}>
+            <Select value={currency} onValueChange={pickCurrency}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
                 {CURRENCIES.map((c) => (
-                  <SelectItem key={c} value={c}>{c}</SelectItem>
+                  <SelectItem key={c} value={c}>{c === "USD" ? t("Dollar ($)", "Dollar ($)") : c === "CNY" ? t("Yuan (CNY)", "Yuan (CNY)") : t("Congolese franc (FC)", "Franc congolais (FC)")}</SelectItem>
                 ))}
               </SelectContent>
             </Select>
           </Field>
           {foreign ? (
-            <Field
-              label={t(`USD for 1 ${currency}`, `USD pour 1 ${currency}`)}
-              hint={t(`Example: 1 CNY = 0.14 USD`, `Exemple\u00a0: 1 CNY = 0,14 USD`)}
-              error={rateToUsd && !rateOk ? t("Enter a rate above zero", "Saisissez un taux supérieur à zéro") : null}
-              required
-            >
-              <Input inputMode="decimal" value={rateToUsd} onChange={(e) => setRateToUsd(e.target.value)} placeholder={formatLang() === "fr" ? "0,14" : "0.14"} />
-            </Field>
+            <ContainerRateField key={currency} currency={currency} value={rateToUsd} onChange={setRateToUsd} />
           ) : (
             <div className="hidden sm:block" />
           )}

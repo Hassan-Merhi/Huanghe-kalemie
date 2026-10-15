@@ -2,8 +2,8 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import { AlertTriangle, ArrowLeft, Bike, Info, Lock, PackageCheck, Pencil, Plus, Save, Trash2, Undo2, X } from "lucide-react";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
-import { MoneyAccountSelect, PartySelect, useRate, VariantSearch } from "@/components/pickers";
+import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
+import { ContainerRateField, MoneyAccountSelect, PartySelect, perUsdText, useRate, VariantSearch } from "@/components/pickers";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
@@ -15,7 +15,8 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Textarea } from "@/components/ui/textarea";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
-import { d, date, money, pct, qty, todayLocal, unitCost, usd, variantText } from "@/lib/format";
+import { curLabel, cdf, d, date, money, number, pct, qty, todayLocal, unitCost, usd, variantText } from "@/lib/format";
+import { unitLabel, wholeUnit } from "@/lib/units";
 import { useT, count } from "@/lib/i18n";
 import type { Account, Party, VariantRow } from "@/lib/types";
 import { ContainerStatusBadge, useStatusLabel, type ContainerRow, type ContainerStatus } from "./Containers";
@@ -38,6 +39,7 @@ interface ContainerLine {
   attributes: Record<string, string>;
   productName: string;
   tracksSerials: boolean;
+  unit?: string;
 }
 
 type Method = "value" | "quantity" | "weight" | "volume" | "line";
@@ -84,6 +86,7 @@ interface DraftLine {
   attributes: Record<string, string>;
   sku: string;
   tracksSerials: boolean;
+  unit?: string;
   quantity: string;
   unitPrice: string;
   weightKg: string;
@@ -134,7 +137,7 @@ function marginPct(sell: string | undefined, cost: string | null | undefined) {
 function MarginCell({ sell, cost }: { sell: string | undefined; cost: string | null | undefined }) {
   const m = marginPct(sell, cost);
   if (!m) return <span className="text-muted-foreground">—</span>;
-  const cls = m.isNegative() ? "text-destructive font-medium" : m.lt(10) ? "text-amber-700 dark:text-amber-400" : "text-green-700 dark:text-green-400";
+  const cls = m.isNegative() ? "text-destructive font-medium" : m.lt(10) ? "text-amber-800 dark:text-amber-400" : "text-green-800 dark:text-green-400";
   return <Num className={cls}>{pct(m.toNumber())}</Num>;
 }
 
@@ -180,7 +183,7 @@ export default function ContainerDetail() {
         description={c.supplierName ? t(`Supplier: ${c.supplierName}`, `Fournisseur\u00a0: ${c.supplierName}`) : undefined}
         actions={
           <>
-            {editable && <OffloadButton c={c} disabledReason={linesDirty ? t("Save the lines first", "Enregistrez d'abord les lignes") : null} />}
+            {editable && <OffloadButton c={c} priceOf={priceOf} disabledReason={linesDirty ? t("Save the lines first", "Enregistrez d'abord les lignes") : null} />}
             {finalized && can() && <ReverseButton c={c} />}
           </>
         }
@@ -243,8 +246,8 @@ function HeaderCard({ c }: { c: ContainerFull }) {
         <div>
           <p className="text-xs text-muted-foreground">{t("Invoice currency", "Devise de la facture")}</p>
           <p className="mt-1 font-medium">
-            {c.currency}
-            {c.currency !== "USD" && <span className="ml-2 text-sm font-normal text-muted-foreground">1 {c.currency} = {d(c.rateToUsd).toString()} USD</span>}
+            {c.currency === "CDF" ? "FC" : c.currency}
+            {c.currency !== "USD" && <span className="ml-2 text-sm font-normal text-muted-foreground">1 $ = {qty(perUsdText(c.rateToUsd))} {c.currency === "CDF" ? "FC" : c.currency}</span>}
           </p>
         </div>
         <div>
@@ -308,11 +311,16 @@ function EditDetailsDialog({ c, onClose }: { c: ContainerFull; onClose: () => vo
           {!finalized && (
             <>
               <Field label={t("Invoice currency", "Devise de la facture")} required>
-                <Input value={currency} maxLength={3} onChange={(e) => setCurrency(e.target.value.toUpperCase())} />
+                <Select value={currency} onValueChange={(v) => { setCurrency(v); setRate(v === c.currency ? d(c.rateToUsd).toString() : ""); }}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="USD">{t("Dollar ($)", "Dollar ($)")}</SelectItem>
+                    <SelectItem value="CNY">{t("Yuan (CNY)", "Yuan (CNY)")}</SelectItem>
+                    <SelectItem value="CDF">{t("Congolese franc (FC)", "Franc congolais (FC)")}</SelectItem>
+                  </SelectContent>
+                </Select>
               </Field>
-              <Field label={t(`USD for 1 ${cur || "…"}`, `USD pour 1 ${cur || "…"}`)} hint={t("Example: 1 CNY = 0.14 USD", "Exemple\u00a0: 1 CNY = 0,14 USD")} required={cur !== "USD"}>
-                <Input inputMode="decimal" disabled={cur === "USD"} value={cur === "USD" ? "1" : rate} onChange={(e) => setRate(e.target.value)} />
-              </Field>
+              {cur !== "USD" ? <ContainerRateField key={cur} currency={cur} value={rate} onChange={setRate} /> : <div className="hidden sm:block" />}
             </>
           )}
           <Field label={t("Ship date", "Date d'expédition")}>
@@ -329,7 +337,7 @@ function EditDetailsDialog({ c, onClose }: { c: ContainerFull; onClose: () => vo
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
           <SubmitButton
             onClick={save}
-            blocked={cur.length !== 3 ? t("Enter a 3-letter currency code", "Saisissez un code de devise à 3 lettres") : !rateOk ? t("Enter the rate to USD", "Saisissez le taux en USD") : null}
+            blocked={cur.length !== 3 ? t("Enter a 3-letter currency code", "Saisissez un code de devise à 3 lettres") : !rateOk ? t("Enter the rate (how much one dollar buys)", "Saisissez le taux (combien vaut 1 $)") : null}
             pending={patch.isPending}
           >
             {t("Save", "Enregistrer")}
@@ -350,6 +358,7 @@ function toDraft(lines: ContainerLine[]): DraftLine[] {
     attributes: l.attributes,
     sku: l.sku,
     tracksSerials: l.tracksSerials,
+    unit: l.unit,
     quantity: d(l.quantity).toString(),
     unitPrice: d(l.unitPrice).toString(),
     weightKg: l.weightKg ? d(l.weightKg).toString() : "",
@@ -358,6 +367,8 @@ function toDraft(lines: ContainerLine[]): DraftLine[] {
 }
 
 let draftSeq = 0;
+/** A line whose price is simply not typed yet (not an error to show in red). */
+const PENDING = "pending";
 
 function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editable: boolean; onDirtyChange: (dirty: boolean) => void }) {
   const t = useT();
@@ -388,6 +399,8 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
     onSuccess: () => setDirty(false),
   });
 
+  const [touched, setTouched] = useState<Set<string>>(() => new Set());
+  const touch = (key: string) => setTouched((s) => (s.has(key) ? s : new Set(s).add(key)));
   function update(key: string, patch: Partial<DraftLine>) {
     setDraft((rows) => rows.map((r) => (r.key === key ? { ...r, ...patch } : r)));
     setDirty(true);
@@ -409,6 +422,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
           attributes: v.attributes,
           sku: v.sku,
           tracksSerials: v.tracksSerials,
+          unit: v.unit,
           quantity: "1",
           unitPrice: "",
           weightKg: "",
@@ -428,10 +442,13 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
     const q = d(r.quantity);
     if (!r.quantity.trim() || q.lte(0)) return t("Quantity must be above zero", "La quantité doit être supérieure à zéro");
     if (r.tracksSerials && !q.isInteger()) return t("Motorcycles must be whole units", "Les motos se comptent en unités entières");
-    if (!r.unitPrice.trim()) return t("Enter the unit price", "Entrez le prix unitaire");
+    if (!q.isInteger() && wholeUnit(r.unit)) return t(`Counted by the ${unitLabel(t, r.unit, 1)}: enter a whole number`, `Se compte à l'unité (${unitLabel(t, r.unit, 1)})\u00a0: saisissez un nombre entier`);
+    // A line just added has no price yet: only say so once the field was left or saving was tried.
+    if (!r.unitPrice.trim()) return touched.has(r.key) ? t("Enter the unit price", "Entrez le prix unitaire") : PENDING;
     if (d(r.unitPrice).isNegative()) return t("Price cannot be negative", "Le prix ne peut pas être négatif");
     return null;
   });
+  const shown = problems.map((p) => (p === PENDING ? null : p));
   const totalNative = draft.reduce((s, r) => s.plus(d(r.quantity).times(d(r.unitPrice))), d(0));
   const totalQty = draft.reduce((s, r) => s.plus(d(r.quantity)), d(0));
 
@@ -455,8 +472,8 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
         <CardTitle className="text-lg">{t("Items in the container", "Articles du conteneur")}</CardTitle>
         <CardDescription>
           {t(
-            `Unit prices are in the supplier invoice currency (${c.currency}). Weight and volume are totals for the whole line (all units together), only needed if you split a cost by weight or volume.`,
-            `Les prix unitaires sont dans la devise de la facture fournisseur (${c.currency}). Le poids et le volume sont des totaux pour toute la ligne (toutes les unités ensemble) et ne servent que si vous répartissez un frais par poids ou par volume.`,
+            `Unit prices are in the supplier invoice currency (${curLabel(c.currency)}). Weight and volume are totals for the whole line (all units together), only needed if you split a cost by weight or volume.`,
+            `Les prix unitaires sont dans la devise de la facture fournisseur (${curLabel(c.currency)}). Le poids et le volume sont des totaux pour toute la ligne (toutes les unités ensemble) et ne servent que si vous répartissez un frais par poids ou par volume.`,
           )}
         </CardDescription>
       </CardHeader>
@@ -497,14 +514,14 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                       </Button>
                     )}
                   </div>
-                  {editable && problems[i] && <div className="mt-1 text-xs text-destructive">{problems[i]}</div>}
+                  {editable && shown[i] && <div className="mt-1 text-xs text-destructive">{shown[i]}</div>}
                   {editable ? (
                     <div className="mt-2 grid grid-cols-2 items-end gap-2">
                       <Field label={t("Quantity", "Quantité")}>
                         <Input className="text-right" inputMode="decimal" value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
                       </Field>
-                      <Field label={t(`Price each (${c.currency})`, `Prix/unité (${c.currency})`)}>
-                        <Input className="text-right" inputMode="decimal" value={r.unitPrice} placeholder="0" onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
+                      <Field label={t(`Price each (${curLabel(c.currency)})`, `Prix/unité (${curLabel(c.currency)})`)}>
+                        <Input className="text-right" inputMode="decimal" value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
                       </Field>
                       <Field label={t("Total weight (kg)", "Poids total (kg)")}>
                         <Input className="text-right" inputMode="decimal" placeholder={t("total kg", "kg total")} value={r.weightKg} onChange={(e) => update(r.key, { weightKg: e.target.value })} />
@@ -545,7 +562,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                 <TableRow>
                   <TableHead>{t("Item", "Article")}</TableHead>
                   <TableHead className="text-right">{t("Quantity", "Quantité")}</TableHead>
-                  <TableHead className="text-right">{t(`Unit price (${c.currency})`, `Prix unitaire (${c.currency})`)}</TableHead>
+                  <TableHead className="text-right">{t(`Unit price (${curLabel(c.currency)})`, `Prix unitaire (${curLabel(c.currency)})`)}</TableHead>
                   <TableHead className="text-right">{t("Total weight (kg)", "Poids total (kg)")}</TableHead>
                   <TableHead className="text-right">{t("Total volume (m³)", "Volume total (m³)")}</TableHead>
                   <TableHead className="text-right">{t("Purchase value", "Valeur d'achat")}</TableHead>
@@ -560,15 +577,15 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                       <TableCell className="min-w-[180px]">
                         <div className="font-medium">{itemLabel(r)}</div>
                         <div className="text-xs text-muted-foreground">{r.sku}{r.tracksSerials ? ` · ${t("motorcycle", "moto")}` : ""}</div>
-                        {editable && problems[i] && <div className="text-xs text-destructive">{problems[i]}</div>}
+                        {editable && shown[i] && <div className="text-xs text-destructive">{shown[i]}</div>}
                       </TableCell>
                       {editable ? (
                         <>
                           <TableCell className="text-right">
-                            <Input className="ml-auto w-20 text-right" inputMode="decimal" value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
+                            <Input className="ml-auto w-20 text-right" inputMode="decimal" aria-label={t(`Quantity of ${itemLabel(r)}`, `Quantité de ${itemLabel(r)}`)} value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
                           </TableCell>
                           <TableCell className="text-right">
-                            <Input className="ml-auto w-28 text-right" inputMode="decimal" value={r.unitPrice} placeholder="0" onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
+                            <Input className="ml-auto w-28 text-right" inputMode="decimal" aria-label={t(`Unit price of ${itemLabel(r)}`, `Prix unitaire de ${itemLabel(r)}`)} value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
                           </TableCell>
                           <TableCell className="text-right">
                             <Input className="ml-auto w-24 text-right" inputMode="decimal" aria-label={t("Total weight for the line (kg)", "Poids total de la ligne (kg)")} placeholder={t("total kg", "kg total")} value={r.weightKg} onChange={(e) => update(r.key, { weightKg: e.target.value })} />
@@ -625,7 +642,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
             )}
             <SubmitButton
               onClick={submit}
-              blocked={!dirty ? t("No changes to save", "Aucune modification à enregistrer") : problems.some(Boolean) ? t("Fix the lines marked in red", "Corrigez les lignes signalées en rouge") : null}
+              blocked={!dirty ? t("No changes to save", "Aucune modification à enregistrer") : problems.some((p) => p && p !== PENDING) ? t("Fix the lines marked in red", "Corrigez les lignes signalées en rouge") : problems.includes(PENDING) ? t("Enter the unit price of every line", "Saisissez le prix unitaire de chaque ligne") : null}
               pending={save.isPending}
             >
               <Save className="mr-1 h-4 w-4" /> {t("Save lines", "Enregistrer les lignes")}
@@ -705,7 +722,7 @@ function ExpensesSection({ c, editable }: { c: ContainerFull; editable: boolean 
                       {e.paidFromAccountId ? (
                         <>{t("Paid from", "Payé par")} {accountName(e.paidFromAccountId)}</>
                       ) : (
-                        <span className="text-amber-700 dark:text-amber-400">{t("Owed to", "Dû à")} {partyName(e.payablePartyId)}</span>
+                        <span className="text-amber-800 dark:text-amber-400">{t("Owed to", "Dû à")} {partyName(e.payablePartyId)}</span>
                       )}
                     </TableCell>
                     {editable && (
@@ -945,12 +962,12 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
               </Field>
             </>
           )}
-          <Field label={t(`Amount (${currency})`, `Montant (${currency})`)} required>
+          <Field label={t(`Amount (${curLabel(currency)})`, `Montant (${curLabel(currency)})`)} error={francDecimalsError(t, currency, amount)} required>
             <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
           </Field>
           {isCdf && (
             <Field
-              label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 $)")}
+              label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")}
               hint={usdValue ? `= ${usd(usdValue.toFixed(2))}` : undefined}
               required
             >
@@ -1051,7 +1068,7 @@ function PreviewSection({ c, priceOf }: { c: ContainerFull; priceOf: Map<number,
                   <TableRow>
                     <TableHead>{t("Item", "Article")}</TableHead>
                     <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
-                    <TableHead className="text-right">{t("Purchase USD", "Achat USD")}</TableHead>
+                    <TableHead className="text-right">{t("Purchase ($)", "Achat ($)")}</TableHead>
                     {c.expenses.map((e) => (
                       <TableHead key={e.id} className="hidden text-right md:table-cell">
                         <span className="block whitespace-nowrap">{L.type(e.type)}</span>
@@ -1122,7 +1139,7 @@ function PreviewSection({ c, priceOf }: { c: ContainerFull; priceOf: Map<number,
 
 // ---------------------------------------------------------------- Offload
 
-function OffloadButton({ c, disabledReason }: { c: ContainerFull; disabledReason: string | null }) {
+function OffloadButton({ c, disabledReason, priceOf }: { c: ContainerFull; disabledReason: string | null; priceOf: Map<number, string> }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const [offloadDate, setOffloadDate] = useState(todayLocal());
@@ -1142,6 +1159,18 @@ function OffloadButton({ c, disabledReason }: { c: ContainerFull; disabledReason
           ? t("A cost charged to one line has no line", "Un frais affecté à une ligne n'a pas de ligne")
           : null);
   const motos = c.lines.filter((l) => l.tracksSerials).reduce((s, l) => s.plus(d(l.quantity)), d(0));
+  /** What the supplier is owed, in the invoice currency: the books keep a yuan or franc debt in that currency. */
+  const owedNative = c.lines.reduce((s, l) => s.plus(d(l.quantity).times(d(l.unitPrice))), d(0)).toDecimalPlaces(2);
+  const owedIn = c.currency === "CDF" ? cdf(owedNative.toString()) : `${number(owedNative.toString(), 2)}\u00a0${c.currency === "CNY" ? "¥" : c.currency}`;
+  const owedText = c.currency === "USD" ? (p ? usd(p.fobTotalUsd) : usd(owedNative.toFixed(2))) : `${owedIn}${p ? ` (${usd(p.fobTotalUsd)})` : ""}`;
+  /** Items that would cost more than they sell for once the container's costs are added. */
+  const losing = p
+    ? c.lines.flatMap((l) => {
+        const pl = p.lines.find((x) => x.key === l.id);
+        const price = priceOf.get(l.variantId);
+        return pl && price && d(price).gt(0) && d(pl.landedUnitCost).gt(d(price)) ? [{ l, cost: pl.landedUnitCost, price }] : [];
+      })
+    : [];
   const noCosts = !!p && d(p.expensesTotalUsd).isZero();
   const [noCostsOk, setNoCostsOk] = useState(false);
   return (
@@ -1164,7 +1193,27 @@ function OffloadButton({ c, disabledReason }: { c: ContainerFull; disabledReason
               <div className="flex justify-between"><span>{t("Purchase value", "Valeur d'achat")}</span><Num>{usd(p.fobTotalUsd)}</Num></div>
               <div className="flex justify-between"><span>{t("Container costs", "Frais du conteneur")}</span><Num>{usd(p.expensesTotalUsd)}</Num></div>
               <div className="flex justify-between border-t pt-1 font-semibold"><span>{t("Landed total into stock", "Total de revient en stock")}</span><Num>{usd(p.landedTotalUsd)}</Num></div>
+              <div className="flex flex-wrap justify-between gap-x-2 border-t pt-1">
+                <span>{t("Owed to the supplier", "Dû au fournisseur")}</span>
+                <Num className="font-medium">{owedText}</Num>
+              </div>
             </div>
+          )}
+          {losing.length > 0 && (
+            <Alert className="border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>{t("Cost above the selling price", "Coût supérieur au prix de vente")}</AlertTitle>
+              <AlertDescription>
+                <ul className="space-y-0.5">
+                  {losing.map(({ l, cost, price }) => (
+                    <li key={l.id}>
+                      {itemLabel(l)}{t(": ", "\u00a0: ")}{t("cost", "coût")} {unitCost(cost)} · {t("sold at", "vendu")} {usd(price)}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-1">{t("Raise the selling price on the item page after the offload, or check the invoice prices.", "Relevez le prix de vente dans la fiche article après le déchargement, ou vérifiez les prix de la facture.")}</p>
+              </AlertDescription>
+            </Alert>
           )}
           {noCosts && (
             <Alert className="border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
@@ -1189,7 +1238,7 @@ function OffloadButton({ c, disabledReason }: { c: ContainerFull; disabledReason
             <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
               <li>{t("Every item is added to stock at its landed cost per unit.", "Chaque article entre en stock à son coût de revient unitaire.")}</li>
               <li>
-                {t(`${c.supplierName ?? "The supplier"} is recorded as owed the purchase value`, `${c.supplierName ?? "Le fournisseur"} est enregistré comme créancier de la valeur d'achat`)} ({p ? usd(p.fobTotalUsd) : "—"}).
+                {t(`${c.supplierName ?? "The supplier"} is recorded as owed ${owedText}.`, `${c.supplierName ? `Il est noté que vous devez ${owedText} à ${c.supplierName}` : `Il est noté que vous devez ${owedText} au fournisseur`}.`)}
               </li>
               {motos.gt(0) && (
                 <li>{motos.equals(1)
@@ -1288,8 +1337,8 @@ function FinalCosts({ c, priceOf }: { c: ContainerFull; priceOf: Map<number, str
                 <TableRow>
                   <TableHead>{t("Item", "Article")}</TableHead>
                   <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
-                  <TableHead className="text-right">{t(`Unit price (${c.currency})`, `Prix unitaire (${c.currency})`)}</TableHead>
-                  <TableHead className="text-right">{t("Purchase USD", "Achat USD")}</TableHead>
+                  <TableHead className="text-right">{t(`Unit price (${curLabel(c.currency)})`, `Prix unitaire (${curLabel(c.currency)})`)}</TableHead>
+                  <TableHead className="text-right">{t("Purchase ($)", "Achat ($)")}</TableHead>
                   <TableHead className="text-right">{t("Costs added", "Frais ajoutés")}</TableHead>
                   <TableHead className="text-right">{t("Landed total", "Total de revient")}</TableHead>
                   <TableHead className="text-right">{t("Cost per unit", "Coût unitaire")}</TableHead>

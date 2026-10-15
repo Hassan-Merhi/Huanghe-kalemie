@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronsUpDown, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -13,6 +13,7 @@ import { api, invalidateAll, withQuery } from "@/lib/api";
 import type { Account, Category, Location, Party, Settings, VariantRow } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+import { capitalize, monthText } from "@shared/french";
 
 /** Cash boxes, bank and mobile money accounts. */
 export function useMoneyAccounts() {
@@ -35,20 +36,110 @@ export function MoneyAccountSelect({ value, onChange, placeholder, "aria-label":
   );
 }
 
-/** Account picker. `hideCode` drops the chart number ("6000 · Loyer" → "Loyer") on pages for the shop, not the books. */
-export function AccountSelect({ value, onChange, types, placeholder, hideCode }: { value: number | null; onChange: (id: number) => void; types?: Account["type"][]; placeholder?: string; hideCode?: boolean }) {
+/** Lower case without accents, so "electricite" finds "Électricité". */
+function fold(s: string) {
+  return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+/**
+ * Searchable account picker: typing filters by name or chart number. `hideCode` drops the chart
+ * number from what is shown ("6000 · Loyer" → "Loyer") on pages for the shop, not the books; the
+ * number still finds the account. `filter` narrows the list further.
+ */
+export function AccountSelect({
+  value,
+  onChange,
+  types,
+  placeholder,
+  hideCode,
+  filter,
+  "aria-label": ariaLabel,
+}: {
+  value: number | null;
+  onChange: (id: number) => void;
+  types?: Account["type"][];
+  placeholder?: string;
+  hideCode?: boolean;
+  filter?: (a: Account) => boolean;
+  "aria-label"?: string;
+}) {
   const t = useT();
   const q = useQuery<Account[]>({ queryKey: ["/api/accounts"] });
-  const rows = (q.data ?? []).filter((a) => a.active && (!types || types.includes(a.type)));
+  const rows = (q.data ?? []).filter((a) => a.active && (!types || types.includes(a.type)) && (!filter || filter(a)));
+  const selected = (q.data ?? []).find((a) => a.id === value);
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const words = fold(search).split(/\s+/).filter(Boolean);
+  const filtered = rows.filter((a) => words.every((w) => fold(`${a.code} ${a.name}`).includes(w))).slice(0, 80);
+  const [active, setActive] = useState(0);
+  useEffect(() => setActive(0), [search, open]);
+  const listRef = useRef<HTMLDivElement>(null);
+  const listId = useId();
+  useEffect(() => {
+    listRef.current?.querySelector<HTMLElement>(`[data-index="${active}"]`)?.scrollIntoView({ block: "nearest" });
+  }, [active]);
+  const pick = (a: Account) => {
+    onChange(a.id);
+    setOpen(false);
+    setSearch("");
+  };
+  const label = (a: Account) => (hideCode ? a.name : `${a.code} · ${a.name}`);
   return (
-    <Select value={value ? String(value) : ""} onValueChange={(v) => onChange(Number(v))}>
-      <SelectTrigger><SelectValue placeholder={placeholder ?? t("Choose account", "Choisir le compte")} /></SelectTrigger>
-      <SelectContent>
-        {rows.map((a) => (
-          <SelectItem key={a.id} value={String(a.id)}>{hideCode ? a.name : `${a.code} · ${a.name}`}</SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button variant="outline" role="combobox" aria-expanded={open} aria-label={ariaLabel} className="w-full justify-between font-normal">
+          <span className={cn("truncate", !selected && "text-muted-foreground")}>{selected ? label(selected) : placeholder ?? t("Choose account", "Choisir le compte")}</span>
+          <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent className="w-[--radix-popover-trigger-width] min-w-[260px] max-w-[calc(100vw-2rem)] p-2" align="start">
+        <Input
+          autoFocus
+          placeholder={hideCode ? t("Search", "Chercher") : t("Search name or number", "Chercher nom ou numéro")}
+          aria-label={t("Search accounts", "Chercher un compte")}
+          value={search}
+          onChange={(e) => setSearch(e.target.value)}
+          role="combobox"
+          aria-expanded
+          aria-controls={listId}
+          aria-activedescendant={filtered[active] ? `${listId}-${filtered[active].id}` : undefined}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setActive((i) => Math.min(i + 1, filtered.length - 1));
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setActive((i) => Math.max(i - 1, 0));
+            } else if (e.key === "Enter" && filtered[active]) {
+              e.preventDefault();
+              pick(filtered[active]);
+            }
+          }}
+        />
+        <div ref={listRef} id={listId} className="mt-2 max-h-64 overflow-y-auto" role="listbox">
+          {filtered.map((a, i) => (
+            <button
+              key={a.id}
+              type="button"
+              id={`${listId}-${a.id}`}
+              data-index={i}
+              role="option"
+              aria-selected={i === active}
+              className={cn("flex w-full items-center justify-between gap-2 rounded px-2 py-1.5 text-left text-sm hover:bg-muted", i === active && "bg-muted")}
+              onMouseEnter={() => setActive(i)}
+              onClick={() => pick(a)}
+            >
+              <span className="min-w-0 truncate">{a.name}</span>
+              <span className="flex shrink-0 items-center gap-1">
+                {!hideCode && <span className="text-xs text-muted-foreground tabular">{a.code}</span>}
+                {a.id === value && <Check className="h-4 w-4" />}
+              </span>
+            </button>
+          ))}
+          {filtered.length === 0 && <p className="px-2 py-3 text-sm text-muted-foreground">{t("No match", "Aucun résultat")}</p>}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }
 
@@ -350,24 +441,28 @@ export function VariantSearch({
  * Month picker ("YYYY-MM"): next month plus the last 24, in the current language.
  * Replaces <input type="month">, which Safari and Firefox desktop do not support.
  */
-export function MonthSelect({ value, onChange, className }: { value: string; onChange: (month: string) => void; className?: string }) {
+/**
+ * A month from the list. By default next month back to two years ago; `max` and `min` ("2026-10")
+ * narrow it, e.g. to months that have ended or that have entries.
+ */
+export function MonthSelect({ value, onChange, className, min, max, "aria-label": ariaLabel }: { value: string; onChange: (month: string) => void; className?: string; min?: string | null; max?: string | null; "aria-label"?: string }) {
   const { lang } = useI18n();
   const options = useMemo(() => {
     const [y, m] = todayLocal().split("-").map(Number);
-    const fmt = new Intl.DateTimeFormat(lang === "fr" ? "fr-FR" : "en-US", { month: "long", year: "numeric", timeZone: "UTC" });
     const list: { value: string; label: string }[] = [];
     for (let i = 1; i >= -24; i--) {
       const dt = new Date(Date.UTC(y, m - 1 + i, 1));
-      const label = fmt.format(dt);
-      list.push({ value: `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}`, label: label.charAt(0).toUpperCase() + label.slice(1) });
+      const key = `${dt.getUTCFullYear()}-${String(dt.getUTCMonth() + 1).padStart(2, "0")}`;
+      if ((max && key > max) || (min && key < min)) continue;
+      list.push({ value: key, label: capitalize(monthText(key, lang)) });
     }
     // Keep an older month chosen elsewhere (e.g. from a link) selectable.
-    if (value && !list.some((o) => o.value === value)) list.push({ value, label: value });
+    if (value && !list.some((o) => o.value === value)) list.push({ value, label: capitalize(monthText(value, lang)) });
     return list;
-  }, [lang, value]);
+  }, [lang, value, min, max]);
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className={className}><SelectValue /></SelectTrigger>
+      <SelectTrigger className={className} aria-label={ariaLabel}><SelectValue /></SelectTrigger>
       <SelectContent>
         {options.map((o) => (
           <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
@@ -379,7 +474,72 @@ export function MonthSelect({ value, onChange, className }: { value: string; onC
 
 /** CDF per USD for a date (that day's rate, else the latest before it, else the default). */
 export function useRate(date: string) {
-  return useQuery<{ date: string; cdfPerUsd: string; source: string }>({ queryKey: [`/api/exchange-rates/for/${date}`] });
+  return useQuery<{ date: string; cdfPerUsd: string; source: string; cnyPerUsd?: string | null }>({ queryKey: [`/api/exchange-rates/for/${date}`] });
+}
+
+/** "7,1" for a stored USD-per-unit rate of 0.140845: how many of the currency one dollar buys. */
+export function perUsdText(rateToUsd: string | null | undefined): string {
+  const r = d(rateToUsd);
+  if (r.lte(0)) return "";
+  return d(1).dividedBy(r).toDecimalPlaces(r.lt(0.01) ? 0 : 4).toString();
+}
+
+/**
+ * The rate of a container invoiced in yuan or francs, typed the way the Treasury page asks for it:
+ * how many CNY (or FC) one dollar buys. The value passed in and out stays USD per 1 unit, as the
+ * server keeps it. A new container starts from the rate on file, and a rate far from it is flagged.
+ */
+export function ContainerRateField({ currency, value, onChange, day = todayLocal(), className }: { currency: string; value: string; onChange: (rateToUsd: string) => void; day?: string; className?: string }) {
+  const t = useT();
+  const rateQ = useRate(day);
+  const settings = useQuery<Settings>({ queryKey: ["/api/settings"] }).data;
+  const onFile = currency === "CNY" ? rateQ.data?.cnyPerUsd ?? null : currency === "CDF" ? rateQ.data?.cdfPerUsd ?? null : null;
+  const [text, setText] = useState(() => perUsdText(value));
+  // Start from the rate on file when nothing is set yet.
+  useEffect(() => {
+    if (!text && !d(value).gt(0) && onFile && d(onFile).gt(0)) {
+      setText(d(onFile).toString());
+      onChange(d(1).dividedBy(onFile).toDecimalPlaces(6).toString());
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [onFile]);
+  const label = currency === "CDF" ? "FC" : currency;
+  const typed = d(text);
+  const tolerance = d(settings?.rateTolerancePct ?? "3");
+  const gap = onFile && d(onFile).gt(0) && typed.gt(0) ? typed.minus(onFile).abs().dividedBy(onFile).times(100) : null;
+  const far = gap !== null && gap.gt(tolerance);
+  return (
+    <Field
+      className={className}
+      label={t(`${label} for $1`, `${label} pour 1 $`)}
+      required
+      error={text && !typed.gt(0) ? t("Enter a rate above zero", "Saisissez un taux supérieur à zéro") : null}
+      hint={
+        far ? (
+          <span className="font-medium text-amber-800 dark:text-amber-400">
+            {t(
+              `Far from the rate on file (1 $ = ${fmtQty(onFile)} ${label}, ${gap!.toDecimalPlaces(0).toString()}% apart): check the invoice`,
+              `Loin du taux enregistré (1 $ = ${fmtQty(onFile)} ${label}, ${gap!.toDecimalPlaces(0).toString()} % d'écart)\u00a0: vérifiez la facture`,
+            )}
+          </span>
+        ) : onFile ? (
+          t(`Rate on file: 1 $ = ${fmtQty(onFile)} ${label}`, `Taux enregistré\u00a0: 1 $ = ${fmtQty(onFile)} ${label}`)
+        ) : currency === "CNY" ? (
+          t("No yuan rate on file yet (about 7.1 CNY for $1); it can be entered on the Treasury page", "Pas encore de taux du yuan (environ 7,1 CNY pour 1 $)\u00a0; il se saisit dans la page Trésorerie")
+        ) : null
+      }
+    >
+      <Input
+        inputMode="decimal"
+        value={text}
+        onChange={(e) => {
+          setText(e.target.value);
+          const x = d(e.target.value);
+          onChange(x.gt(0) ? d(1).dividedBy(x).toDecimalPlaces(6).toString() : "");
+        }}
+      />
+    </Field>
+  );
 }
 
 /** Rate input state prefilled from the date's rate until the user edits it (a reload never overwrites a typed rate). */
