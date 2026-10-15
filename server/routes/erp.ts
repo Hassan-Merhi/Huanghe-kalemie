@@ -27,9 +27,10 @@ export function registerErpRoutes(
     journalSchema: Schema;
     transferSchema: Schema;
     audit: (req: Request, action: string, entity: string, entityId: number | null, data?: unknown) => Promise<void>;
+    assertAccountVisible: (req: Request, accountId: number) => Promise<void>;
   },
 ) {
-  const { audit } = deps;
+  const { audit, assertAccountVisible } = deps;
 
   // ---------------------------------------------------------------- Payment & receipt vouchers
 
@@ -44,7 +45,7 @@ export function registerErpRoutes(
   for (const kind of ["payment", "receipt"] as const) {
     app.post(`/api/vouchers/${kind}`, requireRole(...STAFF), asyncHandler(async (req, res) => {
       const body = voucherSchema.parse(req.body);
-      const result = await db.transaction((tx) => vouchers.postVoucher(tx, kind, body, uid(req)));
+      const result = await db.transaction((tx) => vouchers.postVoucher(tx, kind, body, uid(req), { owner: req.user!.role === "owner" }));
       await audit(req, "create", kind, result.id, body);
       res.status(201).json(result);
     }));
@@ -171,7 +172,7 @@ export function registerErpRoutes(
   }));
   app.post("/api/voucher-drafts/:id/finalize", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const result = await db.transaction((tx) =>
-      vouchers.finalizeDraft(tx, paramId(req), uid(req), (kind, payload) => {
+      vouchers.finalizeDraft(tx, paramId(req), uid(req), { owner: req.user!.role === "owner" }, (kind, payload) => {
         if (kind === "journal" && req.user!.role !== "owner") {
           throw forbidden("Only the owner can post a journal entry", "Seul le propriétaire peut passer une écriture");
         }
@@ -194,7 +195,11 @@ export function registerErpRoutes(
         month,
         date: isoDate.optional().nullable(),
         accountId: id,
-        lines: z.array(z.object({ partyId: id, salary: decimalString, bonus: optionalDecimal, deduction: optionalDecimal })).min(1),
+        currency: z.enum(["USD", "CDF"]).optional().nullable(),
+        rate: optionalDecimal,
+        lines: z
+          .array(z.object({ partyId: id, salary: decimalString, bonus: optionalDecimal, withheld: optionalDecimal, penalty: optionalDecimal, deduction: optionalDecimal }))
+          .min(1),
       })
       .parse(req.body);
     const run = await db.transaction((tx) => payroll.runPayroll(tx, body, uid(req)));
@@ -239,6 +244,10 @@ export function registerErpRoutes(
   }));
   app.post("/api/import/items", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = z.object({ date: isoDate, locationId: id, updatePrices: z.boolean().optional(), rows: z.array(stockRow).min(1).max(5000) }).parse(req.body);
+    // Quantities in the file become opening stock (Cr opening balances), which only the owner may enter.
+    if (req.user!.role !== "owner" && body.rows.some((r) => r.qty && !dec(r.qty).isZero())) {
+      throw forbidden("Only the owner can import opening stock. Remove the quantities to import the items only.", "Seul le propriétaire peut importer du stock d'ouverture. Retirez les quantités pour importer seulement les articles.");
+    }
     const result = await db.transaction((tx) => imports.importItems(tx, body, uid(req)));
     await audit(req, "import", "items", null, { rows: body.rows.length, created: result.created, stockLines: result.stockLines });
     res.status(201).json(result);
@@ -260,10 +269,12 @@ export function registerErpRoutes(
 
   app.get("/api/accounts/balances", requireRole(...READERS), asyncHandler(async (req, res) => {
     const q = z.object({ asOf: isoDate.optional() }).parse(req.query);
-    res.json(await reports.accountBalances(db, q.asOf));
+    const rows = await reports.accountBalances(db, q.asOf);
+    res.json(req.user!.role === "partner" ? reports.maskOtherPartners(rows, req.user!.partnerId) : rows);
   }));
   app.get("/api/accounts/:id/monthly", requireRole(...READERS), asyncHandler(async (req, res) => {
     const q = z.object({ year: z.coerce.number().int().min(2000).max(2100) }).parse(req.query);
+    await assertAccountVisible(req, paramId(req));
     res.json(await insights.accountMonthly(db, paramId(req), q.year));
   }));
   app.get("/api/inventory/by-location", requireRole(...READERS), asyncHandler(async (_req, res) => {

@@ -72,7 +72,7 @@ describe.skipIf(!hasDb)("Francs, yuan and exchange differences", async () => {
     let st = await reports.partyStatement(db, agentId);
     expect(st.foreign).toEqual([{ partyId: agentId, currency: "CDF", native: "-56000.00", usd: "-20.00" }]);
     // Paid later at 2,900 from the franc drawer through a payment voucher.
-    await db.transaction((tx) => vouchers.postVoucher(tx, "payment", { date: "2026-08-12", accountId: cashCdf, lines: [{ partyId: agentId, amount: "56000" }] }, userId));
+    await db.transaction((tx) => vouchers.postVoucher(tx, "payment", { date: "2026-08-12", accountId: cashCdf, lines: [{ partyId: agentId, amount: "56000" }] }, userId, { owner: true }));
     st = await reports.partyStatement(db, agentId);
     expect(st.balance).toBe("0.00");
     expect(st.foreign).toEqual([]);

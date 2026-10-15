@@ -40,7 +40,7 @@ describe.skipIf(!hasDb)("Vouchers, optional vouchers, payroll, imports and inven
 
   it("posts a payment voucher with an expense line and a supplier line, and shows the expense in Expenses", async () => {
     const r = await db.transaction((tx) =>
-      vouchers.postVoucher(tx, "payment", { date: "2026-09-05", accountId: cashUsd, memo: "Paiements du jour", lines: [{ accountId: rent, amount: "300", memo: "Loyer septembre" }, { partyId: supplierId, amount: "250" }] }, userId),
+      vouchers.postVoucher(tx, "payment", { date: "2026-09-05", accountId: cashUsd, memo: "Paiements du jour", lines: [{ accountId: rent, amount: "300", memo: "Loyer septembre" }, { partyId: supplierId, amount: "250" }] }, userId, { owner: true }),
     );
     expect(r.total).toBe("550.00");
     expect((await balanceOf("cash_usd")).balance).toBe("1450.00");
@@ -60,14 +60,14 @@ describe.skipIf(!hasDb)("Vouchers, optional vouchers, payroll, imports and inven
   });
 
   it("values a CDF payment at the voucher rate and keeps the franc balance", async () => {
-    await db.transaction((tx) => vouchers.postVoucher(tx, "payment", { date: "2026-09-07", accountId: cashCdf, rate: "2800", lines: [{ accountId: rent, amount: "56000" }, { accountId: rent, amount: "28000" }] }, userId));
+    await db.transaction((tx) => vouchers.postVoucher(tx, "payment", { date: "2026-09-07", accountId: cashCdf, rate: "2800", lines: [{ accountId: rent, amount: "56000" }, { accountId: rent, amount: "28000" }] }, userId, { owner: true }));
     const cdf = await balanceOf("cash_cdf");
     expect(cdf.nativeBalance).toBe("196000.00");
     expect(cdf.balance).toBe("70.00");
   });
 
   it("posts a receipt voucher from a customer and other income", async () => {
-    await db.transaction((tx) => vouchers.postVoucher(tx, "receipt", { date: "2026-09-08", accountId: cashUsd, lines: [{ partyId: customerId, amount: "40" }, { accountId: otherIncome, amount: "10" }] }, userId));
+    await db.transaction((tx) => vouchers.postVoucher(tx, "receipt", { date: "2026-09-08", accountId: cashUsd, lines: [{ partyId: customerId, amount: "40" }, { accountId: otherIncome, amount: "10" }] }, userId, { owner: true }));
     const c = (await reports.partyBalances(db, "customer")).find((p) => p.id === customerId)!;
     expect(c.balance).toBe("-40.00");
     expect((await balanceOf("cash_usd")).balance).toBe("2050.00");
@@ -75,8 +75,8 @@ describe.skipIf(!hasDb)("Vouchers, optional vouchers, payroll, imports and inven
 
   it("refuses lines that belong to other screens", async () => {
     const inventory = (await db.select().from(accounts)).find((a) => a.systemKey === "inventory")!.id;
-    await expect(db.transaction((tx) => vouchers.postVoucher(tx, "payment", { date: "2026-09-08", accountId: cashUsd, lines: [{ accountId: inventory, amount: "5" }] }, userId))).rejects.toThrow(/own screen/);
-    await expect(db.transaction((tx) => vouchers.postVoucher(tx, "payment", { date: "2026-09-08", accountId: cashUsd, lines: [{ accountId: cashCdf, amount: "5" }] }, userId))).rejects.toThrow(/transfer/);
+    await expect(db.transaction((tx) => vouchers.postVoucher(tx, "payment", { date: "2026-09-08", accountId: cashUsd, lines: [{ accountId: inventory, amount: "5" }] }, userId, { owner: true }))).rejects.toThrow(/own screen/);
+    await expect(db.transaction((tx) => vouchers.postVoucher(tx, "payment", { date: "2026-09-08", accountId: cashUsd, lines: [{ accountId: cashCdf, amount: "5" }] }, userId, { owner: true }))).rejects.toThrow(/transfer/);
   });
 
   it("keeps optional vouchers out of the books until finalized", async () => {
@@ -84,14 +84,14 @@ describe.skipIf(!hasDb)("Vouchers, optional vouchers, payroll, imports and inven
     const draft = await db.transaction((tx) => vouchers.saveDraft(tx, { kind: "payment", date: "2026-09-09", memo: "Brouillon", payload: { accountId: cashUsd, lines: [{ accountId: rent, amount: "20" }] } }, userId));
     expect(draft.totalUsd).toBe("20.00");
     expect((await reports.trialBalance(db)).rows).toEqual(before.rows);
-    const res = await db.transaction((tx) => vouchers.finalizeDraft(tx, draft.id, userId, (_k, p) => p));
+    const res = await db.transaction((tx) => vouchers.finalizeDraft(tx, draft.id, userId, { owner: true }, (_k, p) => p));
     expect(res.kind).toBe("payment");
     expect(await db.select().from(voucherDrafts)).toHaveLength(0);
     expect((await balanceOf("cash_usd")).balance).toBe("2030.00");
 
     // A draft that fails its checks stays a draft.
     const bad = await db.transaction((tx) => vouchers.saveDraft(tx, { kind: "journal", date: "2026-09-09", memo: "Déséquilibré", payload: { memo: "x", lines: [{ accountId: rent, debit: "5" }, { accountId: cashUsd, credit: "4" }] } }, userId));
-    await expect(db.transaction((tx) => vouchers.finalizeDraft(tx, bad.id, userId, (_k, p) => p))).rejects.toThrow(/equal/);
+    await expect(db.transaction((tx) => vouchers.finalizeDraft(tx, bad.id, userId, { owner: true }, (_k, p) => p))).rejects.toThrow(/equal/);
     expect(await db.select().from(voucherDrafts)).toHaveLength(1);
   });
 
@@ -109,7 +109,7 @@ describe.skipIf(!hasDb)("Vouchers, optional vouchers, payroll, imports and inven
     const pnl = await reports.profitAndLoss(db, "2026-09-01", "2026-09-30");
     expect(pnl.accounts.find((a) => a.accountId === salaries)!.amount).toBe("260.00");
 
-    await db.transaction((tx) => vouchers.postVoucher(tx, "payment", { date: "2026-09-30", accountId: cashUsd, memo: "Salaires", lines: [{ partyId: empA, amount: "110" }, { partyId: empB, amount: "100" }] }, userId));
+    await db.transaction((tx) => vouchers.postVoucher(tx, "payment", { date: "2026-09-30", accountId: cashUsd, memo: "Salaires", lines: [{ partyId: empA, amount: "110" }, { partyId: empB, amount: "100" }] }, userId, { owner: true }));
     staff = await payroll.employees(db);
     expect(staff.every((e) => e.balance === "0.00")).toBe(true);
 
@@ -118,7 +118,10 @@ describe.skipIf(!hasDb)("Vouchers, optional vouchers, payroll, imports and inven
     expect(await payroll.listRuns(db)).toHaveLength(1);
     // Without a date the cancellation is dated like the run, so September loses the salaries (not the day it is cancelled).
     await db.transaction((tx) => payroll.cancelRun(tx, "2026-09", null, userId));
-    expect((await payroll.listRuns(db))).toHaveLength(0);
+    const runs = await payroll.listRuns(db);
+    expect(runs).toHaveLength(1);
+    expect(runs[0].status).toBe("cancelled");
+    expect(runs[0].cancelJournalId).toBeTruthy();
     const [reversal] = await db.select().from(journals).where(eq(journals.reversesJournalId, run.journalId!));
     expect(reversal.date).toBe("2026-09-30");
     expect((await reports.profitAndLoss(db, "2026-09-01", "2026-09-30")).accounts.find((a) => a.accountId === salaries)).toBeUndefined();

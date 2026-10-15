@@ -29,6 +29,13 @@
       "when": 1792063806005,
       "tag": "0003_a2_currencies",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792065302127,
+      "tag": "0004_a3_controls",
+      "breakpoints": true
     }
   ]
 }

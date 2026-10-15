@@ -9,12 +9,14 @@ import {
   saleReturnLines,
   saleReturns,
   sales,
+  settings,
   users,
   variants,
+  type Role,
 } from "@shared/schema";
 import { allocateCents, cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
-import { badRequest, conflict, notFound } from "../errors";
+import { badRequest, conflict, forbidden, notFound } from "../errors";
 import { moneyLeg, nextNumber, postJournal, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId } from "./ledger";
 import { issueStock, linkMovementsToJournal, receiveStock, stockQty } from "./stock";
 
@@ -45,12 +47,25 @@ export interface CreateSaleInput {
   note?: string | null;
 }
 
-export async function createSale(tx: Tx, input: CreateSaleInput, userId: number) {
+export interface PriceRules {
+  role: Role;
+}
+
+/** The biggest discount a role may give on a line, in % of the list price, and whether it may sell below cost. */
+export async function priceLimits(tx: Tx, role: Role): Promise<{ maxDiscountPct: Decimal | null; belowCost: boolean }> {
+  if (role === "owner") return { maxDiscountPct: null, belowCost: true };
+  const rows = await tx.select().from(settings).where(inArray(settings.key, ["cashierDiscountPct", "managerDiscountPct", "managerBelowCost"]));
+  const get = (k: string) => rows.find((r) => r.key === k)?.value;
+  const pct = role === "manager" ? get("managerDiscountPct") ?? "20" : get("cashierDiscountPct") ?? "10";
+  return { maxDiscountPct: dec(String(pct)), belowCost: role === "manager" && get("managerBelowCost") === true };
+}
+
+export async function createSale(tx: Tx, input: CreateSaleInput, userId: number, rules?: PriceRules) {
   if (input.lines.length === 0) throw badRequest("Add at least one item", "Ajoutez au moins un article");
 
   const variantIds = Array.from(new Set(input.lines.map((l) => l.variantId)));
   const variantRows = await tx
-    .select({ id: variants.id, sku: variants.sku, name: products.name, tracksSerials: products.tracksSerials, active: variants.active })
+    .select({ id: variants.id, sku: variants.sku, name: products.name, tracksSerials: products.tracksSerials, active: variants.active, sellPrice: variants.sellPrice })
     .from(variants)
     .innerJoin(products, eq(products.id, variants.productId))
     .where(inArray(variants.id, variantIds));
@@ -91,6 +106,21 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number)
     ? gross.map(() => new Decimal(0))
     : allocateCents(saleDiscount, gross.map((g) => g.amount));
   const total = subtotal.minus(saleDiscount);
+  const limits = rules ? await priceLimits(tx, rules.role) : { maxDiscountPct: null, belowCost: true };
+  if (limits.maxDiscountPct) {
+    gross.forEach((g, i) => {
+      const list = cents(g.q.times(g.variant.sellPrice));
+      if (list.lte(0)) return;
+      const given = list.minus(g.amount.minus(discountShares[i]));
+      if (given.times(100).gt(list.times(limits.maxDiscountPct!))) {
+        const pct = limits.maxDiscountPct!.toString();
+        throw forbidden(
+          `${g.variant.name}: the discount is more than the ${pct}% you may give. Ask the owner.`,
+          `${g.variant.name} : la remise dépasse les ${pct} % autorisés. Demandez au propriétaire.`,
+        );
+      }
+    });
+  }
 
   const legs = [];
   for (const p of input.payments) {
@@ -150,6 +180,17 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number)
       userId,
     });
     cogsTotal = cogsTotal.plus(cogs);
+    if (!limits.belowCost && g.amount.minus(discountShares[i]).lt(cogs)) {
+      // A cashier never sees cost, so the message does not give it.
+      throw forbidden(
+        rules?.role === "manager"
+          ? `${g.variant.name}: ${g.amount.minus(discountShares[i]).toFixed(2)} is below its cost (${dec(cogs).toFixed(2)}). Only the owner can sell below cost.`
+          : `${g.variant.name}: this price is too low. Ask the owner.`,
+        rules?.role === "manager"
+          ? `${g.variant.name} : ${g.amount.minus(discountShares[i]).toFixed(2)} $ est sous le coût (${dec(cogs).toFixed(2)} $). Seul le propriétaire peut vendre à perte.`
+          : `${g.variant.name} : ce prix est trop bas. Demandez au propriétaire.`,
+      );
+    }
     await tx.insert(saleLines).values({
       saleId: sale.id,
       variantId: g.variant.id,

@@ -68,8 +68,41 @@ export async function accountBalances(tx: Tx, asOf?: string) {
   });
 }
 
-export async function trialBalance(tx: Tx, asOf?: string) {
-  const rows = (await accountBalances(tx, asOf)).filter((r) => !dec(r.balance).isZero());
+type BalanceRow = Awaited<ReturnType<typeof accountBalances>>[number];
+
+/**
+ * What a partner may see of the chart: their own capital and current accounts, and the other
+ * partners' accounts added up in one line, so totals still balance without showing the others.
+ */
+export function maskOtherPartners(rows: BalanceRow[], partnerId: number | null | undefined): BalanceRow[] {
+  const others = rows.filter((r) => r.partnerId && r.partnerId !== partnerId);
+  if (!others.length) return rows;
+  const debit = sum(others.map((r) => r.debit));
+  const credit = sum(others.map((r) => r.credit));
+  const merged: BalanceRow = {
+    id: -1,
+    code: others[0].code,
+    name: "Autres associés",
+    type: "equity",
+    systemKey: null,
+    isMoney: false,
+    currency: "USD",
+    partnerId: -1,
+    active: true,
+    debit: debit.toFixed(2),
+    credit: credit.toFixed(2),
+    balance: debit.minus(credit).toFixed(2),
+    nativeBalance: debit.minus(credit).toFixed(2),
+  };
+  const kept = rows.filter((r) => !others.includes(r));
+  const at = rows.indexOf(others[0]);
+  const before = rows.slice(0, at).filter((r) => !others.includes(r)).length;
+  return [...kept.slice(0, before), merged, ...kept.slice(before)];
+}
+
+export async function trialBalance(tx: Tx, asOf?: string, partnerId?: number | null) {
+  const all = await accountBalances(tx, asOf);
+  const rows = (partnerId === undefined ? all : maskOtherPartners(all, partnerId)).filter((r) => !dec(r.balance).isZero());
   const debit = sum(rows.filter((r) => dec(r.balance).isPositive()).map((r) => r.balance));
   const credit = sum(rows.filter((r) => dec(r.balance).isNegative()).map((r) => dec(r.balance).abs()));
   return { asOf: asOf ?? null, rows, totalDebit: debit.toFixed(2), totalCredit: credit.toFixed(2), balanced: debit.equals(credit) };

@@ -75,13 +75,20 @@ function ShopTab() {
   const [rate, setRate] = useState("");
   const [footer, setFooter] = useState("");
   const [tolerance, setTolerance] = useState("3");
+  const [cashierPct, setCashierPct] = useState("10");
+  const [managerPct, setManagerPct] = useState("20");
+  const [belowCost, setBelowCost] = useState(false);
   useEffect(() => {
     if (!q.data) return;
     setShopName(String(q.data.shopName ?? ""));
     setRate(String(q.data.defaultCdfRate ?? ""));
     setFooter(String(q.data.receiptFooter ?? ""));
     setTolerance(String(q.data.rateTolerancePct ?? "3"));
+    setCashierPct(String(q.data.cashierDiscountPct ?? "10"));
+    setManagerPct(String(q.data.managerDiscountPct ?? "20"));
+    setBelowCost(q.data.managerBelowCost === true);
   }, [q.data]);
+  const pctOk = (v: string) => /^\d{1,3}(\.\d{1,2})?$/.test(v.trim()) && Number(v) <= 100;
   const m = useApiMutation("PATCH", "/api/settings", { success: t("Settings saved", "Paramètres enregistrés") });
   if (q.isLoading) return <Loading />;
   return (
@@ -105,11 +112,38 @@ function ShopTab() {
         >
           <Input inputMode="decimal" value={tolerance} onChange={(e) => setTolerance(e.target.value)} />
         </Field>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <Field label={t("Cashier: biggest discount (%)", "Caissier : remise maximale (%)")}>
+            <Input inputMode="decimal" value={cashierPct} onChange={(e) => setCashierPct(e.target.value)} />
+          </Field>
+          <Field label={t("Manager: biggest discount (%)", "Gérant : remise maximale (%)")}>
+            <Input inputMode="decimal" value={managerPct} onChange={(e) => setManagerPct(e.target.value)} />
+          </Field>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          {t(
+            "Measured on each line against the item's price. The owner has no limit. Nobody but the owner sells below cost unless allowed below.",
+            "Calculée sur chaque ligne par rapport au prix de l'article. Le propriétaire n'a pas de limite. Personne d'autre que le propriétaire ne vend sous le coût, sauf autorisation ci-dessous.",
+          )}
+        </p>
+        <label className="flex items-center gap-2 text-sm">
+          <Switch checked={belowCost} onCheckedChange={setBelowCost} /> {t("Managers may sell below cost", "Les gérants peuvent vendre sous le coût")}
+        </label>
         <Field label={t("Receipt footer", "Pied de reçu")}><Textarea rows={3} maxLength={300} value={footer} onChange={(e) => setFooter(e.target.value)} /></Field>
         <div className="flex justify-end">
           <Button
-            disabled={!shopName.trim() || !d(rate).gt(0) || !/^\d{1,2}(\.\d{1,2})?$/.test(tolerance.trim()) || m.isPending}
-            onClick={() => m.mutate({ shopName: shopName.trim(), defaultCdfRate: d(rate).toString(), receiptFooter: footer, rateTolerancePct: tolerance.trim() })}
+            disabled={!shopName.trim() || !d(rate).gt(0) || !/^\d{1,2}(\.\d{1,2})?$/.test(tolerance.trim()) || !pctOk(cashierPct) || !pctOk(managerPct) || m.isPending}
+            onClick={() =>
+              m.mutate({
+                shopName: shopName.trim(),
+                defaultCdfRate: d(rate).toString(),
+                receiptFooter: footer,
+                rateTolerancePct: tolerance.trim(),
+                cashierDiscountPct: cashierPct.trim(),
+                managerDiscountPct: managerPct.trim(),
+                managerBelowCost: belowCost,
+              })
+            }
           >
             {t("Save", "Enregistrer")}
           </Button>

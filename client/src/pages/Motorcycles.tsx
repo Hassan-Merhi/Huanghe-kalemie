@@ -22,7 +22,7 @@ type Unit = MotorcycleUnit & { attributes?: Record<string, string> };
 export default function Motorcycles() {
   const t = useT();
   const { can } = useAuth();
-  const [status, setStatus] = useState<"in_stock" | "sold" | "all">("in_stock");
+  const [status, setStatus] = useState<"in_stock" | "sold" | "removed" | "all">("in_stock");
   const [search, setSearch] = useState("");
   const [debounced, setDebounced] = useState("");
   const [model, setModel] = useState("all");
@@ -75,7 +75,13 @@ export default function Motorcycles() {
             <TableCell className="whitespace-nowrap font-mono text-xs">{u.engineNo ?? "—"}</TableCell>
             <TableCell>{u.color ?? "—"}</TableCell>
             <TableCell>
-              {u.status === "sold" ? <Badge variant="secondary">{t("Sold", "Vendue")}</Badge> : <Badge variant="outline">{t("In stock", "En stock")}</Badge>}
+              {u.status === "sold" ? (
+                <Badge variant="secondary">{t("Sold", "Vendue")}</Badge>
+              ) : u.status === "removed" ? (
+                <Badge variant="destructive">{t("Removed", "Retirée")}</Badge>
+              ) : (
+                <Badge variant="outline">{t("In stock", "En stock")}</Badge>
+              )}
             </TableCell>
             <TableCell>{locName(u.locationId)}</TableCell>
             <TableCell>
@@ -116,6 +122,7 @@ export default function Motorcycles() {
           <SelectContent>
             <SelectItem value="in_stock">{t("In stock", "En stock")}</SelectItem>
             <SelectItem value="sold">{t("Sold", "Vendues")}</SelectItem>
+            <SelectItem value="removed">{t("Removed from stock", "Retirées du stock")}</SelectItem>
             <SelectItem value="all">{t("All", "Toutes")}</SelectItem>
           </SelectContent>
         </Select>

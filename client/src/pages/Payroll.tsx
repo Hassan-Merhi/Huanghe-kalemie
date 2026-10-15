@@ -5,6 +5,7 @@ import { ChevronDown, ChevronRight, HandCoins, Pencil, Plus, Printer, Undo2, Wal
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -24,7 +25,7 @@ import { AccountSelect, MoneyAccountSelect, MonthSelect, PartySelect, RateInput,
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useI18n, useT, count } from "@/lib/i18n";
-import { cdf, d, date as fmtDate, todayLocal, usd } from "@/lib/format";
+import { cdf, d, date as fmtDate, money, todayLocal, usd } from "@/lib/format";
 import type { Account, Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { PartyDialog } from "@/pages/Contacts";
@@ -36,18 +37,28 @@ interface RunLine {
   name: string;
   salary: string;
   bonus: string;
+  /** Kept from the pay, still a cost: owed to someone else. Older runs have only `deduction`. */
+  withheld?: string;
+  /** A fine: lowers the cost. */
+  penalty?: string;
   deduction: string;
   net: string;
+  netUsd?: string;
 }
 
 interface PayrollRun {
   id: number;
   month: string;
+  status: "posted" | "cancelled";
+  currency: "USD" | "CDF";
+  rate: string | null;
   date: string;
   accountId: number;
   totalUsd: string;
   lines: RunLine[];
   journalId: number | null;
+  cancelledAt: string | null;
+  cancelJournalId: number | null;
 }
 
 interface PayrollData {
@@ -215,7 +226,8 @@ interface GridEdit {
   include?: boolean;
   salary?: string;
   bonus?: string;
-  deduction?: string;
+  withheld?: string;
+  penalty?: string;
 }
 
 function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
@@ -227,32 +239,53 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
   const [day, setDay] = useState("");
   const [paying, setPaying] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [currency, setCurrency] = useState<"USD" | "CDF">("USD");
 
   useEffect(() => {
     setEdits({});
     setDay("");
   }, [month]);
 
-  const run = data.runs.find((r) => r.month === month) ?? null;
+  const run = data.runs.find((r) => r.month === month && r.status !== "cancelled") ?? null;
+  const cancelledRuns = data.runs.filter((r) => r.month === month && r.status === "cancelled");
   const active = data.employees.filter((e) => e.active);
   const effectiveAccount = accountId ?? data.salaryAccountId;
   // The current month defaults to today, not its last day: a future-dated entry would be missing from today's reports.
   const today = todayLocal();
   const effectiveDay = day || (month === today.slice(0, 7) ? today : lastDayOfMonth(month));
+  const { rate, setRate } = useRateField(effectiveDay);
+  const fmt = (v: unknown) => money(v, currency);
 
   const grid = active.map((e) => {
     const ed = edits[e.id] ?? {};
-    const salary = ed.salary ?? (e.monthlySalary ? d(e.monthlySalary).toString() : "");
+    // Monthly salaries are kept in dollars; a franc payroll starts from them at the rate.
+    const base = e.monthlySalary ? d(e.monthlySalary) : null;
+    const salary = ed.salary ?? (base ? (currency === "CDF" ? (d(rate).gt(0) ? base.times(d(rate)).toDecimalPlaces(0).toString() : "") : base.toString()) : "");
     const bonus = ed.bonus ?? "";
-    const deduction = ed.deduction ?? "";
+    const withheld = ed.withheld ?? "";
+    const penalty = ed.penalty ?? "";
     const include = ed.include ?? true;
-    const net = d(salary).plus(d(bonus)).minus(d(deduction));
-    return { e, salary, bonus, deduction, include, net };
+    const net = d(salary).plus(d(bonus)).minus(d(withheld)).minus(d(penalty));
+    return { e, salary, bonus, withheld, penalty, include, net };
   });
   const included = grid.filter((g) => g.include);
   const total = included.reduce((s, g) => s.plus(g.net), d(0));
   const negative = included.find((g) => g.net.isNegative());
   const dayInMonth = effectiveDay.slice(0, 7) === month;
+
+  /** Switching currency converts what was typed at the rate, so 250 $ does not become 250 FC. */
+  function changeCurrency(next: "USD" | "CDF") {
+    if (next === currency) return;
+    const r = d(rate);
+    const conv = (v: string | undefined) => {
+      if (v === undefined || !v.trim() || !r.gt(0)) return v;
+      return next === "CDF" ? d(v).times(r).toDecimalPlaces(0).toString() : d(v).dividedBy(r).toDecimalPlaces(2).toString();
+    };
+    setEdits((prev) =>
+      Object.fromEntries(Object.entries(prev).map(([k, e]) => [k, { ...e, salary: conv(e.salary), bonus: conv(e.bonus), withheld: conv(e.withheld), penalty: conv(e.penalty) }])),
+    );
+    setCurrency(next);
+  }
 
   function setEdit(id: number, patch: GridEdit) {
     setEdits((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
@@ -273,11 +306,14 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
       month,
       date: effectiveDay,
       accountId: effectiveAccount,
+      currency,
+      rate: currency === "CDF" ? d(rate).toString() : null,
       lines: included.map((g) => ({
         partyId: g.e.id,
         salary: d(g.salary).toFixed(2),
         bonus: g.bonus.trim() ? d(g.bonus).toFixed(2) : null,
-        deduction: g.deduction.trim() ? d(g.deduction).toFixed(2) : null,
+        withheld: g.withheld.trim() ? d(g.withheld).toFixed(2) : null,
+        penalty: g.penalty.trim() ? d(g.penalty).toFixed(2) : null,
       })),
     });
   }
@@ -316,7 +352,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
             )}
           </CardHeader>
           <CardContent className="p-0">
-            <RunLinesTable lines={run.lines} total={run.totalUsd} />
+            <RunLinesTable run={run} />
           </CardContent>
         </Card>
       ) : active.length === 0 ? (
@@ -335,14 +371,34 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
               <Field label={t("Expense account", "Compte de charge")}>
                 <AccountSelect value={effectiveAccount} onChange={setAccountId} types={["expense"]} />
               </Field>
               <Field label={t("Date", "Date")} error={dayInMonth ? null : t("The date must be inside the month", "La date doit être dans le mois")}>
                 <Input type="date" value={effectiveDay} onChange={(e) => setDay(e.target.value)} />
               </Field>
+              <Field label={t("Salaries owed in", "Salaires dus en")}>
+                <Select value={currency} onValueChange={(v) => changeCurrency(v as "USD" | "CDF")}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="USD">{t("Dollars ($)", "Dollars ($)")}</SelectItem>
+                    <SelectItem value="CDF">{t("Francs (FC)", "Francs (FC)")}</SelectItem>
+                  </SelectContent>
+                </Select>
+              </Field>
+              {currency === "CDF" && (
+                <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")}>
+                  <RateInput day={effectiveDay} value={rate} onChange={setRate} />
+                </Field>
+              )}
             </div>
+            <p className="text-xs text-muted-foreground">
+              {t(
+                "Withheld: kept from the pay but owed to someone else (tax, social security); it stays a salary cost. Penalty: a fine, it lowers the cost.",
+                "Retenue : gardée sur la paie mais due à un tiers (impôt, sécurité sociale) ; elle reste une charge de salaire. Pénalité : une amende, elle réduit la charge.",
+              )}
+            </p>
             <div className="-mx-6 overflow-x-auto">
               <Table>
                 <TableHeader>
@@ -351,7 +407,8 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                     <TableHead>{t("Employee", "Employé")}</TableHead>
                     <TableHead className="text-right">{t("Salary", "Salaire")}</TableHead>
                     <TableHead className="text-right">{t("Bonus", "Prime")}</TableHead>
-                    <TableHead className="text-right">{t("Deduction", "Retenue")}</TableHead>
+                    <TableHead className="text-right">{t("Withheld", "Retenue")}</TableHead>
+                    <TableHead className="text-right">{t("Penalty", "Pénalité")}</TableHead>
                     <TableHead className="text-right">{t("Net", "Net")}</TableHead>
                     <TableHead className="text-right">{t("Current balance", "Solde actuel")}</TableHead>
                   </TableRow>
@@ -380,10 +437,13 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                         <Input className="ml-auto w-20 text-right" inputMode="decimal" placeholder="0" value={g.bonus} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { bonus: ev.target.value })} />
                       </TableCell>
                       <TableCell className="text-right">
-                        <Input className="ml-auto w-20 text-right" inputMode="decimal" placeholder="0" value={g.deduction} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { deduction: ev.target.value })} />
+                        <Input className="ml-auto w-20 text-right" inputMode="decimal" placeholder="0" value={g.withheld} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { withheld: ev.target.value })} />
                       </TableCell>
                       <TableCell className="text-right">
-                        <Num className={cn("font-medium", g.net.isNegative() && "text-destructive")}>{usd(g.net.toFixed(2))}</Num>
+                        <Input className="ml-auto w-20 text-right" inputMode="decimal" placeholder="0" value={g.penalty} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { penalty: ev.target.value })} />
+                      </TableCell>
+                      <TableCell className="text-right">
+                        <Num className={cn("font-medium", g.net.isNegative() && "text-destructive")}>{fmt(g.net.toFixed(2))}</Num>
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-right text-sm"><EmployeeBalance balance={g.e.balance} /></TableCell>
                     </TableRow>
@@ -391,8 +451,8 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                 </TableBody>
                 <TableFooter>
                   <TableRow>
-                    <TableCell colSpan={5}>{t("Total", "Total")} · {count(t, included.length, ["employee", "employees"], ["employé", "employés"])}</TableCell>
-                    <TableCell className="text-right"><Num className="font-semibold">{usd(total.toFixed(2))}</Num></TableCell>
+                    <TableCell colSpan={6}>{t("Total", "Total")} · {count(t, included.length, ["employee", "employees"], ["employé", "employés"])}</TableCell>
+                    <TableCell className="text-right"><Num className="font-semibold">{fmt(total.toFixed(2))}</Num></TableCell>
                     <TableCell />
                   </TableRow>
                 </TableFooter>
@@ -403,12 +463,34 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
               <div className="flex justify-end">
                 <Button
                   onClick={submit}
-                  disabled={post.isPending || !effectiveAccount || !dayInMonth || included.length === 0 || !!negative || !total.gt(0)}
+                  disabled={post.isPending || !effectiveAccount || !dayInMonth || included.length === 0 || !!negative || !total.gt(0) || (currency === "CDF" && !d(rate).gt(0))}
                 >
                   {t("Book salaries", "Comptabiliser les salaires")}
                 </Button>
               </div>
             )}
+          </CardContent>
+        </Card>
+      )}
+
+      {cancelledRuns.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">{t("Cancelled runs", "Passages annulés")}</CardTitle>
+            <p className="text-sm text-muted-foreground">{t("Kept for the record. Their entries were reversed.", "Gardés pour l'historique. Leurs écritures ont été contre-passées.")}</p>
+          </CardHeader>
+          <CardContent className="space-y-4 p-0 pb-4">
+            {cancelledRuns.map((r) => (
+              <div key={r.id} className="space-y-1">
+                <p className="flex flex-wrap items-center gap-2 px-6 text-sm">
+                  <Badge variant="destructive">{t("Cancelled", "Annulé")}</Badge>
+                  {t("Booked on", "Comptabilisé le")} {fmtDate(r.date)}
+                  {r.cancelledAt && <> · {t("cancelled on", "annulé le")} {fmtDate(r.cancelledAt.slice(0, 10))}</>}
+                  {r.cancelJournalId && <Link href={`/vouchers/${r.cancelJournalId}`} className="text-primary hover:underline">{t("reversal", "contre-passation")}</Link>}
+                </p>
+                <RunLinesTable run={r} />
+              </div>
+            ))}
           </CardContent>
         </Card>
       )}
@@ -442,8 +524,12 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
   );
 }
 
-function RunLinesTable({ lines, total }: { lines: RunLine[]; total: string }) {
+function RunLinesTable({ run }: { run: PayrollRun }) {
   const t = useT();
+  const fmt = (v: unknown) => money(v, run.currency);
+  // Older runs only know one deduction, which lowered the cost: shown as a penalty.
+  const penaltyOf = (l: RunLine) => l.penalty ?? (l.withheld == null ? l.deduction : "0");
+  const total = run.lines.reduce((s, l) => s.plus(d(l.net)), d(0));
   return (
     <div className="overflow-x-auto">
       <Table>
@@ -452,27 +538,35 @@ function RunLinesTable({ lines, total }: { lines: RunLine[]; total: string }) {
             <TableHead>{t("Employee", "Employé")}</TableHead>
             <TableHead className="text-right">{t("Salary", "Salaire")}</TableHead>
             <TableHead className="text-right">{t("Bonus", "Prime")}</TableHead>
-            <TableHead className="text-right">{t("Deduction", "Retenue")}</TableHead>
+            <TableHead className="text-right">{t("Withheld", "Retenue")}</TableHead>
+            <TableHead className="text-right">{t("Penalty", "Pénalité")}</TableHead>
             <TableHead className="text-right">{t("Net", "Net")}</TableHead>
           </TableRow>
         </TableHeader>
         <TableBody>
-          {lines.map((l) => (
+          {run.lines.map((l) => (
             <TableRow key={l.partyId}>
               <TableCell className="font-medium">
                 <Link href={`/contacts/${l.partyId}`} className="hover:underline">{l.name}</Link>
               </TableCell>
-              <TableCell className="text-right"><Num>{usd(l.salary)}</Num></TableCell>
-              <TableCell className="text-right"><Num>{d(l.bonus).isZero() ? "—" : usd(l.bonus)}</Num></TableCell>
-              <TableCell className="text-right"><Num>{d(l.deduction).isZero() ? "—" : usd(l.deduction)}</Num></TableCell>
-              <TableCell className="text-right"><Num className="font-medium">{usd(l.net)}</Num></TableCell>
+              <TableCell className="text-right"><Num>{fmt(l.salary)}</Num></TableCell>
+              <TableCell className="text-right"><Num>{d(l.bonus).isZero() ? "—" : fmt(l.bonus)}</Num></TableCell>
+              <TableCell className="text-right"><Num>{d(l.withheld).isZero() ? "—" : fmt(l.withheld)}</Num></TableCell>
+              <TableCell className="text-right"><Num>{d(penaltyOf(l)).isZero() ? "—" : fmt(penaltyOf(l))}</Num></TableCell>
+              <TableCell className="text-right"><Num className="font-medium">{fmt(l.net)}</Num></TableCell>
             </TableRow>
           ))}
         </TableBody>
         <TableFooter>
           <TableRow>
-            <TableCell colSpan={4}>{t("Total", "Total")}</TableCell>
-            <TableCell className="text-right"><Num className="font-semibold">{usd(total)}</Num></TableCell>
+            <TableCell colSpan={5}>
+              {t("Total", "Total")}
+              {run.currency === "CDF" && run.rate && <span className="ml-2 text-xs text-muted-foreground">{t(`at ${cdf(run.rate)} per $1`, `à ${cdf(run.rate)} pour 1 $`)}</span>}
+            </TableCell>
+            <TableCell className="text-right">
+              <Num className="font-semibold">{fmt(total.toFixed(2))}</Num>
+              {run.currency === "CDF" && <span className="block text-xs text-muted-foreground">{t("cost", "charge")} {usd(run.totalUsd)}</span>}
+            </TableCell>
           </TableRow>
         </TableFooter>
       </Table>
@@ -488,7 +582,7 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
   const [account, setAccount] = useState<Account | null>(null);
   const [day, setDay] = useState(todayLocal());
   const { rate, setRate } = useRateField(day);
-  const [amounts, setAmounts] = useState<Record<number, string>>({});
+  const [amounts, setAmounts] = useState<Record<string, string>>({});
   const [doneId, setDoneId] = useState<number | null>(null);
 
   // One line per employee of the run, plus anyone else we still owe.
@@ -498,12 +592,30 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
     return employees.filter((e) => ids.has(e.id));
   }, [run, employees]);
   const owedOf = (e: Party) => (d(e.balance).isNegative() ? d(e.balance).abs() : d(0));
-  const amountOf = (e: Party) => amounts[e.id] ?? owedOf(e).toFixed(2);
-
   const isCdf = account?.currency === "CDF";
   const r = d(rate);
-  const lines = rows.map((e) => ({ e, usdAmount: d(amountOf(e)) })).filter((l) => l.usdAmount.gt(0));
-  const total = lines.reduce((s, l) => s.plus(l.usdAmount), d(0));
+  // Francs owed (from a payroll in francs) are paid in francs to the franc; the dollar part at the day's rate.
+  const owedFc = (e: Party) => {
+    const f = e.foreign?.find((x) => x.currency === "CDF");
+    return f && d(f.native).isNegative() ? { native: d(f.native).abs(), usd: d(f.usd).abs() } : { native: d(0), usd: d(0) };
+  };
+  const suggested = (e: Party) => {
+    if (!isCdf) return owedOf(e).toFixed(2);
+    const fc = owedFc(e);
+    const dollars = owedOf(e).minus(fc.usd);
+    return fc.native.plus(dollars.gt(0) && r.gt(0) ? dollars.times(r) : 0).toDecimalPlaces(0).toFixed(0);
+  };
+  const keyOf = (e: Party) => `${e.id}:${isCdf ? "CDF" : "USD"}`;
+  const amountOf = (e: Party) => amounts[keyOf(e)] ?? suggested(e);
+
+  /** Amount in the paying account's currency, and its dollar value. */
+  const lines = rows
+    .map((e) => {
+      const amount = d(amountOf(e));
+      return { e, amount, usdAmount: isCdf ? (r.gt(0) ? amount.dividedBy(r) : d(0)) : amount };
+    })
+    .filter((l) => l.amount.gt(0));
+  const total = lines.reduce((s, l) => s.plus(l.amount), d(0));
   const frMonth = formatMonth(month, "fr");
 
   const pay = useApiMutation<Record<string, unknown>, { id: number; total: string }>("POST", "/api/vouchers/payment", {
@@ -520,7 +632,7 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
       memo: `Salaires ${frMonth}`,
       lines: lines.map((l) => ({
         partyId: l.e.id,
-        amount: (isCdf ? l.usdAmount.times(r) : l.usdAmount).toFixed(2),
+        amount: l.amount.toFixed(isCdf ? 0 : 2),
         memo: `Salaire ${frMonth}`,
       })),
     });
@@ -533,8 +645,8 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
           <DialogTitle>{t(`Pay salaries · ${monthLabel(month)}`, `Payer les salaires · ${monthLabel(month)}`)}</DialogTitle>
           <DialogDescription>
             {t(
-              "Prefilled with what each employee is owed; advances already given are deducted. Amounts are in USD.",
-              "Prérempli avec ce qui est dû à chaque employé ; les avances déjà données sont déduites. Montants en USD.",
+              "Prefilled with what each employee is owed; advances already given are deducted. Amounts are in the currency of the account paid from.",
+              "Prérempli avec ce qui est dû à chaque employé ; les avances déjà données sont déduites. Montants dans la monnaie du compte qui paie.",
             )}
           </DialogDescription>
         </DialogHeader>
@@ -565,7 +677,6 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
             ) : (
               <div className="divide-y rounded-md border">
                 {rows.map((e) => {
-                  const a = d(amountOf(e));
                   return (
                     <div key={e.id} className="flex flex-wrap items-center justify-between gap-2 p-3">
                       <div className="min-w-0">
@@ -573,8 +684,10 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
                         <p className="text-xs"><EmployeeBalance balance={e.balance} /></p>
                       </div>
                       <div className="text-right">
-                        <Input className="w-28 text-right" inputMode="decimal" value={amountOf(e)} onChange={(ev) => setAmounts((p) => ({ ...p, [e.id]: ev.target.value }))} />
-                        {isCdf && r.gt(0) && <p className="mt-0.5 text-xs text-muted-foreground">{cdf(a.times(r).toFixed(0))}</p>}
+                        <div className="flex items-center justify-end gap-1">
+                          <Input className="w-28 text-right" inputMode="decimal" value={amountOf(e)} onChange={(ev) => setAmounts((p) => ({ ...p, [keyOf(e)]: ev.target.value }))} />
+                          <span className="w-6 text-left text-xs text-muted-foreground">{isCdf ? "FC" : "$"}</span>
+                        </div>
                       </div>
                     </div>
                   );
@@ -584,8 +697,7 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
             <div className="flex items-center justify-between rounded-md bg-muted/50 p-3 text-sm">
               <span>{t("Total", "Total")} · {count(t, lines.length, ["employee", "employees"], ["employé", "employés"])}</span>
               <Num className="font-semibold">
-                {usd(total.toFixed(2))}
-                {isCdf && r.gt(0) && <span className="ml-2 font-normal text-muted-foreground">{cdf(total.times(r).toFixed(0))}</span>}
+                {isCdf ? cdf(total.toFixed(0)) : usd(total.toFixed(2))}
               </Num>
             </div>
           </div>
@@ -594,7 +706,7 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
           <Button variant="outline" onClick={onClose}>{doneId ? t("Close", "Fermer") : t("Cancel", "Annuler")}</Button>
           {!doneId && (
             <Button onClick={submit} disabled={pay.isPending || !account || lines.length === 0 || (isCdf && !r.gt(0))}>
-              {t("Pay", "Payer")} {usd(total.toFixed(2))}
+              {t("Pay", "Payer")} {isCdf ? cdf(total.toFixed(0)) : usd(total.toFixed(2))}
             </Button>
           )}
         </DialogFooter>
@@ -744,7 +856,7 @@ function HistoryTab({ runs }: { runs: PayrollRun[] }) {
   const [open, setOpen] = useState<number | null>(null);
   const sorted = [...runs].sort((a, b) => b.month.localeCompare(a.month));
   if (sorted.length === 0) return <EmptyState title={t("No payroll booked yet", "Aucune paie comptabilisée pour l'instant")} />;
-  const grand = sorted.reduce((s, r) => s.plus(r.totalUsd), d(0));
+  const grand = sorted.filter((r) => r.status !== "cancelled").reduce((s, r) => s.plus(r.totalUsd), d(0));
   return (
     <Card>
       <CardContent className="p-0">
@@ -765,10 +877,13 @@ function HistoryTab({ runs }: { runs: PayrollRun[] }) {
                 <Fragment key={r.id}>
                   <TableRow className="cursor-pointer" onClick={() => setOpen(open === r.id ? null : r.id)}>
                     <TableCell>{open === r.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</TableCell>
-                    <TableCell className="font-medium">{monthLabel(r.month)}</TableCell>
+                    <TableCell className="font-medium">
+                      {monthLabel(r.month)}
+                      {r.status === "cancelled" && <Badge variant="destructive" className="ml-2">{t("Cancelled", "Annulé")}</Badge>}
+                    </TableCell>
                     <TableCell className="hidden whitespace-nowrap sm:table-cell">{fmtDate(r.date)}</TableCell>
                     <TableCell className="text-right"><Num>{r.lines.length}</Num></TableCell>
-                    <TableCell className="text-right"><Num className="font-medium">{usd(r.totalUsd)}</Num></TableCell>
+                    <TableCell className="text-right"><Num className={cn("font-medium", r.status === "cancelled" && "text-muted-foreground line-through")}>{usd(r.totalUsd)}</Num></TableCell>
                     <TableCell onClick={(e) => e.stopPropagation()}>
                       {r.journalId && (
                         <Button variant="ghost" size="icon" asChild aria-label={t("View entry", "Voir l'écriture")}>
@@ -780,7 +895,7 @@ function HistoryTab({ runs }: { runs: PayrollRun[] }) {
                   {open === r.id && (
                     <TableRow className="hover:bg-transparent">
                       <TableCell colSpan={6} className="bg-muted/30 p-2">
-                        <RunLinesTable lines={r.lines} total={r.totalUsd} />
+                        <RunLinesTable run={r} />
                       </TableCell>
                     </TableRow>
                   )}
@@ -789,7 +904,7 @@ function HistoryTab({ runs }: { runs: PayrollRun[] }) {
             </TableBody>
             <TableFooter>
               <TableRow>
-                <TableCell colSpan={4}>{t("Total", "Total")} · {count(t, sorted.length, ["month", "months"], ["mois", "mois"])}</TableCell>
+                <TableCell colSpan={4}>{t("Total", "Total")} · {count(t, sorted.filter((r) => r.status !== "cancelled").length, ["month", "months"], ["mois", "mois"])}</TableCell>
                 <TableCell className="text-right"><Num className="font-semibold">{usd(grand.toFixed(2))}</Num></TableCell>
                 <TableCell />
               </TableRow>

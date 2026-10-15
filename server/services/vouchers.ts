@@ -2,7 +2,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import { accounts, expenses, journals, parties, voucherDrafts, type DraftKind } from "@shared/schema";
 import { cents, dec, sum } from "@shared/money";
 import type { Tx } from "../db";
-import { badRequest, conflict, notFound } from "../errors";
+import { badRequest, conflict, forbidden, notFound } from "../errors";
 import { contactLines, moneyLeg, postJournal, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type PostLine } from "./ledger";
 import * as ops from "./operations";
 
@@ -42,7 +42,15 @@ const BLOCKED_KEYS: string[] = [
   SYSTEM_ACCOUNTS.stockAdjustments,
 ];
 
-async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherInput) {
+/** Accounts only the owner may post to: partners' money, opening balances and exchange differences. */
+const OWNER_ONLY_KEYS: string[] = [SYSTEM_ACCOUNTS.openingEquity, SYSTEM_ACCOUNTS.fx];
+
+export interface PostingRights {
+  /** The owner may post to equity, opening balance and exchange accounts. */
+  owner: boolean;
+}
+
+async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherInput, rights: PostingRights) {
   if (input.lines.length === 0) throw badRequest("Add at least one line", "Ajoutez au moins une ligne");
   const money = await moneyLeg(tx, { accountId: input.accountId, amount: sum(input.lines.map((l) => cents(l.amount))), rate: input.rate, date: input.date });
   const receivables = await systemAccountId(tx, SYSTEM_ACCOUNTS.receivables);
@@ -81,6 +89,9 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
       if (a.systemKey && BLOCKED_KEYS.includes(a.systemKey)) {
         throw badRequest(`Line ${n}: ${a.name} is kept by its own screen; pick a contact or another account`, `Ligne ${n} : ${a.name} est tenu par son propre écran ; choisissez un contact ou un autre compte`);
       }
+      if (!rights.owner && (a.type === "equity" || a.partnerId || (a.systemKey && OWNER_ONLY_KEYS.includes(a.systemKey)))) {
+        throw forbidden(`Line ${n}: only the owner can post to ${a.name}`, `Ligne ${n} : seul le propriétaire peut passer une écriture sur ${a.name}`);
+      }
       if (kind === "receipt" && a.type === "expense") {
         throw badRequest(`Line ${n}: an expense refund is recorded by cancelling the expense`, `Ligne ${n} : un remboursement de dépense s'enregistre en annulant la dépense`);
       }
@@ -101,8 +112,8 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
   return { money, lines, moneyLine, total };
 }
 
-export async function postVoucher(tx: Tx, kind: "payment" | "receipt", input: VoucherInput, userId: number) {
-  const { money, lines, moneyLine, total } = await voucherLines(tx, kind, input);
+export async function postVoucher(tx: Tx, kind: "payment" | "receipt", input: VoucherInput, userId: number, rights: PostingRights) {
+  const { money, lines, moneyLine, total } = await voucherLines(tx, kind, input, rights);
   const [acc] = await tx.select({ name: accounts.name }).from(accounts).where(eq(accounts.id, money.accountId));
   const journalId = await postJournal(tx, {
     date: input.date,
@@ -192,6 +203,7 @@ export async function finalizeDraft(
   tx: Tx,
   id: number,
   userId: number,
+  rights: PostingRights,
   /** Validates the stored payload with the same schema the direct endpoint uses. */
   parse: (kind: DraftKind, payload: Record<string, unknown>) => Record<string, unknown>,
 ) {
@@ -202,7 +214,7 @@ export async function finalizeDraft(
   switch (draft.kind) {
     case "payment":
     case "receipt":
-      result = await postVoucher(tx, draft.kind, p as unknown as VoucherInput, userId);
+      result = await postVoucher(tx, draft.kind, p as unknown as VoucherInput, userId, rights);
       break;
     case "journal":
       result = { id: await ops.manualJournal(tx, p as unknown as Parameters<typeof ops.manualJournal>[1], userId) };
@@ -211,6 +223,9 @@ export async function finalizeDraft(
       result = { id: await ops.transferMoney(tx, p as unknown as ops.TransferInput, userId) };
       break;
     case "adjustment":
+      if (!rights.owner && (p as { kind?: string }).kind === "opening") {
+        throw forbidden("Only the owner can enter opening stock", "Seul le propriétaire peut saisir le stock d'ouverture");
+      }
       result = await ops.adjustStock(tx, p as unknown as ops.AdjustmentInput, userId);
       break;
     default:

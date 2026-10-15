@@ -12,6 +12,7 @@ import {
   serial,
   text,
   timestamp,
+  uniqueIndex,
   varchar,
 } from "drizzle-orm/pg-core";
 
@@ -213,8 +214,12 @@ export const stockMovements = pgTable(
   }),
 );
 
-/** "reversed": the container offload was undone; the record keeps its chassis number for the next offload. */
-export const UNIT_STATUSES = ["in_stock", "sold", "reversed"] as const;
+/**
+ * "reversed": the container offload was undone; the record keeps its chassis number for the next offload.
+ * "removed": taken out of stock (lost, damaged, or no longer on a container). The record and its chassis
+ * number are kept so the history stays complete; a "found" adjustment can bring it back.
+ */
+export const UNIT_STATUSES = ["in_stock", "sold", "reversed", "removed"] as const;
 
 export const motorcycleUnits = pgTable(
   "motorcycle_units",
@@ -643,16 +648,31 @@ export const voucherDrafts = pgTable("voucher_drafts", {
 export interface PayrollLine {
   partyId: number;
   name: string;
+  /** Amounts in the run's currency (USD or CDF). */
   salary: string;
   bonus: string;
+  /** Kept from the pay but still a salary cost: owed to someone else (tax, social security, a loan). */
+  withheld?: string;
+  /** A fine: lowers the salary cost. */
+  penalty?: string;
+  /** withheld + penalty. Older runs only have this field. */
   deduction: string;
   net: string;
+  /** USD value of net, for CDF runs. */
+  netUsd?: string;
 }
+
+export const PAYROLL_STATUSES = ["posted", "cancelled"] as const;
 
 /** One salary run per month: Dr salaries expense, Cr what is owed to each employee. */
 export const payrollRuns = pgTable("payroll_runs", {
   id: serial("id").primaryKey(),
-  month: varchar("month", { length: 7 }).notNull().unique(),
+  /** One posted run per month (partial unique index in the migration); cancelled runs are kept. */
+  month: varchar("month", { length: 7 }).notNull(),
+  status: varchar("status", { length: 20 }).$type<(typeof PAYROLL_STATUSES)[number]>().notNull().default("posted"),
+  currency: varchar("currency", { length: 3 }).$type<"USD" | "CDF">().notNull().default("USD"),
+  /** Francs per dollar, for CDF runs. */
+  rate: numeric("rate", { precision: 14, scale: 4 }),
   date: date("date").notNull(),
   accountId: integer("account_id")
     .notNull()
@@ -662,4 +682,9 @@ export const payrollRuns = pgTable("payroll_runs", {
   journalId: integer("journal_id"),
   createdBy: integer("created_by"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
-});
+  cancelledAt: timestamp("cancelled_at"),
+  cancelledBy: integer("cancelled_by"),
+  cancelJournalId: integer("cancel_journal_id"),
+}, (t) => ({
+  postedMonth: uniqueIndex("payroll_runs_posted_month").on(t.month).where(sql`${t.status} = 'posted'`),
+}));

@@ -90,7 +90,7 @@ export interface MotorcycleUnit {
   engineNo: string | null;
   color: string | null;
   containerId: number | null;
-  status: "in_stock" | "sold";
+  status: "in_stock" | "sold" | "reversed" | "removed";
   saleId: number | null;
   sku: string;
   productName: string;
@@ -129,6 +129,11 @@ export interface Settings {
   defaultCdfRate?: string;
   receiptFooter?: string;
   rateTolerancePct?: string;
+  /** Biggest line discount a cashier / manager may give, in % of the list price. */
+  cashierDiscountPct?: string;
+  managerDiscountPct?: string;
+  /** Whether managers may sell below cost (cashiers never may). */
+  managerBelowCost?: boolean;
   latestRate: { date: string; cdfPerUsd: string } | null;
   today: string;
 }

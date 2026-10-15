@@ -175,13 +175,14 @@ export async function seedDemo(): Promise<void> {
         ],
       },
       userId,
+      { owner: true },
     ),
   );
 
   // Salaries: an advance, last month's payroll, then the payment of what is left.
   const today = day(0);
   const lastMonth = new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 2, 1)).toISOString().slice(0, 7);
-  await db.transaction((tx) => vouchers.postVoucher(tx, "payment", { date: day(Number(today.slice(8, 10)) + 10), accountId: acc("cash_usd"), memo: "Avance sur salaire", lines: [{ partyId: mechanic.id, amount: "80" }] }, userId));
+  await db.transaction((tx) => vouchers.postVoucher(tx, "payment", { date: day(Number(today.slice(8, 10)) + 10), accountId: acc("cash_usd"), memo: "Avance sur salaire", lines: [{ partyId: mechanic.id, amount: "80" }] }, userId, { owner: true }));
   const salaryAccount = await payroll.salaryAccountId(db);
   await db.transaction((tx) =>
     payroll.runPayroll(
@@ -196,6 +197,7 @@ export async function seedDemo(): Promise<void> {
       "payment",
       { date: day(Math.max(0, Number(today.slice(8, 10)) - 2)), accountId: acc("cash_usd"), memo: `Salaires ${lastMonth}`, lines: [{ partyId: cashier.id, amount: "250" }, { partyId: mechanic.id, amount: "240" }, { partyId: guard.id, amount: "150" }] },
       userId,
+      { owner: true },
     ),
   );
 
