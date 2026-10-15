@@ -731,10 +731,10 @@ function BalanceSheet() {
       {q.isLoading && <Loading />}
       {bs && (
         <div className="grid gap-4 lg:grid-cols-2">
-          {section(t("Assets: what the shop owns", "Actif : ce que la boutique possède"), bs.assets, bs.totalAssets, t("Total assets", "Total actif"))}
+          {section(t("Assets: what the shop owns", "Actif\u00a0: ce que la boutique possède"), bs.assets, bs.totalAssets, t("Total assets", "Total actif"))}
           <div className="space-y-4">
-            {section(t("Liabilities: what the shop owes", "Dettes : ce que la boutique doit"), bs.liabilities, bs.totalLiabilities, t("Total liabilities", "Total dettes"))}
-            {section(t("Equity: what belongs to the partners", "Capitaux propres : ce qui revient aux associés"), bs.equity, bs.totalEquity, t("Total equity", "Total capitaux propres"))}
+            {section(t("Liabilities: what the shop owes", "Dettes\u00a0: ce que la boutique doit"), bs.liabilities, bs.totalLiabilities, t("Total liabilities", "Total dettes"))}
+            {section(t("Equity: what belongs to the partners", "Capitaux propres\u00a0: ce qui revient aux associés"), bs.equity, bs.totalEquity, t("Total equity", "Total capitaux propres"))}
           </div>
         </div>
       )}
