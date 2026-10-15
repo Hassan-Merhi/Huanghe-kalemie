@@ -1,6 +1,7 @@
 import { and, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import {
   accounts,
+  auditLog,
   counters,
   exchangeRates,
   journalLines,
@@ -261,6 +262,15 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
   await tx.insert(journalLines).values(
     values.map((v) => ({ ...v, debit: v.debit.toFixed(2), credit: v.credit.toFixed(2), journalId: journal.id })),
   );
+  // Every posting is in the activity log, written in the same transaction so neither exists without the other.
+  const total = values.reduce((s, v) => s.plus(v.debit), new Decimal(0));
+  await tx.insert(auditLog).values({
+    userId: input.userId ?? null,
+    action: input.reversesJournalId ? "reverse" : "post",
+    entity: input.type,
+    entityId: journal.id,
+    data: { number, date: input.date, memo: input.memo ?? null, total: total.toFixed(2), sourceType: input.sourceType ?? null, sourceId: input.sourceId ?? null },
+  });
   return journal.id;
 }
 

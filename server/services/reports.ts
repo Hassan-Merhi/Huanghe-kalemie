@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, lt, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, lt, lte, ne, or, sql } from "drizzle-orm";
 import {
   accounts,
   categories,
@@ -308,34 +308,49 @@ export async function stockValuation(tx: Tx) {
   };
 }
 
+/**
+ * What each item sold in a period, net of cancellations and returns, each counted on its own date:
+ * a sale on its sale date, a cancellation on its cancellation date and a return on its return date.
+ * That is how the ledger books them, so revenue and cost always equal the P&L (accounts 4000 and 5000).
+ */
 export async function salesByProduct(tx: Tx, from: string, to: string) {
-  const rows = await tx
-    .select({
-      variantId: variants.id,
-      sku: variants.sku,
-      attributes: variants.attributes,
-      productName: products.name,
-      categoryName: categories.name,
-      qty: sql<string>`sum(${saleLines.qty} - ${saleLines.returnedQty})`,
-      revenue: sql<string>`sum(${saleLines.lineTotal} - coalesce((select sum(r.amount) from sale_return_lines r where r.sale_line_id = "sale_lines"."id"), 0))`,
-      cogs: sql<string>`sum(${saleLines.cogs} - coalesce((select sum(r.cogs) from sale_return_lines r where r.sale_line_id = "sale_lines"."id"), 0))`,
+  const result = await tx.execute<{ variant_id: number; qty: string; revenue: string; cogs: string }>(sql`
+    select x.variant_id, sum(x.qty) as qty, sum(x.revenue) as revenue, sum(x.cogs) as cogs from (
+      select sl.variant_id, sl.qty, sl.line_total as revenue, sl.cogs
+        from sale_lines sl join sales s on s.id = sl.sale_id
+        where s.date between ${from} and ${to}
+      union all
+      select sl.variant_id, -sl.qty, -sl.line_total, -sl.cogs
+        from sale_lines sl join sales s on s.id = sl.sale_id join journals vj on vj.id = s.void_journal_id
+        where vj.date between ${from} and ${to}
+      union all
+      select sl.variant_id, -rl.qty, -rl.amount, -rl.cogs
+        from sale_return_lines rl join sale_returns r on r.id = rl.return_id join sale_lines sl on sl.id = rl.sale_line_id
+        where r.date between ${from} and ${to}
+    ) x
+    group by x.variant_id
+  `);
+  const ids = result.rows.map((r) => r.variant_id);
+  const info = ids.length
+    ? await tx
+        .select({ variantId: variants.id, sku: variants.sku, attributes: variants.attributes, productName: products.name, categoryName: categories.name })
+        .from(variants)
+        .innerJoin(products, eq(products.id, variants.productId))
+        .leftJoin(categories, eq(categories.id, products.categoryId))
+        .where(inArray(variants.id, ids))
+    : [];
+  return result.rows
+    .filter((r) => !(dec(r.qty).isZero() && dec(r.revenue).isZero() && dec(r.cogs).isZero()))
+    .map((r) => {
+      const v = info.find((x) => x.variantId === r.variant_id)!;
+      return {
+        ...v,
+        qty: dec(r.qty).toFixed(3),
+        revenue: dec(r.revenue).toFixed(2),
+        cogs: dec(r.cogs).toFixed(2),
+        profit: dec(r.revenue).minus(r.cogs).toFixed(2),
+      };
     })
-    .from(saleLines)
-    .innerJoin(sales, eq(sales.id, saleLines.saleId))
-    .innerJoin(variants, eq(variants.id, saleLines.variantId))
-    .innerJoin(products, eq(products.id, variants.productId))
-    .leftJoin(categories, eq(categories.id, products.categoryId))
-    .where(and(gte(sales.date, from), lte(sales.date, to), eq(sales.status, "completed")))
-    .groupBy(variants.id, products.name, categories.name)
-    .orderBy(desc(sql`3`));
-  return rows
-    .map((r) => ({
-      ...r,
-      qty: dec(r.qty).toFixed(3),
-      revenue: dec(r.revenue).toFixed(2),
-      cogs: dec(r.cogs).toFixed(2),
-      profit: dec(r.revenue).minus(r.cogs).toFixed(2),
-    }))
     .sort((a, b) => dec(b.profit).comparedTo(a.profit));
 }
 

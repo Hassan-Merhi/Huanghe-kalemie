@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "wouter";
 import { Download, Pencil, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -20,11 +21,12 @@ import { cdf, d, date as fmtDate, money, usd } from "@/lib/format";
 import type { Account, Category, Location, Partner, Settings as ShopSettings } from "@/lib/types";
 import { accountTypeLabel } from "@/pages/Reports";
 import { roleLabel } from "@/lib/labels";
+import { journalTypeLabel } from "@/pages/ContactDetail";
 
 type T = (en: string, fr: string) => string;
 
 interface UserRow { id: number; username: string; fullName: string; role: Role; partnerId: number | null; language: Lang; active: boolean }
-interface AuditRow { id: number; userId: number | null; username: string | null; action: string; entity: string; entityId: number | null; data: unknown; createdAt: string }
+interface AuditRow { id: number; userId: number | null; username: string | null; fullName: string | null; action: string; entity: string; entityId: number | null; data: unknown; createdAt: string }
 
 export default function Settings() {
   const t = useT();
@@ -593,16 +595,113 @@ function MeTab() {
 
 // ---------------------------------------------------------------- Activity log
 
+const ACTION_LABELS: Record<string, [string, string]> = {
+  post: ["Posted", "Comptabilisé"],
+  reverse: ["Reversed", "Contre-passé"],
+  create: ["Created", "Créé"],
+  update: ["Changed", "Modifié"],
+  delete: ["Deleted", "Supprimé"],
+  void: ["Cancelled", "Annulé"],
+  cancel: ["Cancelled", "Annulé"],
+  return: ["Return", "Retour"],
+  set_rate: ["Rate set", "Taux fixé"],
+  import: ["Imported", "Importé"],
+  finalize: ["Posted", "Validé"],
+  close: ["Closed", "Clôturé"],
+  reopen: ["Reopened", "Rouvert"],
+  update_lines: ["Lines changed", "Lignes modifiées"],
+  add_cost: ["Cost added", "Frais ajouté"],
+  update_cost: ["Cost changed", "Frais modifié"],
+  remove_cost: ["Cost removed", "Frais retiré"],
+  login: ["Signed in", "Connexion"],
+};
+
+const ENTITY_LABELS: Record<string, [string, string]> = {
+  exchange_rate: ["Exchange rate", "Taux de change"],
+  location: ["Location", "Emplacement"],
+  category: ["Category", "Catégorie"],
+  product: ["Item", "Article"],
+  variant: ["Item variant", "Variante d'article"],
+  motorcycle: ["Motorcycle", "Moto"],
+  stock_transfer: ["Stock transfer", "Transfert de stock"],
+  stock_adjustment: ["Stock adjustment", "Ajustement de stock"],
+  contact: ["Contact", "Contact"],
+  account: ["Account", "Compte"],
+  container: ["Container", "Conteneur"],
+  settings: ["Settings", "Paramètres"],
+  user: ["User", "Utilisateur"],
+  partners: ["Partners", "Associés"],
+  period: ["Month", "Mois"],
+  payroll_run: ["Payroll", "Paie"],
+  voucher_draft: ["Optional voucher", "Pièce facultative"],
+  items: ["Items", "Articles"],
+  prices: ["Prices", "Prix"],
+  container_lines: ["Container lines", "Lignes de conteneur"],
+};
+
 function AuditTab() {
   const t = useT();
   const { lang } = useI18n();
-  const q = useQuery<AuditRow[]>({ queryKey: ["/api/audit"] });
+  const [userId, setUserId] = useState("all");
+  const [entity, setEntity] = useState("all");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+  const [search, setSearch] = useState("");
+  const [debounced, setDebounced] = useState("");
+  useEffect(() => {
+    const id = setTimeout(() => setDebounced(search.trim()), 300);
+    return () => clearTimeout(id);
+  }, [search]);
+  const users = useQuery<UserRow[]>({ queryKey: ["/api/users"] }).data ?? [];
+  const entities = useQuery<string[]>({ queryKey: ["/api/audit/entities"] }).data ?? [];
+  const params = {
+    userId: userId === "all" ? undefined : userId,
+    entity: entity === "all" ? undefined : entity,
+    from: /^\d{4}-\d{2}-\d{2}$/.test(from) ? from : undefined,
+    to: /^\d{4}-\d{2}-\d{2}$/.test(to) ? to : undefined,
+    q: debounced || undefined,
+  };
+  const q = useQuery<AuditRow[]>({ queryKey: ["/api/audit", params] });
   const rows = q.data ?? [];
   const fmt = new Intl.DateTimeFormat(lang === "fr" ? "fr-FR" : "en-GB", { dateStyle: "short", timeStyle: "short", timeZone: "Africa/Lubumbashi" });
+  const isPosting = (r: AuditRow) => r.action === "post" || r.action === "reverse";
+  const entityText = (e: string) => {
+    const m = ENTITY_LABELS[e];
+    return m ? t(m[0], m[1]) : journalTypeLabel(e, t);
+  };
+  const actionText = (a: string) => {
+    const m = ACTION_LABELS[a];
+    return m ? t(m[0], m[1]) : a;
+  };
   return (
     <div className="space-y-3">
+      <Card>
+        <CardContent className="grid grid-cols-1 gap-3 p-4 sm:grid-cols-2 lg:grid-cols-5">
+          <Field label={t("Who", "Qui")}>
+            <Select value={userId} onValueChange={setUserId}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t("Everyone", "Tout le monde")}</SelectItem>
+                {users.map((u) => <SelectItem key={u.id} value={String(u.id)}>{u.fullName || u.username}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label={t("Type", "Type")}>
+            <Select value={entity} onValueChange={setEntity}>
+              <SelectTrigger><SelectValue /></SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">{t("Everything", "Tout")}</SelectItem>
+                {entities.map((e) => <SelectItem key={e} value={e}>{entityText(e)}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </Field>
+          <Field label={t("From", "Du")}><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
+          <Field label={t("To", "Au")}><Input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></Field>
+          <Field label={t("Search", "Chercher")}><Input value={search} placeholder={t("Number, name, amount…", "Numéro, nom, montant…")} onChange={(e) => setSearch(e.target.value)} /></Field>
+        </CardContent>
+      </Card>
       <ErrorText error={q.error} />
-      {q.isLoading ? <Loading /> : rows.length === 0 ? <EmptyState title={t("No activity yet", "Aucune activité")} /> : (
+      {q.isLoading ? <Loading /> : rows.length === 0 ? <EmptyState title={t("Nothing matches", "Rien ne correspond")} /> : (
         <Card>
           <CardContent className="p-0">
             <div className="overflow-x-auto">
@@ -611,35 +710,48 @@ function AuditTab() {
                   <TableRow>
                     <TableHead>{t("When", "Quand")}</TableHead>
                     <TableHead>{t("Who", "Qui")}</TableHead>
-                    <TableHead>{t("Action", "Action")}</TableHead>
+                    <TableHead>{t("What", "Quoi")}</TableHead>
                     <TableHead>{t("Details", "Détails")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {rows.map((r) => (
-                    <TableRow key={r.id}>
-                      <TableCell className="whitespace-nowrap text-sm">{fmt.format(new Date(r.createdAt))}</TableCell>
-                      <TableCell>{r.username ?? "—"}</TableCell>
-                      <TableCell className="whitespace-nowrap">
-                        <Badge variant="outline">{r.action}</Badge> {r.entity}{r.entityId ? ` #${r.entityId}` : ""}
-                      </TableCell>
-                      <TableCell className="max-w-md">
-                        {r.data != null && (
-                          <details>
-                            <summary className="cursor-pointer text-xs text-muted-foreground">{t("Show", "Voir")}</summary>
-                            <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 text-xs">{JSON.stringify(r.data, null, 2)}</pre>
-                          </details>
-                        )}
-                      </TableCell>
-                    </TableRow>
-                  ))}
+                  {rows.map((r) => {
+                    const data = (r.data ?? {}) as { number?: string; memo?: string | null; total?: string; date?: string };
+                    return (
+                      <TableRow key={r.id}>
+                        <TableCell className="whitespace-nowrap text-sm">{fmt.format(new Date(r.createdAt))}</TableCell>
+                        <TableCell>{r.fullName || r.username || "—"}</TableCell>
+                        <TableCell>
+                          <Badge variant="outline" className="mr-1">{actionText(r.action)}</Badge>
+                          {entityText(r.entity)}
+                        </TableCell>
+                        <TableCell className="max-w-md text-sm">
+                          {isPosting(r) ? (
+                            <span>
+                              {r.entityId ? <Link href={`/vouchers/${r.entityId}`} className="font-mono text-primary hover:underline">{data.number}</Link> : data.number}
+                              {data.date && <> · {fmtDate(data.date)}</>}
+                              {data.total && <> · <Num>{usd(data.total)}</Num></>}
+                              {data.memo && <span className="block text-xs text-muted-foreground">{data.memo}</span>}
+                            </span>
+                          ) : r.data != null ? (
+                            <details>
+                              <summary className="cursor-pointer text-xs text-muted-foreground">{t("Show", "Voir")}</summary>
+                              <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded bg-muted p-2 text-xs">{JSON.stringify(r.data, null, 2)}</pre>
+                            </details>
+                          ) : (
+                            "—"
+                          )}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
                 </TableBody>
               </Table>
             </div>
           </CardContent>
         </Card>
       )}
-      <p className="text-xs text-muted-foreground">{t("Latest 300 actions.", "Les 300 dernières actions.")}</p>
+      <p className="text-xs text-muted-foreground">{t("Shows the latest 500 matching actions. Every posting is logged with it, in the same save.", "Affiche les 500 dernières actions correspondantes. Chaque écriture est journalisée en même temps qu'elle est enregistrée.")}</p>
     </div>
   );
 }

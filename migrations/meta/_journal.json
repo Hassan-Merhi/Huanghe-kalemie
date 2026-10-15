@@ -43,6 +43,13 @@
       "when": 1792066552195,
       "tag": "0005_u3_franc_names",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792067828552,
+      "tag": "0006_a4_activity_backfill",
+      "breakpoints": true
     }
   ]
 }

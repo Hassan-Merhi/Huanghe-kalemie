@@ -31,6 +31,8 @@ interface Daily {
   count: number;
   total: string;
   credit: string;
+  voidsCount: number;
+  voidsTotal: string;
   byAccount: { account_id: number; name: string; currency: string; usd: string; native: string }[];
 }
 
@@ -53,7 +55,12 @@ function DailySummary() {
         ) : (
           <div className="mt-2 grid gap-4 sm:grid-cols-[auto_1fr]">
             <div>
-              <p className="text-3xl font-semibold tabular">{usd(data.total)}</p>
+              <p className="text-3xl font-semibold tabular">{usd(d(data.total).minus(data.voidsTotal).toFixed(2))}</p>
+              {data.voidsCount > 0 && (
+                <p className="text-sm text-muted-foreground">
+                  {count(t, data.voidsCount, ["sale cancelled", "sales cancelled"], ["vente annulée", "ventes annulées"])} (−{usd(data.voidsTotal)})
+                </p>
+              )}
               {d(data.credit).gt(0) && <p className="text-sm text-amber-600 dark:text-amber-400">{t("of which on credit", "dont à crédit")} {usd(data.credit)}</p>}
             </div>
             <div className="flex flex-wrap gap-2 sm:justify-end">
