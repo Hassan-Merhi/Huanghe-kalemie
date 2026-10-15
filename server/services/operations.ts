@@ -252,7 +252,10 @@ export async function payablesLines(
   const { payables, partyId } = input;
   const cny = await foreignBalance(tx, payables, partyId, "CNY", input.date);
   const fcOwed = (await foreignBalance(tx, payables, partyId, "CDF", input.date)).native.negated();
-  const usdOwed = Decimal.max((await foreignBalance(tx, payables, partyId, "USD", input.date)).usd.negated(), 0);
+  const usdBalance = (await foreignBalance(tx, payables, partyId, "USD", input.date)).usd;
+  const usdOwed = Decimal.max(usdBalance.negated(), 0);
+  // Dollars paid to them in advance, which also go to the yuan.
+  const advance = Decimal.max(usdBalance, 0);
   const total = cents(input.usd);
   const memo = input.memo ?? null;
   let cnyUsd = new Decimal(0);
@@ -275,7 +278,23 @@ export async function payablesLines(
     }
     if (cnyUsd.gt(0) && native.gt(0)) {
       lines.push({ accountId: payables, partyId, debit: cnyUsd, currency: "CNY", nativeAmount: native, rate: native.dividedBy(cnyUsd).toFixed(4), memo });
-    } else cnyUsd = new Decimal(0);
+    } else {
+      cnyUsd = new Decimal(0);
+      native = new Decimal(0);
+    }
+    // An advance paid in dollars settles the yuan still owed, so they are not paid twice.
+    const left = owedNative.minus(native);
+    if (advance.gt(0) && left.gt(0)) {
+      const leftUsd = dayRate ? cents(left.dividedBy(dayRate)) : cents(cny.usd.abs().times(left).dividedBy(owedNative));
+      const applyUsd = Decimal.min(advance, leftUsd);
+      const applyNative = applyUsd.equals(leftUsd) ? left : dayRate ? cents(applyUsd.times(dayRate)) : cents(owedNative.times(applyUsd).dividedBy(cny.usd.abs()));
+      if (applyUsd.gt(0) && applyNative.gt(0)) {
+        lines.push(
+          { accountId: payables, partyId, debit: applyUsd, currency: "CNY", nativeAmount: applyNative, rate: applyNative.dividedBy(applyUsd).toFixed(4), memo: memo ?? "Avance imputée" },
+          { accountId: payables, partyId, credit: applyUsd, memo: "Avance imputée" },
+        );
+      }
+    }
   }
   const rest = total.minus(cnyUsd);
   if (rest.gt(0)) {
@@ -443,17 +462,20 @@ export interface AdjustmentInput {
  * for the owner.
  */
 async function assertGainCost(tx: Tx, variant: typeof variants.$inferSelect, name: string, unit: Decimal) {
+  // The reference is what the item last cost when bought (a container or opening stock), so gains
+  // booked by adjustments cannot raise their own reference count after count. Without a purchase,
+  // the average cost.
   let reference: Decimal | null = null;
-  const q = dec(variant.stockQty);
-  if (q.gt(0)) reference = dec(variant.stockValue).dividedBy(q);
+  const [last] = await tx
+    .select({ qty: stockMovements.qty, value: stockMovements.value })
+    .from(stockMovements)
+    .where(and(eq(stockMovements.variantId, variant.id), inArray(stockMovements.type, ["container_in", "opening"]), sql`${stockMovements.qty} > 0`, sql`${stockMovements.value} > 0`))
+    .orderBy(desc(stockMovements.date), desc(stockMovements.id))
+    .limit(1);
+  if (last) reference = dec(last.value).dividedBy(last.qty);
   else {
-    const [last] = await tx
-      .select({ qty: stockMovements.qty, value: stockMovements.value })
-      .from(stockMovements)
-      .where(and(eq(stockMovements.variantId, variant.id), sql`${stockMovements.qty} > 0`, sql`${stockMovements.value} > 0`))
-      .orderBy(desc(stockMovements.date), desc(stockMovements.id))
-      .limit(1);
-    if (last) reference = dec(last.value).dividedBy(last.qty);
+    const q = dec(variant.stockQty);
+    if (q.gt(0)) reference = dec(variant.stockValue).dividedBy(q);
   }
   const ok = reference ? unit.minus(reference).abs().lte(reference.times("0.10").plus("0.01")) : false;
   if (!ok) {
@@ -473,6 +495,12 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
   // A count where everything matched is still worth recording; other adjustments must change something.
   if (input.kind !== "count" && input.lines.every((l) => dec(l.qtyChange, "quantity").isZero())) {
     throw badRequest("Nothing to adjust: every quantity change is zero", "Rien à ajuster : toutes les variations de quantité sont à zéro");
+  }
+  // One line per item: removing and adding the same item in one adjustment would revalue it.
+  const seenVariants = new Set<number>();
+  for (const l of input.lines) {
+    if (seenVariants.has(l.variantId)) throw badRequest("The same item is on the adjustment twice: enter one net change", "Le même article figure deux fois : saisissez une seule variation nette");
+    seenVariants.add(l.variantId);
   }
   const number = await nextNumber(tx, "adjustment", "ADJ-");
   const [adj] = await tx

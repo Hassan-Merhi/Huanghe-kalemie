@@ -52,9 +52,10 @@ describe.skipIf(!hasDb)("Guards against moving value between partners", async ()
   });
 
   it("lets only the owner move the day's rate far", async () => {
-    await expect(db.transaction((tx) => ledger.setExchangeRate(tx, { date: "2026-08-02", cdfPerUsd: "1000" }, userId, staff))).rejects.toThrow(/Only the owner/);
-    await db.transaction((tx) => ledger.setExchangeRate(tx, { date: "2026-08-02", cdfPerUsd: "2850" }, userId, staff));
-    await db.transaction((tx) => ledger.setExchangeRate(tx, { date: "2026-08-02", cdfPerUsd: "2800" }, userId));
+    const today = ledger.shopToday();
+    await expect(db.transaction((tx) => ledger.setExchangeRate(tx, { date: today, cdfPerUsd: "1000" }, userId, staff))).rejects.toThrow(/Only the owner/);
+    await db.transaction((tx) => ledger.setExchangeRate(tx, { date: today, cdfPerUsd: "2850" }, userId, staff));
+    await db.transaction((tx) => ledger.setExchangeRate(tx, { date: today, cdfPerUsd: "2800" }, userId));
   });
 
   it("refuses a container rate that cannot be right", async () => {
