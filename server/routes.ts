@@ -548,7 +548,10 @@ export function registerRoutes(app: Express) {
     res.json(row);
   }));
   app.get("/api/parties/:id/statement", requireRole(...READERS, "cashier"), asyncHandler(async (req, res) => {
-    const statement = await reports.partyStatement(db, paramId(req));
+    // Partners don't see the other partner's memos; cashiers see no partner's.
+    const role = req.user!.role;
+    const hidden = role === "partner" || role === "cashier" ? await reports.otherPartnerAccountIds(db, role === "partner" ? req.user!.partnerId : null) : undefined;
+    const statement = await reports.partyStatement(db, paramId(req), hidden);
     if (req.user!.role === "cashier" && statement.party.type !== "customer") throw notFound("Customer", "Client introuvable");
     res.json(statement);
   }));

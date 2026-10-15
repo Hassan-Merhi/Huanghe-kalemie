@@ -268,8 +268,11 @@ export async function accountLedger(tx: Tx, accountId: number, from: string, to:
   };
 }
 
-/** Customer, supplier or agent statement. Positive balance = they owe us. */
-export async function partyStatement(tx: Tx, partyId: number) {
+/**
+ * Customer, supplier or agent statement. Positive balance = they owe us. A typed memo on a journal
+ * that also moves one of the `hidden` partner accounts is replaced, as in the daybook.
+ */
+export async function partyStatement(tx: Tx, partyId: number, hidden?: Set<number>) {
   const [party] = await tx.select().from(parties).where(eq(parties.id, partyId));
   if (!party) throw notFound("Customer, supplier or agent", "Client, fournisseur ou agent introuvable");
   const rows = await tx
@@ -312,10 +315,16 @@ export async function partyStatement(tx: Tx, partyId: number) {
     const into = money.reduce((s, l) => s.plus(value(l, "debit")), dec(0));
     return out.gt(0) !== into.gt(0) ? Decimal.max(out, into) : null;
   };
+  const typedIds = rows.filter((r) => PARTNER_MEMO_TYPES.has(r.type)).map((r) => r.journalId);
+  const masked =
+    hidden?.size && typedIds.length
+      ? new Set((await tx.select({ id: journalLines.journalId }).from(journalLines).where(and(inArray(journalLines.journalId, typedIds), inArray(journalLines.accountId, Array.from(hidden))))).map((r) => r.id))
+      : new Set<number>();
   let running = dec(0);
   return {
     party,
     rows: rows.map((r) => {
+      if (masked.has(r.journalId)) r = { ...r, memo: "Mouvement d'un autre associé" };
       running = running.plus(r.debit).minus(r.credit);
       const booked = dec(r.debit).minus(r.credit).abs();
       const paid = paidOf(r.journalId);

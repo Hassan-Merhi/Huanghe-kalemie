@@ -77,6 +77,24 @@ async function mergeSettlingLines(tx: Tx, lines: VoucherLineInput[]): Promise<Vo
   return out;
 }
 
+/**
+ * The most staff may pay out on a contact or account today. `heldUsd` is what is held for them at
+ * book value (positive when the shop owes them). Francs count at today's rate rather than their book
+ * value, and dollars owed the other way are taken off, so a franc credit cannot be paid out to
+ * someone who owes more in dollars. `cdf` is the same cap in whole francs when francs are involved.
+ */
+async function capToday(tx: Tx, accountId: number, partyId: number | null, heldUsd: Decimal, date: string) {
+  const francs = await foreignBalance(tx, accountId, partyId, "CDF", date);
+  const francsHeld = francs.native.negated();
+  if (francsHeld.isZero()) return { usd: Decimal.max(heldUsd, 0), cdf: null };
+  const rate = dec((await rateFor(tx, date)).rate);
+  const dollarsHeld = heldUsd.plus(francs.usd);
+  return {
+    usd: Decimal.max(cents(dollarsHeld.plus(francsHeld.dividedBy(rate))), 0),
+    cdf: Decimal.max(francsHeld.plus(dollarsHeld.times(rate)).toDecimalPlaces(0, Decimal.ROUND_FLOOR), 0),
+  };
+}
+
 async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherInput, rights: PostingRights) {
   if (input.lines.length === 0) throw badRequest("Add at least one line", "Ajoutez au moins une ligne");
   input = { ...input, lines: await mergeSettlingLines(tx, input.lines) };
@@ -111,14 +129,11 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
           .select({ v: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)` })
           .from(journalLines)
           .where(and(eq(journalLines.accountId, receivables), eq(journalLines.partyId, p.id)));
-        const credit = Decimal.max(dec(bal?.v ?? 0).negated(), 0);
-        // Francs paid ahead go back as those francs, or in dollars at today's rate (as for liabilities).
-        const francs = await foreignBalance(tx, receivables, p.id, "CDF", input.date);
-        const francsHeld = Decimal.max(francs.native.negated(), 0);
-        const dayRate = francsHeld.gt(0) ? (await rateFor(tx, input.date)).rate : null;
-        const dollarPart = francsHeld.gt(0) ? Decimal.max(credit.minus(Decimal.max(francs.usd.negated(), 0)), 0) : credit;
-        const dollarCap = dayRate ? dollarPart.plus(cents(francsHeld.dividedBy(dayRate))) : credit;
-        const tooMuch = money.currency === "CDF" && dayRate ? amount.gt(francsHeld.plus(dollarPart.times(dayRate).toDecimalPlaces(0, Decimal.ROUND_FLOOR))) : dec(usd).gt(dollarCap);
+        // Francs paid ahead go back as those francs, or in dollars at today's rate, less any dollars
+        // the customer still owes.
+        const cap = await capToday(tx, receivables, p.id, dec(bal?.v ?? 0).negated(), input.date);
+        const dollarCap = cap.usd;
+        const tooMuch = money.currency === "CDF" && cap.cdf ? amount.gt(cap.cdf) : dec(usd).gt(dollarCap);
         if (tooMuch) {
           throw forbidden(
             `Line ${n}: ${p.name} has only ${dollarCap.toFixed(2)} $ to get back. Only the owner can pay a customer more.`,
@@ -169,21 +184,14 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
           .select({ v: sql<string>`coalesce(sum(${journalLines.credit} - ${journalLines.debit}), 0)` })
           .from(journalLines)
           .where(eq(journalLines.accountId, a.id));
-        const owed = Decimal.max(dec(bal?.v ?? 0), 0);
-        // Francs owed in francs may be paid in full whatever today's rate: in francs, or in dollars
-        // at the day's rate.
-        const francs = await foreignBalance(tx, a.id, null, "CDF", input.date);
-        const francsOwed = francs.native.negated();
-        // In dollars: the dollars owed, plus the francs owed at the day's rate (not at their book value).
-        const dollarCap = francsOwed.gt(0)
-          ? Decimal.max(owed.minus(francs.usd.negated()), 0).plus(cents(francsOwed.dividedBy((await rateFor(tx, input.date)).rate)))
-          : owed;
-        const tooMuch = money.currency === "CDF" ? dec(usd).gt(owed) && !amount.lte(francsOwed) : dec(usd).gt(dollarCap);
+        // Francs owed may be paid in full whatever today's rate: in francs, or in dollars at the day's
+        // rate, less any dollars already overpaid.
+        const cap = await capToday(tx, a.id, null, dec(bal?.v ?? 0), input.date);
+        const tooMuch = money.currency === "CDF" && cap.cdf ? amount.gt(cap.cdf) : dec(usd).gt(cap.usd);
         if (tooMuch) {
-          const cap = money.currency === "CDF" ? owed : dollarCap;
           throw forbidden(
-            `Line ${n}: only ${cap.toFixed(2)} $ is owed on ${a.name}. Only the owner can pay more.`,
-            `Ligne ${n} : seulement ${frMoney(cap)} restent dus sur ${a.name}. Seul le propriétaire peut payer davantage.`,
+            `Line ${n}: only ${cap.usd.toFixed(2)} $ is owed on ${a.name}. Only the owner can pay more.`,
+            `Ligne ${n} : seulement ${frMoney(cap.usd)} restent dus sur ${a.name}. Seul le propriétaire peut payer davantage.`,
           );
         }
       }
@@ -217,7 +225,8 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
       ? { accountId: money.accountId, credit: total, nativeAmount: money.nativeAmount, rate: money.rate }
       : { accountId: money.accountId, debit: total, nativeAmount: money.nativeAmount, rate: money.rate };
   // With no description, the daybook reads the first line: its note, else its account or contact ("Loyer + 1 autre").
-  const first = input.lines[0];
+  // A partner's own account never names the voucher, since the memo shows on the contact's statement.
+  const first = input.lines.find((l) => !accountRows.find((x) => x.id === l.accountId)?.partnerId) ?? { memo: null, partyId: null, accountId: null };
   const firstName = first.memo || (first.partyId ? partyRows.find((x) => x.id === first.partyId)?.name : accountRows.find((x) => x.id === first.accountId)?.name) || null;
   const others = input.lines.length - 1;
   const defaultMemo = firstName ? `${firstName}${others > 0 ? ` + ${others} ${others > 1 ? "autres" : "autre"}` : ""}` : null;
