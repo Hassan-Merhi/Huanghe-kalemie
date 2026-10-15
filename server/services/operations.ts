@@ -8,6 +8,7 @@ import {
   parties,
   partners,
   products,
+  locations,
   stockAdjustments,
   stockMovements,
   variants,
@@ -617,6 +618,8 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
     if (seenVariants.has(l.variantId)) throw badRequest("The same item is on the adjustment twice: enter one net change", "Le même article figure deux fois : saisissez une seule variation nette");
     seenVariants.add(l.variantId);
   }
+  const [location] = await tx.select({ id: locations.id }).from(locations).where(eq(locations.id, input.locationId));
+  if (!location) throw badRequest("That location does not exist", "Cet emplacement n'existe pas");
   const number = await nextNumber(tx, "adjustment", "ADJ-");
   const [adj] = await tx
     .insert(stockAdjustments)

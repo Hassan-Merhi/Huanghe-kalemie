@@ -444,6 +444,10 @@ export async function returnSale(tx: Tx, saleId: number, input: ReturnInput, use
     .where(and(eq(saleLines.saleId, saleId), inArray(saleLines.id, input.lines.map((l) => l.saleLineId))))
     .for("update");
 
+  if (input.refundAccountId) {
+    const [account] = await tx.select({ id: accounts.id, isMoney: accounts.isMoney }).from(accounts).where(eq(accounts.id, input.refundAccountId));
+    if (!account?.isMoney) throw badRequest("Pick the cash box, bank or mobile money account the refund leaves", "Choisissez la caisse, la banque ou le compte mobile d'où part le remboursement");
+  }
   const number = await nextNumber(tx, "return", "R-");
   const [ret] = await tx
     .insert(saleReturns)
