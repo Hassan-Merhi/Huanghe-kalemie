@@ -163,6 +163,9 @@ export async function partyBalances(tx: Tx, type?: string) {
       name: parties.name,
       phone: parties.phone,
       notes: parties.notes,
+      position: parties.position,
+      monthlySalary: parties.monthlySalary,
+      startDate: parties.startDate,
       active: parties.active,
       balance: sql<string>`coalesce((select sum(l.debit - l.credit) from ${journalLines} l where l.party_id = "parties"."id"), 0)`,
     })
@@ -335,9 +338,28 @@ export async function dashboard(tx: Tx, today: string) {
     openContainers,
     recentSales,
     partners: await partnerSummaries(tx),
+    position: netPosition(balances),
   };
 }
 
 export async function stockByLocation(tx: Tx, variantId: number) {
   return tx.select().from(stockLevels).where(eq(stockLevels.variantId, variantId));
+}
+
+/** What the shop has minus what it owes, from the ledger. */
+export function netPosition(balances: Awaited<ReturnType<typeof accountBalances>>) {
+  const by = (key: string) => dec(balances.find((b) => b.systemKey === key)?.balance ?? 0);
+  const money = sum(balances.filter((b) => b.isMoney).map((b) => b.balance));
+  const stock = by(SYSTEM_ACCOUNTS.inventory);
+  const transit = by(SYSTEM_ACCOUNTS.goodsInTransit);
+  const receivables = by(SYSTEM_ACCOUNTS.receivables);
+  const payables = by(SYSTEM_ACCOUNTS.payables).negated();
+  return {
+    money: money.toFixed(2),
+    stock: stock.toFixed(2),
+    transit: transit.toFixed(2),
+    receivables: receivables.toFixed(2),
+    payables: payables.toFixed(2),
+    net: money.plus(stock).plus(transit).plus(receivables).minus(payables).toFixed(2),
+  };
 }

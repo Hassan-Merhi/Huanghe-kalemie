@@ -237,6 +237,10 @@ export const parties = pgTable(
     name: text("name").notNull(),
     phone: varchar("phone", { length: 40 }),
     notes: text("notes"),
+    /** Employees: job title, monthly salary in USD and start date, used by payroll. */
+    position: text("position"),
+    monthlySalary: money("monthly_salary"),
+    startDate: date("start_date"),
     active: boolean("active").notNull().default(true),
     createdAt: timestamp("created_at").notNull().defaultNow(),
   },
@@ -284,6 +288,9 @@ export const JOURNAL_TYPES = [
   "partner_contribution",
   "partner_withdrawal",
   "stock_adjustment",
+  "payment",
+  "receipt",
+  "payroll",
   "period_close",
   "reversal",
 ] as const;
@@ -594,3 +601,48 @@ export const stockAdjustments = pgTable("stock_adjustments", {
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 
+
+// ---------------------------------------------------------------- Optional vouchers & payroll
+
+export const DRAFT_KINDS = ["payment", "receipt", "journal", "transfer", "adjustment"] as const;
+export type DraftKind = (typeof DRAFT_KINDS)[number];
+
+/**
+ * Optional vouchers: saved but not posted. They touch no balance, stock or report until
+ * finalized, which posts them through the same checks as a voucher saved directly.
+ */
+export const voucherDrafts = pgTable("voucher_drafts", {
+  id: serial("id").primaryKey(),
+  kind: varchar("kind", { length: 20 }).$type<DraftKind>().notNull(),
+  date: date("date").notNull(),
+  memo: text("memo"),
+  totalUsd: money("total_usd"),
+  payload: jsonb("payload").$type<Record<string, unknown>>().notNull(),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
+
+export interface PayrollLine {
+  partyId: number;
+  name: string;
+  salary: string;
+  bonus: string;
+  deduction: string;
+  net: string;
+}
+
+/** One salary run per month: Dr salaries expense, Cr what is owed to each employee. */
+export const payrollRuns = pgTable("payroll_runs", {
+  id: serial("id").primaryKey(),
+  month: varchar("month", { length: 7 }).notNull().unique(),
+  date: date("date").notNull(),
+  accountId: integer("account_id")
+    .notNull()
+    .references(() => accounts.id),
+  totalUsd: money("total_usd").notNull(),
+  lines: jsonb("lines").$type<PayrollLine[]>().notNull(),
+  journalId: integer("journal_id"),
+  createdBy: integer("created_by"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
