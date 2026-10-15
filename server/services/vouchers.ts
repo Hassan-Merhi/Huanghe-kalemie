@@ -92,17 +92,36 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
       if (!rights.owner && (a.type === "equity" || a.partnerId || (a.systemKey && OWNER_ONLY_KEYS.includes(a.systemKey)))) {
         throw forbidden(`Line ${n}: only the owner can post to ${a.name}`, `Ligne ${n} : seul le propriétaire peut passer une écriture sur ${a.name}`);
       }
+      // Paying out of an income or cost-of-sales account moves profit between the partners (rent
+      // booked against other income lands 25% on the partner who does not bear running costs).
+      if (!rights.owner && (a.type === "cost_of_sales" || (kind === "payment" && a.type === "income"))) {
+        throw forbidden(
+          `Line ${n}: only the owner can post a payment to ${a.name}. Pick an expense category.`,
+          `Ligne ${n} : seul le propriétaire peut passer un paiement sur ${a.name}. Choisissez une catégorie de dépense.`,
+        );
+      }
       if (kind === "receipt" && a.type === "expense") {
         throw badRequest(`Line ${n}: an expense refund is recorded by cancelling the expense`, `Ligne ${n} : un remboursement de dépense s'enregistre en annulant la dépense`);
       }
-      // Francs paid into or out of a balance sheet account (withholdings to remit, deposits…) stay
-      // francs there, so paying out what was withheld in francs empties it in francs too.
-      const keepsFrancs = money.currency === "CDF" && (a.type === "asset" || a.type === "liability");
+      if (a.type === "asset" || a.type === "liability") {
+        // A balance sheet account (withholdings to remit, deposits…) is settled like a contact: francs
+        // clear its francs first, then its dollars, and only the rest stays in francs.
+        const split = await contactLines(tx, {
+          accountId: a.id,
+          partyId: null,
+          side: kind === "payment" ? "debit" : "credit",
+          usd,
+          money: { currency: money.currency, nativeAmount: money.currency === "CDF" ? amount.toFixed(2) : null, rate: money.rate },
+          memo: l.memo || null,
+          date: input.date,
+        });
+        split.forEach((line, k) => lines.push({ ...line, usd: k === 0 ? usd : "0" }));
+        continue;
+      }
       lines.push({
         ...side,
         usd,
         accountId: a.id,
-        ...(keepsFrancs ? { currency: "CDF" as const, nativeAmount: amount.toFixed(2), rate: money.rate } : {}),
         memo: l.memo || null,
         expense: a.type === "expense" && kind === "payment" ? { accountId: a.id, name: a.name, native: amount.toFixed(2), description: l.memo || input.memo || a.name } : undefined,
       });
@@ -230,7 +249,7 @@ export async function finalizeDraft(
       if (!rights.owner && (p as { kind?: string }).kind === "opening") {
         throw forbidden("Only the owner can enter opening stock", "Seul le propriétaire peut saisir le stock d'ouverture");
       }
-      result = await ops.adjustStock(tx, p as unknown as ops.AdjustmentInput, userId);
+      result = await ops.adjustStock(tx, p as unknown as ops.AdjustmentInput, userId, rights);
       break;
     default:
       throw conflict("Unknown voucher type", "Type de pièce inconnu");

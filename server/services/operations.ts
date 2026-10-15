@@ -1,6 +1,7 @@
-import { and, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import {
   accounts,
+  exchangeRates,
   expenses,
   journals,
   motorcycleUnits,
@@ -8,11 +9,12 @@ import {
   partners,
   products,
   stockAdjustments,
+  stockMovements,
   variants,
 } from "@shared/schema";
 import { cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
-import { badRequest, conflict, notFound } from "../errors";
+import { badRequest, conflict, forbidden, notFound } from "../errors";
 import {
   contactLines,
   foreignBalance,
@@ -250,27 +252,49 @@ export async function payParty(tx: Tx, input: PartyPaymentInput, userId: number)
     if (owed.lte(0)) throw badRequest(`${party.name} is not owed anything in yuan`, `${party.name} n'a rien à recevoir en yuans`);
     if (settle.gt(owed)) throw badRequest(`${party.name} is owed only ${owed.toFixed(2)} CNY`, `${party.name} n'attend que ${owed.toFixed(2)} CNY`);
     if (leg.currency !== "USD") throw badRequest("Pay a yuan invoice from a dollar account", "Payez une facture en yuans depuis un compte en dollars");
-    // The yuan settled must be worth roughly what the dollars paid: compare with what they cost.
-    const bookRate = cny.native.abs().dividedBy(cny.usd.abs());
-    if (!cny.usd.isZero()) {
-      const tolerance = Decimal.max((await rateTolerancePct(tx)).times(3), 10);
-      await assertImpliedRate(tx, input.date, settle.dividedBy(leg.usd), bookRate, "CNY", tolerance);
+    // The yuan settled must be worth roughly what the dollars paid: compare with the yuan rate of the
+    // day when one is on file, else with what those yuan cost.
+    const [day] = await tx
+      .select({ rate: exchangeRates.cnyPerUsd })
+      .from(exchangeRates)
+      .where(and(lte(exchangeRates.date, input.date), sql`${exchangeRates.cnyPerUsd} is not null`))
+      .orderBy(desc(exchangeRates.date))
+      .limit(1);
+    const reference = day?.rate ? dec(day.rate) : cny.usd.isZero() ? null : cny.native.abs().dividedBy(cny.usd.abs());
+    if (reference) {
+      const tolerance = Decimal.max(await rateTolerancePct(tx), 5);
+      await assertImpliedRate(tx, input.date, settle.dividedBy(leg.usd), reference, "CNY", tolerance);
     }
     partyLines = [{ accountId: payables, partyId: party.id, debit: leg.usd, currency: "CNY", nativeAmount: settle, rate: settle.dividedBy(leg.usd).toFixed(4) }];
   } else {
-    partyLines = await contactLines(tx, { accountId: payables, partyId: party.id, side: "debit", usd: leg.usd, money: leg, date: input.date });
-    // Dollars paid to a supplier owed only in yuan settle the yuan at what they cost, not nothing.
-    const cny = leg.currency === "USD" ? await foreignBalance(tx, payables, party.id, "CNY", input.date) : null;
+    // Money paid to a supplier owed in yuan (and not in francs) settles, after any dollars owed, the
+    // yuan at what they cost; only what is left goes through the usual dollar and franc balances.
+    const cny = await foreignBalance(tx, payables, party.id, "CNY", input.date);
+    const fcOwed = (await foreignBalance(tx, payables, party.id, "CDF", input.date)).native.negated();
     const usdOwed = Decimal.max((await foreignBalance(tx, payables, party.id, "USD", input.date)).usd.negated(), 0);
-    if (cny && cny.native.isNegative() && cny.usd.isNegative() && partyLines.length === 1 && !partyLines[0].currency) {
-      const rest = Decimal.max(dec(leg.usd).minus(usdOwed), 0);
-      const cnyUsd = Decimal.min(rest, cny.usd.abs());
+    const total = dec(leg.usd);
+    let cnyUsd = new Decimal(0);
+    partyLines = [];
+    if (cny.native.isNegative() && cny.usd.isNegative() && !fcOwed.gt(0)) {
+      cnyUsd = Decimal.min(Decimal.max(total.minus(usdOwed), 0), cny.usd.abs());
       if (cnyUsd.gt(0)) {
         const native = cnyUsd.equals(cny.usd.abs()) ? cny.native.abs() : cents(cny.native.abs().times(cnyUsd).dividedBy(cny.usd.abs()));
-        const base = { accountId: payables, partyId: party.id };
-        partyLines = [{ ...base, debit: cnyUsd, currency: "CNY", nativeAmount: native, rate: native.dividedBy(cnyUsd).toFixed(4) }];
-        if (dec(leg.usd).gt(cnyUsd)) partyLines.push({ ...base, debit: dec(leg.usd).minus(cnyUsd) });
+        partyLines.push({ accountId: payables, partyId: party.id, debit: cnyUsd, currency: "CNY", nativeAmount: native, rate: native.dividedBy(cnyUsd).toFixed(4) });
       }
+    }
+    const rest = total.minus(cnyUsd);
+    if (rest.gt(0)) {
+      const restNative = leg.nativeAmount ? (cnyUsd.isZero() ? dec(leg.nativeAmount) : cents(dec(leg.nativeAmount).times(rest).dividedBy(total))) : null;
+      partyLines.push(
+        ...(await contactLines(tx, {
+          accountId: payables,
+          partyId: party.id,
+          side: "debit",
+          usd: rest,
+          money: { currency: leg.currency, nativeAmount: restNative ? restNative.toFixed(2) : null, rate: leg.rate },
+          date: input.date,
+        })),
+      );
     }
   }
   return postJournal(tx, {
@@ -387,9 +411,41 @@ export interface AdjustmentInput {
   lines: AdjustmentLineInput[];
 }
 
-export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number) {
+/**
+ * Stock found or counted in is a gain shared by the partners at its cost, so a staff member may only
+ * value it near what that item already costs (its average, else its last receipt). Anything else is
+ * for the owner.
+ */
+async function assertGainCost(tx: Tx, variant: typeof variants.$inferSelect, name: string, unit: Decimal) {
+  let reference: Decimal | null = null;
+  const q = dec(variant.stockQty);
+  if (q.gt(0)) reference = dec(variant.stockValue).dividedBy(q);
+  else {
+    const [last] = await tx
+      .select({ qty: stockMovements.qty, value: stockMovements.value })
+      .from(stockMovements)
+      .where(and(eq(stockMovements.variantId, variant.id), sql`${stockMovements.qty} > 0`, sql`${stockMovements.value} > 0`))
+      .orderBy(desc(stockMovements.date), desc(stockMovements.id))
+      .limit(1);
+    if (last) reference = dec(last.value).dividedBy(last.qty);
+  }
+  const ok = reference ? unit.minus(reference).abs().lte(reference.times("0.10").plus("0.01")) : false;
+  if (!ok) {
+    throw forbidden(
+      reference
+        ? `${name}: ${unit.toFixed(2)} is far from its cost (${reference.toFixed(2)}). Leave the cost empty to use it, or ask the owner.`
+        : `${name} has no cost yet. Ask the owner to enter it.`,
+      reference
+        ? `${name} : ${unit.toFixed(2)} $ s'écarte de son coût (${reference.toFixed(2)} $). Laissez le coût vide pour l'utiliser, ou demandez au propriétaire.`
+        : `${name} n'a pas encore de coût. Demandez au propriétaire de le saisir.`,
+    );
+  }
+}
+
+export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number, opts: { owner: boolean } = { owner: true }) {
   if (input.lines.length === 0) throw badRequest("Add at least one item", "Ajoutez au moins un article");
-  if (input.lines.every((l) => dec(l.qtyChange, "quantity").isZero())) {
+  // A count where everything matched is still worth recording; other adjustments must change something.
+  if (input.kind !== "count" && input.lines.every((l) => dec(l.qtyChange, "quantity").isZero())) {
     throw badRequest("Nothing to adjust: every quantity change is zero", "Rien à ajuster : toutes les variations de quantité sont à zéro");
   }
   const number = await nextNumber(tx, "adjustment", "ADJ-");
@@ -422,6 +478,7 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
         unit = dec(v.variant.stockValue).dividedBy(q);
       }
       if (unit.isNegative()) throw badRequest("Cost cannot be negative", "Le coût ne peut pas être négatif");
+      if (!opts.owner && input.kind !== "opening") await assertGainCost(tx, v.variant, v.name, unit);
       const value = cents(unit.times(change));
       await receiveStock(tx, {
         date: input.date,

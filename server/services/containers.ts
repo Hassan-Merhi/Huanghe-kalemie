@@ -1,8 +1,9 @@
-import { and, asc, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, inArray, isNull, lt, lte, sql } from "drizzle-orm";
 import {
   containerExpenses,
   containerLines,
   containers,
+  exchangeRates,
   motorcycleUnits,
   products,
   stockLevels,
@@ -10,10 +11,10 @@ import {
   variants,
 } from "@shared/schema";
 import { computeLandedCost, type AllocationMethod, type LandedCostResult } from "@shared/landedCost";
-import { cents, dec, sum } from "@shared/money";
+import { cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, notFound } from "../errors";
-import { moneyLeg, postJournal, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type ForeignCurrency } from "./ledger";
+import { moneyLeg, postJournal, rateFor, rateTolerancePct, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type ForeignCurrency } from "./ledger";
 import { assertSameCurrency } from "./operations";
 import { issueStock, linkMovementsToJournal, receiveStock, stockQty } from "./stock";
 import { variantColour } from "./catalog";
@@ -269,8 +270,53 @@ function supplierInvoiceNative(currency: string, lines: { quantity: string; unit
   return { currency: currency as ForeignCurrency, nativeAmount: native, rate: native.dividedBy(fobUsd).toFixed(4) };
 }
 
+/**
+ * Refuse a container rate that cannot be right: the purchase is booked at it, so 7.14 typed for
+ * 0.14 would put fifty times the value in stock and in the supplier's balance.
+ */
+export async function assertContainerRate(tx: Tx, currency: string, rateToUsd: string | null | undefined, date: string) {
+  const rate = dec(rateToUsd ?? "1");
+  const cur = currency.toUpperCase();
+  if (cur === "USD") {
+    if (!rate.equals(1)) throw badRequest("A container invoiced in USD has a rate of 1", "Un conteneur facturé en USD a un taux de 1");
+    return;
+  }
+  let reference: Decimal | null = null;
+  let label = "";
+  if (cur === "CDF") {
+    const r = (await rateFor(tx, date)).rate;
+    reference = new Decimal(1).dividedBy(r);
+    label = `1 FC = ${reference.toSignificantDigits(4).toString()} USD (1 $ = ${r.toString()} FC)`;
+  } else if (cur === "CNY") {
+    const [row] = await tx
+      .select({ rate: exchangeRates.cnyPerUsd })
+      .from(exchangeRates)
+      .where(and(lte(exchangeRates.date, date), sql`${exchangeRates.cnyPerUsd} is not null`))
+      .orderBy(desc(exchangeRates.date))
+      .limit(1);
+    if (row?.rate) {
+      reference = new Decimal(1).dividedBy(row.rate);
+      label = `1 CNY = ${reference.toSignificantDigits(4).toString()} USD (1 $ = ${dec(row.rate).toString()} CNY)`;
+    } else if (rate.lt(0.08) || rate.gt(0.25)) {
+      throw badRequest(
+        `1 CNY = ${rate.toString()} USD looks wrong: a yuan is worth about 0.14 USD. Give USD per 1 CNY.`,
+        `1 CNY = ${rate.toString()} USD semble faux : un yuan vaut environ 0,14 USD. Indiquez combien de USD vaut 1 CNY.`,
+      );
+    }
+  }
+  if (!reference) return;
+  const limit = Decimal.max(await rateTolerancePct(tx), 5);
+  if (rate.minus(reference).abs().dividedBy(reference).times(100).gt(limit)) {
+    throw badRequest(
+      `The container rate ${rate.toString()} is more than ${limit.toString()}% away from the rate on file (${label}). Check it, or update the day's rate first.`,
+      `Le taux du conteneur ${rate.toString()} s'écarte de plus de ${limit.toString()} % du taux enregistré (${label}). Vérifiez-le, ou mettez d'abord à jour le taux du jour.`,
+    );
+  }
+}
+
 export async function finalizeContainer(tx: Tx, containerId: number, offloadDate: string, userId: number) {
   const container = await lockEditable(tx, containerId);
+  await assertContainerRate(tx, container.currency, container.rateToUsd, offloadDate);
   const full = await getContainer(tx, containerId);
   if (full.lines.length === 0) throw badRequest("Add the container's items before offloading", "Ajoutez les articles du conteneur avant le déchargement");
   const unpinned = full.expenses.find((e) => e.method === "line" && !e.targetLineId);

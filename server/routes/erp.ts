@@ -1,7 +1,7 @@
 import type { Express, Request } from "express";
 import { and, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
-import { accounts, DRAFT_KINDS, journalLines, journals, parties, saleReturns, users, type DraftKind } from "@shared/schema";
+import { accounts, DRAFT_KINDS, journalLines, journals, parties, partners, saleReturns, users, type DraftKind } from "@shared/schema";
 import { dec, parseTypedNumber } from "@shared/money";
 import { db } from "../db";
 import { forbidden, notFound } from "../errors";
@@ -140,7 +140,11 @@ export function registerErpRoutes(
     let moneyIn = dec(0);
     let moneyOut = dec(0);
     const hidden = req.user!.role === "partner" ? await reports.otherPartnerAccountIds(db, req.user!.partnerId) : new Set<number>();
-    const rows = js.map(({ journal: raw, createdByName }) => {
+    // A search must not find another partner's movements by words a partner cannot see.
+    const searchable = q.q?.trim() && hidden.size
+      ? js.filter(({ journal }) => !(byJournal.get(journal.id) ?? []).some((l) => hidden.has(l.line.accountId)))
+      : js;
+    const rows = searchable.map(({ journal: raw, createdByName }) => {
       const ls = byJournal.get(raw.id) ?? [];
       const masked = reports.maskPartnerJournal(
         raw,
@@ -188,8 +192,18 @@ export function registerErpRoutes(
     adjustment: deps.adjustmentSchema,
   };
 
-  app.get("/api/voucher-drafts", requireRole(...READERS), asyncHandler(async (_req, res) => {
-    const rows = await db.transaction((tx) => vouchers.listDrafts(tx));
+  app.get("/api/voucher-drafts", requireRole(...READERS), asyncHandler(async (req, res) => {
+    let rows = await db.transaction((tx) => vouchers.listDrafts(tx));
+    if (req.user!.role === "partner") {
+      // A draft that moves another partner's money is theirs and the owner's business.
+      const hidden = await reports.otherPartnerAccountIds(db, req.user!.partnerId);
+      const others = (await db.select({ id: partners.id }).from(partners)).map((p) => p.id).filter((id) => id !== req.user!.partnerId);
+      rows = rows.filter((r) => {
+        const p = r.payload as { partnerId?: number; lines?: { accountId?: number | null }[] };
+        if (p.partnerId && others.includes(p.partnerId)) return false;
+        return !(p.lines ?? []).some((l) => l.accountId && hidden.has(l.accountId));
+      });
+    }
     const names = await db.select({ id: users.id, fullName: users.fullName }).from(users);
     res.json(rows.map((r) => ({ ...r, createdByName: names.find((n) => n.id === r.createdBy)?.fullName ?? null })));
   }));

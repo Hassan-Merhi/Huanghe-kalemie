@@ -164,7 +164,7 @@ export function registerRoutes(app: Express) {
 
   app.post("/api/exchange-rates", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = z.object({ date: isoDate, cdfPerUsd: positiveDecimal, cnyPerUsd: positiveDecimal.nullish() }).parse(req.body);
-    const row = await db.transaction((tx) => setExchangeRate(tx, body, uid(req)));
+    const row = await db.transaction((tx) => setExchangeRate(tx, body, uid(req), { owner: req.user!.role === "owner" }));
     await audit(req, "set_rate", "exchange_rate", null, body);
     res.json(row);
   }));
@@ -393,7 +393,7 @@ export function registerRoutes(app: Express) {
     if (body.kind === "opening" && req.user!.role !== "owner") {
       throw forbidden("Only the owner can enter opening stock", "Seul le propriétaire peut saisir le stock d'ouverture");
     }
-    const result = await db.transaction((tx) => ops.adjustStock(tx, body, uid(req)));
+    const result = await db.transaction((tx) => ops.adjustStock(tx, body, uid(req), { owner: req.user!.role === "owner" }));
     await audit(req, "create", "stock_adjustment", result.id, body);
     res.status(201).json(result);
   }));
@@ -729,6 +729,7 @@ export function registerRoutes(app: Express) {
     const body = containerSchema.parse(req.body);
     const [supplier] = await db.select().from(parties).where(eq(parties.id, body.supplierId));
     if (!supplier || supplier.type !== "supplier") throw badRequest("Pick a supplier", "Choisissez un fournisseur");
+    if (body.rateToUsd) await containerSvc.assertContainerRate(db, body.currency ?? "USD", body.rateToUsd, todayIso());
     const [row] = await db.insert(containers).values({ ...body, number: body.number.trim().toUpperCase(), currency: (body.currency ?? "USD").toUpperCase() }).returning();
     await audit(req, "create", "container", row.id);
     res.status(201).json(row);
@@ -756,6 +757,7 @@ export function registerRoutes(app: Express) {
         const allowed = Object.keys(body).every((k) => ["notes", "shipDate", "arrivalDate"].includes(k));
         if (!allowed) throw conflict("This container is finalized. Only dates and notes can change.", "Ce conteneur est finalisé. Seules les dates et les notes peuvent être modifiées.");
       }
+      if (body.rateToUsd) await containerSvc.assertContainerRate(tx, body.currency ?? c.currency, body.rateToUsd, todayIso());
       const [row] = await tx
         .update(containers)
         .set({ ...body, ...(body.number && { number: body.number.trim().toUpperCase() }), ...(body.currency && { currency: body.currency.toUpperCase() }) })
@@ -919,11 +921,27 @@ export function registerRoutes(app: Express) {
     res.json(await reports.partnerStatement(db, partnerId));
   }));
 
-  app.get("/api/periods", requireRole(...READERS), asyncHandler(async (_req, res) => {
-    res.json(await db.select().from(periods).orderBy(desc(periods.month)));
+  /** A partner sees the other partners of a month's split without their names. */
+  const maskSplit = <T,>(req: Request, value: T): T => {
+    if (req.user!.role !== "partner" || !value) return value;
+    const me = req.user!.partnerId;
+    const rename = (p: { partnerId?: number; id?: number; name: string }) => ((p.partnerId ?? p.id) === me ? p : { ...p, name: "Autre associé" });
+    const v = value as Record<string, unknown>;
+    const split = v.split as { partners?: { partnerId: number; name: string }[] } | undefined;
+    const result = v.result as { split?: { partners?: { partnerId: number; name: string }[] } } | null | undefined;
+    return {
+      ...v,
+      ...(split?.partners ? { split: { ...split, partners: split.partners.map(rename) } } : {}),
+      ...(result?.split?.partners ? { result: { ...result, split: { ...result.split, partners: result.split.partners.map(rename) } } } : {}),
+      ...(Array.isArray(v.shares) ? { shares: (v.shares as { id: number; name: string }[]).map(rename) } : {}),
+    } as T;
+  };
+  app.get("/api/periods", requireRole(...READERS), asyncHandler(async (req, res) => {
+    const rows = await db.select().from(periods).orderBy(desc(periods.month));
+    res.json(rows.map((r) => maskSplit(req, r)));
   }));
   app.get("/api/periods/:month", requireRole(...READERS), asyncHandler(async (req, res) => {
-    res.json(await periodSvc.previewPeriod(db, month.parse(req.params.month)));
+    res.json(maskSplit(req, await periodSvc.previewPeriod(db, month.parse(req.params.month))));
   }));
   app.post("/api/periods/:month/close", requireRole(), asyncHandler(async (req, res) => {
     const m = month.parse(req.params.month);
