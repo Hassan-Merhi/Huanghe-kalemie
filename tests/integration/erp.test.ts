@@ -182,7 +182,7 @@ describe.skipIf(!hasDb)("Vouchers, optional vouchers, payroll, imports and inven
     const asOf = await insights.stockAsOf(db, "2026-12-31");
     expect(asOf.totalValue).toBe((await reports.stockValuation(db)).totalValue);
     expect((await insights.stockAsOf(db, "2026-09-01")).totalValue).toBe("0.00");
-    const tyre = (await db.select().from(variants)).find((v) => v.attributes.Size === "3.00-17")!;
+    const tyre = (await db.select().from(variants)).find((v) => v.attributes.Taille === "3.00-17")!;
     const m = await insights.itemMonthly(db, tyre.id, 2026);
     expect(m.months[8]).toMatchObject({ inQty: "10.000", inValue: "145.00", closingQty: "10.000" });
     const byLoc = await insights.inventoryByLocation(db);

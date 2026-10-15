@@ -50,41 +50,41 @@ export async function seedDemo(): Promise<void> {
       categoryId: cat("Motos"),
       tracksSerials: true,
       variants: [
-        { attributes: { Colour: "Red" }, sellPrice: "1450" },
-        { attributes: { Colour: "Black" }, sellPrice: "1450" },
+        { attributes: { Couleur: "Rouge" }, sellPrice: "1450" },
+        { attributes: { Couleur: "Noir" }, sellPrice: "1450" },
       ],
     }),
   );
   const tyre = await db.transaction((tx) =>
     catalog.createProduct(tx, {
-      name: "Tyre",
+      name: "Pneu",
       categoryId: cat("Pneus et chambres à air"),
       variants: [
-        { attributes: { Size: "2.75-17" }, sellPrice: "22", reorderLevel: "10", barcode: "2000000000017" },
-        { attributes: { Size: "3.00-17" }, sellPrice: "25", reorderLevel: "10", barcode: "2000000000024" },
-        { attributes: { Size: "3.00-18" }, sellPrice: "27", reorderLevel: "10", barcode: "2000000000031" },
+        { attributes: { Taille: "2.75-17" }, sellPrice: "22", reorderLevel: "10", barcode: "2000000000017" },
+        { attributes: { Taille: "3.00-17" }, sellPrice: "25", reorderLevel: "10", barcode: "2000000000024" },
+        { attributes: { Taille: "3.00-18" }, sellPrice: "27", reorderLevel: "10", barcode: "2000000000031" },
       ],
     }),
   );
   const pads = await db.transaction((tx) =>
     catalog.createProduct(tx, {
-      name: "Brake pads",
+      name: "Plaquettes de frein",
       categoryId: cat("Freins"),
-      unit: "set",
+      unit: "jeu",
       variants: [
-        { attributes: { Position: "Front" }, sellPrice: "6", reorderLevel: "20" },
-        { attributes: { Position: "Rear" }, sellPrice: "5", reorderLevel: "20" },
+        { attributes: { Position: "Avant" }, sellPrice: "6", reorderLevel: "20" },
+        { attributes: { Position: "Arrière" }, sellPrice: "5", reorderLevel: "20" },
       ],
     }),
   );
   const oil = await db.transaction((tx) =>
-    catalog.createProduct(tx, { name: "Engine oil 4T", categoryId: cat("Huiles et lubrifiants"), unit: "litre", variants: [{ attributes: { Size: "1L" }, sellPrice: "5" }] }),
+    catalog.createProduct(tx, { name: "Huile moteur 4T", categoryId: cat("Huiles et lubrifiants"), unit: "litre", variants: [{ attributes: { Contenance: "1 L" }, sellPrice: "5" }] }),
   );
 
   await db.transaction((tx) => ops.partnerContribution(tx, { date: day(40), partnerId: partnerA.id, accountId: acc("cash_usd"), amount: "60000" }, userId));
 
   await db.transaction((tx) =>
-    ops.transferMoney(tx, { date: day(40), fromAccountId: acc("cash_usd"), fromAmount: "1000", toAccountId: acc("cash_cdf"), toAmount: "2800000", rate: "2800", memo: "Change USD to CDF" }, userId),
+    ops.transferMoney(tx, { date: day(40), fromAccountId: acc("cash_usd"), fromAmount: "1000", toAccountId: acc("cash_cdf"), toAmount: "2800000", rate: "2800", memo: "Change USD en FC" }, userId),
   );
   const [c] = await db
     .insert(containers)

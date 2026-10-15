@@ -79,6 +79,7 @@ export interface SaleFull {
   voidReason: string | null;
   createdAt: string;
   customer: Party | null;
+  cashierName?: string | null;
   lines: SaleLineFull[];
   payments: SalePaymentRow[];
   returns: SaleReturnRow[];
@@ -103,7 +104,14 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
   const t = useT();
   const settings = useQuery<Settings>({ queryKey: ["/api/settings"] }).data;
   const accounts = useQuery<Account[]>({ queryKey: ["/api/accounts"] }).data ?? [];
-  const accName = (id: number) => accounts.find((a) => a.id === id)?.name ?? `#${id}`;
+  // The customer reads "Cash", not the shop's account names.
+  const accName = (id: number, currency: string) => {
+    const a = accounts.find((x) => x.id === id);
+    if (!a || a.systemKey === "cash_usd" || a.systemKey === "cash_cdf") return currency === "CDF" ? t("Cash FC", "Espèces FC") : t("Cash $", "Espèces $");
+    return a.name;
+  };
+  const saleRate = useRate(sale.date).data?.cdfPerUsd;
+  const cdfRate = sale.payments.find((p) => p.currency === "CDF")?.rate ?? saleRate ?? null;
   const gross = sale.lines.reduce((s, l) => s.plus(c2(d(l.qty).times(l.unitPrice))), d(0));
   const discount = gross.minus(sale.total);
   const time = sale.createdAt ? new Date(sale.createdAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) : "";
@@ -117,6 +125,7 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
       {dash}
       <ReceiptRow left={t("No.", "N°")} right={sale.number} />
       <ReceiptRow left={t("Date", "Date")} right={`${fmtDate(sale.date)} ${time}`} />
+      {sale.cashierName && <ReceiptRow left={t("Served by", "Servi par")} right={sale.cashierName} />}
       {sale.customer && <ReceiptRow left={t("Customer", "Client")} right={sale.customer.name} />}
       {sale.status === "voided" && <p className="mt-1 text-center font-bold">*** {t("CANCELLED", "ANNULÉE")} ***</p>}
       {dash}
@@ -138,18 +147,19 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
         </>
       )}
       <ReceiptRow bold left={t("TOTAL", "TOTAL")} right={usd(sale.total)} />
+      {cdfRate && d(cdfRate).gt(0) && <ReceiptRow left="" right={`≈ ${cdf(d(sale.total).times(cdfRate).toDecimalPlaces(0, ROUND).toString())}`} />}
       {sale.payments.length > 0 && dash}
       {sale.payments.map((p) => (
         <ReceiptRow
           key={p.id}
-          left={accName(p.accountId)}
+          left={accName(p.accountId, p.currency)}
           right={p.currency === "CDF" ? `${cdf(p.amountNative)} (${usd(p.amountUsd)})` : usd(p.amountUsd)}
         />
       ))}
       {sale.payments.length > 0 && <ReceiptRow left={t("Paid", "Payé")} right={usd(sale.paidUsd)} />}
       {d(sale.creditUsd).gt(0) && <ReceiptRow bold left={t("On credit (to pay)", "À crédit (reste à payer)")} right={usd(sale.creditUsd)} />}
-      {sale.payments.some((p) => p.currency === "CDF") && (
-        <p className="mt-1">{t("Rate", "Taux")}: 1 USD = {fmtQty(sale.payments.find((p) => p.currency === "CDF")?.rate)} FC</p>
+      {cdfRate && d(cdfRate).gt(0) && (
+        <p className="mt-1">{t("Rate", "Taux")}{"\u00a0"}: 1 $ = {fmtQty(cdfRate)} FC</p>
       )}
       {sale.note && <p className="mt-1">{sale.note}</p>}
       {dash}
@@ -375,6 +385,17 @@ export default function POS() {
     setPays([...kept, { key: keyRef.current++, accountId: acc.id, amount, rate: null }]);
   }
   const updatePay = (key: number, patch: Partial<PayRow>) => setPays((ps) => ps.map((p) => (p.key === key ? { ...p, ...patch } : p)));
+  /** Changing a line to an account in another currency converts what was typed at the day's rate. */
+  function changePayAccount(p: PayRow, acc: Account) {
+    const prev = accById(p.accountId);
+    let amount = p.amount;
+    if (prev && prev.currency !== acc.currency && d(p.amount).gt(0)) {
+      const value = payUsd(p);
+      if (acc.currency === "CDF") amount = rateNum.gt(0) ? value.times(rateNum).toDecimalPlaces(0, ROUND).toFixed(0) : "";
+      else amount = value.gt(0) ? c2(value).toFixed(2) : "";
+    }
+    updatePay(p.key, { accountId: acc.id, amount, rate: null });
+  }
 
   // ---- change calculator (helper only)
   const toPay = paid.gt(0) ? paid : total;
@@ -441,8 +462,16 @@ export default function POS() {
     setTimeout(() => searchBox.current?.querySelector("input")?.focus(), 50);
   }
 
+  const payCard = useRef<HTMLDivElement>(null);
+  const [tried, setTried] = useState(false);
+  function mobilePay() {
+    if (valid) return submit();
+    setTried(true);
+    payCard.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+
   return (
-    <div>
+    <div className="pb-24 lg:pb-0">
       <PageHeader
         title={t("Point of sale", "Caisse")}
         description={t("Scan or search items, take payment, print the receipt. F9 or Ctrl+Enter to finish.", "Scanner ou chercher les articles, encaisser, imprimer le reçu. F9 ou Ctrl+Entrée pour valider.")}
@@ -563,7 +592,7 @@ export default function POS() {
 
         {/* ---------------- Payment */}
         <div className="space-y-4">
-          <Card className="lg:sticky lg:top-4">
+          <Card className="scroll-mt-4 lg:sticky lg:top-4" ref={payCard}>
             <CardHeader className="p-4 pb-2"><CardTitle className="text-base">{t("Payment", "Paiement")}</CardTitle></CardHeader>
             <CardContent className="space-y-3 p-4 pt-0">
               <div className="rounded-lg bg-muted p-3">
@@ -591,12 +620,22 @@ export default function POS() {
                   <div key={p.key} className="space-y-2 rounded-md border p-2">
                     <div className="flex gap-2">
                       <div className="min-w-0 flex-1">
-                        <MoneyAccountSelect value={p.accountId} onChange={(id) => updatePay(p.key, { accountId: id })} />
+                        <MoneyAccountSelect value={p.accountId} onChange={(_id, account) => changePayAccount(p, account)} />
                       </div>
                       <Button variant="ghost" size="icon" onClick={() => setPays((ps) => ps.filter((x) => x.key !== p.key))} aria-label={t("Remove", "Retirer")}><Trash2 className="h-4 w-4" /></Button>
                     </div>
                     <div className={cn("grid gap-2", acc?.currency === "CDF" ? "grid-cols-2" : "grid-cols-1")}>
-                      <Input inputMode="decimal" placeholder={acc?.currency === "CDF" ? t("Amount FC", "Montant FC") : t("Amount $", "Montant $")} value={p.amount} onChange={(e) => updatePay(p.key, { amount: e.target.value })} />
+                      <div className="relative">
+                        <Input
+                          inputMode="decimal"
+                          className="pr-10"
+                          aria-label={acc?.currency === "CDF" ? t("Amount in FC", "Montant en FC") : t("Amount in $", "Montant en $")}
+                          placeholder={t("Amount", "Montant")}
+                          value={p.amount}
+                          onChange={(e) => updatePay(p.key, { amount: e.target.value })}
+                        />
+                        <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm font-medium text-muted-foreground">{acc?.currency === "CDF" ? "FC" : "$"}</span>
+                      </div>
                       {acc?.currency === "CDF" && (
                         <Input inputMode="decimal" placeholder={t("Rate", "Taux")} value={p.rate ?? dayRate} onChange={(e) => updatePay(p.key, { rate: e.target.value })} title={t("CDF per 1 USD", "CDF pour 1 USD")} />
                       )}
@@ -645,7 +684,7 @@ export default function POS() {
                 </div>
               </details>
 
-              {!valid && lines.length > 0 && (
+              {!valid && (lines.length > 0 || tried) && (
                 <ul className="space-y-0.5 text-xs text-destructive">
                   {Array.from(new Set(problems)).map((p) => <li key={p}>• {p}</li>)}
                 </ul>
@@ -653,11 +692,25 @@ export default function POS() {
               <Button className="h-12 w-full text-base" disabled={!valid || mutation.isPending} onClick={submit}>
                 {mutation.isPending ? "…" : t(`Finish sale ${usd(total.toFixed(2))}`, `Valider la vente ${usd(total.toFixed(2))}`)}
               </Button>
-              <p className="text-center text-xs text-muted-foreground">F9 / Ctrl+Entrée</p>
+              <p className="hidden text-center text-xs text-muted-foreground lg:block">F9 / Ctrl+Entrée</p>
             </CardContent>
           </Card>
         </div>
       </div>
+
+      {/* Phone: the total and the pay button stay on screen while scrolling the cart. */}
+      {!receipt && (
+        <div className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-3 border-t bg-background/95 px-4 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.08)] backdrop-blur lg:hidden print:hidden">
+          <div className="min-w-0 flex-1">
+            <p className="text-xs text-muted-foreground">{t("Total", "Total")} · {lines.length} {lines.length > 1 ? t("items", "articles") : t("item", "article")}</p>
+            <p className="truncate text-xl font-bold tabular">{usd(total.toFixed(2))}</p>
+            {rateNum.gt(0) && total.gt(0) && <p className="truncate text-xs text-muted-foreground">≈ {cdf(total.times(rateNum).toDecimalPlaces(0, ROUND).toString())}</p>}
+          </div>
+          <Button className="h-12 shrink-0 px-6 text-base" disabled={lines.length === 0 || mutation.isPending} onClick={mobilePay}>
+            {mutation.isPending ? "…" : valid ? t("Finish", "Valider") : t("Pay", "Payer")}
+          </Button>
+        </div>
+      )}
 
       {receipt && (
         <ReceiptDialog
