@@ -1,4 +1,4 @@
-import type { Express, Request } from "express";
+import express, { type Express, type Request } from "express";
 import { and, asc, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
@@ -54,6 +54,7 @@ import * as ops from "./services/operations";
 import * as periodSvc from "./services/periods";
 import * as reports from "./services/reports";
 import * as checks from "./services/checks";
+import * as backup from "./services/backup";
 import { getSetting } from "./setup";
 import { reverseJournal } from "./services/ledger";
 import { transferStock } from "./services/stock";
@@ -401,21 +402,45 @@ export function registerRoutes(app: Express) {
     `);
     res.json(rows.rows.map((r) => ({ id: r.id, date: r.date, qty: r.qty, note: r.note, sku: r.sku, productName: r.product_name, label: catalog.variantLabel(r.attributes), fromName: r.from_name, toName: r.to_name, username: r.username })));
   }));
+  // ---------------------------------------------------------------- Backups (owner only)
+
   app.get("/api/backup", requireRole(), asyncHandler(async (req, res) => {
-    // Owner only (requireRole() with no roles admits only the owner): every table as JSON, without password hashes or sessions.
-    const tables = await db.execute<{ table_name: string }>(sql`
-      select table_name from information_schema.tables
-      where table_schema = 'public' and table_type = 'BASE TABLE' and table_name <> 'user_sessions'
-      order by table_name
-    `);
-    const data: Record<string, unknown[]> = {};
-    for (const { table_name } of tables.rows) {
-      const result = await db.execute(sql`select * from ${sql.identifier(table_name)}`);
-      data[table_name] = table_name === "users" ? result.rows.map(({ password_hash, ...u }) => u) : result.rows;
-    }
-    await audit(req, "export", "backup", null, { tables: tables.rows.length });
-    res.setHeader("Content-Disposition", `attachment; filename="huanghe-kalemie-backup-${todayIso()}.json"`);
-    res.json({ exportedAt: new Date().toISOString(), tables: data });
+    // One consistent snapshot of every table, users included, so it can rebuild the shop on a new database.
+    const text = await backup.takeSnapshot();
+    await audit(req, "export", "backup", null, { size: text.length });
+    res.setHeader("Content-Disposition", `attachment; filename="huanghe-kalemie-sauvegarde-${todayIso()}.json"`);
+    res.type("application/json").send(text);
+  }));
+  app.get("/api/backups", requireRole(), asyncHandler(async (_req, res) => {
+    const [last] = await db
+      .select({ at: auditLog.createdAt })
+      .from(auditLog)
+      .where(and(eq(auditLog.action, "export"), eq(auditLog.entity, "backup")))
+      .orderBy(desc(auditLog.id))
+      .limit(1);
+    res.json({ snapshots: await backup.listSnapshots(), lastDownloadAt: last?.at ?? null, empty: await backup.isEmptyShop(db) });
+  }));
+  app.get("/api/backups/:id", requireRole(), asyncHandler(async (req, res) => {
+    const row = await backup.snapshotFile(paramId(req));
+    await audit(req, "export", "backup", row.id, { kind: row.kind, day: row.day });
+    res.setHeader("Content-Disposition", `attachment; filename="huanghe-kalemie-sauvegarde-${row.day}-${row.kind}.json.gz"`);
+    res.type("application/gzip").send(row.data);
+  }));
+  const rawBody = express.raw({ type: () => true, limit: "200mb" });
+  app.post("/api/backup/inspect", requireRole(), rawBody, asyncHandler(async (req, res) => {
+    const file = backup.parseBackup(req.body as Buffer);
+    res.json({ exportedAt: file.exportedAt, migrations: file.migrations, totals: file.totals, empty: await backup.isEmptyShop(db) });
+  }));
+  app.post("/api/backup/restore", requireRole(), rawBody, asyncHandler(async (req, res) => {
+    // The current password travels in a header because the body is the file itself.
+    await checkPassword(uid(req), req.get("X-Current-Password") ?? "");
+    const replace = req.query.replace === "1";
+    const file = backup.parseBackup(req.body as Buffer);
+    // Before replacing anything, keep what is there now so the restore itself can be undone.
+    if (replace && !(await backup.isEmptyShop(db))) await backup.saveSnapshot("before_restore");
+    const result = await db.transaction((tx) => backup.restore(tx, file, { replace }));
+    await db.insert(auditLog).values({ userId: null, action: "restore", entity: "backup", entityId: null, data: { exportedAt: file.exportedAt, rows: result.rows, replace } });
+    res.json(result);
   }));
   app.get("/api/stock/adjustments", requireRole(...READERS), asyncHandler(async (_req, res) => {
     const rows = await db

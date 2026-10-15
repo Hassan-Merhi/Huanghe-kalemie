@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { Download, Pencil, Plus } from "lucide-react";
+import { Pencil, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -21,6 +21,7 @@ import type { Account, Category, Location, Partner, Settings as ShopSettings } f
 import { accountTypeLabel } from "@/pages/Reports";
 import { roleLabel } from "@/lib/labels";
 import { journalTypeLabel } from "@/pages/ContactDetail";
+import { BackupPanel } from "@/components/BackupPanel";
 
 type T = (en: string, fr: string) => string;
 
@@ -555,27 +556,7 @@ function AccountDialog({ account, onClose }: { account: Account | null; onClose:
 // ---------------------------------------------------------------- Backup
 
 function BackupTab() {
-  const t = useT();
-  return (
-    <Card className="max-w-3xl">
-      <CardHeader>
-        <CardTitle className="text-base">{t("Backup", "Sauvegarde")}</CardTitle>
-        <CardDescription>
-          {t(
-            "Download a file with all the data. Keep a copy every week on a USB key or a phone.",
-            "Téléchargez un fichier avec toutes les données. Gardez-en une copie chaque semaine sur une clé USB ou un téléphone.",
-          )}
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <Button asChild variant="outline">
-          <a href="/api/backup" download>
-            <Download className="mr-1 h-4 w-4" /> {t("Download a backup", "Télécharger une sauvegarde")}
-          </a>
-        </Button>
-      </CardContent>
-    </Card>
-  );
+  return <BackupPanel />;
 }
 
 // ---------------------------------------------------------------- Activity log

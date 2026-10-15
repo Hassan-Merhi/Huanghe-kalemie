@@ -101,6 +101,12 @@ export function date(value: string | null | undefined): string {
   return `${d}/${m}/${y}`;
 }
 
+/** Date and time in the shop's time zone: 15/10/2026 14:05. */
+export function dateTime(value: string | Date | null | undefined): string {
+  if (!value) return "";
+  return new Intl.DateTimeFormat(formatLang() === "fr" ? "fr-FR" : "en-GB", { dateStyle: "short", timeStyle: "short", timeZone: "Africa/Lubumbashi" }).format(new Date(value));
+}
+
 export function todayLocal(): string {
   const now = new Date(Date.now() + 2 * 60 * 60 * 1000);
   return now.toISOString().slice(0, 10);

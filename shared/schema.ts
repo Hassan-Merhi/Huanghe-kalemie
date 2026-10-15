@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  customType,
   date,
   index,
   integer,
@@ -687,4 +688,24 @@ export const payrollRuns = pgTable("payroll_runs", {
   cancelJournalId: integer("cancel_journal_id"),
 }, (t) => ({
   postedMonth: uniqueIndex("payroll_runs_posted_month").on(t.month).where(sql`${t.status} = 'posted'`),
+}));
+
+// ---------------------------------------------------------------- Backups
+
+const bytea = customType<{ data: Buffer }>({ dataType: () => "bytea" });
+
+export const BACKUP_KINDS = ["daily", "before_restore"] as const;
+
+/** Snapshots kept inside the database: one a day, and one taken just before each restore. */
+export const backups = pgTable("backups", {
+  id: serial("id").primaryKey(),
+  kind: varchar("kind", { length: 20 }).$type<(typeof BACKUP_KINDS)[number]>().notNull(),
+  /** The day the snapshot is for (UTC+2), so there is one daily snapshot per day. */
+  day: date("day").notNull(),
+  /** Gzipped JSON, the same file a download gives. */
+  data: bytea("data").notNull(),
+  size: integer("size").notNull(),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+}, (t) => ({
+  dailyDay: uniqueIndex("backups_daily_day").on(t.day).where(sql`${t.kind} = 'daily'`),
 }));
