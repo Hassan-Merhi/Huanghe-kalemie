@@ -15,7 +15,7 @@ import { allocateCents, cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, notFound } from "../errors";
 import { moneyLeg, nextNumber, postJournal, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId } from "./ledger";
-import { issueStock, linkMovementsToJournal, receiveStock } from "./stock";
+import { issueStock, linkMovementsToJournal, receiveStock, stockQty } from "./stock";
 
 /** Rounding left over from paying in CDF, absorbed into exchange differences. */
 const ROUNDING_TOLERANCE = new Decimal("0.10");
@@ -66,7 +66,7 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number)
     const v = byId.get(l.variantId);
     if (!v) throw badRequest("One of the items does not exist", "Un des articles n'existe pas");
     if (!v.active) throw badRequest(`${v.name} (${v.sku}) is inactive`, `${v.name} (${v.sku}) est inactif`);
-    const q = dec(l.qty, "quantity");
+    const q = stockQty(l.qty);
     if (q.lte(0)) throw badRequest("Quantities must be greater than zero", "Les quantités doivent être supérieures à zéro");
     const price = cents(l.unitPrice);
     if (price.isNegative()) throw badRequest("Prices cannot be negative", "Les prix ne peuvent pas être négatifs");
@@ -283,6 +283,12 @@ export async function returnSale(tx: Tx, saleId: number, input: ReturnInput, use
   if (!sale) throw notFound("Sale", "Vente introuvable");
   if (sale.status === "voided") throw conflict("This sale is cancelled", "Cette vente est annulée");
   if (input.lines.length === 0) throw badRequest("Pick what is coming back", "Choisissez ce qui est retourné");
+  if (new Set(input.lines.map((l) => l.saleLineId)).size !== input.lines.length) {
+    throw badRequest("The same item is listed twice on this return", "Le même article figure deux fois sur ce retour");
+  }
+  if (input.date < sale.date) {
+    throw badRequest(`A return cannot be dated before the sale (${sale.date})`, `Un retour ne peut pas être daté avant la vente (${sale.date})`);
+  }
   if (!input.refundAccountId && !sale.customerId) {
     throw badRequest("This sale has no customer, so pick the account the refund is paid from", "Cette vente n'a pas de client : choisissez le compte qui paie le remboursement");
   }
@@ -304,7 +310,7 @@ export async function returnSale(tx: Tx, saleId: number, input: ReturnInput, use
   for (const req of input.lines) {
     const line = lineRows.find((l) => l.id === req.saleLineId);
     if (!line) throw badRequest("That item is not on this sale", "Cet article ne figure pas sur cette vente");
-    const q = dec(req.qty, "quantity");
+    const q = stockQty(req.qty);
     const remaining = dec(line.qty).minus(line.returnedQty);
     if (q.lte(0) || q.gt(remaining)) throw badRequest(`You can return at most ${remaining.toString()} of that item`, `Vous pouvez retourner au maximum ${remaining.toString()} de cet article`);
     const isLast = q.equals(remaining);

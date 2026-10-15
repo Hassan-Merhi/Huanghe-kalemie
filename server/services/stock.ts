@@ -10,6 +10,13 @@ import { badRequest, conflict } from "../errors";
  * value is left), so the Inventory account always equals the sum of variant values.
  */
 
+/** Quantities are stored with 3 decimals; refuse more so totals and locations never drift apart. */
+export function stockQty(input: DecimalInput): Decimal {
+  const q = dec(input, "quantity");
+  if (q.decimalPlaces() > 3) throw badRequest("Quantities can have at most 3 decimals", "Les quantités ont au maximum 3 décimales");
+  return q;
+}
+
 interface MovementRef {
   date: string;
   type: MovementType;
@@ -58,7 +65,7 @@ export async function receiveStock(
   tx: Tx,
   input: MovementRef & { variantId: number; locationId: number; qty: DecimalInput; value: DecimalInput },
 ): Promise<void> {
-  const q = dec(input.qty, "quantity");
+  const q = stockQty(input.qty);
   const v = cents(input.value);
   if (q.lte(0)) throw badRequest("Quantity must be greater than zero", "La quantité doit être supérieure à zéro");
   if (v.isNegative()) throw badRequest("Stock value cannot be negative", "La valeur du stock ne peut pas être négative");
@@ -95,7 +102,7 @@ export async function issueStock(
   tx: Tx,
   input: MovementRef & { variantId: number; locationId: number; qty: DecimalInput; label?: string; value?: DecimalInput },
 ): Promise<string> {
-  const q = dec(input.qty, "quantity");
+  const q = stockQty(input.qty);
   if (q.lte(0)) throw badRequest("Quantity must be greater than zero", "La quantité doit être supérieure à zéro");
   const variant = await lockVariant(tx, input.variantId);
   const available = await locationQty(tx, variant.id, input.locationId);
@@ -141,7 +148,7 @@ export async function transferStock(
   tx: Tx,
   input: MovementRef & { variantId: number; fromLocationId: number; toLocationId: number; qty: DecimalInput; unitIds?: number[] },
 ): Promise<void> {
-  const q = dec(input.qty, "quantity");
+  const q = stockQty(input.qty);
   if (q.lte(0)) throw badRequest("Quantity must be greater than zero", "La quantité doit être supérieure à zéro");
   if (input.fromLocationId === input.toLocationId) throw badRequest("Pick two different locations", "Choisissez deux emplacements différents");
   const variant = await lockVariant(tx, input.variantId);

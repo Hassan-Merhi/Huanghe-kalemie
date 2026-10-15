@@ -6,6 +6,7 @@ import { createServer } from "http";
 import { db } from "./db";
 import { registerAuthRoutes, setupSession } from "./auth";
 import { errorHandler } from "./http";
+import { idempotency } from "./idempotency";
 import { log } from "./log";
 import { runMigrations } from "./migrate";
 import { registerRoutes } from "./routes";
@@ -30,6 +31,7 @@ export async function createApp() {
   app.use(express.json({ limit: "1mb" }));
   setupSession(app);
   registerAuthRoutes(app);
+  app.use("/api", idempotency());
   registerRoutes(app);
   app.use("/api", (_req, res) => res.status(404).json({ message: "Not found", messageFr: "Introuvable" }));
   app.use(errorHandler);

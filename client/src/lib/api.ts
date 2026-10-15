@@ -33,10 +33,13 @@ async function parse(res: Response) {
 }
 
 /** Call the API. Throws ApiError with the server's message on failure. */
-export async function api<T = unknown>(method: string, url: string, body?: unknown): Promise<T> {
+export async function api<T = unknown>(method: string, url: string, body?: unknown, idempotencyKey?: string): Promise<T> {
+  const headers: Record<string, string> = {};
+  if (body !== undefined) headers["Content-Type"] = "application/json";
+  if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
   const res = await fetch(url, {
     method,
-    headers: body !== undefined ? { "Content-Type": "application/json" } : {},
+    headers,
     body: body !== undefined ? JSON.stringify(body) : undefined,
     credentials: "include",
   });

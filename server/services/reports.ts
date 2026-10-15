@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, lt, lte, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, lt, lte, ne, or, sql } from "drizzle-orm";
 import {
   accounts,
   categories,
@@ -244,7 +244,8 @@ export async function stockValuation(tx: Tx) {
     .from(variants)
     .innerJoin(products, eq(products.id, variants.productId))
     .leftJoin(categories, eq(categories.id, products.categoryId))
-    .where(eq(variants.active, true))
+    // Inactive items still count while they hold stock or value, so the total always equals the ledger.
+    .where(or(eq(variants.active, true), ne(variants.stockQty, "0"), ne(variants.stockValue, "0")))
     .orderBy(asc(products.name), asc(variants.sku));
   const items = rows.map((r) => {
     const q = dec(r.qty);

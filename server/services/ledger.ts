@@ -61,11 +61,29 @@ export function monthOf(date: string): string {
   return date.slice(0, 7);
 }
 
+/**
+ * Refuse a posting dated in a closed month, or before the last closed month: months close in
+ * order, so a posting into an earlier open month would still change balances already closed.
+ */
 export async function assertPeriodOpen(tx: Tx, date: string): Promise<void> {
   const month = monthOf(date);
-  const [row] = await tx.select({ status: periods.status }).from(periods).where(eq(periods.month, month));
-  if (row?.status === "closed") {
-    throw new AppError(409, `${month} is closed. Reopen it before changing anything dated in that month.`, "PERIOD_CLOSED", `Le mois ${month} est clôturé. Rouvrez-le avant de modifier quoi que ce soit daté de ce mois.`);
+  const [row] = await tx
+    .select({ month: periods.month })
+    .from(periods)
+    .where(and(eq(periods.status, "closed"), sql`${periods.month} >= ${month}`))
+    .orderBy(sql`${periods.month} desc`)
+    .limit(1);
+  if (row) {
+    const closed = row.month;
+    if (closed === month) {
+      throw new AppError(409, `${month} is closed. Reopen it before changing anything dated in that month.`, "PERIOD_CLOSED", `Le mois ${month} est clôturé. Rouvrez-le avant de modifier quoi que ce soit daté de ce mois.`);
+    }
+    throw new AppError(
+      409,
+      `${closed} is closed, so nothing dated in ${month} or earlier can change. Reopen the closed months first.`,
+      "PERIOD_CLOSED",
+      `Le mois ${closed} est clôturé : rien de daté de ${month} ou avant ne peut changer. Rouvrez d'abord les mois clôturés.`,
+    );
   }
 }
 

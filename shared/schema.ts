@@ -65,6 +65,18 @@ export const counters = pgTable("counters", {
   value: integer("value").notNull().default(0),
 });
 
+/** One row per Idempotency-Key the browser sent, so a double tap or a retry posts only once. */
+export const idempotencyKeys = pgTable("idempotency_keys", {
+  key: varchar("key", { length: 100 }).primaryKey(),
+  userId: integer("user_id").notNull(),
+  method: varchar("method", { length: 10 }).notNull(),
+  path: text("path").notNull(),
+  /** Null while the first request is still running. */
+  status: integer("status"),
+  response: jsonb("response"),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+});
+
 export const auditLog = pgTable(
   "audit_log",
   {
