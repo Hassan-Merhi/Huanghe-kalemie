@@ -107,10 +107,10 @@ function Body({ a }: { a: Analytics }) {
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
         <StatCard label={t("Sales", "Ventes")} value={usd(a.sales.total)} sub={count(t, a.sales.count, ["sale", "sales"], ["vente", "ventes"])} />
-        <StatCard label={t("Gross profit", "Marge brute")} value={usd(a.totals.grossProfit)} tone={d(a.totals.grossProfit).lt(0) ? "bad" : "good"} sub={marginPct ? `${marginPct} % ${t("of income", "des recettes")}` : undefined} />
+        <StatCard label={t("Gross profit", "Marge brute")} value={usd(a.totals.grossProfit)} tone={d(a.totals.grossProfit).lt(0) ? "bad" : "good"} sub={marginPct ? `${pct(marginPct)} ${t("of income", "des recettes")}` : undefined} />
         <StatCard label={t("Running costs", "Charges")} value={usd(a.totals.operatingExpenses)} />
         <StatCard label={t("Net profit", "Bénéfice net")} value={usd(a.totals.netProfit)} tone={d(a.totals.netProfit).lt(0) ? "bad" : "good"} />
-        <StatCard label={t("Credit sales", "Ventes à crédit")} value={usd(a.sales.credit)} sub={d(a.sales.total).gt(0) ? `${d(a.sales.credit).div(d(a.sales.total)).times(100).toFixed(0)} % ${t("of sales", "des ventes")}` : undefined} />
+        <StatCard label={t("Credit sales", "Ventes à crédit")} value={usd(a.sales.credit)} sub={d(a.sales.total).gt(0) ? `${pct(d(a.sales.credit).div(d(a.sales.total)).times(100).toNumber(), 0)} ${t("of sales", "des ventes")}` : undefined} />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
@@ -121,8 +121,8 @@ function Body({ a }: { a: Analytics }) {
             <YAxis tick={AXIS} tickLine={false} axisLine={false} tickFormatter={axisUsd} width={52} />
             <Tooltip {...TOOLTIP} formatter={tipUsd} />
             <Legend wrapperStyle={{ fontSize: 12 }} />
-            <Area type="monotone" dataKey="revenue" name={t("Income", "Recettes")} stroke={C_MAIN} fill={C_MAIN} fillOpacity={0.15} strokeWidth={2} />
-            <Area type="monotone" dataKey="grossProfit" name={t("Gross profit", "Marge brute")} stroke={C_PROFIT} fill={C_PROFIT} fillOpacity={0.15} strokeWidth={2} />
+            <Area type="linear" dataKey="revenue" name={t("Income", "Recettes")} stroke={C_MAIN} fill={C_MAIN} fillOpacity={0.15} strokeWidth={2} />
+            <Area type="linear" dataKey="grossProfit" name={t("Gross profit", "Marge brute")} stroke={C_PROFIT} fill={C_PROFIT} fillOpacity={0.15} strokeWidth={2} />
           </AreaChart>
         </ChartCard>
 

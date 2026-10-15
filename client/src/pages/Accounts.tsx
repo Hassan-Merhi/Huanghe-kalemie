@@ -194,7 +194,7 @@ function Chart({ onOpen }: { onOpen: (id: number) => void }) {
                     <span className="min-w-0 flex-1">
                       <span className="block truncate text-sm">{a.name}</span>
                       <span className="flex flex-wrap gap-1">
-                        {a.isMoney && <Badge variant="outline" className="h-4 px-1 text-[10px] font-normal">{a.currency}</Badge>}
+                        {a.isMoney && <Badge variant="outline" className="h-4 px-1 text-[10px] font-normal">{a.currency === "CDF" ? "FC" : a.currency}</Badge>}
                         {!a.active && <Badge variant="secondary" className="h-4 px-1 text-[10px] font-normal">{t("Inactive", "Inactif")}</Badge>}
                       </span>
                     </span>
@@ -252,7 +252,7 @@ function AccountView({ id, onBack }: { id: number; onBack: () => void }) {
       </button>
       <PageHeader
         title={acc ? `${acc.code} · ${acc.name}` : t("Account", "Compte")}
-        description={acc ? [accountTypeLabel(acc.type, t), acc.isMoney ? acc.currency : null, !acc.active ? t("Inactive", "Inactif") : null].filter(Boolean).join(" · ") : undefined}
+        description={acc ? [accountTypeLabel(acc.type, t), acc.isMoney ? (acc.currency === "CDF" ? "FC" : acc.currency) : null, !acc.active ? t("Inactive", "Inactif") : null].filter(Boolean).join(" · ") : undefined}
         actions={
           acc && (
             <div className="text-right">

@@ -411,7 +411,7 @@ function AccountsTab() {
                         {!a.active && <Badge variant="secondary" className="ml-2">{t("Inactive", "Inactif")}</Badge>}
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{accountTypeLabel(a.type, t)}</TableCell>
-                      <TableCell>{a.isMoney ? <Badge variant="outline">{a.currency}</Badge> : ""}</TableCell>
+                      <TableCell>{a.isMoney ? <Badge variant="outline">{a.currency === "CDF" ? "FC" : a.currency}</Badge> : ""}</TableCell>
                       <TableCell className="text-right">
                         <Num>{usd(a.balance)}</Num>
                         {a.isMoney && a.currency === "CDF" && <Num className="block text-xs text-muted-foreground">{money(a.nativeBalance, "CDF")}</Num>}
