@@ -7,10 +7,11 @@ import { Table } from "@/components/ui/table";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ErrorText, Loading, Num } from "@/components/common";
-import { cdf, d, date, qty, usd } from "@/lib/format";
+import { cdf, d, date, money, qty, usd } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import type { Settings } from "@/lib/types";
 import { journalTypeLabel } from "@/pages/ContactDetail";
+import { useSystemText } from "@/lib/systemText";
 
 interface VoucherLine {
   id: number;
@@ -19,6 +20,7 @@ interface VoucherLine {
   accountCode: string;
   accountType: string;
   isMoney: boolean;
+  systemKey?: string | null;
   partyName: string | null;
   debit: string;
   credit: string;
@@ -39,12 +41,43 @@ interface Voucher {
   createdByName: string | null;
   createdAt?: string;
   total: string;
+  /** The daybook's amount: francs at the voucher's rate, without the exchange difference. */
+  amount?: string;
+  fxDiff?: string | null;
   reversedByJournalId: number | null;
   reversesJournalId: number | null;
   lines: VoucherLine[];
 }
 
 type Paper = "A5" | "A4";
+
+/** Memo of the exchange difference the server books when francs leave a box at its average cost. */
+const COST_FX_MEMO = "Écart de change (coût moyen des devises)";
+const isCostFx = (l: VoucherLine) => l.systemKey === "fx" && l.memo === COST_FX_MEMO;
+/** A franc line at the voucher's own rate (1 400 000 FC at 2 808 = 498,58 $), as the daybook shows it. */
+function docValue(l: VoucherLine, booked: string) {
+  if (!d(booked).gt(0) || l.currency !== "CDF" || !l.nativeAmount || !d(l.rate).gt(0)) return d(booked);
+  return d(l.nativeAmount).abs().dividedBy(d(l.rate)).toDecimalPlaces(2);
+}
+
+/**
+ * The lines as printed. When francs left a box at its average cost, the francs read at the voucher's
+ * rate and the exchange difference moves to a footnote, so the voucher matches the daybook; when
+ * that would not balance, the lines print as booked.
+ */
+function printedLines(lines: VoucherLine[]) {
+  const asBooked = { rows: lines.map((l) => ({ line: l, debit: d(l.debit), credit: d(l.credit) })), bookCost: null as null | { usd: string; diff: string } };
+  const fx = lines.filter(isCostFx);
+  if (!fx.length) return asBooked;
+  const rows = lines.filter((l) => !isCostFx(l)).map((l) => ({ line: l, debit: docValue(l, l.debit), credit: docValue(l, l.credit) }));
+  const dr = rows.reduce((s, r) => s.plus(r.debit), d(0));
+  const cr = rows.reduce((s, r) => s.plus(r.credit), d(0));
+  if (!dr.equals(cr)) return asBooked;
+  const changed = rows.filter((r) => !r.debit.equals(d(r.line.debit)) || !r.credit.equals(d(r.line.credit)));
+  const booked = changed.reduce((s, r) => s.plus(d(r.line.debit)).plus(d(r.line.credit)), d(0));
+  const diff = fx.reduce((s, l) => s.plus(d(l.debit)).minus(d(l.credit)), d(0));
+  return { rows, bookCost: { usd: booked.toFixed(2), diff: diff.toFixed(2) } };
+}
 
 const printCss = (paper: Paper) => `@media print {
   @page { size: ${paper}; margin: 10mm; }
@@ -57,6 +90,7 @@ const printCss = (paper: Paper) => `@media print {
 
 export default function VoucherPrint() {
   const t = useT();
+  const sys = useSystemText();
   const { id } = useParams<{ id: string }>();
   const [paper, setPaper] = useState<Paper>("A5");
   const q = useQuery<Voucher>({ queryKey: [`/api/vouchers/${id}`] });
@@ -70,9 +104,19 @@ export default function VoucherPrint() {
   if (q.error || !v) return <ErrorText error={q.error ?? t("Voucher not found", "Pièce introuvable")} />;
 
   const hasCdf = v.lines.some((l) => l.nativeAmount && d(l.nativeAmount).abs().gt(0));
-  const totalDebit = v.lines.reduce((s, l) => s.plus(d(l.debit)), d(0));
-  const totalCredit = v.lines.reduce((s, l) => s.plus(d(l.credit)), d(0));
+  const onlyCdf = v.lines.every((l) => !l.nativeAmount || d(l.nativeAmount).isZero() || l.currency === "CDF");
+  const { rows, bookCost } = printedLines(v.lines);
+  const totalDebit = rows.reduce((s, r) => s.plus(r.debit), d(0));
+  const totalCredit = rows.reduce((s, r) => s.plus(r.credit), d(0));
   const title = journalTypeLabel(v.type, t);
+  const amountUsd = v.amount ?? v.total;
+  // Francs paid out or taken in: the amount in francs first, its dollar value beside it.
+  const cashFc = v.lines.filter((l) => l.isMoney && l.currency === "CDF" && l.nativeAmount && !d(l.nativeAmount).isZero());
+  // Only when those francs are the amount (a return's amount is the goods', the francs being a rounded refund).
+  const cashFcTotal = cashFc.length && cashFc.every((l) => d(l.nativeAmount).isNegative() === d(cashFc[0].nativeAmount).isNegative()) && v.lines.every((l) => !l.isMoney || cashFc.includes(l))
+    && cashFc.reduce((s, l) => s.plus(docValue(l, d(l.debit).gt(0) ? l.debit : l.credit)), d(0)).equals(d(amountUsd))
+    ? cashFc.reduce((s, l) => s.plus(d(l.nativeAmount).abs()), d(0))
+    : null;
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
@@ -128,7 +172,7 @@ export default function VoucherPrint() {
           {v.memo && (
             <p className="text-sm">
               <span className="text-muted-foreground">{t("Description: ", "Libellé\u00a0: ")}</span>
-              <span className="font-medium">{v.memo}</span>
+              <span className="font-medium">{sys.memo(v.memo)}</span>
             </p>
           )}
 
@@ -139,29 +183,29 @@ export default function VoucherPrint() {
                   <th className="py-2 pr-2 font-medium">{t("Account", "Compte")}</th>
                   <th className="py-2 pr-2 font-medium">{t("Contact", "Contact")}</th>
                   <th className="py-2 pr-2 font-medium">{t("Note", "Note")}</th>
-                  {hasCdf && <th className="py-2 pr-2 text-right font-medium">CDF</th>}
+                  {hasCdf && <th className="py-2 pr-2 text-right font-medium">{onlyCdf ? "CDF" : t("Currency", "Devise")}</th>}
                   <th className="py-2 pr-2 text-right font-medium">{t("Debit", "Débit")}</th>
                   <th className="py-2 text-right font-medium">{t("Credit", "Crédit")}</th>
                 </tr>
               </thead>
               <tbody>
-                {v.lines.map((l) => (
+                {rows.map(({ line: l, debit, credit }) => (
                   <tr key={l.id} className="border-b align-top">
-                    <td className="py-2 pr-2"><span className="font-mono text-xs text-muted-foreground">{l.accountCode}</span> {l.accountName}</td>
+                    <td className="py-2 pr-2"><span className="font-mono text-xs text-muted-foreground">{l.accountCode}</span> {sys.account(l.accountName)}</td>
                     <td className="py-2 pr-2">{l.partyName ?? ""}</td>
-                    <td className="py-2 pr-2 text-muted-foreground">{l.memo && l.memo !== l.partyName ? l.memo : ""}</td>
+                    <td className="py-2 pr-2 text-muted-foreground">{l.memo && l.memo !== l.partyName ? sys.memo(l.memo) : ""}</td>
                     {hasCdf && (
                       <td className="py-2 pr-2 text-right">
                         {l.nativeAmount && d(l.nativeAmount).abs().gt(0) ? (
                           <Num>
-                            {cdf(d(l.nativeAmount).abs().toString())}
-                            {l.rate && <span className="block text-xs text-muted-foreground">{t("rate", "taux")} {qty(d(l.rate).toDecimalPlaces(2).toString())}{"\u00a0"}FC/$</span>}
+                            {l.currency === "CDF" ? cdf(d(l.nativeAmount).abs().toString()) : money(d(l.nativeAmount).abs().toString(), l.currency)}
+                            {l.rate && <span className="block text-xs text-muted-foreground">{t("rate", "taux")} {qty(d(l.rate).toDecimalPlaces(2).toString())}{"\u00a0"}{l.currency === "CDF" ? "FC" : l.currency}/$</span>}
                           </Num>
                         ) : ""}
                       </td>
                     )}
-                    <td className="py-2 pr-2 text-right"><Num>{d(l.debit).gt(0) ? usd(l.debit) : ""}</Num></td>
-                    <td className="py-2 text-right"><Num>{d(l.credit).gt(0) ? usd(l.credit) : ""}</Num></td>
+                    <td className="py-2 pr-2 text-right"><Num>{debit.gt(0) ? usd(debit.toFixed(2)) : ""}</Num></td>
+                    <td className="py-2 text-right"><Num>{credit.gt(0) ? usd(credit.toFixed(2)) : ""}</Num></td>
                   </tr>
                 ))}
               </tbody>
@@ -175,12 +219,37 @@ export default function VoucherPrint() {
             </Table>
           </div>
 
-          <p className="text-sm">
-            <span className="text-muted-foreground">{t("Amount: ", "Montant\u00a0: ")}</span>
-            <span className="text-base font-semibold">{usd(v.total)}</span>
-            <span className="ml-4 text-muted-foreground">{t("Created by: ", "Saisi par\u00a0: ")}</span>
-            <span>{v.createdByName ?? "—"}</span>
-          </p>
+          {bookCost && (
+            <p className="text-xs text-muted-foreground">
+              {d(bookCost.diff).gt(0)
+                ? t(
+                    `In the books these francs leave at their average cost of ${usd(bookCost.usd)}: the ${usd(bookCost.diff)} difference is an exchange loss (Exchange differences).`,
+                    `Dans les comptes, ces francs sortent à leur coût moyen de ${usd(bookCost.usd)}\u00a0: l'écart de ${usd(bookCost.diff)} est une perte de change (Écarts de change).`,
+                  )
+                : t(
+                    `In the books these francs count at their average cost of ${usd(bookCost.usd)}: the ${usd(d(bookCost.diff).abs().toFixed(2))} difference is an exchange gain (Exchange differences).`,
+                    `Dans les comptes, ces francs comptent à leur coût moyen de ${usd(bookCost.usd)}\u00a0: l'écart de ${usd(d(bookCost.diff).abs().toFixed(2))} est un gain de change (Écarts de change).`,
+                  )}
+            </p>
+          )}
+
+          <div className="flex flex-wrap items-baseline gap-x-6 gap-y-1 text-sm">
+            <p>
+              <span className="text-muted-foreground">{t("Amount: ", "Montant\u00a0: ")}</span>
+              {cashFcTotal ? (
+                <>
+                  <span className="text-base font-semibold">{cdf(cashFcTotal.toString())}</span>{" "}
+                  <span className="text-muted-foreground">({usd(amountUsd)})</span>
+                </>
+              ) : (
+                <span className="text-base font-semibold">{usd(amountUsd)}</span>
+              )}
+            </p>
+            <p>
+              <span className="text-muted-foreground">{t("Created by: ", "Saisi par\u00a0: ")}</span>
+              <span>{v.createdByName ?? "—"}</span>
+            </p>
+          </div>
 
           <div className="grid grid-cols-3 gap-3 pt-4">
             {[t("Prepared by", "Préparé par"), t("Approved by", "Approuvé par"), t("Received by", "Reçu par")].map((label) => (

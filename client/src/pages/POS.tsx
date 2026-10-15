@@ -414,6 +414,11 @@ export default function POS() {
   const francRounding =
     !remaining.isZero() && remaining.abs().lte(tolerance) && rateNum.gt(0) ? total.minus(receivedExact.minus(changeExact)).times(rateNum).toDecimalPlaces(0, ROUND) : null;
 
+  /** A short franc payment: what is still to pay in francs too, in the 100 FC notes the customer can hand over. */
+  const remainingFc = francs && !francRounding && remaining.gt(tolerance) && paid.gt(0) && rateNum.gt(0)
+    ? remaining.times(rateNum).dividedBy(100).toDecimalPlaces(0, Decimal.ROUND_UP).times(100)
+    : null;
+
   const takenUnitIds = useMemo(() => new Set(lines.map((l) => l.unitId).filter((x): x is number => !!x)), [lines]);
 
   // ---- validation
@@ -426,7 +431,9 @@ export default function POS() {
     // A price or discount typed so that it cannot be read ("1.400": 1 400 $ or 1,40 $?) is said by its field.
     if (!typedNumberOk(l.unitPrice)) problems.push(t(`Correct the price of ${l.variant.productName}`, `Corrigez le prix ${de(l.variant.productName)}`));
     else if (!l.unitPrice.trim() || d(l.unitPrice).lte(0)) problems.push(t(`Enter the price of ${l.variant.productName} (it is 0 $)`, `Saisissez le prix ${de(l.variant.productName)} (il est à 0\u00a0$)`));
-    if (d(l.qty).lte(0)) problems.push(t(`Quantity of ${l.variant.productName} must be more than zero`, `La quantité ${de(l.variant.productName)} doit être supérieure à zéro`));
+    // "1.000" for a whole-unit item is asked about by its field (1 000 or 1?), never read as 1.
+    if (!typedNumberOk(l.qty)) problems.push(t(`Correct the quantity of ${l.variant.productName}`, `Corrigez la quantité ${de(l.variant.productName)}`));
+    else if (d(l.qty).lte(0)) problems.push(t(`Quantity of ${l.variant.productName} must be more than zero`, `La quantité ${de(l.variant.productName)} doit être supérieure à zéro`));
     else if (!d(l.qty).isInteger() && wholeUnit(l.variant.unit)) {
       problems.push(t(`${l.variant.productName} is sold by the ${unitLabel(t, l.variant.unit, 1)}: enter a whole number`, `${l.variant.productName} se vend à l'unité (${unitLabel(t, l.variant.unit, 1)}) : saisissez un nombre entier`));
     }
@@ -666,7 +673,7 @@ export default function POS() {
                             ) : (
                               <div className="flex items-center gap-1">
                                 <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" aria-label={t(`Lower the quantity of ${l.variant.productName}`, `Diminuer la quantité ${de(l.variant.productName)}`)} onClick={() => updateLine(l.key, { qty: Decimal.max(d(l.qty).minus(1), 1).toString() })}><Minus className="h-3 w-3" /></Button>
-                                <Input className="h-9 min-w-0 text-center" inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} aria-label={t(`Quantity of ${l.variant.productName}`, `Quantité ${de(l.variant.productName)}`)} aria-invalid={(!d(l.qty).isInteger() && wholeUnit(l.variant.unit)) || undefined} value={l.qty} onChange={(e) => updateLine(l.key, { qty: e.target.value })} />
+                                <Input className="h-9 min-w-0 text-center" inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} aria-label={t(`Quantity of ${l.variant.productName}`, `Quantité ${de(l.variant.productName)}`)} aria-invalid={(!d(l.qty).isInteger() && wholeUnit(l.variant.unit)) || undefined} value={l.qty} onChange={(e) => updateLine(l.key, { qty: e.target.value })} />
                                 <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" aria-label={t(`Raise the quantity of ${l.variant.productName}`, `Augmenter la quantité ${de(l.variant.productName)}`)} onClick={() => updateLine(l.key, { qty: d(l.qty).plus(1).toString() })}><Plus className="h-3 w-3" /></Button>
                               </div>
                             )}
@@ -704,17 +711,18 @@ export default function POS() {
           </Card>
 
           <Card>
-            <CardContent className="grid gap-3 p-4 sm:grid-cols-2">
+            {/* One column beside the payment card at 1024 px, so the customer's name and the discount label fit. */}
+            <CardContent className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-1 xl:grid-cols-2">
               <Field label={t("Customer (optional, required for credit)", "Client (facultatif, obligatoire pour le crédit)")}>
                 <PartySelect types={["customer"]} value={customerId} onChange={(id, p) => { setCustomerId(id); setCustomer(p ?? null); }} placeholder={t("Walk-in customer", "Client de passage")} />
                 {customer && d(customer.balance).gt(0) && (
                   <p className="text-xs text-amber-800 dark:text-amber-400">{t("Already owes", "Doit déjà")} {usd(customer.balance)}</p>
                 )}
               </Field>
-              <Field label={t("Sale discount $", "Remise sur la vente $")}>
+              <Field label={t("Sale discount ($)", "Remise sur la vente ($)")}>
                 <Input inputMode="decimal" usd placeholder="0" value={discount} onChange={(e) => setDiscount(e.target.value)} />
               </Field>
-              <Field label={t("Note", "Note")} className="sm:col-span-2">
+              <Field label={t("Note", "Note")} className="sm:col-span-2 lg:col-span-1 xl:col-span-2">
                 <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
               </Field>
             </CardContent>
@@ -851,7 +859,10 @@ export default function POS() {
                 ) : (
                   <div className="flex justify-between">
                     <span>{credit.gt(0) && customerId ? t("Remaining → on credit", "Reste → à crédit") : t("Left to pay", "Reste à payer")}</span>
-                    <Num className={cn("font-semibold", credit.gt(0) && customerId && "text-amber-800 dark:text-amber-400", overpaid && "text-destructive")}>{usd((francRounding ? d(0) : remaining).toFixed(2))}</Num>
+                    <span data-testid="left-to-pay">
+                      <Num className={cn("font-semibold", credit.gt(0) && customerId && "text-amber-800 dark:text-amber-400", overpaid && "text-destructive")}>{usd((francRounding ? d(0) : remaining).toFixed(2))}</Num>
+                      {remainingFc && <Num className="text-muted-foreground"> ≈ {cdf(remainingFc.toString())}</Num>}
+                    </span>
                   </div>
                 )}
               </div>
@@ -915,6 +926,8 @@ export default function POS() {
               <p className="truncate text-xs font-medium text-destructive" role="status" data-testid="problem-bar">{problems[0]}</p>
             ) : changeAcc && changeNative.gt(0) ? (
               <p className="truncate text-sm font-bold" data-testid="change-due-bar">{t("Give back", "Rendre")}{t(":", "\u00a0:")} {changeText}</p>
+            ) : remainingFc && !(credit.gt(0) && customerId) ? (
+              <p className="truncate text-xs font-semibold" data-testid="left-to-pay-bar">{t("Left to pay", "Reste à payer")}{t(":", "\u00a0:")} {usd(remaining.toFixed(2))} ≈ {cdf(remainingFc.toString())}</p>
             ) : credit.gt(0) && customerId ? (
               <p className="truncate text-xs font-semibold text-amber-800 dark:text-amber-400">{t(`${usd(credit.toFixed(2))} on credit`, `dont ${usd(credit.toFixed(2))} à crédit`)}</p>
             ) : (

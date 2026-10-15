@@ -21,6 +21,7 @@ import { cdf, curLabel, d, pct, date as fmtDate, money, monthStart, previousMont
 import type { Account } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { WIDE_PRINT_CSS, journalTypeLabel } from "@/pages/ContactDetail";
+import { useSystemText } from "@/lib/systemText";
 
 /** A balanced report reads as good news: green, not the orange of buttons. */
 const BALANCED = "border-green-700/40 bg-green-50 text-green-800 dark:border-green-400/40 dark:bg-green-950/40 dark:text-green-300";
@@ -837,6 +838,7 @@ const JOURNAL_TYPES = ["opening", "manual", "sale", "sale_void", "sale_return", 
 const REVERSIBLE = ["manual", "opening", "transfer", "customer_receipt", "supplier_payment", "partner_contribution", "partner_withdrawal"];
 
 function Journals() {
+  const sys = useSystemText();
   const t = useT();
   const { can } = useAuth();
   const range = useRange();
@@ -923,7 +925,7 @@ function Journals() {
                             {journalTypeLabel(j.type, t)}
                             {j.reversedByJournalId && <Badge variant="secondary" className="ml-2">{t("Reversed", "Annulée")}</Badge>}
                           </TableCell>
-                          <TableCell className="min-w-[180px]">{j.memo}</TableCell>
+                          <TableCell className="min-w-[180px]">{sys.memo(j.memo)}</TableCell>
                           <TableCell className="text-right"><Num>{usd(total.toFixed(2))}</Num></TableCell>
                           {can() && (
                             <TableCell onClick={(e) => e.stopPropagation()}>
@@ -952,7 +954,7 @@ function Journals() {
                                 <TableBody>
                                   {j.lines.map((l) => (
                                     <TableRow key={l.id}>
-                                      <TableCell><span className="mr-2 font-mono text-xs text-muted-foreground">{l.accountCode}</span>{l.accountName}{l.memo ? <span className="block text-xs text-muted-foreground">{l.memo}</span> : null}</TableCell>
+                                      <TableCell><span className="mr-2 font-mono text-xs text-muted-foreground">{l.accountCode}</span>{sys.account(l.accountName)}{l.memo ? <span className="block text-xs text-muted-foreground">{sys.memo(l.memo)}</span> : null}</TableCell>
                                       <TableCell>{l.partyName}</TableCell>
                                       <TableCell className="text-right"><Num>{d(l.debit).isZero() ? "" : usd(l.debit)}</Num></TableCell>
                                       <TableCell className="text-right"><Num>{d(l.credit).isZero() ? "" : usd(l.credit)}</Num></TableCell>
@@ -1148,6 +1150,7 @@ interface LedgerRow { journalId: number; number: string; date: string; type: str
 interface LedgerData { account: Account; from: string; to: string; openingBalance: string; openingNative: string | null; rows: LedgerRow[]; closingBalance: string; closingNative: string | null }
 
 function Ledger() {
+  const sys = useSystemText();
   const t = useT();
   const range = useRange();
   const [accountId, setAccountId] = useState<number | null>(null);
@@ -1223,7 +1226,7 @@ function Ledger() {
                       <TableCell className="whitespace-nowrap">{fmtDate(r.date)}</TableCell>
                       <TableCell className="whitespace-nowrap font-mono text-xs">{r.number}</TableCell>
                       <TableCell className="min-w-[180px]">
-                        {r.lineMemo || r.memo}
+                        {sys.memo(r.lineMemo || r.memo)}
                         <span className="block text-xs text-muted-foreground">{[journalTypeLabel(r.type, t), r.partyName].filter(Boolean).join(" · ")}</span>
                       </TableCell>
                       <TableCell className="text-right"><Num>{d(r.debit).isZero() ? "" : usd(r.debit)}</Num></TableCell>

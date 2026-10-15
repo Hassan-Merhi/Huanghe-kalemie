@@ -601,7 +601,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                             <Input className="ml-auto w-20 text-right" inputMode="decimal" aria-label={t(`Quantity of ${itemLabel(r)}`, `Quantité ${de(itemLabel(r))}`)} value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
                           </TableCell>
                           <TableCell className="text-right">
-                            <Input className="ml-auto w-28 text-right" inputMode="decimal" currency={c.currency} aria-label={t(`Unit price of ${itemLabel(r)}`, `Prix unitaire ${de(itemLabel(r))}`)} value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
+                            <Input className="ml-auto w-28 text-right" inputMode="decimal" currency={c.currency} inlineAlert aria-label={t(`Unit price of ${itemLabel(r)}`, `Prix unitaire ${de(itemLabel(r))}`)} value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
                           </TableCell>
                           <TableCell className="text-right">
                             <Input className="ml-auto w-24 text-right" inputMode="decimal" aria-label={t("Total weight for the line (kg)", "Poids total de la ligne (kg)")} placeholder={t("total kg", "kg total")} value={r.weightKg} onChange={(e) => update(r.key, { weightKg: e.target.value })} />
@@ -1079,7 +1079,7 @@ function PreviewSection({ c, priceOf }: { c: ContainerFull; priceOf: Map<number,
               <StatCard label={t("Container costs", "Frais du conteneur")} value={usd(p.expensesTotalUsd)} sub={d(p.fobTotalUsd).gt(0) ? `+${pct(d(p.expensesTotalUsd).dividedBy(d(p.fobTotalUsd)).times(100).toNumber())}` : undefined} />
               <StatCard label={t("Landed total", "Coût de revient total")} value={usd(p.landedTotalUsd)} />
             </div>
-            {cheap.length > 0 && <CheapAlert cheap={cheap} />}
+            {cheap.length > 0 && <CheapAlert cheap={cheap} currency={c.currency} />}
             <p className="text-xs text-muted-foreground hidden sm:block md:hidden">{t("Swipe the table sideways to see every column →", "Faites glisser le tableau sur le côté pour voir toutes les colonnes →")}</p>
             <div className="max-w-full overflow-x-auto rounded-md border">
               <Table>
@@ -1157,7 +1157,7 @@ function PreviewSection({ c, priceOf }: { c: ContainerFull; priceOf: Map<number,
 }
 
 /** Costs so far under the selling price that an invoice price was probably mistyped. */
-function CheapAlert({ cheap, children }: { cheap: ReturnType<typeof cheapLines>; children?: ReactNode }) {
+function CheapAlert({ cheap, currency, children }: { cheap: ReturnType<typeof cheapLines>; currency: string; children?: ReactNode }) {
   const t = useT();
   return (
     <Alert className="border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
@@ -1172,10 +1172,16 @@ function CheapAlert({ cheap, children }: { cheap: ReturnType<typeof cheapLines>;
           ))}
         </ul>
         <p>
-          {t(
-            `A margin above ${pct(SUSPECT_MARGIN, 0)} usually means an invoice price was typed too small (6.500 read as 6.50 instead of 6,500). Check the unit prices of these lines.`,
-            `Une marge de plus de ${pct(SUSPECT_MARGIN, 0)} vient souvent d'un prix de facture saisi trop petit (6.500 lu 6,50 au lieu de 6\u00a0500). Vérifiez les prix unitaires de ces lignes.`,
-          )}
+          {/* Franc prices read "6.500" as 6 500 (thousands), so the dollar example would be wrong for them. */}
+          {currency === "CDF"
+            ? t(
+                `A margin above ${pct(SUSPECT_MARGIN, 0)} usually means an invoice price is missing a zero or the rate is wrong. Check the unit prices of these lines and the FC rate.`,
+                `Une marge de plus de ${pct(SUSPECT_MARGIN, 0)} vient souvent d'un prix de facture auquel il manque un zéro, ou d'un taux erroné. Vérifiez les prix unitaires de ces lignes et le taux en FC.`,
+              )
+            : t(
+                `A margin above ${pct(SUSPECT_MARGIN, 0)} usually means an invoice price was typed too small (6.500 read as 6.50 instead of 6,500). Check the unit prices of these lines.`,
+                `Une marge de plus de ${pct(SUSPECT_MARGIN, 0)} vient souvent d'un prix de facture saisi trop petit (6.500 lu 6,50 au lieu de 6\u00a0500). Vérifiez les prix unitaires de ces lignes.`,
+              )}
         </p>
         {children}
       </AlertDescription>
@@ -1264,7 +1270,7 @@ function OffloadButton({ c, disabledReason, priceOf }: { c: ContainerFull; disab
             </Alert>
           )}
           {cheap.length > 0 && (
-            <CheapAlert cheap={cheap}>
+            <CheapAlert cheap={cheap} currency={c.currency}>
               <label className="flex items-start gap-2">
                 <Checkbox checked={cheapOk} onCheckedChange={(v) => setCheapOk(v === true)} className="mt-0.5" />
                 <span>{t("I checked: these prices are right", "J'ai vérifié\u00a0: ces prix sont justes")}</span>
@@ -1393,7 +1399,7 @@ function FinalCosts({ c, priceOf }: { c: ContainerFull; priceOf: Map<number, str
                 <TableRow>
                   <TableHead>{t("Item", "Article")}</TableHead>
                   <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
-                  <TableHead className="text-right">{t(`Unit price (${curLabel(c.currency)})`, `Prix unitaire (${curLabel(c.currency)})`)}</TableHead>
+                  {/* The invoice's unit price sits under the purchase value, so the margin stays in view at 1280 px. */}
                   <TableHead className="text-right">{t("Purchase ($)", "Achat ($)")}</TableHead>
                   <TableHead className="text-right">{t("Costs added", "Frais ajoutés")}</TableHead>
                   <TableHead className="text-right">{t("Landed total", "Total de revient")}</TableHead>
@@ -1412,8 +1418,10 @@ function FinalCosts({ c, priceOf }: { c: ContainerFull; priceOf: Map<number, str
                         <div className="text-xs text-muted-foreground">{l.sku}</div>
                       </TableCell>
                       <TableCell className="text-right"><Num>{qty(l.quantity)}</Num></TableCell>
-                      <TableCell className="text-right"><Num>{fmtCur(l.unitPrice, c.currency)}</Num></TableCell>
-                      <TableCell className="text-right"><Num>{usd(l.fobUsd)}</Num></TableCell>
+                      <TableCell className="text-right">
+                        <Num>{usd(l.fobUsd)}</Num>
+                        <span className="block whitespace-nowrap text-xs text-muted-foreground">{fmtCur(l.unitPrice, c.currency)} {t("each", "l'unité")}</span>
+                      </TableCell>
                       <TableCell className="text-right"><Num>{usd(l.allocatedUsd)}</Num></TableCell>
                       <TableCell className="text-right"><Num className="font-medium">{usd(l.landedTotalUsd)}</Num></TableCell>
                       <TableCell className="text-right"><Num className="font-semibold">{unitCost(l.landedUnitCost)}</Num></TableCell>

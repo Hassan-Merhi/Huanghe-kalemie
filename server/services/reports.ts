@@ -509,7 +509,22 @@ export async function dashboard(tx: Tx, today: string) {
   // Goods brought back today come off today's sales, as on the Sales page.
   const todayReturns = await tx.execute<{ total: string }>(sql`select coalesce(sum(total), 0)::text as total from sale_returns where date = ${today}`);
   const returnsToday = dec(todayReturns.rows[0]?.total ?? 0);
-  const monthPnl = summarizePnl(await pnlByAccount(tx, from, to));
+  const monthRows = await pnlByAccount(tx, from, to);
+  const monthPnl = summarizePnl(monthRows);
+  // The gross profit apart: the margin on sales (as on the Sales page), then stock losses and gains,
+  // exchange differences and other income, which the gross profit shared at month close also holds.
+  const signed = (r: (typeof monthRows)[number]) => (r.type === "income" ? dec(r.amount) : dec(r.amount).negated());
+  const [salesId, cogsId, stockAdjId, fxId] = await Promise.all([SYSTEM_ACCOUNTS.sales, SYSTEM_ACCOUNTS.cogs, SYSTEM_ACCOUNTS.stockAdjustments, SYSTEM_ACCOUNTS.fx].map((k) => systemAccountId(tx, k)));
+  const part = (ids: number[]) => sum(monthRows.filter((r) => r.type !== "expense" && ids.includes(r.accountId)).map(signed));
+  const salesMargin = part([salesId, cogsId]);
+  const stockAdjustments = part([stockAdjId]);
+  const fxDifferences = part([fxId]);
+  const monthMargin = {
+    sales: salesMargin.toFixed(2),
+    stockAdjustments: stockAdjustments.toFixed(2),
+    fx: fxDifferences.toFixed(2),
+    other: dec(monthPnl.grossProfit).minus(salesMargin).minus(stockAdjustments).minus(fxDifferences).toFixed(2),
+  };
   const balances = await accountBalances(tx);
   const money = balances.filter((b) => b.isMoney && b.active);
   const receivablesId = await systemAccountId(tx, SYSTEM_ACCOUNTS.receivables);
@@ -551,6 +566,7 @@ export async function dashboard(tx: Tx, today: string) {
     month,
     todaySales: { count: todaySales.count, total: dec(todaySales.total).minus(returnsToday).toFixed(2), returns: returnsToday.toFixed(2) },
     monthPnl,
+    monthMargin,
     money: money.map((m) => ({ id: m.id, name: m.name, currency: m.currency, balance: m.balance, nativeBalance: m.nativeBalance })),
     receivables: balances.find((b) => b.id === receivablesId)?.balance ?? "0.00",
     payables: dec(balances.find((b) => b.id === payablesId)?.balance ?? 0).negated().toFixed(2),

@@ -16,7 +16,10 @@ import { useT } from "@/lib/i18n";
 import { cdf, curLabel, d, date as fmtDate, money, number as fmtNumber, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import type { Account, Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { paymentSplit, type PaymentPart } from "@/lib/allocation";
+import Decimal from "decimal.js";
 import { BalanceWords, foreignText, PartyDialog, type ForeignBalance } from "@/pages/Contacts";
+import { useSystemText } from "@/lib/systemText";
 
 interface StatementRow {
   journalId: number;
@@ -81,13 +84,30 @@ export const WIDE_PRINT_CSS = `@media print {
 
 export default function ContactDetail() {
   const t = useT();
-  const { can } = useAuth();
+  const sys = useSystemText();
+  const { can, user } = useAuth();
   const { id } = useParams<{ id: string }>();
   const [paying, setPaying] = useState(false);
   const [editing, setEditing] = useState(false);
-  const q = useQuery<Statement>({ queryKey: [`/api/parties/${id}/statement`] });
+  // A cashier sees customers only: a supplier's link says so without asking the server for a statement it refuses.
+  const cashier = user?.role === "cashier";
+  const customers = useQuery<Party[]>({ queryKey: ["/api/parties", { type: "customer" }], enabled: cashier });
+  const notCustomer = cashier && !!customers.data && !customers.data.some((p) => String(p.id) === id);
+  const q = useQuery<Statement>({ queryKey: [`/api/parties/${id}/statement`], enabled: !cashier || (!!customers.data && !notCustomer) });
 
-  if (q.isLoading) return <Loading />;
+  if (notCustomer) {
+    return (
+      <div>
+        <Link href="/contacts" className="mb-2 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+          <ArrowLeft className="h-4 w-4" /> {t("Customers", "Clients")}
+        </Link>
+        <EmptyState title={t("Not a customer", "Ce contact n'est pas un client")}>
+          {t("The till works with customers only.", "La caisse ne voit que les clients.")}
+        </EmptyState>
+      </div>
+    );
+  }
+  if (q.isLoading || (cashier && customers.isLoading)) return <Loading />;
   if (q.error || !q.data) return <ErrorText error={q.error ?? t("Not found", "Introuvable")} />;
   const { party, rows, balance, foreign } = q.data;
   const isCustomer = party.type === "customer";
@@ -98,7 +118,7 @@ export default function ContactDetail() {
     <div>
       <style>{WIDE_PRINT_CSS}</style>
       <Link href="/contacts" className="mb-2 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-        <ArrowLeft className="h-4 w-4" /> {t("Customers and suppliers", "Clients et fournisseurs")}
+        <ArrowLeft className="h-4 w-4" /> {cashier ? t("Customers", "Clients") : t("Customers and suppliers", "Clients et fournisseurs")}
       </Link>
       <PageHeader
         title={party.name}
@@ -185,7 +205,7 @@ export default function ContactDetail() {
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{journalTypeLabel(r.type, t)}</TableCell>
                       <TableCell className="min-w-[160px]">
-                        {r.memo}
+                        {sys.memo(r.memo)}
                         {r.nativeAmount && r.currency !== "USD" && !d(r.nativeAmount).isZero() && (
                           <span className="block text-xs text-muted-foreground tabular">
                             {money(d(r.nativeAmount).abs().toString(), r.currency)}
@@ -255,6 +275,42 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
   const cnyOwedUsd = cnyOwed && cnyRef ? cnyOwed.dividedBy(cnyRef) : null;
   const impliedCny = cnyOwed && d(settleCny).gt(0) && d(amount).gt(0) ? d(settleCny).dividedBy(d(amount)) : null;
   const impliedGap = impliedCny && cnyRef ? impliedCny.minus(cnyRef).abs().dividedBy(cnyRef).times(100) : null;
+  // Which debts this payment reduces, in the server's order (payablesLines, contactLines, payParty).
+  const dollarBalance = d(balance).minus(foreign.reduce((x, f) => x.plus(d(f.usd)), d(0)));
+  const split = account && d(amount).gt(0) && (isCdf ? d(rate).gt(0) : account.currency === "USD")
+    ? paymentSplit({
+        usd: isCdf ? d(amount).dividedBy(d(rate)) : d(amount),
+        francs: isCdf ? d(amount) : null,
+        rate: d(rate).gt(0) ? d(rate) : null,
+        owedUsd: Decimal.max(isCustomer ? dollarBalance : dollarBalance.negated(), 0),
+        owedFc: fcOwed ?? d(0),
+        owedCny: isCustomer ? undefined : owedIn("CNY") ?? undefined,
+        cnyRate: cnyRef,
+        settleCny: cnyOwed && d(settleCny).gt(0) ? d(settleCny) : null,
+      })
+    : [];
+  const partText = (p: PaymentPart) =>
+    p.kind === "usd"
+      ? t(`${usd(p.usd)} of the dollar debt`, `${usd(p.usd)} de la dette en dollars`)
+      : p.kind === "cdf"
+        ? t(`${cdf(p.native)} of the franc debt (${usd(p.usd)})`, `${cdf(p.native)} de la dette en francs (${usd(p.usd)})`)
+        : p.kind === "cny"
+          ? t(`${money(p.native, "CNY")} of the yuan debt (${usd(p.usd)})`, `${money(p.native, "CNY")} de la dette en yuans (${usd(p.usd)})`)
+          : "";
+  const settled = split.filter((p) => p.kind !== "advance");
+  const advance = split.find((p) => p.kind === "advance");
+  const advanceText = advance
+    ? isCustomer
+      ? t(`${usd(advance.usd)} stays to the customer's credit`, `${usd(advance.usd)} restent au crédit du client`)
+      : t(`${usd(advance.usd)} is an advance`, `${usd(advance.usd)} constituent une avance`)
+    : "";
+  const splitText = cnyOwed && d(settleCny).gt(0) && split[0]?.kind === "cny"
+    ? t(`These ${usd(split[0].usd)} settle ${money(split[0].native, "CNY")} of the yuan debt.`, `Ces ${usd(split[0].usd)} règlent ${money(split[0].native, "CNY")} de la dette en yuans.`)
+    : settled.length
+      ? t(`This payment settles ${settled.map(partText).join(", then ")}${advance ? `; ${advanceText}` : ""}.`, `Ce paiement règle ${settled.map(partText).join(", puis ")}${advance ? `\u00a0; ${advanceText}` : ""}.`)
+      : advance
+        ? t(`Nothing is owed: ${advanceText}.`, `Rien n'est dû\u00a0: ${advanceText}.`)
+        : "";
   /** The dollar amount looks like the yuan figure (50 550 typed for 50 550 ¥): far more dollars than the yuan are worth. */
   const looksLikeYuan = !!cnyOwedUsd && d(amount).gt(cnyOwedUsd.times(2)) && (!impliedGap || impliedGap.gt(20));
   const blocked = !account
@@ -325,14 +381,21 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
               )}
             </div>
           </Field>
-          {fcOwed && (
+          {split.length > 0 ? (
+            <p className="text-xs text-muted-foreground sm:col-span-2" data-testid="payment-split">{splitText}</p>
+          ) : fcOwed && !(cnyOwed && d(settleCny).gt(0)) ? (
             <p className="text-xs text-muted-foreground sm:col-span-2">
-              {t(
-                `${cdf(fcOwed.toString())} are owed in francs: a payment settles them first, in francs, and any difference in value is an exchange gain or loss.`,
-                `${cdf(fcOwed.toString())} sont dus en francs : un paiement les règle d'abord, en francs, et l'écart de valeur est un gain ou une perte de change.`,
-              )}
+              {isCdf
+                ? t(
+                    `${cdf(fcOwed.toString())} are owed in francs: francs paid settle them first, and any difference in value is an exchange gain or loss.`,
+                    `${cdf(fcOwed.toString())} sont dus en francs\u00a0: des francs payés les règlent d'abord, et l'écart de valeur est un gain ou une perte de change.`,
+                  )
+                : t(
+                    `${cdf(fcOwed.toString())} are owed in francs: dollars paid settle the dollars owed first, then the francs at the day's rate.`,
+                    `${cdf(fcOwed.toString())} sont dus en francs\u00a0: des dollars payés règlent d'abord les dollars dus, puis les francs au taux du jour.`,
+                  )}
             </p>
-          )}
+          ) : null}
           {cnyOwed && (
             <Field
               label={t("Yuan settled by this payment (¥)", "Yuans réglés par ce paiement (¥)")}

@@ -2,7 +2,7 @@ import * as React from "react";
 import { CalendarDays } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { ambiguousDollars, formatLang, inputText, money, parseNumberInput, unusableText } from "@/lib/format";
+import { ambiguousDollars, formatLang, inputText, money, parseNumberInput, qty, unusableText } from "@/lib/format";
 
 const BASE =
   "flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 aria-[invalid=true]:border-destructive aria-[invalid=true]:ring-destructive/20 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none md:text-sm";
@@ -17,14 +17,18 @@ type InputProps = React.ComponentProps<"input"> & {
    * and yuan get the `usd` treatment, written with their own sign; francs the `thousands` one.
    */
   currency?: string | null;
+  /** A quantity counted in whole units (pcs, set…): "1.000" is asked about (1 000 or 1?) instead of read as 1. */
+  whole?: boolean;
+  /** The "did you mean" question sits in the flow below the field, for fields stacked in a table (no overlap with the next row). */
+  inlineAlert?: boolean;
 };
 
 const Input = React.forwardRef<HTMLInputElement, InputProps>(
-  ({ className, type, thousands, usd, currency, ...props }, ref) => {
+  ({ className, type, thousands, usd, currency, whole, inlineAlert, ...props }, ref) => {
     // Dates are always shown dd/mm/yyyy, whatever language the phone or browser is set to.
     if (type === "date") return <DateInput className={className} {...props} ref={ref} />;
     // Amounts and quantities accept "4,50" as well as "4.50" and read French-style.
-    if ((props.inputMode === "decimal" || props.inputMode === "numeric") && (!type || type === "text")) return <DecimalInput className={className} thousands={thousands} usd={usd} currency={currency} {...props} ref={ref} />;
+    if ((props.inputMode === "decimal" || props.inputMode === "numeric") && (!type || type === "text")) return <DecimalInput className={className} thousands={thousands} usd={usd} currency={currency} whole={whole} inlineAlert={inlineAlert} {...props} ref={ref} />;
     // h-9 to match icon buttons and default buttons.
     return <input type={type} className={cn(BASE, className)} ref={ref} {...props} />;
   },
@@ -119,7 +123,7 @@ const LAYOUT = /^(?:[a-z0-9[\]-]+:)*!?(?:-?m[trblxy]?-|w-|min-w-|max-w-|flex-|ba
  * Text that is not a number is passed on as typed so the page can say what is wrong; in a dollar field an
  * ambiguous "1.200" is passed on as "1.200?" (see unusableText) so that no page saves it as 1,20 $.
  */
-const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className, value, onChange, onBlur, onFocus, thousands: thousandsProp, usd: usdProp, currency, ...props }, ref) => {
+const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className, value, onChange, onBlur, onFocus, thousands: thousandsProp, usd: usdProp, currency, whole, inlineAlert, ...props }, ref) => {
   const thousands = thousandsProp || currency === "CDF";
   const usd = usdProp || (!!currency && currency !== "CDF");
   const cur = usdProp || !currency || currency === "CDF" ? "USD" : currency;
@@ -135,8 +139,11 @@ const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className
     sent.current = null;
   }, [plain]);
   const [focused, setFocused] = React.useState(false);
-  const read = parseNumberInput(text, { thousands, usd });
-  const ambiguous = usd ? ambiguousDollars(text) : null;
+  // Whole quantities are asked about like dollars: "1.000" may be 1 000 pieces or 1.
+  const strict = usd || !!whole;
+  const read = parseNumberInput(text, { thousands, usd: strict });
+  const ambiguous = strict ? ambiguousDollars(text) : null;
+  const fmtAmbiguous = (v: unknown) => (usd ? fmtUsd(v) : qty(v));
   const unreadable = text.trim() !== "" && read === null;
   const fr = formatLang() === "fr";
   // While a dollar amount is typed, say how it is read when that could be in doubt: "= 1 200,00 $".
@@ -160,7 +167,7 @@ const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className
         onChange={(e) => {
           const typed = e.target.value;
           setText(typed);
-          const parsed = parseNumberInput(typed, { thousands, usd });
+          const parsed = parseNumberInput(typed, { thousands, usd: strict });
           const out = parsed === null ? unusableText(typed) : parsed;
           sent.current = out;
           if (out === plain) sent.current = null;
@@ -182,15 +189,16 @@ const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className
           id={hintId}
           role="alert"
           className={cn(
-            "pointer-events-none absolute left-0 top-full z-20 mt-1 rounded border border-destructive bg-popover px-2 py-0.5 text-xs font-medium text-destructive shadow-sm",
+            "pointer-events-none rounded border border-destructive bg-popover px-2 py-0.5 text-xs font-medium text-destructive shadow-sm",
+            inlineAlert ? "mt-1 block text-left" : "absolute left-0 top-full z-20 mt-1",
             // The question wraps within the field's width, so it never runs off a phone's screen.
-            ambiguous ? "w-full min-w-[9rem]" : "whitespace-nowrap",
+            ambiguous ? cn("w-full", !inlineAlert && "min-w-[9rem]") : "whitespace-nowrap",
           )}
         >
           {ambiguous
             ? fr
-              ? `${text.trim()}\u00a0: voulez-vous dire ${fmtUsd(ambiguous)} ou ${fmtUsd(Number(ambiguous) / 1000)}\u00a0?`
-              : `${text.trim()}: did you mean ${fmtUsd(ambiguous)} or ${fmtUsd(Number(ambiguous) / 1000)}?`
+              ? `${text.trim()}\u00a0: voulez-vous dire ${fmtAmbiguous(ambiguous)} ou ${fmtAmbiguous(Number(ambiguous) / 1000)}\u00a0?`
+              : `${text.trim()}: did you mean ${fmtAmbiguous(ambiguous)} or ${fmtAmbiguous(Number(ambiguous) / 1000)}?`
             : fr
               ? "Nombre non reconnu"
               : "Not a number"}
