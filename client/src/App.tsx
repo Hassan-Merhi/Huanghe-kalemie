@@ -21,8 +21,6 @@ import Motorcycles from "@/pages/Motorcycles";
 import Stock from "@/pages/Stock";
 import Containers from "@/pages/Containers";
 import ContainerDetail from "@/pages/ContainerDetail";
-import Expenses from "@/pages/Expenses";
-import Money from "@/pages/Money";
 import Contacts from "@/pages/Contacts";
 import ContactDetail from "@/pages/ContactDetail";
 import Partners from "@/pages/Partners";
@@ -102,8 +100,9 @@ function Routes() {
         {R("/analytics", ["manager", "partner"], Analytics)}
         {R("/containers", ["manager", "partner"], Containers)}
         {R("/containers/:id", ["manager", "partner"], ContainerDetail)}
-        {R("/expenses", ["manager", "partner"], Expenses)}
-        {R("/money", ["manager", "partner"], Money)}
+        {/* Pages that were removed: their work is done in Vouchers, Accounts and the dashboard. */}
+        <Route path="/money"><Redirect to="/accounts" /></Route>
+        <Route path="/expenses"><Redirect to="/vouchers?tab=payment" /></Route>
         {R("/contacts", ["manager", "cashier", "partner"], Contacts)}
         {R("/contacts/:id", ["manager", "cashier", "partner"], ContactDetail)}
         {R("/partners", ["manager", "partner"], Partners)}

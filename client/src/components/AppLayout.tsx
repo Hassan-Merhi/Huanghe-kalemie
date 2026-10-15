@@ -5,7 +5,6 @@ import {
   BarChart3,
   Boxes,
   Container,
-  HandCoins,
   LayoutDashboard,
   LogOut,
   Package,
@@ -13,7 +12,6 @@ import {
   Settings as SettingsIcon,
   ShoppingCart,
   Users,
-  Wallet,
   Bike,
   PieChart,
   BookOpen,
@@ -83,21 +81,13 @@ const NAV: { en: string; fr: string; items: NavItem[] }[] = [
     ],
   },
   {
-    en: "Money",
-    fr: "Argent",
-    items: [
-      { href: "/money", en: "Treasury", fr: "Trésorerie", icon: HandCoins, roles: ["manager", "partner"] },
-      { href: "/expenses", en: "Expenses", fr: "Dépenses", icon: Wallet, roles: ["manager", "partner"] },
-      { href: "/payroll", en: "Payroll", fr: "Paie", icon: UserCheck, roles: ["manager", "partner"] },
-    ],
-  },
-  {
     en: "Accounting",
     fr: "Comptabilité",
     items: [
       { href: "/daybook", en: "Daybook", fr: "Journal du jour", icon: BookOpen, roles: ["manager", "partner"] },
       { href: "/vouchers", en: "Vouchers", fr: "Pièces", icon: FileText, roles: ["manager", "partner"], also: ["/optional-vouchers"] },
       { href: "/accounts", en: "Accounts", fr: "Comptes", icon: Landmark, roles: ["manager", "partner"] },
+      { href: "/payroll", en: "Payroll", fr: "Paie", icon: UserCheck, roles: ["manager", "partner"] },
       { href: "/partners", en: "Partners and months", fr: "Associés et mois", icon: PieChart, roles: ["manager", "partner"] },
     ],
   },

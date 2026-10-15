@@ -485,7 +485,7 @@ export function perUsdText(rateToUsd: string | null | undefined): string {
 }
 
 /**
- * The rate of a container invoiced in yuan or francs, typed the way the Treasury page asks for it:
+ * The rate of a container invoiced in yuan or francs, typed the way the dashboard's rate card asks for it:
  * how many CNY (or FC) one dollar buys. The value passed in and out stays USD per 1 unit, as the
  * server keeps it. A new container starts from the rate on file, and a rate far from it is flagged.
  */
@@ -525,7 +525,7 @@ export function ContainerRateField({ currency, value, onChange, day = todayLocal
         ) : onFile ? (
           t(`Rate on file: 1 $ = ${fmtQty(onFile)} ${label}`, `Taux enregistré\u00a0: 1 $ = ${fmtQty(onFile)} ${label}`)
         ) : currency === "CNY" ? (
-          t("No yuan rate on file yet (about 7.1 CNY for $1); it can be entered on the Treasury page", "Pas encore de taux du yuan (environ 7,1 CNY pour 1 $)\u00a0; il se saisit dans la page Trésorerie")
+          t("No yuan rate on file yet (about 7.1 CNY for $1); it can be entered on the dashboard", "Pas encore de taux du yuan (environ 7,1 CNY pour 1 $)\u00a0; il se saisit sur le tableau de bord")
         ) : null
       }
     >

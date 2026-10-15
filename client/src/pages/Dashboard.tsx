@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState, ErrorText, Loading, Num, PageHeader, StatCard } from "@/components/common";
+import { RatesCard } from "@/components/RatesCard";
 import { useAuth } from "@/lib/auth";
 import { count, useT } from "@/lib/i18n";
 import { cdf, d, pct, date as fmtDate, usd } from "@/lib/format";
@@ -54,7 +55,7 @@ export default function Dashboard() {
           can("manager") ? (
             <>
               <Button asChild><Link href="/pos"><ShoppingCart className="mr-1 h-4 w-4" /> {t("New sale", "Nouvelle vente")}</Link></Button>
-              <Button asChild variant="outline"><Link href="/expenses"><Receipt className="mr-1 h-4 w-4" /> {t("Add expense", "Ajouter une dépense")}</Link></Button>
+              <Button asChild variant="outline"><Link href="/vouchers?tab=payment"><Receipt className="mr-1 h-4 w-4" /> {t("Add expense", "Ajouter une dépense")}</Link></Button>
               <Button asChild variant="outline"><Link href="/containers"><Container className="mr-1 h-4 w-4" /> {t("New container", "Nouveau conteneur")}</Link></Button>
             </>
           ) : undefined
@@ -108,10 +109,11 @@ export default function Dashboard() {
 
           <div className="grid gap-4 lg:grid-cols-2">
             {data.position && <PositionCard p={data.position} onTheWay={data.openContainers} />}
+            <RatesCard />
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
                 <CardTitle className="text-base">{t("Money", "Trésorerie")}</CardTitle>
-                <Link href="/money" className="text-sm text-muted-foreground hover:text-foreground">{t("Details", "Détails")}</Link>
+                <Link href="/accounts" className="text-sm text-muted-foreground hover:text-foreground">{t("Details", "Détails")}</Link>
               </CardHeader>
               <CardContent className="p-4 pt-0">
                 {data.money.length === 0 ? (
