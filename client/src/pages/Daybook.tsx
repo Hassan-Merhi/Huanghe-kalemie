@@ -50,7 +50,13 @@ interface DaybookRow {
   reversedByJournalId: number | null;
   reversesJournalId: number | null;
   createdByName: string | null;
+  /** The document's own amount: a sale's total, a transfer's amount sent. */
   amount: string;
+  /** Sales: money taken in and change handed back (both in dollars). */
+  received?: string;
+  changeGiven?: string;
+  /** Transfers: the boxes the money left and reached. */
+  transfer?: { from: string; to: string };
   lines: DaybookLine[];
 }
 
@@ -93,7 +99,7 @@ function sourceHref(r: DaybookRow): string {
 }
 
 function typeTone(type: string): string {
-  if (type.startsWith("sale") || type === "customer_receipt" || type === "receipt") return "border-emerald-500/40 text-emerald-700 dark:text-emerald-400";
+  if (type.startsWith("sale") || type === "customer_receipt" || type === "receipt") return "border-emerald-500/40 text-emerald-800 dark:text-emerald-400";
   if (type === "expense" || type === "payment" || type === "supplier_payment" || type === "payroll") return "border-orange-500/40 text-orange-700 dark:text-orange-400";
   if (type.startsWith("container")) return "border-sky-500/40 text-sky-700 dark:text-sky-400";
   if (type === "reversal" || type === "sale_void") return "border-destructive/40 text-destructive";
@@ -117,7 +123,14 @@ function StatusBadges({ r, t }: { r: DaybookRow; t: T }) {
 
 /** Contacts named on the lines, for the memo column. */
 function contactsOf(r: DaybookRow): string {
+  if (r.transfer?.from && r.transfer.to) return `${r.transfer.from} → ${r.transfer.to}`;
   return Array.from(new Set(r.lines.map((l) => l.partyName).filter(Boolean))).join(", ");
+}
+
+/** "reçu 35,61 $ · rendu 23,11 $" under a sale paid with more than its total. */
+function cashDetail(r: DaybookRow, t: T): string | null {
+  if (!r.received || !d(r.changeGiven).gt(0)) return null;
+  return `${t("received", "reçu")} ${usd(r.received)} · ${t("change", "rendu")} ${usd(r.changeGiven)}`;
 }
 
 export default function Daybook() {
@@ -190,7 +203,7 @@ export default function Daybook() {
     const name = `journal_${from}${from !== to ? `_${to}` : ""}${kind === "detailed" ? "_detail" : ""}.csv`;
     if (kind === "summary") {
       downloadCsv(name, [
-        [t("Date", "Date"), t("No.", "N°"), t("Type", "Type"), t("Details", "Libellé"), t("Contacts", "Tiers"), t("Amount USD", "Montant USD"), t("Created by", "Créé par"), t("Status", "Statut")],
+        [t("Date", "Date"), t("No.", "N°"), t("Type", "Type"), t("Details", "Libellé"), t("Contacts", "Tiers"), t("Amount ($)", "Montant ($)"), t("Created by", "Créé par"), t("Status", "Statut")],
         ...rows.map((r) => [
           r.date, r.number, journalTypeLabel(r.type, t), r.memo ?? "", contactsOf(r), r.amount, r.createdByName ?? "",
           r.reversedByJournalId ? t("Reversed", "Annulée") : r.reversesJournalId ? t("Reversal entry", "Contre-passation") : "",
@@ -198,7 +211,7 @@ export default function Daybook() {
       ]);
     } else {
       downloadCsv(name, [
-        [t("Date", "Date"), t("No.", "N°"), t("Type", "Type"), t("Details", "Libellé"), t("Account code", "Code compte"), t("Account", "Compte"), t("Contact", "Tiers"), t("Line memo", "Note de ligne"), t("Debit USD", "Débit USD"), t("Credit USD", "Crédit USD"), "CDF", t("Rate", "Taux")],
+        [t("Date", "Date"), t("No.", "N°"), t("Type", "Type"), t("Details", "Libellé"), t("Account code", "Code compte"), t("Account", "Compte"), t("Contact", "Tiers"), t("Line memo", "Note de ligne"), t("Debit ($)", "Débit ($)"), t("Credit ($)", "Crédit ($)"), "FC", t("Rate", "Taux")],
         ...rows.flatMap((r) =>
           r.lines.map((l) => [r.date, r.number, journalTypeLabel(r.type, t), r.memo ?? "", l.accountCode, l.accountName, l.partyName ?? "", l.memo ?? "", l.debit, l.credit, l.nativeAmount ?? "", l.rate ?? ""]),
         ),
@@ -412,7 +425,10 @@ export default function Daybook() {
                               <span className={cn(r.reversedByJournalId && "line-through")}>{r.memo ? frenchPunctuation(r.memo) : "—"}</span>
                               {contacts && <span className="block text-xs text-muted-foreground">{contacts}</span>}
                             </TableCell>
-                            <TableCell className="text-right font-medium"><Num>{usd(r.amount)}</Num></TableCell>
+                            <TableCell className="text-right font-medium">
+                              <Num>{usd(r.amount)}</Num>
+                              {cashDetail(r, t) && <span className="block whitespace-nowrap text-xs font-normal text-muted-foreground">{cashDetail(r, t)}</span>}
+                            </TableCell>
                             <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{r.createdByName ?? ""}</TableCell>
                             <TableCell className="w-12 pl-0 text-right" onClick={(e) => e.stopPropagation()}>
                               <RowActionsMenu r={r} t={t} isOwner={isOwner} onReverse={() => setReversing(r)} />
@@ -453,6 +469,7 @@ export default function Daybook() {
                         </div>
                         <div className="shrink-0 text-right">
                           <Num className="font-medium">{usd(r.amount)}</Num>
+                          {cashDetail(r, t) && <span className="block text-[11px] text-muted-foreground">{cashDetail(r, t)}</span>}
                           <div className="mt-1 flex flex-wrap justify-end gap-1"><TypeBadge type={r.type} t={t} /><StatusBadges r={r} t={t} /></div>
                         </div>
                       </div>
@@ -597,7 +614,7 @@ function ReverseDialog({ row, t, onClose }: { row: DaybookRow; t: T; onClose: ()
           <DialogDescription>
             {t(
               "A reversal entry with the opposite debits and credits will be posted. The original stays in the books, marked as reversed.",
-              "Une contre-passation avec les débits et crédits inversés sera passée. La pièce d'origine reste dans les livres, marquée comme annulée.",
+              "Une écriture inverse (débits et crédits échangés) sera passée. La pièce d'origine reste dans les livres, marquée comme annulée.",
             )}
           </DialogDescription>
         </DialogHeader>
