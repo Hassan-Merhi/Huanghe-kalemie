@@ -20,7 +20,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
-import { AccountSelect, MoneyAccountSelect, MonthSelect, PartySelect, useRateField } from "@/components/pickers";
+import { AccountSelect, MoneyAccountSelect, MonthSelect, PartySelect, RateInput, useRateField } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useI18n, useT, count } from "@/lib/i18n";
@@ -556,7 +556,7 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
               </Field>
               {isCdf && (
                 <Field label={t("Rate (CDF per USD)", "Taux (FC pour 1 USD)")}>
-                  <Input inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} />
+                  <RateInput day={day} value={rate} onChange={setRate} />
                 </Field>
               )}
             </div>
@@ -671,7 +671,7 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
               </Field>
               {isCdf && (
                 <Field label={t("Rate (CDF per USD)", "Taux (FC pour 1 USD)")}>
-                  <Input inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} />
+                  <RateInput day={day} value={rate} onChange={setRate} />
                 </Field>
               )}
             </div>

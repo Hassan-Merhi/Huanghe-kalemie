@@ -14,8 +14,12 @@ import { cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, notFound } from "../errors";
 import {
+  contactLines,
+  foreignBalance,
+  bookValue,
   moneyLeg,
   nextNumber,
+  resolveRate,
   postJournal,
   reverseJournal,
   SYSTEM_ACCOUNTS,
@@ -68,16 +72,22 @@ export async function createExpense(tx: Tx, input: ExpenseInput, userId: number)
   let rate: string | null = null;
   let creditLine: PostLine;
   if (input.paidFromAccountId) {
-    const leg = await moneyLeg(tx, { accountId: input.paidFromAccountId, amount, rate: input.rate });
+    const leg = await moneyLeg(tx, { accountId: input.paidFromAccountId, amount, rate: input.rate, date: input.date });
     currency = leg.currency;
     usd = leg.usd;
     rate = leg.rate;
     creditLine = { accountId: leg.accountId, credit: usd, nativeAmount: leg.nativeAmount, rate: leg.rate };
   } else {
     await requireParty(tx, input.payablePartyId, ["supplier", "agent", "employee"]);
-    usd = toUsd(currency, amount, input.rate);
-    rate = currency === "CDF" ? dec(input.rate).toFixed(4) : null;
-    creditLine = { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.payables), credit: usd, partyId: input.payablePartyId };
+    rate = currency === "CDF" ? await resolveRate(tx, input.date, input.rate) : null;
+    usd = toUsd(currency, amount, rate);
+    // A bill in francs stays owed in francs on the contact.
+    creditLine = {
+      accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.payables),
+      credit: usd,
+      partyId: input.payablePartyId,
+      ...(currency === "CDF" ? { currency: "CDF" as const, nativeAmount: amount, rate } : {}),
+    };
   }
 
   const [expense] = await tx
@@ -138,9 +148,18 @@ export interface TransferInput {
  */
 export async function transferMoney(tx: Tx, input: TransferInput, userId: number) {
   if (input.fromAccountId === input.toAccountId) throw badRequest("Pick two different accounts", "Choisissez deux comptes différents");
-  const from = await moneyLeg(tx, { accountId: input.fromAccountId, amount: input.fromAmount, rate: input.rate });
-  const to = await moneyLeg(tx, { accountId: input.toAccountId, amount: input.toAmount, rate: input.rate });
-  const diff = dec(from.usd).minus(to.usd);
+  const from = await moneyLeg(tx, { accountId: input.fromAccountId, amount: input.fromAmount, date: input.date });
+  const to = await moneyLeg(tx, { accountId: input.toAccountId, amount: input.toAmount, date: input.date });
+  // What the money leaving is worth: dollars at face value, francs at what they cost on average.
+  let value = dec(from.usd);
+  if (from.currency === "CDF") {
+    const bal = await foreignBalance(tx, from.accountId, null, "CDF", input.date);
+    value = bookValue(bal, dec(from.nativeAmount), dec(from.usd));
+  }
+  // Francs bought with dollars cost exactly the dollars paid; dollars received are worth their face value.
+  const received = to.currency === "USD" ? dec(to.usd) : value;
+  const toRate = to.currency === "CDF" && received.gt(0) ? dec(to.nativeAmount).dividedBy(received).toFixed(4) : to.rate;
+  const diff = value.minus(received);
   const fx = await systemAccountId(tx, SYSTEM_ACCOUNTS.fx);
   return postJournal(tx, {
     date: input.date,
@@ -148,8 +167,8 @@ export async function transferMoney(tx: Tx, input: TransferInput, userId: number
     memo: input.memo ?? "Transfert",
     userId,
     lines: [
-      { accountId: to.accountId, debit: to.usd, nativeAmount: to.nativeAmount, rate: to.rate },
-      { accountId: from.accountId, credit: from.usd, nativeAmount: from.nativeAmount, rate: from.rate },
+      { accountId: to.accountId, debit: received, nativeAmount: to.nativeAmount, rate: toRate },
+      { accountId: from.accountId, credit: value, nativeAmount: from.nativeAmount, rate: from.rate },
       { accountId: fx, debit: diff.isPositive() ? diff : 0, credit: diff.isNegative() ? diff.abs() : 0, memo: "Écart de change" },
     ],
   });
@@ -162,12 +181,15 @@ export interface PartyPaymentInput {
   amount: string;
   rate?: string | null;
   memo?: string | null;
+  /** Paying a supplier owed in yuan: how many yuan this payment settles. */
+  settleNative?: string | null;
 }
 
 /** A customer pays what they owe. */
 export async function receiveFromCustomer(tx: Tx, input: PartyPaymentInput, userId: number) {
   const party = await requireParty(tx, input.partyId, ["customer"]);
   const leg = await moneyLeg(tx, input);
+  const receivables = await systemAccountId(tx, SYSTEM_ACCOUNTS.receivables);
   return postJournal(tx, {
     date: input.date,
     type: "customer_receipt",
@@ -175,7 +197,7 @@ export async function receiveFromCustomer(tx: Tx, input: PartyPaymentInput, user
     userId,
     lines: [
       { accountId: leg.accountId, debit: leg.usd, nativeAmount: leg.nativeAmount, rate: leg.rate },
-      { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.receivables), credit: leg.usd, partyId: party.id },
+      ...(await contactLines(tx, { accountId: receivables, partyId: party.id, side: "credit", usd: leg.usd, money: leg, date: input.date })),
     ],
   });
 }
@@ -184,15 +206,26 @@ export async function receiveFromCustomer(tx: Tx, input: PartyPaymentInput, user
 export async function payParty(tx: Tx, input: PartyPaymentInput, userId: number) {
   const party = await requireParty(tx, input.partyId, ["supplier", "agent", "employee"]);
   const leg = await moneyLeg(tx, input);
+  const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
+  let partyLines: PostLine[];
+  if (input.settleNative && dec(input.settleNative).gt(0)) {
+    // Dollars paid against an invoice in yuan: the yuan settled leave at their book cost.
+    const cny = await foreignBalance(tx, payables, party.id, "CNY", input.date);
+    const owed = cny.native.negated();
+    const settle = cents(input.settleNative);
+    if (owed.lte(0)) throw badRequest(`${party.name} is not owed anything in yuan`, `${party.name} n'a rien à recevoir en yuans`);
+    if (settle.gt(owed)) throw badRequest(`${party.name} is owed only ${owed.toFixed(2)} CNY`, `${party.name} n'attend que ${owed.toFixed(2)} CNY`);
+    if (leg.currency !== "USD") throw badRequest("Pay a yuan invoice from a dollar account", "Payez une facture en yuans depuis un compte en dollars");
+    partyLines = [{ accountId: payables, partyId: party.id, debit: leg.usd, currency: "CNY", nativeAmount: settle, rate: settle.dividedBy(leg.usd).toFixed(4) }];
+  } else {
+    partyLines = await contactLines(tx, { accountId: payables, partyId: party.id, side: "debit", usd: leg.usd, money: leg, date: input.date });
+  }
   return postJournal(tx, {
     date: input.date,
     type: "supplier_payment",
     memo: input.memo ?? `Paiement à ${party.name}`,
     userId,
-    lines: [
-      { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.payables), debit: leg.usd, partyId: party.id },
-      { accountId: leg.accountId, credit: leg.usd, nativeAmount: leg.nativeAmount, rate: leg.rate },
-    ],
+    lines: [...partyLines, { accountId: leg.accountId, credit: leg.usd, nativeAmount: leg.nativeAmount, rate: leg.rate }],
   });
 }
 

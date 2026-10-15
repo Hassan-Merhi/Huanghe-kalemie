@@ -70,13 +70,14 @@ describe.skipIf(!hasDb)("Containers and currencies", async () => {
     expect((await reports.stockValuation(db)).reconciled).toBe(true);
   });
 
-  it("books the exchange difference when changing USD to CDF", async () => {
-    // $100 changed at 2,750 instead of the book rate: 275,000 CDF is worth $98.21 at 2,800.
+  it("values francs bought with dollars at the dollars paid", async () => {
+    // $100 changed for 275,000 CDF: the francs cost $100, so there is no gain or loss yet.
     await db.transaction((tx) =>
       ops.transferMoney(tx, { date: "2026-08-10", fromAccountId: cashUsd, fromAmount: "100", toAccountId: cashCdf, toAmount: "275000", rate: "2800" }, userId),
     );
     const bal = await reports.accountBalances(db);
-    expect(bal.find((b) => b.systemKey === "fx")!.balance).toBe("1.79");
+    expect(bal.find((b) => b.systemKey === "fx")?.balance ?? "0.00").toBe("0.00");
+    expect(bal.find((b) => b.id === cashCdf)).toMatchObject({ nativeBalance: "2795000.00", balance: "1000.00" });
     expect((await reports.trialBalance(db)).balanced).toBe(true);
   });
 

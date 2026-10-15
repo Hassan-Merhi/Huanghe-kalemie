@@ -9,13 +9,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader } from "@/components/common";
-import { MoneyAccountSelect, PARTY_LABELS, useRateField } from "@/components/pickers";
+import { MoneyAccountSelect, PARTY_LABELS, RateInput, useRateField } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
-import { d, date as fmtDate, todayLocal, usd } from "@/lib/format";
+import { cdf, d, date as fmtDate, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import type { Account, Party } from "@/lib/types";
-import { BalanceWords, PartyDialog } from "@/pages/Contacts";
+import { BalanceWords, foreignText, PartyDialog, type ForeignBalance } from "@/pages/Contacts";
 
 interface StatementRow {
   journalId: number;
@@ -25,6 +25,8 @@ interface StatementRow {
   memo: string | null;
   debit: string;
   credit: string;
+  currency: string;
+  nativeAmount: string | null;
   sourceType: string | null;
   sourceId: number | null;
   balance: string;
@@ -33,6 +35,7 @@ interface Statement {
   party: Omit<Party, "balance">;
   rows: StatementRow[];
   balance: string;
+  foreign: ForeignBalance[];
 }
 
 export function journalTypeLabel(type: string, t: (en: string, fr: string) => string): string {
@@ -55,6 +58,7 @@ export function journalTypeLabel(type: string, t: (en: string, fr: string) => st
     payment: ["Payment voucher", "Pièce de paiement"],
     receipt: ["Receipt voucher", "Pièce de recette"],
     payroll: ["Salaries", "Salaires"],
+    revaluation: ["Month-end revaluation", "Réévaluation de fin de mois"],
     period_close: ["Month close", "Clôture du mois"],
     reversal: ["Reversal", "Annulation"],
   };
@@ -80,7 +84,7 @@ export default function ContactDetail() {
 
   if (q.isLoading) return <Loading />;
   if (q.error || !q.data) return <ErrorText error={q.error ?? t("Not found", "Introuvable")} />;
-  const { party, rows, balance } = q.data;
+  const { party, rows, balance, foreign } = q.data;
   const isCustomer = party.type === "customer";
   const typeLabel = t(PARTY_LABELS[party.type][0], PARTY_LABELS[party.type][1]);
   const canPay = isCustomer ? can("manager", "cashier") : can("manager");
@@ -118,6 +122,11 @@ export default function ContactDetail() {
           <CardContent className="p-4">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("Balance", "Solde")}</p>
             <p className="mt-1 text-2xl font-semibold"><BalanceWords balance={balance} /></p>
+            {foreign.map((f) => (
+              <p key={f.currency} className="mt-1 text-sm text-muted-foreground">
+                {t("Of which", "Dont")} {foreignText(f, t)} <span className="tabular">({usd(d(f.usd).abs().toFixed(2))})</span>
+              </p>
+            ))}
           </CardContent>
         </Card>
         <Card className="sm:col-span-2">
@@ -170,7 +179,14 @@ export default function ContactDetail() {
                         )}
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{journalTypeLabel(r.type, t)}</TableCell>
-                      <TableCell className="min-w-[160px]">{r.memo}</TableCell>
+                      <TableCell className="min-w-[160px]">
+                        {r.memo}
+                        {r.nativeAmount && r.currency !== "USD" && !d(r.nativeAmount).isZero() && (
+                          <span className="block text-xs text-muted-foreground tabular">
+                            {r.currency === "CDF" ? cdf(d(r.nativeAmount).abs().toString()) : `${fmtQty(d(r.nativeAmount).abs().toString())} ${r.currency}`}
+                          </span>
+                        )}
+                      </TableCell>
                       <TableCell className="text-right"><Num>{d(r.debit).isZero() ? "" : usd(r.debit)}</Num></TableCell>
                       <TableCell className="text-right"><Num>{d(r.credit).isZero() ? "" : usd(r.credit)}</Num></TableCell>
                       <TableCell className="text-right whitespace-nowrap"><BalanceWords balance={r.balance} /></TableCell>
@@ -183,13 +199,13 @@ export default function ContactDetail() {
         </CardContent>
       </Card>
 
-      {paying && <PaymentDialog party={party} balance={balance} onClose={() => setPaying(false)} />}
+      {paying && <PaymentDialog party={party} balance={balance} foreign={foreign} onClose={() => setPaying(false)} />}
       {editing && <PartyDialog type={party.type} party={{ ...party, balance }} onClose={() => setEditing(false)} />}
     </div>
   );
 }
 
-function PaymentDialog({ party, balance, onClose }: { party: Statement["party"]; balance: string; onClose: () => void }) {
+function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement["party"]; balance: string; foreign: ForeignBalance[]; onClose: () => void }) {
   const t = useT();
   const isCustomer = party.type === "customer";
   const [day, setDay] = useState(todayLocal());
@@ -205,7 +221,17 @@ function PaymentDialog({ party, balance, onClose }: { party: Statement["party"];
   });
   const b = d(balance);
   const outstanding = isCustomer ? (b.gt(0) ? b : null) : b.isNegative() ? b.abs() : null;
-  const valid = !!account && d(amount).gt(0) && (!isCdf || d(rate).gt(0));
+  // What is owed in francs (or yuan) in the direction of this payment.
+  const owedIn = (cur: "CDF" | "CNY") => {
+    const f = foreign.find((x) => x.currency === cur);
+    if (!f) return null;
+    const n = d(f.native);
+    return isCustomer ? (n.gt(0) ? n : null) : n.isNegative() ? n.abs() : null;
+  };
+  const fcOwed = owedIn("CDF");
+  const cnyOwed = !isCustomer && account?.currency === "USD" ? owedIn("CNY") : null;
+  const [settleCny, setSettleCny] = useState("");
+  const valid = !!account && d(amount).gt(0) && (!isCdf || d(rate).gt(0)) && (!cnyOwed || !settleCny || d(settleCny).lte(cnyOwed));
 
   function save() {
     if (!account) return;
@@ -215,6 +241,7 @@ function PaymentDialog({ party, balance, onClose }: { party: Statement["party"];
       accountId: account.id,
       amount: d(amount).toFixed(2),
       ...(isCdf ? { rate: d(rate).toString() } : {}),
+      ...(cnyOwed && d(settleCny).gt(0) ? { settleNative: d(settleCny).toFixed(2) } : {}),
       memo: memo.trim() || null,
     });
   }
@@ -243,16 +270,42 @@ function PaymentDialog({ party, balance, onClose }: { party: Statement["party"];
           >
             <div className="flex gap-2">
               <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
-              {outstanding && !isCdf && (
+              {outstanding && !isCdf && !cnyOwed && (
                 <Button type="button" variant="outline" size="sm" className="h-10" onClick={() => setAmount(outstanding.toFixed(2))}>
+                  {t("All", "Tout")}
+                </Button>
+              )}
+              {isCdf && fcOwed && (
+                <Button type="button" variant="outline" size="sm" className="h-10" onClick={() => setAmount(fcOwed.toFixed(0))}>
                   {t("All", "Tout")}
                 </Button>
               )}
             </div>
           </Field>
+          {fcOwed && (
+            <p className="text-xs text-muted-foreground sm:col-span-2">
+              {t(
+                `${cdf(fcOwed.toString())} are owed in francs: a payment settles them first, in francs, and any difference in value is an exchange gain or loss.`,
+                `${cdf(fcOwed.toString())} sont dus en francs : un paiement les règle d'abord, en francs, et l'écart de valeur est un gain ou une perte de change.`,
+              )}
+            </p>
+          )}
+          {cnyOwed && (
+            <Field
+              label={t("Yuan settled by this payment (CNY)", "Yuans réglés par ce paiement (CNY)")}
+              hint={t(`Owed: ${fmtQty(cnyOwed.toString())} CNY. The difference with the invoice value is an exchange gain or loss.`, `Dû : ${fmtQty(cnyOwed.toString())} CNY. L'écart avec la valeur de la facture est un gain ou une perte de change.`)}
+              error={d(settleCny).gt(cnyOwed) ? t("More than what is owed", "Plus que ce qui est dû") : null}
+              className="sm:col-span-2"
+            >
+              <div className="flex gap-2">
+                <Input inputMode="decimal" value={settleCny} onChange={(e) => setSettleCny(e.target.value)} placeholder="0" />
+                <Button type="button" variant="outline" size="sm" className="h-10" onClick={() => setSettleCny(cnyOwed.toFixed(2))}>{t("All", "Tout")}</Button>
+              </div>
+            </Field>
+          )}
           {isCdf && (
             <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 USD)")} hint={usdEquivalent ? `= ${usd(usdEquivalent)}` : undefined}>
-              <Input inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} />
+              <RateInput day={day} value={rate} onChange={setRate} />
             </Field>
           )}
           <Field label={t("Note", "Note")} className="sm:col-span-2">

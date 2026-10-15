@@ -15,7 +15,7 @@ import {
 import { allocateCents, cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, notFound } from "../errors";
-import { moneyLeg, nextNumber, postJournal, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId } from "./ledger";
+import { moneyLeg, nextNumber, postJournal, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId } from "./ledger";
 import { issueStock, linkMovementsToJournal, receiveStock, stockQty } from "./stock";
 
 /** Rounding left over from paying in CDF, absorbed into exchange differences. */
@@ -94,7 +94,7 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number)
 
   const legs = [];
   for (const p of input.payments) {
-    legs.push(await moneyLeg(tx, { accountId: p.accountId, amount: p.amount, rate: p.rate }));
+    legs.push(await moneyLeg(tx, { accountId: p.accountId, amount: p.amount, rate: p.rate, date: input.date }));
   }
   const paid = sum(legs.map((l) => l.usd));
   let rounding = new Decimal(0);
@@ -350,8 +350,9 @@ export async function returnSale(tx: Tx, saleId: number, input: ReturnInput, use
     if (!acc) throw badRequest("Refund account not found", "Compte de remboursement introuvable");
     // Refund the USD value; for a CDF box, pay it out at the given rate.
     // Francs are handed back in whole notes and coins.
-    const native = acc.currency === "CDF" ? total.times(dec(input.rate, "rate")).toDecimalPlaces(0) : total;
-    const leg = await moneyLeg(tx, { accountId: input.refundAccountId, amount: native, rate: input.rate });
+    const rate = acc.currency === "CDF" ? await resolveRate(tx, input.date, input.rate) : null;
+    const native = rate ? total.times(rate).toDecimalPlaces(0) : total;
+    const leg = await moneyLeg(tx, { accountId: input.refundAccountId, amount: native, rate, date: input.date });
     refundLine = { accountId: leg.accountId, credit: total, nativeAmount: leg.nativeAmount, rate: leg.rate };
   } else {
     refundLine = { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.receivables), credit: total, partyId: sale.customerId };

@@ -1,0 +1,1 @@
+ALTER TABLE "periods" ADD COLUMN "revaluation_journal_id" integer;

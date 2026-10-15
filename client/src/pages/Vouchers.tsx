@@ -11,11 +11,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ErrorText, Field, Loading, Num, PageHeader } from "@/components/common";
-import { AccountSelect, MoneyAccountSelect, PartySelect, useMoneyAccounts, useRate, useRateField } from "@/components/pickers";
+import { AccountSelect, MoneyAccountSelect, PartySelect, RateInput, useMoneyAccounts, useRate, useRateField } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api, invalidateAll } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { d, money, todayLocal, usd } from "@/lib/format";
+import { d, money, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import type { Account, Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -371,7 +371,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted 
           </Field>
           {isCdf && (
             <Field label={t("Rate (CDF per 1 USD)", "Taux (CDF pour 1 USD)")} hint={totalUsd ? `= ${usd(totalUsd.toFixed(2))}` : undefined}>
-              <Input inputMode="decimal" value={rateField.rate} onChange={(e) => rateField.setRate(e.target.value)} />
+              <RateInput day={day} value={rateField.rate} onChange={rateField.setRate} />
             </Field>
           )}
           <Field label={t("Description", "Libellé")} className={isCdf ? "" : "lg:col-span-2"}>
@@ -668,14 +668,9 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
   const [toAmount, setToAmount] = useState(str(p.toAmount));
   const [toTouched, setToTouched] = useState(!!p.toAmount);
   const [memo, setMemo] = useState(str(p.memo ?? draft?.memo));
-  const dayRate = useRateField(day);
-  useEffect(() => {
-    if (p.rate) dayRate.setRate(str(p.rate));
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  const dayRate = useRate(day);
   const from = moneyAccounts.find((a) => a.id === fromId) ?? null;
   const to = moneyAccounts.find((a) => a.id === toId) ?? null;
-  const anyCdf = from?.currency === "CDF" || to?.currency === "CDF";
   const sameCurrency = from && to && from.currency === to.currency;
 
   // Same currency: the "to" amount follows the "from" amount until edited.
@@ -691,15 +686,20 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
         ? fa.dividedBy(ta)
         : ta.dividedBy(fa)
       : null;
-  // The book rate follows the exchange's own rate (no gain/loss) until the user types one.
-  const followsImplied = !!implied && !dayRate.touched;
-  const rate = followsImplied ? implied.toDecimalPlaces(4).toString() : dayRate.rate;
-  const setRate = dayRate.setRate;
-  const r = d(rate);
-  const toUsd = (a: Account | null, x: ReturnType<typeof d>) => (a?.currency === "CDF" ? (r.gt(0) ? x.dividedBy(r) : null) : x);
-  const fromUsd = toUsd(from, fa);
-  const toUsdV = toUsd(to, ta);
-  const diff = fromUsd && toUsdV ? fromUsd.toDecimalPlaces(2).minus(toUsdV.toDecimalPlaces(2)) : null;
+  // Francs leave at what they cost on average; dollars at face value. Francs bought with dollars
+  // cost the dollars paid, so only selling or moving francs can show a difference.
+  const costOf = (a: Account | null, x: ReturnType<typeof d>) => {
+    if (!a || a.currency !== "CDF") return x;
+    const b = balances.data?.find((y) => y.id === a.id);
+    const n = d(b?.nativeBalance);
+    const v = d(b?.balance);
+    if (n.gt(0) && v.gt(0) && x.lte(n)) return x.times(v).dividedBy(n);
+    const r = d(dayRate.data?.cdfPerUsd);
+    return r.gt(0) ? x.dividedBy(r) : null;
+  };
+  const value = from ? costOf(from, fa) : null;
+  const received = to?.currency === "USD" ? ta : value;
+  const diff = value && received ? value.toDecimalPlaces(2).minus(received.toDecimalPlaces(2)) : null;
   const balOf = (a: Account | null) => {
     const b = a && balances.data?.find((x) => x.id === a.id);
     return b ? money(a.currency === "CDF" ? b.nativeBalance : b.balance, a.currency) : null;
@@ -715,7 +715,7 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
       onPosted(res.id);
     },
   });
-  const valid = from && to && from.id !== to.id && fa.gt(0) && ta.gt(0) && (!anyCdf || r.gt(0));
+  const valid = from && to && from.id !== to.id && fa.gt(0) && ta.gt(0);
 
   function payload(): Record<string, unknown> {
     return {
@@ -723,7 +723,6 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
       fromAmount: fa.gt(0) ? fa.toFixed(2) : fromAmount.trim(),
       toAccountId: toId,
       toAmount: ta.gt(0) ? ta.toFixed(2) : toAmount.trim(),
-      ...(anyCdf && r.gt(0) ? { rate: r.toString() } : {}),
       memo: memo.trim() || null,
     };
   }
@@ -760,50 +759,27 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
           <Field label={t(`Amount in${to ? ` (${to.currency})` : ""}`, `Montant reçu${to ? ` (${to.currency})` : ""}`)}>
             <Input inputMode="decimal" value={toAmount} onChange={(e) => { setToAmount(e.target.value); setToTouched(true); }} placeholder="0" />
           </Field>
-          {anyCdf && (
-            <Field
-              label={t("Book rate (CDF per 1 USD)", "Taux comptable (CDF pour 1 USD)")}
-              hint={
-                followsImplied
-                  ? t("Same as the rate of this exchange: no exchange difference.", "Identique au taux de ce change\u00a0: aucune différence de change.")
-                  : t("Used to value the franc side in dollars.", "Sert à valoriser le côté francs en dollars.")
-              }
-            >
-              <Input inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} />
-            </Field>
-          )}
-          <Field label={t("Note (optional)", "Note (facultatif)")} className={anyCdf ? "" : "sm:col-span-2"}>
+          <Field label={t("Note (optional)", "Note (facultatif)")} className="sm:col-span-2">
             <Input value={memo} onChange={(e) => setMemo(e.target.value)} />
           </Field>
           {(implied || (diff && !diff.isZero())) && (
             <div className="space-y-1 rounded-md border bg-muted/40 p-3 text-sm sm:col-span-2">
               {implied && (
-                <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex flex-wrap justify-between gap-2">
                   <span>{t("Rate of this exchange", "Taux de ce change")}</span>
-                  <span className="flex items-center gap-2">
-                    <Num className="font-medium">{implied.toDecimalPlaces(2).toString()} CDF / USD</Num>
-                    {!followsImplied && (
-                      <Button type="button" size="sm" variant="ghost" onClick={() => setRate(implied.toDecimalPlaces(4).toString())}>
-                        {t("Use as book rate", "Utiliser comme taux")}
-                      </Button>
-                    )}
-                  </span>
+                  <Num className="font-medium">{fmtQty(implied.toDecimalPlaces(2).toString())} FC / $</Num>
                 </div>
               )}
               {diff && !diff.isZero() && (
                 <div className="flex flex-wrap justify-between gap-2">
-                  <span>
-                    {implied && !followsImplied
-                      ? t(
-                          `Exchange difference: the book rate (${r.toDecimalPlaces(2).toString()}) differs from this exchange's rate`,
-                          `Différence de change : le taux comptable (${r.toDecimalPlaces(2).toString()}) diffère du taux de ce change`,
-                        )
-                      : t("Exchange difference (booked automatically)", "Différence de change (comptabilisée automatiquement)")}
-                  </span>
+                  <span>{t("Exchange difference against what the francs cost", "Différence de change par rapport au coût des francs")}</span>
                   <Num className={diff.isPositive() ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"}>
                     {diff.isPositive() ? t("loss", "perte") : t("gain", "gain")} {usd(diff.abs().toFixed(2))}
                   </Num>
                 </div>
+              )}
+              {from?.currency === "USD" && to?.currency === "CDF" && (
+                <p className="text-xs text-muted-foreground">{t("The francs are booked at the dollars paid for them.", "Les francs sont comptés au prix payé en dollars.")}</p>
               )}
             </div>
           )}

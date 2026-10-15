@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDownToLine, ArrowLeftRight, ArrowUpFromLine, HandCoins, Landmark, Send, Wallet } from "lucide-react";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
-import { MoneyAccountSelect, PartySelect, useMoneyAccounts, useRate, useRateField } from "@/components/pickers";
+import { MoneyAccountSelect, PartySelect, RateInput, useMoneyAccounts, useRate, useRateField } from "@/components/pickers";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
-import { cdf, d, date, money, monthStart, todayLocal, usd } from "@/lib/format";
+import { cdf, d, date, money, monthStart, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import type { Account, Partner, Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -130,12 +130,14 @@ export default function Money() {
 // ---------------------------------------------------------------- Shared bits
 
 function AmountFields({
+  day,
   account,
   amount,
   setAmount,
   rate,
   setRate,
 }: {
+  day: string;
   account: Account | null;
   amount: string;
   setAmount: (v: string) => void;
@@ -152,7 +154,7 @@ function AmountFields({
       </Field>
       {isCdf && (
         <Field label={t("Rate (CDF per 1 USD)", "Taux (CDF pour 1 USD)")} hint={usdValue ? `= ${usd(usdValue.toFixed(2))}` : undefined}>
-          <Input inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} />
+          <RateInput day={day} value={rate} onChange={setRate} />
         </Field>
       )}
     </>
@@ -171,7 +173,6 @@ function TransferDialog({ onClose }: { onClose: () => void }) {
   const [toTouched, setToTouched] = useState(false);
   const [memo, setMemo] = useState("");
   const dayRate = useRateField(day);
-  const anyCdf = from?.currency === "CDF" || to?.currency === "CDF";
   const sameCurrency = from && to && from.currency === to.currency;
 
   // Same currency: the "to" amount follows the "from" amount until edited.
@@ -188,18 +189,21 @@ function TransferDialog({ onClose }: { onClose: () => void }) {
         ? fa.dividedBy(ta)
         : ta.dividedBy(fa)
       : null;
-  // The book rate follows the exchange's own rate (no gain/loss) until the user types one.
-  const followsImplied = !!implied && !dayRate.touched;
-  const rate = followsImplied ? implied.toDecimalPlaces(4).toString() : dayRate.rate;
-  const setRate = dayRate.setRate;
-  const r = d(rate);
-  const toUsd = (acc: Account | null, x: ReturnType<typeof d>) => (acc?.currency === "CDF" ? (r.gt(0) ? x.dividedBy(r) : null) : x);
-  const fromUsd = toUsd(from, fa);
-  const toUsdV = toUsd(to, ta);
-  const diff = fromUsd && toUsdV ? fromUsd.toDecimalPlaces(2).minus(toUsdV.toDecimalPlaces(2)) : null;
+  // Francs leave at what they cost on average; dollars at face value. Francs bought with dollars
+  // cost the dollars paid, so only selling or moving francs can show a difference.
+  const costOf = (acc: Account | null, x: ReturnType<typeof d>) => {
+    if (!acc || acc.currency !== "CDF") return x;
+    const n = d(acc.nativeBalance);
+    const b = d(acc.balance);
+    if (n.gt(0) && b.gt(0) && x.lte(n)) return x.times(b).dividedBy(n);
+    return dayRate.rate && d(dayRate.rate).gt(0) ? x.dividedBy(d(dayRate.rate)) : null;
+  };
+  const value = from ? costOf(from, fa) : null;
+  const received = to?.currency === "USD" ? ta : value;
+  const diff = value && received ? value.toDecimalPlaces(2).minus(received.toDecimalPlaces(2)) : null;
 
   const m = useApiMutation<Record<string, unknown>>("POST", "/api/money/transfer", { success: t("Transfer recorded", "Transfert enregistré"), onSuccess: onClose });
-  const valid = from && to && from.id !== to.id && fa.gt(0) && ta.gt(0) && (!anyCdf || r.gt(0));
+  const valid = from && to && from.id !== to.id && fa.gt(0) && ta.gt(0);
 
   function save() {
     m.mutate({
@@ -208,7 +212,6 @@ function TransferDialog({ onClose }: { onClose: () => void }) {
       fromAmount: fa.toFixed(2),
       toAccountId: to!.id,
       toAmount: ta.toFixed(2),
-      ...(anyCdf ? { rate: r.toString() } : {}),
       memo: memo.trim() || null,
     });
   }
@@ -241,51 +244,28 @@ function TransferDialog({ onClose }: { onClose: () => void }) {
           <Field label={t(`Amount in${to ? ` (${to.currency})` : ""}`, `Montant reçu${to ? ` (${to.currency})` : ""}`)}>
             <Input inputMode="decimal" value={toAmount} onChange={(e) => { setToAmount(e.target.value); setToTouched(true); }} placeholder="0" />
           </Field>
-          {anyCdf && (
-            <Field
-              label={t("Book rate (CDF per 1 USD)", "Taux comptable (CDF pour 1 USD)")}
-              hint={
-                followsImplied
-                  ? t("Same as the rate of this exchange: no exchange difference.", "Identique au taux de ce change\u00a0: aucune différence de change.")
-                  : t("Used to value the franc side in dollars.", "Sert à valoriser le côté francs en dollars.")
-              }
-            >
-              <Input inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} />
-            </Field>
-          )}
-          <Field label={t("Note (optional)", "Note (facultatif)")} className={anyCdf ? "" : "sm:col-span-2"}>
+          <Field label={t("Note (optional)", "Note (facultatif)")} className="sm:col-span-2">
             <Input value={memo} onChange={(e) => setMemo(e.target.value)} />
           </Field>
         </div>
         {(implied || (diff && !diff.isZero())) && (
           <div className="space-y-1 rounded-md border bg-muted/40 p-3 text-sm">
             {implied && (
-              <div className="flex flex-wrap items-center justify-between gap-2">
+              <div className="flex flex-wrap justify-between gap-2">
                 <span>{t("Rate of this exchange", "Taux de ce change")}</span>
-                <span className="flex items-center gap-2">
-                  <Num className="font-medium">{implied.toDecimalPlaces(2).toString()} CDF / USD</Num>
-                  {!followsImplied && (
-                    <Button type="button" size="sm" variant="ghost" onClick={() => setRate(implied.toDecimalPlaces(4).toString())}>
-                      {t("Use as book rate", "Utiliser comme taux")}
-                    </Button>
-                  )}
-                </span>
+                <Num className="font-medium">{fmtQty(implied.toDecimalPlaces(2).toString())} FC / $</Num>
               </div>
             )}
             {diff && !diff.isZero() && (
               <div className="flex flex-wrap justify-between gap-2">
-                <span>
-                  {implied && !followsImplied
-                    ? t(
-                        `Exchange difference: the book rate (${r.toDecimalPlaces(2).toString()}) differs from this exchange's rate`,
-                        `Différence de change : le taux comptable (${r.toDecimalPlaces(2).toString()}) diffère du taux de ce change`,
-                      )
-                    : t("Exchange difference (booked automatically)", "Différence de change (comptabilisée automatiquement)")}
-                </span>
+                <span>{t("Exchange difference against what the francs cost", "Différence de change par rapport au coût des francs")}</span>
                 <Num className={diff.isPositive() ? "text-destructive" : "text-green-700 dark:text-green-400"}>
                   {diff.isPositive() ? t("loss", "perte") : t("gain", "gain")} {usd(diff.abs().toFixed(2))}
                 </Num>
               </div>
+            )}
+            {from?.currency === "USD" && to?.currency === "CDF" && (
+              <p className="text-xs text-muted-foreground">{t("The francs are booked at the dollars paid for them.", "Les francs sont comptés au prix payé en dollars.")}</p>
             )}
           </div>
         )}
@@ -372,7 +352,7 @@ function PartyPaymentDialog({ kind, onClose }: { kind: "customer" | "party"; onC
           <Field label={kind === "customer" ? t("Received into", "Reçu dans") : t("Paid from", "Payé depuis")} className="sm:col-span-2">
             <MoneyAccountSelect value={account?.id ?? null} onChange={(_, a) => setAccount(a)} />
           </Field>
-          <AmountFields account={account} amount={amount} setAmount={setAmount} rate={rate} setRate={setRate} />
+          <AmountFields day={day} account={account} amount={amount} setAmount={setAmount} rate={rate} setRate={setRate} />
           <Field label={t("Note (optional)", "Note (facultatif)")} className="sm:col-span-2">
             <Input value={memo} onChange={(e) => setMemo(e.target.value)} />
           </Field>
@@ -454,7 +434,7 @@ function PartnerMoneyDialog({ kind, onClose }: { kind: "contribution" | "withdra
           <Field label={kind === "contribution" ? t("Into account", "Dans le compte") : t("From account", "Depuis le compte")} className="sm:col-span-2">
             <MoneyAccountSelect value={account?.id ?? null} onChange={(_, a) => setAccount(a)} />
           </Field>
-          <AmountFields account={account} amount={amount} setAmount={setAmount} rate={rate} setRate={setRate} />
+          <AmountFields day={day} account={account} amount={amount} setAmount={setAmount} rate={rate} setRate={setRate} />
           <Field label={t("Note (optional)", "Note (facultatif)")} className="sm:col-span-2">
             <Input value={memo} onChange={(e) => setMemo(e.target.value)} />
           </Field>
