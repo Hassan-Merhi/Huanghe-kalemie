@@ -864,6 +864,11 @@ export function registerRoutes(app: Express) {
         cashier: users.fullName,
         // A line sold at 0 $: almost always a price typed wrong, so the list flags it.
         zeroPrice: sql<boolean>`exists (select 1 from sale_lines sl where sl.sale_id = ${sales.id} and sl.unit_price <= 0)`,
+        // What was sold, so the list reads without opening each sale.
+        qty: sql<string>`(select coalesce(sum(sl.qty), 0)::text from sale_lines sl where sl.sale_id = ${sales.id})`,
+        returnedQty: sql<string>`(select coalesce(sum(sl.returned_qty), 0)::text from sale_lines sl where sl.sale_id = ${sales.id})`,
+        lineCount: sql<number>`(select count(*)::int from sale_lines sl where sl.sale_id = ${sales.id})`,
+        firstItem: sql<string | null>`(select p.name from sale_lines sl join variants v on v.id = sl.variant_id join products p on p.id = v.product_id where sl.sale_id = ${sales.id} order by sl.id limit 1)`,
       })
       .from(sales)
       .leftJoin(parties, eq(parties.id, sales.customerId))
@@ -872,7 +877,7 @@ export function registerRoutes(app: Express) {
       .orderBy(desc(sales.date), desc(sales.id))
       .limit(500);
     const showCost = req.user!.role !== "cashier";
-    res.json(rows.map((r) => ({ ...r.sale, cogs: showCost ? r.sale.cogs : undefined, customerName: r.customerName, cashier: r.cashier, zeroPrice: !!r.zeroPrice })));
+    res.json(rows.map((r) => ({ ...r.sale, cogs: showCost ? r.sale.cogs : undefined, customerName: r.customerName, cashier: r.cashier, zeroPrice: !!r.zeroPrice, qty: r.qty, returnedQty: r.returnedQty, lineCount: r.lineCount, firstItem: r.firstItem })));
   }));
   app.get("/api/sales/:id", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
     const sale = await salesSvc.getSale(db, paramId(req));

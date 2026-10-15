@@ -14,7 +14,7 @@ import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, Submi
 import { useToast } from "@/hooks/use-toast";
 import { api, invalidateAll } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { d, date as fmtDate, qty as fmtQty, todayLocal, unitCost, usd, variantText } from "@/lib/format";
+import { d, date as fmtDate, qty as fmtQty, todayLocal, usd, variantText } from "@/lib/format";
 import { count, useT } from "@/lib/i18n";
 import { downloadCsv, downloadXlsx } from "@/lib/sheets";
 import type { VariantRow } from "@/lib/types";
@@ -79,26 +79,23 @@ function usePriceRows(search: string) {
 
 export default function SalesTools() {
   const t = useT();
-  const { can } = useAuth();
   const [tab, setTab] = useState("prices");
   return (
     <div>
       <style>{WIDE_PRINT_CSS}</style>
       <PageHeader
         title={t("Sales tools", "Outils de vente")}
-        description={t("Price list, restocking and today's sales.", "Liste de prix, réapprovisionnement et ventes du jour.")}
+        description={t("Price list and today's sales.", "Liste de prix et ventes du jour.")}
         actions={<Button asChild><Link href="/pos"><ShoppingCart className="mr-1 h-4 w-4" /> {t("Point of sale", "Caisse")}</Link></Button>}
       />
       <Tabs value={tab} onValueChange={setTab}>
         <div className="overflow-x-auto pb-1">
           <TabsList>
             <TabsTrigger value="prices">{t("Price list", "Liste de prix")}</TabsTrigger>
-            {can("manager", "partner") && <TabsTrigger value="reorder">{t("Restocking", "Réapprovisionnement")}</TabsTrigger>}
             <TabsTrigger value="today">{t("Today's sales", "Ventes du jour")}</TabsTrigger>
           </TabsList>
         </div>
         <TabsContent value="prices"><PriceList /></TabsContent>
-        {can("manager", "partner") && <TabsContent value="reorder"><Reorder /></TabsContent>}
         <TabsContent value="today"><TodaySales /></TabsContent>
       </Tabs>
     </div>
@@ -389,86 +386,6 @@ function BulkPriceDialog({ rows, onClose }: { rows: Row[]; onClose: () => void }
         </DialogFooter>
       </DialogContent>
     </Dialog>
-  );
-}
-
-// ---------------------------------------------------------------- Restocking
-
-function Reorder() {
-  const t = useT();
-  const q = useQuery<{ items: StockItem[] }>({ queryKey: ["/api/stock"] });
-  const rows = useMemo(
-    () =>
-      (q.data?.items ?? [])
-        .filter((i) => i.low || d(i.qty).lte(0))
-        .map((i) => {
-          const suggested = d(i.reorderLevel).times(2).minus(d(i.qty));
-          return { ...i, suggested: suggested.gt(0) ? suggested : d(d(i.reorderLevel).gt(0) ? 0 : 1) };
-        })
-        .sort((a, b) => d(a.qty).comparedTo(d(b.qty)) || a.productName.localeCompare(b.productName)),
-    [q.data],
-  );
-  const cost = rows.reduce((s, r) => s.plus(r.suggested.times(d(r.avgCost))), d(0));
-
-  function exportXlsx() {
-    downloadXlsx(`${t("restocking", "reapprovisionnement")}_${todayLocal()}.xlsx`, [
-      [t("Category", "Catégorie"), t("Item", "Article"), t("Variant", "Variante"), t("SKU", "Code"), t("Qty", "Qté"), t("Reorder level", "Seuil"), t("Suggested order", "Commande suggérée"), t("Average cost", "Coût moyen")],
-      ...rows.map((r) => [r.categoryName ?? "", r.productName, variantText(r.attributes), r.sku, Number(r.qty), Number(r.reorderLevel), Number(r.suggested.toString()), Number(r.avgCost)]),
-    ], t("Restocking", "Réappro"));
-  }
-
-  return (
-    <div className="space-y-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="text-sm text-muted-foreground">
-          {t("Items at or below their reorder level, and items out of stock. Suggested order = 2 × reorder level − quantity.", "Articles au seuil de réapprovisionnement ou en dessous, et articles en rupture. Commande suggérée = 2 × seuil − quantité.")}
-        </p>
-        <Button variant="outline" onClick={exportXlsx} disabled={!rows.length}><Download className="mr-1 h-4 w-4" /> Excel</Button>
-      </div>
-      <ErrorText error={q.error} />
-      {q.isLoading ? (
-        <Loading />
-      ) : rows.length === 0 ? (
-        <EmptyState title={t("Nothing to reorder", "Rien à réapprovisionner")} />
-      ) : (
-        <Card>
-          <CardContent className="p-0">
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>{t("Item", "Article")}</TableHead>
-                    <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
-                    <TableHead className="text-right">{t("Reorder level", "Seuil")}</TableHead>
-                    <TableHead className="text-right">{t("Suggested", "Suggéré")}</TableHead>
-                    <TableHead className="text-right">{t("Avg cost", "Coût moyen")}</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.map((r) => (
-                    <TableRow key={r.variantId}>
-                      <TableCell className="min-w-[150px]">
-                        <div className="font-medium">{r.productName}</div>
-                        <div className="text-xs text-muted-foreground">{[variantText(r.attributes), r.sku].filter(Boolean).join(" · ")}</div>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        {d(r.qty).lte(0) ? <Badge variant="destructive">{fmtQty(r.qty)}</Badge> : <Num className="text-amber-800 dark:text-amber-400">{fmtQty(r.qty)}</Num>}
-                      </TableCell>
-                      <TableCell className="text-right"><Num>{fmtQty(r.reorderLevel)}</Num></TableCell>
-                      <TableCell className="text-right"><Num className="font-semibold">{fmtQty(r.suggested.toString())}</Num></TableCell>
-                      <TableCell className="text-right"><Num>{unitCost(r.avgCost)}</Num></TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </div>
-            <p className="border-t p-3 text-right text-sm text-muted-foreground">
-              {t("Estimated cost of the suggested order", "Coût estimé de la commande suggérée")} : <span className="font-medium text-foreground tabular">{usd(cost.toFixed(2))}</span>
-            </p>
-          </CardContent>
-        </Card>
-      )}
-    </div>
   );
 }
 
