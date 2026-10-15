@@ -133,7 +133,7 @@ export default function Dashboard() {
                       </div>
                     ))}
                     <div className="flex justify-between py-2 font-semibold">
-                      <span>{t("Total (USD value)", "Total (valeur USD)")}</span>
+                      <span>{t("Total (in $)", "Total (en $)")}</span>
                       <Num>{usd(moneyTotal.toFixed(2))}</Num>
                     </div>
                   </div>
@@ -150,7 +150,7 @@ export default function Dashboard() {
                 <p className="mb-2 text-xs text-muted-foreground">
                   {t(
                     "At each month close, gross profit is split 75/25; shop running costs then come off the 75% partner's share only.",
-                    "À chaque clôture mensuelle, la marge brute est partagée 75/25\u00a0; les charges de la boutique sont ensuite déduites uniquement de la part de l'associé à 75 %.",
+                    "À chaque clôture mensuelle, la marge brute est partagée 75/25\u00a0; les charges de la boutique sont ensuite déduites uniquement de la part de l'associé à 75\u00a0%.",
                   )}
                 </p>
                 <div className="divide-y text-sm">

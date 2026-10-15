@@ -87,8 +87,8 @@ export function SaleFlags({ zeroPrice, total, cogs }: { zeroPrice?: boolean; tot
   const loss = cogs !== undefined && d(cogs).gt(0) && d(total).lt(d(cogs));
   return (
     <>
-      {zeroPrice && <Badge variant="destructive" className="ml-1">{t("Price 0", "Prix nul")}</Badge>}
-      {loss && <Badge variant="outline" className="ml-1 border-amber-600 text-amber-800 dark:border-amber-400 dark:text-amber-300">{t("Below cost", "Vente à perte")}</Badge>}
+      {zeroPrice && <Badge variant="destructive" className="ml-1 whitespace-nowrap">{t("Price 0", "Prix nul")}</Badge>}
+      {loss && <Badge variant="outline" className="ml-1 whitespace-nowrap border-amber-600 text-amber-800 dark:border-amber-400 dark:text-amber-300">{t("Below cost", "Vente à perte")}</Badge>}
     </>
   );
 }
@@ -142,7 +142,7 @@ export default function Sales() {
         <EmptyState title={t("No sales", "Aucune vente")}>{t("Sales made at the till appear here.", "Les ventes faites à la caisse apparaissent ici.")}</EmptyState>
       ) : (
         <Card>
-          <div className="overflow-x-auto">
+          <div className="overflow-x-auto [contain:inline-size]">
             <Table>
               <TableHeader>
                 <TableRow>
@@ -162,8 +162,8 @@ export default function Sales() {
                   const voided = r.status === "voided";
                   return (
                     <TableRow key={r.id} className={cn("cursor-pointer", voided && "text-muted-foreground")} onClick={() => navigate(`/sales/${r.id}`)}>
-                      <TableCell className="whitespace-nowrap font-medium">
-                        {r.number} {voided && <Badge variant="destructive" className="ml-1">{t("Cancelled", "Annulée")}</Badge>}
+                      <TableCell className="font-medium">
+                        <span className="whitespace-nowrap">{r.number}</span> {voided && <Badge variant="destructive" className="ml-1">{t("Cancelled", "Annulée")}</Badge>}
                         {!voided && <SaleFlags zeroPrice={r.zeroPrice} total={r.total} cogs={r.cogs} />}
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{fmtDate(r.date)}</TableCell>

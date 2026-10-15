@@ -77,7 +77,7 @@ export default function Expenses() {
         <AlertDescription>
           {t(
             "These running costs are charged to the 75% partner at month close. Container costs (freight, duties, transport…) are entered on the container, not here.",
-            "Ces dépenses de fonctionnement sont imputées à l'associé à 75 % lors de la clôture du mois. Les frais de conteneur (fret, douane, transport…) se saisissent sur le conteneur, pas ici.",
+            "Ces dépenses de fonctionnement sont imputées à l'associé à 75\u00a0% lors de la clôture du mois. Les frais de conteneur (fret, douane, transport…) se saisissent sur le conteneur, pas ici.",
           )}
         </AlertDescription>
       </Alert>
@@ -263,7 +263,7 @@ function AddExpenseDialog({ onClose }: { onClose: () => void }) {
         <DialogHeader>
           <DialogTitle>{t("Add a running cost", "Ajouter une dépense")}</DialogTitle>
           <DialogDescription>
-            {t("Charged to the 75% partner at month close. Container costs go on the container.", "Imputée à l'associé à 75 % à la clôture du mois. Les frais de conteneur se saisissent sur le conteneur.")}
+            {t("Charged to the 75% partner at month close. Container costs go on the container.", "Imputée à l'associé à 75\u00a0% à la clôture du mois. Les frais de conteneur se saisissent sur le conteneur.")}
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">

@@ -599,7 +599,7 @@ function SelfCheck() {
     <div className="space-y-3">
       <div className={cn("rounded-md border p-3 text-sm font-medium", data.ok ? "border-green-600/30 bg-green-600/10 text-green-800 dark:text-green-300" : "border-destructive/40 bg-destructive/10 text-destructive")}>
         {data.ok
-          ? t("Everything agrees.", "Tout concorde.")
+          ? `${t("Everything agrees.", "Tout concorde.")}${(data.warnings ?? []).some((w) => !w.ok) ? ` ${t("Some sales are worth a look below.", "Quelques ventes sont à regarder ci-dessous.")}` : ""}`
           : t(`${data.checks.filter((c) => !c.ok).length} check(s) need a look.`, count(t, data.checks.filter((c) => !c.ok).length, ["", ""], ["contrôle à vérifier", "contrôles à vérifier"]))}
         <Button variant="ghost" size="sm" className="ml-2 h-7" onClick={() => q.refetch()}>
           <RotateCcw className="mr-1 h-3.5 w-3.5" /> {t("Check again", "Recontrôler")}
@@ -613,7 +613,8 @@ function SelfCheck() {
             <Card key={c.key} className={cn(!c.ok && (c.warning ? "border-amber-500/60" : "border-destructive/50"))}>
               <CardContent className="space-y-1 p-4">
                 <p className={cn("font-medium", c.ok ? "text-green-700 dark:text-green-400" : c.warning ? "text-amber-700 dark:text-amber-400" : "text-destructive")}>
-                  {c.ok ? "✓" : c.warning ? "!" : "✗"} {text ? t(text.title[0], text.title[1]) : c.key}
+                  {c.ok ? "✓" : c.warning ? "!" : "✗"}{" "}
+                  {text && c.warning && !c.ok ? `${t(text.actual[0], text.actual[1])}${t(":", "\u00a0:")} ${c.actual}` : text ? t(text.title[0], text.title[1]) : c.key}
                 </p>
                 {text && <p className="text-xs text-muted-foreground">{t(text.what[0], text.what[1])}</p>}
                 {text?.money ? (
@@ -622,7 +623,7 @@ function SelfCheck() {
                     {!c.ok && <span className="ml-1 font-medium text-destructive">({t("difference", "écart")} {show(c.difference)})</span>}
                   </p>
                 ) : (
-                  !c.ok && text && <p className={cn("text-sm", c.warning ? "text-amber-700 dark:text-amber-400" : "text-destructive")}>{t(text.actual[0], text.actual[1])}{t(":", "\u00a0:")} {c.actual}</p>
+                  !c.ok && text && !c.warning && <p className={cn("text-sm", "text-destructive")}>{t(text.actual[0], text.actual[1])}{t(":", "\u00a0:")} {c.actual}</p>
                 )}
                 {c.details?.length ? (
                   <ul className="mt-1 space-y-0.5 text-xs">

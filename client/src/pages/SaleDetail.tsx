@@ -20,6 +20,7 @@ import { cdf, d, date as fmtDate, qty as fmtQty, todayLocal, usd, variantText } 
 import type { Account, Settings } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { ReceiptDialog, paymentText, type SaleFull } from "./POS";
+import { SaleFlags } from "./Sales";
 
 function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () => void; onDone: (sale: SaleFull) => void }) {
   const t = useT();
@@ -345,6 +346,7 @@ export default function SaleDetail() {
       <div className="mb-4 flex flex-wrap items-center gap-2">
         {voided ? <Badge variant="destructive">{t("Cancelled", "Annulée")}</Badge> : <Badge variant="secondary">{t("Completed", "Terminée")}</Badge>}
         {sale.returns.length > 0 && <Badge variant="outline">{t("Has returns", "Avec retours")}</Badge>}
+        {!voided && <SaleFlags zeroPrice={sale.lines.some((l) => d(l.unitPrice).lte(0))} total={sale.total} cogs={sale.cogs} />}
         {credit.gt(0) &&
           (!creditReduced ? (
             <Badge variant="outline">{t("On credit", "À crédit")} {usd(sale.creditUsd)}</Badge>

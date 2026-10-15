@@ -171,7 +171,7 @@ export default function StockImport() {
 function itemHeaders(t: T) {
   return [
     t("Category", "Catégorie"), t("Item", "Article"), t("Brand", "Marque"), t("Unit", "Unité"), t("Size", "Taille"), t("Colour", "Couleur"),
-    "SKU", t("Barcode", "Code-barres"), t("Sell price", "Prix de vente"), t("Reorder level", "Seuil de réapprovisionnement"),
+    t("SKU", "Code"), t("Barcode", "Code-barres"), t("Sell price", "Prix de vente"), t("Reorder level", "Seuil de réapprovisionnement"),
     t("Motorcycle (yes/no)", "Moto (oui/non)"), t("Quantity", "Quantité"), t("Unit cost", "Coût unitaire"),
   ];
 }
@@ -380,7 +380,7 @@ function PricesImport() {
 
   function template() {
     downloadXlsx(t("prices-template.xlsx", "modele-prix.xlsx"), [
-      ["SKU", t("Barcode", "Code-barres"), t("Sell price", "Prix de vente")],
+      [t("SKU", "Code"), t("Barcode", "Code-barres"), t("Sell price", "Prix de vente")],
       ["HH150-RED", "", 1350],
       ["", "6901234567890", 25],
     ], t("Prices", "Prix"));
@@ -393,7 +393,7 @@ function PricesImport() {
     try {
       const { rows: raw, found } = await readSheet(file, PRICE_FIELDS);
       if (!found.includes("sellPrice") || (!found.includes("sku") && !found.includes("barcode"))) {
-        setFileError(t("The file needs a SKU or barcode column and a price column.", "Le fichier doit avoir une colonne SKU ou code-barres et une colonne de prix."));
+        setFileError(t("The file needs a SKU or barcode column and a price column.", "Le fichier doit avoir une colonne Code (SKU) ou code-barres et une colonne de prix."));
         return;
       }
       setRows(raw.map((r) => ({ ...r, sellPrice: numCell(r.sellPrice) })));
@@ -403,7 +403,7 @@ function PricesImport() {
   }
 
   const problem = (r: PriceRow) => {
-    if (!r.sku && !r.barcode) return t("SKU or barcode missing", "SKU ou code-barres manquant");
+    if (!r.sku && !r.barcode) return t("SKU or barcode missing", "Code ou code-barres manquant");
     if (!r.sellPrice || !/^\d+(\.\d+)?$/.test(r.sellPrice)) return t("Price is not a valid number", "Le prix n'est pas un nombre valide");
     return null;
   };
@@ -422,7 +422,7 @@ function PricesImport() {
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-lg">{t("Update sell prices", "Mettre à jour les prix de vente")}</CardTitle>
-          <CardDescription>{t("Items are found by SKU or barcode. Nothing else changes.", "Les articles sont trouvés par SKU ou code-barres. Rien d'autre ne change.")}</CardDescription>
+          <CardDescription>{t("Items are found by SKU or barcode. Nothing else changes.", "Les articles sont trouvés par leur code ou code-barres. Rien d'autre ne change.")}</CardDescription>
         </CardHeader>
         <CardContent className="flex flex-wrap gap-2">
           <Button variant="outline" onClick={template}><Download className="mr-1 h-4 w-4" /> {t("Download the template", "Télécharger le modèle")}</Button>

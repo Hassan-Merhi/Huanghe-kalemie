@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import { AlertTriangle, ArrowLeft, Printer } from "lucide-react";
@@ -62,6 +62,9 @@ export default function VoucherPrint() {
   const q = useQuery<Voucher>({ queryKey: [`/api/vouchers/${id}`] });
   const settings = useQuery<Settings>({ queryKey: ["/api/settings"] });
   const v = q.data;
+  useEffect(() => {
+    document.title = `${t("Voucher", "Pièce")} ${v?.number ?? ""} · Huanghe Kalemie`;
+  }, [t, v?.number]);
 
   if (q.isLoading) return <Loading />;
   if (q.error || !v) return <ErrorText error={q.error ?? t("Voucher not found", "Pièce introuvable")} />;

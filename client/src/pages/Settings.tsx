@@ -89,9 +89,9 @@ function ShopTab() {
     : !d(rate).gt(0)
       ? t("Enter a default rate above zero", "Saisissez un taux par défaut supérieur à zéro")
       : !toleranceOk
-        ? t("Enter the allowed gap (0 to 99 %)", "Saisissez l'écart permis (0 à 99\u00a0%)")
+        ? t("Enter the allowed gap (0 to 99\u00a0%)", "Saisissez l'écart permis (0 à 99\u00a0%)")
         : !pctOk(cashierPct) || !pctOk(managerPct)
-          ? t("Enter the biggest discounts (0 to 100 %)", "Saisissez les remises maximales (0 à 100\u00a0%)")
+          ? t("Enter the biggest discounts (0 to 100\u00a0%)", "Saisissez les remises maximales (0 à 100\u00a0%)")
           : null;
   if (q.isLoading) return <Loading />;
   return (

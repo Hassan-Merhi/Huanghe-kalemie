@@ -242,7 +242,7 @@ function MonthSection() {
                 <p className="mt-1">
                   {t(
                     "Gross profit is split 75/25. Rent, salaries and other running costs are then taken only from the 75% partner.",
-                    "La marge brute est partagée 75/25. Le loyer, les salaires et les autres frais de fonctionnement sont ensuite pris uniquement chez l'associé à 75 %.",
+                    "La marge brute est partagée 75/25. Le loyer, les salaires et les autres frais de fonctionnement sont ensuite pris uniquement chez l'associé à 75\u00a0%.",
                   )}
                 </p>
                 <p className="mt-1 text-muted-foreground">

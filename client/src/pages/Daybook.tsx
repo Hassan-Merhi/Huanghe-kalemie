@@ -15,7 +15,7 @@ import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
 import { downloadCsv } from "@/lib/sheets";
-import { cdf, d, date as fmtDate, qty, todayLocal, usd } from "@/lib/format";
+import { cdf, d, date as fmtDate, frenchPunctuation, qty, todayLocal, usd } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { RangePicker, useRange } from "@/pages/Reports";
 import { journalTypeLabel } from "@/pages/ContactDetail";
@@ -409,7 +409,7 @@ export default function Daybook() {
                               <div className="flex flex-wrap gap-1"><TypeBadge type={r.type} t={t} /><StatusBadges r={r} t={t} /></div>
                             </TableCell>
                             <TableCell className="min-w-[200px]">
-                              <span className={cn(r.reversedByJournalId && "line-through")}>{r.memo || "—"}</span>
+                              <span className={cn(r.reversedByJournalId && "line-through")}>{r.memo ? frenchPunctuation(r.memo) : "—"}</span>
                               {contacts && <span className="block text-xs text-muted-foreground">{contacts}</span>}
                             </TableCell>
                             <TableCell className="text-right font-medium"><Num>{usd(r.amount)}</Num></TableCell>
@@ -446,7 +446,7 @@ export default function Daybook() {
                     <button type="button" className="w-full text-left" onClick={() => toggle(r.id)}>
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <p className={cn("truncate font-medium", r.reversedByJournalId && "line-through text-muted-foreground")}>{r.memo || contacts || journalTypeLabel(r.type, t)}</p>
+                          <p className={cn("truncate font-medium", r.reversedByJournalId && "line-through text-muted-foreground")}>{(r.memo && frenchPunctuation(r.memo)) || contacts || journalTypeLabel(r.type, t)}</p>
                           <p className="truncate text-xs text-muted-foreground">
                             {fmtDate(r.date)} · <span className="font-mono">{r.number}</span>{contacts && r.memo ? ` · ${contacts}` : ""}
                           </p>
