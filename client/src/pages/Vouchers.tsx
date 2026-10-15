@@ -1,0 +1,835 @@
+import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
+import { Link, useLocation, useSearch } from "wouter";
+import { CheckCircle2, FileClock, Info, Plus, Printer, Trash2 } from "lucide-react";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Switch } from "@/components/ui/switch";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { ErrorText, Field, Loading, Num, PageHeader } from "@/components/common";
+import { AccountSelect, MoneyAccountSelect, PartySelect, useMoneyAccounts, useRate, useRateField } from "@/components/pickers";
+import { useApiMutation } from "@/hooks/useApiMutation";
+import { api, invalidateAll } from "@/lib/api";
+import { useAuth } from "@/lib/auth";
+import { d, money, todayLocal, usd } from "@/lib/format";
+import { useT } from "@/lib/i18n";
+import type { Account, Party } from "@/lib/types";
+import { cn } from "@/lib/utils";
+import { AdjustForm, type AdjustmentDraft, type AdjustmentPayload } from "@/pages/Stock";
+
+type T = (en: string, fr: string) => string;
+
+export type VoucherKind = "payment" | "receipt" | "journal" | "transfer" | "adjustment";
+export const VOUCHER_KINDS: VoucherKind[] = ["payment", "receipt", "journal", "transfer", "adjustment"];
+
+export interface VoucherDraft {
+  id: number;
+  kind: VoucherKind;
+  date: string;
+  memo: string | null;
+  totalUsd: string | null;
+  payload: Record<string, unknown>;
+  createdBy: number | null;
+  createdByName: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** Tab / badge label of an optional voucher kind. */
+export function voucherKindLabel(kind: string, t: T): string {
+  const m: Record<string, [string, string]> = {
+    payment: ["Payment", "Paiement"],
+    receipt: ["Receipt", "Recette"],
+    journal: ["Journal entry", "Écriture"],
+    transfer: ["Transfer / exchange", "Transfert / change"],
+    adjustment: ["Stock adjustment", "Ajustement de stock"],
+  };
+  const x = m[kind];
+  return x ? t(x[0], x[1]) : kind;
+}
+
+/** Accounts a voucher line cannot use directly (kept by their own screens); mirrors the server's list. */
+const BLOCKED_KEYS = ["inventory", "goods_in_transit", "receivables", "payables", "sales", "cogs", "stock_adjustments"];
+
+interface DraftInput {
+  kind: VoucherKind;
+  date: string;
+  memo: string | null;
+  payload: Record<string, unknown>;
+}
+
+/** What every form gets from the page: the draft to prefill, and the save callbacks. */
+interface FormProps {
+  draft: VoucherDraft | null;
+  canSave: boolean;
+  savingDraft: boolean;
+  onSaveDraft: (d: DraftInput) => void;
+  onPosted: (journalId: number | null) => void;
+}
+
+// ================================================================== Page
+
+export default function Vouchers() {
+  const t = useT();
+  const { user, can } = useAuth();
+  const search = useSearch();
+  const [, navigate] = useLocation();
+  const params = new URLSearchParams(search);
+  const rawTab = params.get("tab") as VoucherKind | null;
+  const tab: VoucherKind = rawTab && VOUCHER_KINDS.includes(rawTab) ? rawTab : "payment";
+  const draftId = Number(params.get("draft")) || null;
+  const canSave = can("manager");
+  const isOwner = user?.role === "owner";
+  const [posted, setPosted] = useState<{ kind: VoucherKind; id: number | null } | null>(null);
+
+  const draftsQ = useQuery<VoucherDraft[]>({ queryKey: ["/api/voucher-drafts"], enabled: !!draftId });
+  const draft = draftId ? draftsQ.data?.find((x) => x.id === draftId) ?? null : null;
+
+  // A draft link always opens its own tab.
+  useEffect(() => {
+    if (draft && draft.kind !== tab) navigate(`/vouchers?tab=${draft.kind}&draft=${draft.id}`, { replace: true });
+  }, [draft, tab, navigate]);
+
+  const saveDraft = useApiMutation<DraftInput & { id?: number }, VoucherDraft>("POST", "/api/voucher-drafts", {
+    success: t("Optional voucher saved: no balance has changed", "Pièce facultative enregistrée : aucun solde n'a changé"),
+    onSuccess: (row) => {
+      setPosted(null);
+      if (row.id !== draftId) navigate(`/vouchers?tab=${row.kind}&draft=${row.id}`);
+    },
+  });
+
+  async function onPosted(kind: VoucherKind, journalId: number | null) {
+    if (draftId) {
+      // Posted for real: the optional copy is no longer needed.
+      await api("DELETE", `/api/voucher-drafts/${draftId}`).catch(() => undefined);
+      await invalidateAll();
+    }
+    setPosted({ kind, id: journalId });
+    navigate(`/vouchers?tab=${kind}`, { replace: true });
+  }
+
+  function formProps(kind: VoucherKind): FormProps {
+    return {
+      draft: draft && draft.kind === kind ? draft : null,
+      canSave,
+      savingDraft: saveDraft.isPending,
+      onSaveDraft: (x) => saveDraft.mutate({ ...x, ...(draftId ? { id: draftId } : {}) }),
+      onPosted: (id) => void onPosted(kind, id),
+    };
+  }
+
+  const waitingDraft = !!draftId && draftsQ.isLoading;
+  const missingDraft = !!draftId && !draftsQ.isLoading && !draft;
+  const formKey = (kind: VoucherKind) => `${kind}-${draft && draft.kind === kind ? draft.id : "new"}`;
+
+  function body(kind: VoucherKind, node: ReactNode) {
+    if (waitingDraft) return <Loading />;
+    return (
+      <div className="space-y-4">
+        {posted?.kind === kind && <PostedBanner journalId={posted.id} onClose={() => setPosted(null)} />}
+        {draft && draft.kind === kind && <DraftBanner draft={draft} />}
+        {node}
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <PageHeader
+        title={t("Vouchers", "Pièces comptables")}
+        description={t(
+          "Record payments, receipts, entries, transfers and stock adjustments. Each one appears in the day book.",
+          "Enregistrez paiements, recettes, écritures, transferts et ajustements de stock. Chacun apparaît dans le journal du jour.",
+        )}
+        actions={
+          <>
+            <Button variant="outline" asChild><Link href="/optional-vouchers"><FileClock className="mr-1 h-4 w-4" /> {t("Optional vouchers", "Pièces facultatives")}</Link></Button>
+            <Button variant="outline" asChild><Link href="/daybook">{t("Day book", "Journal du jour")}</Link></Button>
+          </>
+        }
+      />
+      {!canSave && (
+        <Alert className="mb-4">
+          <Info className="h-4 w-4" />
+          <AlertDescription>{t("You can look at these forms but not save them.", "Vous pouvez consulter ces formulaires mais pas les enregistrer.")}</AlertDescription>
+        </Alert>
+      )}
+      {missingDraft && (
+        <div className="mb-4">
+          <ErrorText error={t("This optional voucher no longer exists (validated or deleted). The form below is empty.", "Cette pièce facultative n'existe plus (validée ou supprimée). Le formulaire ci-dessous est vide.")} />
+        </div>
+      )}
+      <Tabs value={tab} onValueChange={(v) => { setPosted(null); navigate(`/vouchers?tab=${v}`); }}>
+        <TabsList className="mb-4 flex h-auto w-full flex-wrap justify-start sm:w-auto">
+          {VOUCHER_KINDS.map((k) => <TabsTrigger key={k} value={k}>{voucherKindLabel(k, t)}</TabsTrigger>)}
+        </TabsList>
+        <TabsContent value="payment">{body("payment", <VoucherForm key={formKey("payment")} kind="payment" {...formProps("payment")} />)}</TabsContent>
+        <TabsContent value="receipt">{body("receipt", <VoucherForm key={formKey("receipt")} kind="receipt" {...formProps("receipt")} />)}</TabsContent>
+        <TabsContent value="journal">
+          {isOwner
+            ? body("journal", <JournalForm key={formKey("journal")} {...formProps("journal")} />)
+            : (
+              <Alert>
+                <Info className="h-4 w-4" />
+                <AlertTitle>{t("Owner only", "Réservé au propriétaire")}</AlertTitle>
+                <AlertDescription>
+                  {t(
+                    "Journal entries change the books directly, so only the owner can post them. Use a payment, receipt or transfer voucher instead.",
+                    "Les écritures modifient directement les comptes : seul le propriétaire peut les passer. Utilisez plutôt une pièce de paiement, de recette ou un transfert.",
+                  )}
+                </AlertDescription>
+              </Alert>
+            )}
+        </TabsContent>
+        <TabsContent value="transfer">{body("transfer", <TransferForm key={formKey("transfer")} {...formProps("transfer")} />)}</TabsContent>
+        <TabsContent value="adjustment">{body("adjustment", <AdjustmentTab key={formKey("adjustment")} {...formProps("adjustment")} />)}</TabsContent>
+      </Tabs>
+    </div>
+  );
+}
+
+function PostedBanner({ journalId, onClose }: { journalId: number | null; onClose: () => void }) {
+  const t = useT();
+  return (
+    <Alert className="border-emerald-600/40">
+      <CheckCircle2 className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
+      <AlertTitle>{t("Voucher saved", "Pièce enregistrée")}</AlertTitle>
+      <AlertDescription className="mt-2 flex flex-wrap gap-2">
+        {journalId && (
+          <Button size="sm" asChild><Link href={`/vouchers/${journalId}`}><Printer className="mr-1 h-4 w-4" /> {t("Print voucher", "Imprimer la pièce")}</Link></Button>
+        )}
+        <Button size="sm" variant="outline" asChild><Link href="/daybook">{t("Open day book", "Ouvrir le journal du jour")}</Link></Button>
+        <Button size="sm" variant="ghost" onClick={onClose}>{t("New voucher", "Nouvelle pièce")}</Button>
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+function DraftBanner({ draft }: { draft: VoucherDraft }) {
+  const t = useT();
+  return (
+    <Alert>
+      <FileClock className="h-4 w-4" />
+      <AlertTitle>{t("Editing an optional voucher", "Modification d'une pièce facultative")}</AlertTitle>
+      <AlertDescription>
+        {t(
+          `Saved by ${draft.createdByName ?? "—"}. "Save as optional" updates it; "Save" posts it for real and removes it from the optional list.`,
+          `Enregistrée par ${draft.createdByName ?? "—"}. « Enregistrer comme facultative » la met à jour ; « Enregistrer » la passe pour de bon et la retire de la liste des facultatives.`,
+        )}
+      </AlertDescription>
+    </Alert>
+  );
+}
+
+function ActionBar({ canSave, children }: { canSave: boolean; children: ReactNode }) {
+  if (!canSave) return null;
+  return <div className="flex flex-wrap justify-end gap-2">{children}</div>;
+}
+
+// ================================================================== Helpers
+
+const str = (v: unknown) => (v === null || v === undefined ? "" : String(v));
+const numOrNull = (v: unknown) => (typeof v === "number" && v > 0 ? v : Number(v) > 0 ? Number(v) : null);
+const asArray = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? (v.filter((x) => x && typeof x === "object") as Record<string, unknown>[]) : []);
+const isAmount = (s: string) => /^\d+(\.\d+)?$/.test(s.trim());
+
+function useBalances() {
+  return useQuery<Account[]>({ queryKey: ["/api/accounts/balances"] });
+}
+
+/** Account picker for voucher lines: only the account types the voucher allows, without blocked accounts. */
+function LineAccountSelect({ value, onChange, types }: { value: number | null; onChange: (id: number) => void; types: Account["type"][] }) {
+  const t = useT();
+  const q = useQuery<Account[]>({ queryKey: ["/api/accounts"] });
+  const rows = (q.data ?? []).filter((a) => a.active && types.includes(a.type) && !a.isMoney && !(a.systemKey && BLOCKED_KEYS.includes(a.systemKey)));
+  return (
+    <Select value={value ? String(value) : ""} onValueChange={(v) => onChange(Number(v))}>
+      <SelectTrigger><SelectValue placeholder={t("Choose account", "Choisir le compte")} /></SelectTrigger>
+      <SelectContent>
+        {rows.map((a) => <SelectItem key={a.id} value={String(a.id)}>{a.code} · {a.name}</SelectItem>)}
+      </SelectContent>
+    </Select>
+  );
+}
+
+let rowKey = 1;
+
+// ================================================================== Payment / receipt
+
+interface VLine {
+  key: number;
+  mode: "party" | "account";
+  partyId: number | null;
+  accountId: number | null;
+  amount: string;
+  memo: string;
+}
+
+const blankVLine = (): VLine => ({ key: rowKey++, mode: "party", partyId: null, accountId: null, amount: "", memo: "" });
+
+const PARTY_TYPES: Record<"payment" | "receipt", Party["type"][]> = {
+  payment: ["supplier", "agent", "employee", "customer"],
+  receipt: ["customer", "supplier", "agent", "employee"],
+};
+const ACCOUNT_TYPES: Record<"payment" | "receipt", Account["type"][]> = {
+  payment: ["expense", "liability", "equity", "asset"],
+  receipt: ["income", "liability", "equity", "asset"],
+};
+
+function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted }: FormProps & { kind: "payment" | "receipt" }) {
+  const t = useT();
+  const p = draft?.payload ?? {};
+  const { data: moneyAccounts } = useMoneyAccounts();
+  const balances = useBalances();
+  const [day, setDay] = useState(draft?.date ?? todayLocal());
+  const [accountId, setAccountId] = useState<number | null>(numOrNull(p.accountId));
+  const [memo, setMemo] = useState(str(p.memo ?? draft?.memo));
+  const [lines, setLines] = useState<VLine[]>(() => {
+    const ls = asArray(p.lines).map<VLine>((l) => ({
+      key: rowKey++,
+      mode: l.accountId ? "account" : "party",
+      partyId: numOrNull(l.partyId),
+      accountId: numOrNull(l.accountId),
+      amount: str(l.amount),
+      memo: str(l.memo),
+    }));
+    return ls.length ? ls : [blankVLine()];
+  });
+  const rateField = useRateField(day);
+  useEffect(() => {
+    if (p.rate) rateField.setRate(str(p.rate));
+    // Only once, from the draft.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const [error, setError] = useState<string | null>(null);
+
+  const account = moneyAccounts.find((a) => a.id === accountId) ?? null;
+  const currency = account?.currency ?? "USD";
+  const isCdf = currency === "CDF";
+  const rate = d(rateField.rate);
+  const total = lines.reduce((s, l) => s.plus(isAmount(l.amount) ? d(l.amount).toDecimalPlaces(2) : 0), d(0));
+  const totalUsd = isCdf ? (rate.gt(0) ? total.dividedBy(rate) : null) : total;
+  const bal = balances.data?.find((a) => a.id === accountId);
+  const current = bal ? d(isCdf ? bal.nativeBalance : bal.balance) : null;
+  const after = current ? (kind === "payment" ? current.minus(total) : current.plus(total)) : null;
+
+  const m = useApiMutation<Record<string, unknown>, { id: number; total: string }>("POST", `/api/vouchers/${kind}`, {
+    success: kind === "payment" ? t("Payment recorded", "Paiement enregistré") : t("Receipt recorded", "Recette enregistrée"),
+    onSuccess: (r) => {
+      setLines([blankVLine()]);
+      setMemo("");
+      onPosted(r.id);
+    },
+  });
+
+  const set = (key: number, patch: Partial<VLine>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+
+  function payload(strict: boolean): Record<string, unknown> | null {
+    const out = lines
+      .filter((l) => !strict || l.partyId || l.accountId || l.amount.trim())
+      .map((l) => ({
+        ...(l.mode === "party" ? { partyId: l.partyId } : { accountId: l.accountId }),
+        amount: isAmount(l.amount) ? d(l.amount).toFixed(2) : l.amount.trim(),
+        memo: l.memo.trim() || null,
+      }));
+    return { accountId, ...(isCdf ? { rate: rateField.rate.trim() || null } : {}), memo: memo.trim() || null, lines: out };
+  }
+
+  function save() {
+    setError(null);
+    if (!account) return setError(t("Choose the money account.", "Choisissez le compte de trésorerie."));
+    if (isCdf && !rate.gt(0)) return setError(t("Enter the rate (CDF per 1 USD).", "Saisissez le taux (CDF pour 1 USD)."));
+    const used = lines.filter((l) => l.partyId || l.accountId || l.amount.trim());
+    if (!used.length) return setError(t("Add at least one line.", "Ajoutez au moins une ligne."));
+    for (const [i, l] of used.entries()) {
+      const target = l.mode === "party" ? l.partyId : l.accountId;
+      if (!target) return setError(t(`Line ${i + 1}: pick a contact or an account.`, `Ligne ${i + 1} : choisissez un contact ou un compte.`));
+      if (!isAmount(l.amount) || !d(l.amount).gt(0)) return setError(t(`Line ${i + 1}: enter an amount greater than zero.`, `Ligne ${i + 1} : saisissez un montant supérieur à zéro.`));
+    }
+    m.mutate({ date: day, ...payload(true) });
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardContent className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Field label={t("Date", "Date")}><Input type="date" value={day} onChange={(e) => setDay(e.target.value)} /></Field>
+          <Field
+            label={kind === "payment" ? t("Paid from", "Payé depuis") : t("Received into", "Reçu dans")}
+            hint={
+              current
+                ? `${t("Balance", "Solde")} ${money(current.toFixed(2), currency)} → ${t("after", "après")} ${money(after!.toFixed(2), currency)}`
+                : undefined
+            }
+            error={after && after.lt(0) && kind === "payment" ? t(`Not enough money: the balance would be ${money(after.toFixed(2), currency)}`, `Fonds insuffisants : le solde serait de ${money(after.toFixed(2), currency)}`) : null}
+          >
+            <MoneyAccountSelect value={accountId} onChange={(id) => setAccountId(id)} />
+          </Field>
+          {isCdf && (
+            <Field label={t("Rate (CDF per 1 USD)", "Taux (CDF pour 1 USD)")} hint={totalUsd ? `= ${usd(totalUsd.toFixed(2))}` : undefined}>
+              <Input inputMode="decimal" value={rateField.rate} onChange={(e) => rateField.setRate(e.target.value)} />
+            </Field>
+          )}
+          <Field label={t("Description", "Libellé")} className={isCdf ? "" : "lg:col-span-2"}>
+            <Input value={memo} onChange={(e) => setMemo(e.target.value)} placeholder={kind === "payment" ? t("e.g. supplier payments of the week", "ex. paiements fournisseurs de la semaine") : t("e.g. customer payments", "ex. encaissements clients")} />
+          </Field>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">{t("Lines", "Lignes")}</CardTitle>
+          <CardDescription>
+            {kind === "payment"
+              ? t(
+                  "A contact line pays a supplier, agent or employee (or gives money to a customer). An account line is an expense, a partner account or a debt.",
+                  "Une ligne contact paie un fournisseur, un agent ou un employé (ou remet de l'argent à un client). Une ligne compte est une dépense, un compte associé ou une dette.",
+                )
+              : t(
+                  "A contact line is a customer paying (or a supplier refund). An account line is other income, a partner contribution or a loan received.",
+                  "Une ligne contact est un client qui paie (ou un remboursement fournisseur). Une ligne compte est un autre produit, un apport d'associé ou un prêt reçu.",
+                )}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="hidden gap-2 px-1 text-xs font-medium text-muted-foreground md:grid md:grid-cols-[9.5rem_minmax(0,1.4fr)_8rem_minmax(0,1fr)_2.5rem]">
+            <span>{t("Type", "Type")}</span>
+            <span>{t("Contact or account", "Contact ou compte")}</span>
+            <span className="text-right">{t(`Amount (${currency})`, `Montant (${currency})`)}</span>
+            <span>{t("Line note", "Note de ligne")}</span>
+            <span />
+          </div>
+          {lines.map((l, i) => (
+            <div key={l.key} className="grid grid-cols-1 gap-2 rounded-lg border p-3 md:grid-cols-[9.5rem_minmax(0,1.4fr)_8rem_minmax(0,1fr)_2.5rem] md:items-center md:border-0 md:p-1">
+              <div className="flex items-center justify-between gap-2">
+                <div className="inline-flex rounded-md border p-0.5">
+                  {(["party", "account"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      type="button"
+                      onClick={() => set(l.key, { mode })}
+                      className={cn("rounded px-2 py-1 text-xs", l.mode === mode ? "bg-primary text-primary-foreground" : "text-muted-foreground hover:bg-muted")}
+                    >
+                      {mode === "party" ? t("Contact", "Contact") : t("Account", "Compte")}
+                    </button>
+                  ))}
+                </div>
+                <span className="text-xs text-muted-foreground md:hidden">{t("Line", "Ligne")} {i + 1}</span>
+              </div>
+              <div className="min-w-0">
+                {l.mode === "party" ? (
+                  <PartySelect types={PARTY_TYPES[kind]} value={l.partyId} onChange={(id) => set(l.key, { partyId: id })} placeholder={t("Choose contact…", "Choisir le contact…")} />
+                ) : (
+                  <LineAccountSelect types={ACCOUNT_TYPES[kind]} value={l.accountId} onChange={(id) => set(l.key, { accountId: id })} />
+                )}
+              </div>
+              <Input inputMode="decimal" className="text-right tabular" placeholder={t(`Amount (${currency})`, `Montant (${currency})`)} value={l.amount} onChange={(e) => set(l.key, { amount: e.target.value })} />
+              <Input placeholder={t("Note (optional)", "Note (facultatif)")} value={l.memo} onChange={(e) => set(l.key, { memo: e.target.value })} />
+              <Button variant="ghost" size="icon" className="justify-self-end" disabled={lines.length <= 1} onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} aria-label={t("Remove line", "Retirer la ligne")}>
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </div>
+          ))}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+            <Button variant="outline" size="sm" onClick={() => setLines((ls) => [...ls, blankVLine()])}>
+              <Plus className="mr-1 h-4 w-4" /> {t("Add line", "Ajouter une ligne")}
+            </Button>
+            <div className="text-right text-sm">
+              <span className="text-muted-foreground">{t("Total", "Total")} </span>
+              <Num className="text-lg font-semibold">{money(total.toFixed(2), currency)}</Num>
+              {isCdf && <span className="block text-xs text-muted-foreground">{totalUsd ? `≈ ${usd(totalUsd.toFixed(2))}` : t("enter the rate", "saisissez le taux")}</span>}
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {error && <ErrorText error={error} />}
+      <ActionBar canSave={canSave}>
+        <Button variant="outline" disabled={savingDraft} onClick={() => onSaveDraft({ kind, date: day, memo: memo.trim() || null, payload: payload(false)! })}>
+          {t("Save as optional", "Enregistrer comme facultative")}
+        </Button>
+        <Button onClick={save} disabled={m.isPending}>{t("Save", "Enregistrer")}</Button>
+      </ActionBar>
+    </div>
+  );
+}
+
+// ================================================================== Journal entry
+
+interface JLine {
+  key: number;
+  accountId: number | null;
+  partyId: number | null;
+  debit: string;
+  credit: string;
+  native: string;
+  rate: string;
+  memo: string;
+}
+
+const blankJLine = (): JLine => ({ key: rowKey++, accountId: null, partyId: null, debit: "", credit: "", native: "", rate: "", memo: "" });
+
+function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: FormProps) {
+  const t = useT();
+  const p = draft?.payload ?? {};
+  const accountsQ = useQuery<Account[]>({ queryKey: ["/api/accounts"] });
+  const accounts = accountsQ.data ?? [];
+  const [day, setDay] = useState(draft?.date ?? todayLocal());
+  const dayRate = useRate(day);
+  const [memo, setMemo] = useState(str(p.memo ?? draft?.memo));
+  const [opening, setOpening] = useState(p.type === "opening");
+  const [lines, setLines] = useState<JLine[]>(() => {
+    const ls = asArray(p.lines).map<JLine>((l) => ({
+      key: rowKey++,
+      accountId: numOrNull(l.accountId),
+      partyId: numOrNull(l.partyId),
+      debit: str(l.debit),
+      credit: str(l.credit),
+      native: l.nativeAmount ? d(l.nativeAmount).abs().toString() : "",
+      rate: str(l.rate),
+      memo: str(l.memo),
+    }));
+    while (ls.length < 2) ls.push(blankJLine());
+    return ls;
+  });
+  const m = useApiMutation<Record<string, unknown>, { id: number }>("POST", "/api/journals", {
+    success: t("Entry saved", "Écriture enregistrée"),
+    onSuccess: (r) => {
+      setLines([blankJLine(), blankJLine()]);
+      setMemo("");
+      onPosted(r.id);
+    },
+  });
+  const set = (key: number, patch: Partial<JLine>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  const acc = (id: number | null) => accounts.find((a) => a.id === id);
+  const partyTypes = (a?: Account): Party["type"][] | null =>
+    a?.systemKey === "receivables" ? ["customer"] : a?.systemKey === "payables" ? ["supplier", "agent", "employee"] : null;
+  const isCdf = (a?: Account) => !!a && a.isMoney && a.currency === "CDF";
+
+  const totalDebit = lines.reduce((s, l) => s.plus(d(l.debit).toDecimalPlaces(2)), d(0));
+  const totalCredit = lines.reduce((s, l) => s.plus(d(l.credit).toDecimalPlaces(2)), d(0));
+  const diff = totalDebit.minus(totalCredit);
+  const balanced = diff.isZero() && totalDebit.gt(0);
+  const problems: string[] = [];
+  if (!memo.trim()) problems.push(t("Add a description", "Ajoutez une description"));
+  if (lines.some((l) => !l.accountId)) problems.push(t("Choose an account on every line", "Choisissez un compte sur chaque ligne"));
+  if (lines.some((l) => d(l.debit).gt(0) && d(l.credit).gt(0))) problems.push(t("A line is either debit or credit", "Une ligne est soit au débit soit au crédit"));
+  if (lines.some((l) => partyTypes(acc(l.accountId)) && !l.partyId)) problems.push(t("Pick the contact on receivable/payable lines", "Choisissez le contact sur les lignes créances/dettes"));
+  if (lines.some((l) => isCdf(acc(l.accountId)) && (!d(l.native).gt(0) || !d(l.rate).gt(0)))) problems.push(t("CDF accounts need the CDF amount and the rate", "Les comptes en CDF ont besoin du montant en FC et du taux"));
+  if (totalDebit.isZero()) problems.push(t("Enter some amounts", "Saisissez des montants"));
+  if (!diff.isZero()) problems.push(t("Debits and credits must be equal", "Les débits et crédits doivent être égaux"));
+
+  function setNative(l: JLine, native: string, rate: string) {
+    const usdValue = d(rate).gt(0) && d(native).gt(0) ? d(native).dividedBy(d(rate)).toFixed(2) : "";
+    if (d(l.credit).gt(0)) set(l.key, { native, rate, credit: usdValue });
+    else set(l.key, { native, rate, debit: usdValue });
+  }
+
+  function chooseAccount(l: JLine, id: number) {
+    const a = acc(id);
+    const rate = isCdf(a) ? l.rate || (dayRate.data ? d(dayRate.data.cdfPerUsd).toString() : "") : "";
+    set(l.key, { accountId: id, partyId: null, native: "", rate });
+  }
+
+  function payload() {
+    return {
+      memo: memo.trim(),
+      type: opening ? "opening" : "manual",
+      lines: lines.map((l) => {
+        const a = acc(l.accountId);
+        return {
+          accountId: l.accountId,
+          debit: d(l.debit).gt(0) ? d(l.debit).toFixed(2) : null,
+          credit: d(l.credit).gt(0) ? d(l.credit).toFixed(2) : null,
+          partyId: partyTypes(a) ? l.partyId : null,
+          memo: l.memo.trim() || null,
+          ...(isCdf(a) ? { nativeAmount: d(l.native).toFixed(2), rate: l.rate.trim() ? d(l.rate).toString() : null } : {}),
+        };
+      }),
+    };
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardContent className="space-y-3 p-4">
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-[10rem_1fr]">
+            <Field label={t("Date", "Date")}><Input type="date" value={day} onChange={(e) => setDay(e.target.value)} /></Field>
+            <Field label={t("Description", "Libellé")}><Input value={memo} onChange={(e) => setMemo(e.target.value)} /></Field>
+          </div>
+          <label className="flex items-center gap-2 text-sm">
+            <Switch checked={opening} onCheckedChange={setOpening} />
+            {t("Opening balance (cash, debts and capital you start with)", "Solde d'ouverture (caisse, dettes et capital de départ)")}
+          </label>
+          <p className="text-xs text-muted-foreground">
+            {t("For corrections the other screens cannot make. Stock and container accounts cannot be used here.", "Pour les corrections impossibles depuis les autres écrans. Les comptes de stock et de conteneurs ne sont pas autorisés ici.")}
+          </p>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 pb-2">
+          <CardTitle className="text-base">{t("Lines", "Lignes")}</CardTitle>
+          <Badge variant={balanced ? "secondary" : "destructive"} className={cn(balanced && "text-emerald-700 dark:text-emerald-400")}>
+            {balanced ? t("Balanced", "Équilibrée") : t("Unbalanced", "Déséquilibrée")}
+          </Badge>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="hidden gap-2 px-1 text-xs font-medium text-muted-foreground md:grid md:grid-cols-[minmax(0,1.5fr)_7rem_7rem_minmax(0,1fr)_2.5rem]">
+            <span>{t("Account", "Compte")}</span>
+            <span className="text-right">{t("Debit USD", "Débit USD")}</span>
+            <span className="text-right">{t("Credit USD", "Crédit USD")}</span>
+            <span>{t("Line note", "Note de ligne")}</span>
+            <span />
+          </div>
+          {lines.map((l, i) => {
+            const a = acc(l.accountId);
+            const pt = partyTypes(a);
+            return (
+              <div key={l.key} className="rounded-lg border p-3 md:p-2">
+                <div className="grid grid-cols-2 gap-2 md:grid-cols-[minmax(0,1.5fr)_7rem_7rem_minmax(0,1fr)_2.5rem] md:items-center">
+                  <div className="col-span-2 min-w-0 md:col-span-1">
+                    <span className="mb-1 block text-xs text-muted-foreground md:hidden">{t("Account", "Compte")} {i + 1}</span>
+                    <AccountSelect value={l.accountId} onChange={(id) => chooseAccount(l, id)} />
+                  </div>
+                  <Input inputMode="decimal" className="text-right tabular" placeholder={t("Debit", "Débit")} value={l.debit} onChange={(e) => set(l.key, { debit: e.target.value, credit: e.target.value ? "" : l.credit })} />
+                  <Input inputMode="decimal" className="text-right tabular" placeholder={t("Credit", "Crédit")} value={l.credit} onChange={(e) => set(l.key, { credit: e.target.value, debit: e.target.value ? "" : l.debit })} />
+                  <Input className="col-span-2 md:col-span-1" placeholder={t("Note (optional)", "Note (facultatif)")} value={l.memo} onChange={(e) => set(l.key, { memo: e.target.value })} />
+                  <Button variant="ghost" size="icon" className="col-span-2 justify-self-end md:col-span-1" disabled={lines.length <= 2} onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} aria-label={t("Remove line", "Retirer la ligne")}>
+                    <Trash2 className="h-4 w-4" />
+                  </Button>
+                </div>
+                {pt && (
+                  <div className="mt-2 md:max-w-md">
+                    <Field label={pt[0] === "customer" ? t("Customer", "Client") : t("Supplier, agent or employee", "Fournisseur, agent ou employé")}>
+                      <PartySelect types={pt} value={l.partyId} onChange={(id) => set(l.key, { partyId: id })} allowCreate={false} />
+                    </Field>
+                  </div>
+                )}
+                {isCdf(a) && (
+                  <div className="mt-2 grid grid-cols-2 gap-2 md:max-w-md">
+                    <Field label={t("Amount in CDF", "Montant en FC")}>
+                      <Input inputMode="decimal" value={l.native} onChange={(e) => setNative(l, e.target.value, l.rate)} />
+                    </Field>
+                    <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 USD)")}>
+                      <Input inputMode="decimal" value={l.rate} onChange={(e) => setNative(l, l.native, e.target.value)} />
+                    </Field>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+          <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
+            <Button variant="outline" size="sm" onClick={() => setLines((ls) => [...ls, blankJLine()])}>
+              <Plus className="mr-1 h-4 w-4" /> {t("Add line", "Ajouter une ligne")}
+            </Button>
+            <div className="flex flex-wrap justify-end gap-4 text-sm">
+              <span>{t("Debits", "Débits")}: <Num className="font-medium">{usd(totalDebit.toFixed(2))}</Num></span>
+              <span>{t("Credits", "Crédits")}: <Num className="font-medium">{usd(totalCredit.toFixed(2))}</Num></span>
+              <span className={cn("font-semibold", diff.isZero() ? "text-emerald-600 dark:text-emerald-400" : "text-destructive")}>
+                {t("Difference", "Écart")}: <Num>{usd(diff.toFixed(2))}</Num>
+              </span>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {canSave && problems.length > 0 && <p className="text-right text-xs text-muted-foreground">{problems[0]}</p>}
+      <ActionBar canSave={canSave}>
+        <Button variant="outline" disabled={savingDraft} onClick={() => onSaveDraft({ kind: "journal", date: day, memo: memo.trim() || null, payload: payload() })}>
+          {t("Save as optional", "Enregistrer comme facultative")}
+        </Button>
+        <Button disabled={problems.length > 0 || m.isPending} onClick={() => m.mutate({ date: day, ...payload() })}>{t("Save", "Enregistrer")}</Button>
+      </ActionBar>
+    </div>
+  );
+}
+
+// ================================================================== Transfer / exchange (logic from Money.tsx TransferDialog)
+
+function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: FormProps) {
+  const t = useT();
+  const p = draft?.payload ?? {};
+  const { data: moneyAccounts } = useMoneyAccounts();
+  const balances = useBalances();
+  const [day, setDay] = useState(draft?.date ?? todayLocal());
+  const [fromId, setFromId] = useState<number | null>(numOrNull(p.fromAccountId));
+  const [toId, setToId] = useState<number | null>(numOrNull(p.toAccountId));
+  const [fromAmount, setFromAmount] = useState(str(p.fromAmount));
+  const [toAmount, setToAmount] = useState(str(p.toAmount));
+  const [toTouched, setToTouched] = useState(!!p.toAmount);
+  const [memo, setMemo] = useState(str(p.memo ?? draft?.memo));
+  const dayRate = useRateField(day);
+  useEffect(() => {
+    if (p.rate) dayRate.setRate(str(p.rate));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  const from = moneyAccounts.find((a) => a.id === fromId) ?? null;
+  const to = moneyAccounts.find((a) => a.id === toId) ?? null;
+  const anyCdf = from?.currency === "CDF" || to?.currency === "CDF";
+  const sameCurrency = from && to && from.currency === to.currency;
+
+  // Same currency: the "to" amount follows the "from" amount until edited.
+  useEffect(() => {
+    if (sameCurrency && !toTouched) setToAmount(fromAmount);
+  }, [sameCurrency, fromAmount, toTouched]);
+
+  const fa = d(fromAmount);
+  const ta = d(toAmount);
+  const implied =
+    from && to && from.currency !== to.currency && fa.gt(0) && ta.gt(0)
+      ? from.currency === "CDF"
+        ? fa.dividedBy(ta)
+        : ta.dividedBy(fa)
+      : null;
+  // The book rate follows the exchange's own rate (no gain/loss) until the user types one.
+  const followsImplied = !!implied && !dayRate.touched;
+  const rate = followsImplied ? implied.toDecimalPlaces(4).toString() : dayRate.rate;
+  const setRate = dayRate.setRate;
+  const r = d(rate);
+  const toUsd = (a: Account | null, x: ReturnType<typeof d>) => (a?.currency === "CDF" ? (r.gt(0) ? x.dividedBy(r) : null) : x);
+  const fromUsd = toUsd(from, fa);
+  const toUsdV = toUsd(to, ta);
+  const diff = fromUsd && toUsdV ? fromUsd.toDecimalPlaces(2).minus(toUsdV.toDecimalPlaces(2)) : null;
+  const balOf = (a: Account | null) => {
+    const b = a && balances.data?.find((x) => x.id === a.id);
+    return b ? money(a.currency === "CDF" ? b.nativeBalance : b.balance, a.currency) : null;
+  };
+
+  const m = useApiMutation<Record<string, unknown>, { id: number }>("POST", "/api/money/transfer", {
+    success: t("Transfer recorded", "Transfert enregistré"),
+    onSuccess: (res) => {
+      setFromAmount("");
+      setToAmount("");
+      setToTouched(false);
+      setMemo("");
+      onPosted(res.id);
+    },
+  });
+  const valid = from && to && from.id !== to.id && fa.gt(0) && ta.gt(0) && (!anyCdf || r.gt(0));
+
+  function payload(): Record<string, unknown> {
+    return {
+      fromAccountId: fromId,
+      fromAmount: fa.gt(0) ? fa.toFixed(2) : fromAmount.trim(),
+      toAccountId: toId,
+      toAmount: ta.gt(0) ? ta.toFixed(2) : toAmount.trim(),
+      ...(anyCdf && r.gt(0) ? { rate: r.toString() } : {}),
+      memo: memo.trim() || null,
+    };
+  }
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardHeader className="pb-2">
+          <CardTitle className="text-base">{t("Transfer / exchange", "Transfert / change")}</CardTitle>
+          <CardDescription>
+            {t(
+              "Move money between cash boxes, bank and mobile money, or change dollars into francs. Each amount is in its own account's currency.",
+              "Déplacer de l'argent entre caisses, banque et mobile money, ou changer des dollars en francs. Chaque montant est dans la devise de son compte.",
+            )}
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-3 sm:grid-cols-2">
+          <Field label={t("Date", "Date")} className="sm:col-span-2 sm:max-w-[12rem]">
+            <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
+          </Field>
+          <Field label={t("From account", "Du compte")} hint={balOf(from) ? `${t("Balance", "Solde")} ${balOf(from)}` : undefined}>
+            <MoneyAccountSelect value={fromId} onChange={(id) => setFromId(id)} />
+          </Field>
+          <Field label={t(`Amount out (${from?.currency ?? "—"})`, `Montant sorti (${from?.currency ?? "—"})`)}>
+            <Input inputMode="decimal" value={fromAmount} onChange={(e) => setFromAmount(e.target.value)} placeholder="0" />
+          </Field>
+          <Field
+            label={t("To account", "Vers le compte")}
+            hint={balOf(to) ? `${t("Balance", "Solde")} ${balOf(to)}` : undefined}
+            error={from && to && from.id === to.id ? t("Pick two different accounts", "Choisissez deux comptes différents") : null}
+          >
+            <MoneyAccountSelect value={toId} onChange={(id) => setToId(id)} />
+          </Field>
+          <Field label={t(`Amount in (${to?.currency ?? "—"})`, `Montant reçu (${to?.currency ?? "—"})`)}>
+            <Input inputMode="decimal" value={toAmount} onChange={(e) => { setToAmount(e.target.value); setToTouched(true); }} placeholder="0" />
+          </Field>
+          {anyCdf && (
+            <Field
+              label={t("Book rate (CDF per 1 USD)", "Taux comptable (CDF pour 1 USD)")}
+              hint={
+                followsImplied
+                  ? t("Same as the rate of this exchange: no exchange difference.", "Identique au taux de ce change : aucune différence de change.")
+                  : t("Used to value the franc side in dollars.", "Sert à valoriser le côté francs en dollars.")
+              }
+            >
+              <Input inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} />
+            </Field>
+          )}
+          <Field label={t("Note (optional)", "Note (facultatif)")} className={anyCdf ? "" : "sm:col-span-2"}>
+            <Input value={memo} onChange={(e) => setMemo(e.target.value)} />
+          </Field>
+          {(implied || (diff && !diff.isZero())) && (
+            <div className="space-y-1 rounded-md border bg-muted/40 p-3 text-sm sm:col-span-2">
+              {implied && (
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>{t("Rate of this exchange", "Taux de ce change")}</span>
+                  <span className="flex items-center gap-2">
+                    <Num className="font-medium">{implied.toDecimalPlaces(2).toString()} CDF / USD</Num>
+                    {!followsImplied && (
+                      <Button type="button" size="sm" variant="ghost" onClick={() => setRate(implied.toDecimalPlaces(4).toString())}>
+                        {t("Use as book rate", "Utiliser comme taux")}
+                      </Button>
+                    )}
+                  </span>
+                </div>
+              )}
+              {diff && !diff.isZero() && (
+                <div className="flex flex-wrap justify-between gap-2">
+                  <span>
+                    {implied && !followsImplied
+                      ? t(
+                          `Exchange difference: the book rate (${r.toDecimalPlaces(2).toString()}) differs from this exchange's rate`,
+                          `Différence de change : le taux comptable (${r.toDecimalPlaces(2).toString()}) diffère du taux de ce change`,
+                        )
+                      : t("Exchange difference (booked automatically)", "Différence de change (comptabilisée automatiquement)")}
+                  </span>
+                  <Num className={diff.isPositive() ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"}>
+                    {diff.isPositive() ? t("loss", "perte") : t("gain", "gain")} {usd(diff.abs().toFixed(2))}
+                  </Num>
+                </div>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+      <ActionBar canSave={canSave}>
+        <Button variant="outline" disabled={savingDraft} onClick={() => onSaveDraft({ kind: "transfer", date: day, memo: memo.trim() || null, payload: payload() })}>
+          {t("Save as optional", "Enregistrer comme facultative")}
+        </Button>
+        <Button onClick={() => m.mutate({ date: day, ...payload() })} disabled={!valid || m.isPending}>{t("Save", "Enregistrer")}</Button>
+      </ActionBar>
+    </div>
+  );
+}
+
+// ================================================================== Stock adjustment (form from Stock.tsx)
+
+function AdjustmentTab({ draft, canSave, savingDraft, onSaveDraft, onPosted }: FormProps) {
+  // Keyed on the saved version so a background refetch does not overwrite what is being typed.
+  const initial = useMemo(
+    () => (draft ? { date: draft.date, payload: draft.payload as AdjustmentPayload } : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [draft?.id, draft?.updatedAt],
+  );
+  return (
+    <AdjustForm
+      initial={initial}
+      readOnly={!canSave}
+      savingDraft={savingDraft}
+      onSaveDraft={(x: AdjustmentDraft) => onSaveDraft({ kind: "adjustment", date: x.date, memo: x.memo, payload: x.payload as Record<string, unknown> })}
+      onDone={(r) => onPosted(r.journalId ?? null)}
+    />
+  );
+}

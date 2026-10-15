@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { AlertTriangle, ArrowRightLeft, Bike, CheckCircle2, ChevronDown, ChevronRight, Search, Trash2 } from "lucide-react";
@@ -16,6 +16,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
 import { LocationSelect, useLocations, VariantSearch } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
+import { api, withQuery } from "@/lib/api";
 import { d, date, monthStart, qty, todayLocal, unitCost, usd, variantText } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
@@ -251,7 +252,37 @@ interface AdjLine {
 
 let lineKey = 1;
 
-function AdjustForm({ onDone }: { onDone: () => void }) {
+/** Body of POST /api/stock/adjustments without the date (the shape an optional voucher stores). */
+export interface AdjustmentPayload {
+  locationId?: number | null;
+  kind?: Kind;
+  reason?: string;
+  lines?: { variantId: number; qtyChange: string; unitCost?: string; unitIds?: number[]; serials?: { chassisNo: string; engineNo?: string | null; color?: string | null }[] }[];
+}
+
+export interface AdjustmentDraft {
+  date: string;
+  memo: string | null;
+  payload: AdjustmentPayload;
+}
+
+/**
+ * Stock adjustment form. On the Stock page it only posts; the Vouchers page also passes
+ * `initial` (an optional voucher to prefill) and `onSaveDraft` (save as optional voucher).
+ */
+export function AdjustForm({
+  onDone,
+  initial,
+  onSaveDraft,
+  savingDraft,
+  readOnly,
+}: {
+  onDone: (result: { id: number; number: string; journalId: number | null }) => void;
+  initial?: { date?: string; payload: AdjustmentPayload } | null;
+  onSaveDraft?: (draft: AdjustmentDraft) => void;
+  savingDraft?: boolean;
+  readOnly?: boolean;
+}) {
   const t = useT();
   const [dateValue, setDateValue] = useState(todayLocal());
   const [locationId, setLocationId] = useState<number | null>(null);
@@ -263,19 +294,86 @@ function AdjustForm({ onDone }: { onDone: () => void }) {
   const onlyAdd = kind === "opening";
   const signed = !onlyRemove && !onlyAdd;
 
-  const m = useApiMutation<unknown, { number: string }>("POST", "/api/stock/adjustments", {
+  const m = useApiMutation<unknown, { id: number; number: string; journalId: number | null }>("POST", "/api/stock/adjustments", {
     success: t("Stock adjusted", "Stock ajusté"),
-    onSuccess: () => {
+    onSuccess: (result) => {
       setLines([]);
       setReason("");
-      onDone();
+      onDone(result);
     },
   });
 
-  // Changing location invalidates picked motorcycles.
+  // Changing location invalidates picked motorcycles (but not while loading an optional voucher).
+  const prevLocation = useRef<number | null>(null);
+  const hydrating = useRef(false);
   useEffect(() => {
-    setLines((ls) => ls.map((l) => ({ ...l, unitIds: [] })));
+    if (prevLocation.current !== null && prevLocation.current !== locationId && !hydrating.current) {
+      setLines((ls) => ls.map((l) => ({ ...l, unitIds: [] })));
+    }
+    hydrating.current = false;
+    prevLocation.current = locationId;
   }, [locationId]);
+
+  // Prefill from an optional voucher.
+  useEffect(() => {
+    if (!initial) return;
+    let cancelled = false;
+    const p = initial.payload ?? {};
+    const k = p.kind && KINDS.includes(p.kind) ? p.kind : "count";
+    const draftLines = Array.isArray(p.lines) ? p.lines : [];
+    (async () => {
+      const ids = draftLines.map((l) => l.variantId).filter(Boolean);
+      const variants = ids.length
+        ? await api<VariantRow[]>("GET", withQuery("/api/variants", { ids: ids.join(","), locationId: p.locationId ?? undefined, limit: 500 })).catch(() => [] as VariantRow[])
+        : [];
+      if (cancelled) return;
+      if (initial.date) setDateValue(initial.date);
+      setKind(k);
+      setReason(p.reason ?? "");
+      if (p.locationId && p.locationId !== prevLocation.current) {
+        hydrating.current = true;
+        setLocationId(p.locationId);
+      }
+      const rows: AdjLine[] = [];
+      for (const l of draftLines) {
+        const v = variants.find((x) => x.id === l.variantId);
+        if (!v) continue;
+        const q = d(l.qtyChange);
+        rows.push({
+          key: lineKey++,
+          variant: v,
+          qty: k === "damage" || k === "loss" ? q.abs().toString() : q.toString(),
+          unitCost: l.unitCost ?? "",
+          serials: (l.serials ?? []).map((s) => ({ chassisNo: s.chassisNo ?? "", engineNo: s.engineNo ?? "", color: s.color ?? "" })),
+          unitIds: l.unitIds ?? [],
+        });
+      }
+      setLines(rows);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [initial]);
+
+  function draftPayload(): AdjustmentPayload {
+    return {
+      locationId,
+      kind,
+      reason: reason.trim(),
+      lines: lines.map((l) => {
+        const c = change(l);
+        return {
+          variantId: l.variant.id,
+          qtyChange: c.toString(),
+          ...(c.gt(0) && l.unitCost.trim() ? { unitCost: d(l.unitCost).toString() } : {}),
+          ...(c.gt(0) && l.variant.tracksSerials
+            ? { serials: l.serials.map((s) => ({ chassisNo: s.chassisNo.trim().toUpperCase(), engineNo: s.engineNo.trim().toUpperCase() || null, color: s.color.trim() || null })) }
+            : {}),
+          ...(c.lt(0) && l.variant.tracksSerials ? { unitIds: l.unitIds } : {}),
+        };
+      }),
+    };
+  }
 
   function change(l: AdjLine) {
     if (!isQty(l.qty)) return d(0);
@@ -468,9 +566,16 @@ function AdjustForm({ onDone }: { onDone: () => void }) {
       </Card>
 
       {error && <ErrorText error={error} />}
-      <div className="flex justify-end">
-        <Button onClick={submit} disabled={m.isPending || lines.length === 0}>{t("Save adjustment", "Enregistrer l'ajustement")}</Button>
-      </div>
+      {!readOnly && (
+        <div className="flex flex-wrap justify-end gap-2">
+          {onSaveDraft && (
+            <Button variant="outline" disabled={savingDraft || lines.length === 0} onClick={() => onSaveDraft({ date: dateValue, memo: reason.trim() || null, payload: draftPayload() })}>
+              {t("Save as optional", "Enregistrer comme facultative")}
+            </Button>
+          )}
+          <Button onClick={submit} disabled={m.isPending || lines.length === 0}>{t("Save adjustment", "Enregistrer l'ajustement")}</Button>
+        </div>
+      )}
     </div>
   );
 }
