@@ -94,7 +94,6 @@ function shiftDay(day: string, by: number) {
 function sourceHref(r: DaybookRow): string {
   if (r.saleId) return `/sales/${r.saleId}`;
   if (r.sourceType === "container" && r.sourceId) return `/containers/${r.sourceId}`;
-  if (r.sourceType === "expense") return "/expenses";
   return `/vouchers/${r.id}`;
 }
 
