@@ -126,6 +126,11 @@ export function registerAuthRoutes(app: Express) {
   });
 }
 
+export async function checkPassword(userId: number, password: string) {
+  const [u] = await db.select({ hash: users.passwordHash }).from(users).where(eq(users.id, userId));
+  if (!u || !(await bcrypt.compare(password, u.hash))) throw new AppError(400, "Your current password is wrong", "BAD_PASSWORD", "Votre mot de passe actuel est incorrect");
+}
+
 export async function hashPassword(password: string) {
   if (password.length < 8) throw new AppError(400, "Passwords need at least 8 characters", "WEAK_PASSWORD", "Le mot de passe doit contenir au moins 8 caractères");
   return bcrypt.hash(password, 12);

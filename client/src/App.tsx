@@ -1,5 +1,6 @@
 import { QueryClientProvider } from "@tanstack/react-query";
-import { Redirect, Route, Switch, useLocation } from "wouter";
+import { Link, Redirect, Route, Switch, useLocation } from "wouter";
+import { Button } from "@/components/ui/button";
 import { Toaster } from "@/components/ui/toaster";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { ThemeProvider } from "@/components/ThemeProvider";
@@ -8,7 +9,7 @@ import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Loading } from "@/components/common";
 import { queryClient } from "@/lib/api";
 import { AuthProvider, useAuth, type Role } from "@/lib/auth";
-import { I18nProvider } from "@/lib/i18n";
+import { I18nProvider, useT } from "@/lib/i18n";
 import Login from "@/pages/Login";
 import Dashboard from "@/pages/Dashboard";
 import POS from "@/pages/POS";
@@ -38,9 +39,30 @@ import StockImport from "@/pages/StockImport";
 import SalesTools from "@/pages/SalesTools";
 import Analytics from "@/pages/Analytics";
 
-function Guard({ roles, children }: { roles: Role[]; children: React.ReactNode }) {
+/** Where each role starts: the till for cashiers, the dashboard for everyone else. */
+const homeOf = (role?: Role) => (role === "cashier" ? "/pos" : "/");
+
+function Blocked({ forbidden }: { forbidden?: boolean }) {
+  const { user } = useAuth();
+  const t = useT();
+  return (
+    <div className="mx-auto max-w-md py-16 text-center">
+      <h1 className="text-xl font-semibold">{forbidden ? t("Not available for your role", "Page non accessible à votre rôle") : t("Page not found", "Page introuvable")}</h1>
+      <p className="mt-2 text-sm text-muted-foreground">
+        {forbidden
+          ? t("Ask the owner if you need this page.", "Demandez au propriétaire si vous avez besoin de cette page.")
+          : t("The link may be old or mistyped.", "Le lien est peut-être ancien ou mal saisi.")}
+      </p>
+      <Button asChild className="mt-6">
+        <Link href={homeOf(user?.role)}>{user?.role === "cashier" ? t("Go to the till", "Aller à la caisse") : t("Go to the dashboard", "Aller au tableau de bord")}</Link>
+      </Button>
+    </div>
+  );
+}
+
+function Guard({ path, roles, children }: { path: string; roles: Role[]; children: React.ReactNode }) {
   const { can, user } = useAuth();
-  if (!can(...roles)) return <Redirect to={user?.role === "cashier" ? "/pos" : "/"} />;
+  if (!can(...roles)) return path === "/" ? <Redirect to={homeOf(user?.role)} /> : <Blocked forbidden />;
   return <>{children}</>;
 }
 
@@ -51,7 +73,7 @@ function Routes() {
   if (!user) return <Login />;
   const R = (path: string, roles: Role[], C: React.ComponentType) => (
     <Route path={path}>
-      <Guard roles={roles}>
+      <Guard path={path} roles={roles}>
         <C />
       </Guard>
     </Route>
@@ -88,7 +110,7 @@ function Routes() {
         {R("/reports", ["manager", "partner"], Reports)}
         {R("/settings", [], Settings)}
         <Route>
-          <Redirect to="/" />
+          <Blocked />
         </Route>
       </Switch>
       </ErrorBoundary>

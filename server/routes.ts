@@ -33,7 +33,7 @@ import { validatePartnerShares } from "@shared/partnerSplit";
 import { dec } from "@shared/money";
 import { db } from "./db";
 import { badRequest, conflict, forbidden, notFound } from "./errors";
-import { hashPassword, requireAuth, requireRole } from "./auth";
+import { checkPassword, hashPassword, requireAuth, requireRole } from "./auth";
 import {
   asyncHandler,
   decimalString,
@@ -231,11 +231,16 @@ export function registerRoutes(app: Express) {
   }));
 
   app.patch("/api/me", asyncHandler(async (req, res) => {
-    const body = z.object({ language: z.enum(["fr", "en"]).optional(), password: z.string().min(8).max(200).optional() }).parse(req.body);
+    const body = z
+      .object({ language: z.enum(["fr", "en"]).optional(), password: z.string().min(8).max(200).optional(), currentPassword: z.string().max(200).optional() })
+      .parse(req.body);
+    // Changing your own password needs the current one, so an unattended open session cannot lock you out.
+    if (body.password) await checkPassword(uid(req), body.currentPassword ?? "");
     await db
       .update(users)
       .set({ ...(body.language && { language: body.language }), ...(body.password && { passwordHash: await hashPassword(body.password) }) })
       .where(eq(users.id, uid(req)));
+    if (body.password) await audit(req, "update", "user", uid(req), { password: "(changed)" });
     res.json({ ok: true });
   }));
 

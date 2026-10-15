@@ -1,8 +1,7 @@
 import { useState } from "react";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Field, ErrorText } from "@/components/common";
+import { Field, ErrorText, SubmitButton } from "@/components/common";
 import { ThemeToggle } from "@/components/ThemeProvider";
 import { api, queryClient } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
@@ -45,16 +44,21 @@ export default function Login() {
         </CardHeader>
         <CardContent>
           <form onSubmit={submit} className="space-y-4">
-            <Field label={t("Username", "Nom d'utilisateur")}>
+            <Field label={t("Username", "Nom d'utilisateur")} required>
               <Input autoFocus autoCapitalize="none" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} />
             </Field>
-            <Field label={t("Password", "Mot de passe")}>
+            <Field label={t("Password", "Mot de passe")} required>
               <Input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
             </Field>
             <ErrorText error={error} />
-            <Button type="submit" className="w-full" disabled={busy || !username || !password}>
+            <SubmitButton
+              type="submit"
+              className="sm:flex-col sm:items-stretch [&>button]:w-full [&>p]:text-center"
+              blocked={!username ? t("Enter your username", "Saisissez votre nom d'utilisateur") : !password ? t("Enter your password", "Saisissez votre mot de passe") : null}
+              pending={busy}
+            >
               {t("Sign in", "Se connecter")}
-            </Button>
+            </SubmitButton>
             <button type="button" className="w-full text-center text-xs text-muted-foreground" onClick={() => setLang(lang === "fr" ? "en" : "fr")}>
               {lang === "fr" ? "English" : "Français"}
             </button>

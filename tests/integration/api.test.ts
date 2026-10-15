@@ -57,6 +57,15 @@ describe.skipIf(!hasDb)("API", async () => {
     expect((await partner("POST", "/api/auth/login", { username: "partnerb", password: "partner-pass" })).status).toBe(200);
   });
 
+  it("lets any role change their own password, only with the current one", async () => {
+    expect((await cashier("PATCH", "/api/me", { password: "new-cashier-pass" })).status).toBe(400);
+    expect((await cashier("PATCH", "/api/me", { password: "new-cashier-pass", currentPassword: "wrong" })).status).toBe(400);
+    expect((await cashier("PATCH", "/api/me", { password: "new-cashier-pass", currentPassword: "cashier-pass" })).status).toBe(200);
+    expect((await cashier("PATCH", "/api/me", { language: "en" })).status).toBe(200);
+    const again = client();
+    expect((await again("POST", "/api/auth/login", { username: "cashier1", password: "new-cashier-pass" })).status).toBe(200);
+  });
+
   it("validates input with readable messages", async () => {
     const r = await owner("POST", "/api/products", { name: "", variants: [] });
     expect(r.status).toBe(400);

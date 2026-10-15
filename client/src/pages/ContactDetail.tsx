@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader } from "@/components/common";
+import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
 import { MoneyAccountSelect, PARTY_LABELS, RateInput, useRateField } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
@@ -231,7 +231,15 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
   const fcOwed = owedIn("CDF");
   const cnyOwed = !isCustomer && account?.currency === "USD" ? owedIn("CNY") : null;
   const [settleCny, setSettleCny] = useState("");
-  const valid = !!account && d(amount).gt(0) && (!isCdf || d(rate).gt(0)) && (!cnyOwed || !settleCny || d(settleCny).lte(cnyOwed));
+  const blocked = !account
+    ? t("Choose an account", "Choisissez un compte")
+    : !d(amount).gt(0)
+      ? t("Enter an amount above zero", "Saisissez un montant supérieur à zéro")
+      : isCdf && !d(rate).gt(0)
+        ? t("Enter the exchange rate", "Saisissez le taux de change")
+        : cnyOwed && settleCny && !d(settleCny).lte(cnyOwed)
+          ? t("The yuan settled are more than what is owed", "Les yuans réglés dépassent ce qui est dû")
+          : null;
 
   function save() {
     if (!account) return;
@@ -262,11 +270,12 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
           <Field label={t("Date", "Date")}>
             <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
           </Field>
-          <Field label={isCustomer ? t("Received into", "Reçu dans") : t("Paid from", "Payé depuis")}>
+          <Field label={isCustomer ? t("Received into", "Reçu dans") : t("Paid from", "Payé depuis")} required>
             <MoneyAccountSelect value={account?.id ?? null} onChange={(_, a) => setAccount(a)} />
           </Field>
           <Field
             label={t(`Amount (${account?.currency ?? "USD"})`, `Montant (${account?.currency ?? "USD"})`)}
+            required
           >
             <div className="flex gap-2">
               <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
@@ -304,7 +313,7 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
             </Field>
           )}
           {isCdf && (
-            <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 USD)")} hint={usdEquivalent ? `= ${usd(usdEquivalent)}` : undefined}>
+            <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 USD)")} hint={usdEquivalent ? `= ${usd(usdEquivalent)}` : undefined} required>
               <RateInput day={day} value={rate} onChange={setRate} />
             </Field>
           )}
@@ -314,7 +323,7 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <Button onClick={save} disabled={!valid || mutation.isPending}>{t("Save", "Enregistrer")}</Button>
+          <SubmitButton onClick={save} blocked={blocked} pending={mutation.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

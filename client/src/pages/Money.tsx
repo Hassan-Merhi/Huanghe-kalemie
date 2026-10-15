@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { ArrowDownToLine, ArrowLeftRight, ArrowUpFromLine, HandCoins, Landmark, Send, Wallet } from "lucide-react";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
+import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
 import { MoneyAccountSelect, PartySelect, RateInput, useMoneyAccounts, useRate, useRateField } from "@/components/pickers";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -39,7 +39,7 @@ export default function Money() {
   return (
     <div className="space-y-5">
       <PageHeader
-        title={t("Cash and accounts", "Caisse et comptes")}
+        title={t("Treasury", "Trésorerie")}
         description={t("Cash boxes, bank and mobile money, what customers owe and what we owe.", "Caisses, banque et mobile money, ce que les clients doivent et ce que nous devons.")}
         actions={
           <>
@@ -150,11 +150,11 @@ function AmountFields({
   const usdValue = isCdf && d(rate).gt(0) ? d(amount).dividedBy(d(rate)) : null;
   return (
     <>
-      <Field label={t(`Amount (${account?.currency ?? "USD"})`, `Montant (${account?.currency ?? "USD"})`)}>
+      <Field label={t(`Amount (${account?.currency ?? "USD"})`, `Montant (${account?.currency ?? "USD"})`)} required>
         <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
       </Field>
       {isCdf && (
-        <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 $)")} hint={usdValue ? `= ${usd(usdValue.toFixed(2))}` : undefined}>
+        <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 $)")} hint={usdValue ? `= ${usd(usdValue.toFixed(2))}` : undefined} required>
           <RateInput day={day} value={rate} onChange={setRate} />
         </Field>
       )}
@@ -204,7 +204,17 @@ function TransferDialog({ onClose }: { onClose: () => void }) {
   const diff = value && received ? value.toDecimalPlaces(2).minus(received.toDecimalPlaces(2)) : null;
 
   const m = useApiMutation<Record<string, unknown>>("POST", "/api/money/transfer", { success: t("Transfer recorded", "Transfert enregistré"), onSuccess: onClose });
-  const valid = from && to && from.id !== to.id && fa.gt(0) && ta.gt(0);
+  const blocked = !from
+    ? t("Choose the account the money leaves", "Choisissez le compte de départ")
+    : !fa.gt(0)
+      ? t("Enter the amount out", "Saisissez le montant sorti")
+      : !to
+        ? t("Choose the account the money goes to", "Choisissez le compte d'arrivée")
+        : from.id === to.id
+          ? t("Pick two different accounts", "Choisissez deux comptes différents")
+          : !ta.gt(0)
+            ? t("Enter the amount in", "Saisissez le montant reçu")
+            : null;
 
   function save() {
     m.mutate({
@@ -233,16 +243,16 @@ function TransferDialog({ onClose }: { onClose: () => void }) {
           <Field label={t("Date", "Date")} className="sm:col-span-2">
             <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
           </Field>
-          <Field label={t("From account", "Du compte")}>
+          <Field label={t("From account", "Du compte")} required>
             <MoneyAccountSelect value={from?.id ?? null} onChange={(_, a) => setFrom(a)} />
           </Field>
-          <Field label={t(`Amount out${from ? ` (${from.currency})` : ""}`, `Montant sorti${from ? ` (${from.currency})` : ""}`)}>
+          <Field label={t(`Amount out${from ? ` (${from.currency})` : ""}`, `Montant sorti${from ? ` (${from.currency})` : ""}`)} required>
             <Input inputMode="decimal" value={fromAmount} onChange={(e) => setFromAmount(e.target.value)} placeholder="0" />
           </Field>
-          <Field label={t("To account", "Vers le compte")} error={from && to && from.id === to.id ? t("Pick two different accounts", "Choisissez deux comptes différents") : null}>
+          <Field label={t("To account", "Vers le compte")} error={from && to && from.id === to.id ? t("Pick two different accounts", "Choisissez deux comptes différents") : null} required>
             <MoneyAccountSelect value={to?.id ?? null} onChange={(_, a) => setTo(a)} />
           </Field>
-          <Field label={t(`Amount in${to ? ` (${to.currency})` : ""}`, `Montant reçu${to ? ` (${to.currency})` : ""}`)}>
+          <Field label={t(`Amount in${to ? ` (${to.currency})` : ""}`, `Montant reçu${to ? ` (${to.currency})` : ""}`)} required>
             <Input inputMode="decimal" value={toAmount} onChange={(e) => { setToAmount(e.target.value); setToTouched(true); }} placeholder="0" />
           </Field>
           <Field label={t("Note (optional)", "Note (facultatif)")} className="sm:col-span-2">
@@ -272,7 +282,7 @@ function TransferDialog({ onClose }: { onClose: () => void }) {
         )}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <Button onClick={save} disabled={!valid || m.isPending}>{t("Record transfer", "Enregistrer le transfert")}</Button>
+          <SubmitButton onClick={save} blocked={blocked} pending={m.isPending}>{t("Record transfer", "Enregistrer le transfert")}</SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -297,7 +307,15 @@ function PartyPaymentDialog({ kind, onClose }: { kind: "customer" | "party"; onC
     success: kind === "customer" ? t("Payment received", "Paiement reçu") : t("Payment recorded", "Paiement enregistré"),
     onSuccess: onClose,
   });
-  const valid = partyId && account && d(amount).gt(0) && (!isCdf || d(rate).gt(0));
+  const blocked = !partyId
+    ? kind === "customer" ? t("Choose a customer", "Choisissez un client") : t("Choose who is paid", "Choisissez qui est payé")
+    : !account
+      ? t("Choose an account", "Choisissez un compte")
+      : !d(amount).gt(0)
+        ? t("Enter an amount above zero", "Saisissez un montant supérieur à zéro")
+        : isCdf && !d(rate).gt(0)
+          ? t("Enter the exchange rate", "Saisissez le taux de change")
+          : null;
   const bal = d(party?.balance);
   const owed = kind === "customer" ? bal : bal.negated();
 
@@ -327,7 +345,7 @@ function PartyPaymentDialog({ kind, onClose }: { kind: "customer" | "party"; onC
           <Field label={t("Date", "Date")}>
             <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
           </Field>
-          <Field label={kind === "customer" ? t("Customer", "Client") : t("Supplier, agent or employee", "Fournisseur, agent ou employé")}>
+          <Field label={kind === "customer" ? t("Customer", "Client") : t("Supplier, agent or employee", "Fournisseur, agent ou employé")} required>
             <PartySelect types={kind === "customer" ? ["customer"] : ["supplier", "agent", "employee"]} value={partyId} onChange={(id) => setPartyId(id)} />
           </Field>
           {party && (
@@ -350,7 +368,7 @@ function PartyPaymentDialog({ kind, onClose }: { kind: "customer" | "party"; onC
               )}
             </div>
           )}
-          <Field label={kind === "customer" ? t("Received into", "Reçu dans") : t("Paid from", "Payé depuis")} className="sm:col-span-2">
+          <Field label={kind === "customer" ? t("Received into", "Reçu dans") : t("Paid from", "Payé depuis")} className="sm:col-span-2" required>
             <MoneyAccountSelect value={account?.id ?? null} onChange={(_, a) => setAccount(a)} />
           </Field>
           <AmountFields day={day} account={account} amount={amount} setAmount={setAmount} rate={rate} setRate={setRate} />
@@ -360,7 +378,7 @@ function PartyPaymentDialog({ kind, onClose }: { kind: "customer" | "party"; onC
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <Button onClick={save} disabled={!valid || m.isPending}>{t("Save", "Enregistrer")}</Button>
+          <SubmitButton onClick={save} blocked={blocked} pending={m.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -384,7 +402,15 @@ function PartnerMoneyDialog({ kind, onClose }: { kind: "contribution" | "withdra
     success: t("Recorded", "Enregistré"),
     onSuccess: onClose,
   });
-  const valid = partnerId && account && d(amount).gt(0) && (!isCdf || d(rate).gt(0));
+  const blocked = !partnerId
+    ? t("Choose a partner", "Choisissez un associé")
+    : !account
+      ? t("Choose an account", "Choisissez un compte")
+      : !d(amount).gt(0)
+        ? t("Enter an amount above zero", "Saisissez un montant supérieur à zéro")
+        : isCdf && !d(rate).gt(0)
+          ? t("Enter the exchange rate", "Saisissez le taux de change")
+          : null;
   function save() {
     m.mutate({
       date: day,
@@ -410,7 +436,7 @@ function PartnerMoneyDialog({ kind, onClose }: { kind: "contribution" | "withdra
           <Field label={t("Date", "Date")}>
             <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
           </Field>
-          <Field label={t("Partner", "Associé")}>
+          <Field label={t("Partner", "Associé")} required>
             <Select value={partnerId ? String(partnerId) : ""} onValueChange={(v) => setPartnerId(Number(v))}>
               <SelectTrigger><SelectValue placeholder={t("Choose partner", "Choisir l'associé")} /></SelectTrigger>
               <SelectContent>
@@ -432,7 +458,7 @@ function PartnerMoneyDialog({ kind, onClose }: { kind: "contribution" | "withdra
               </div>
             </div>
           )}
-          <Field label={kind === "contribution" ? t("Into account", "Dans le compte") : t("From account", "Depuis le compte")} className="sm:col-span-2">
+          <Field label={kind === "contribution" ? t("Into account", "Dans le compte") : t("From account", "Depuis le compte")} className="sm:col-span-2" required>
             <MoneyAccountSelect value={account?.id ?? null} onChange={(_, a) => setAccount(a)} />
           </Field>
           <AmountFields day={day} account={account} amount={amount} setAmount={setAmount} rate={rate} setRate={setRate} />
@@ -442,7 +468,7 @@ function PartnerMoneyDialog({ kind, onClose }: { kind: "contribution" | "withdra
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <Button onClick={save} disabled={!valid || m.isPending}>{t("Save", "Enregistrer")}</Button>
+          <SubmitButton onClick={save} blocked={blocked} pending={m.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -646,15 +672,20 @@ function RatesCard() {
         </div>
         {can("manager") && (
           <div className="grid grid-cols-2 gap-2">
-            <Field label={t("Date", "Date")}>
+            <Field label={t("Date", "Date")} required>
               <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
             </Field>
-            <Field label={t("CDF per USD", "FC pour 1 $")}>
+            <Field label={t("CDF per USD", "FC pour 1 $")} required>
               <Input inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} placeholder={current ? d(current.cdfPerUsd).toString() : "2800"} />
             </Field>
-            <Button className="col-span-2" disabled={!day || !d(value).gt(0) || m.isPending} onClick={() => m.mutate({ date: day, cdfPerUsd: d(value).toString() })}>
+            <SubmitButton
+              className="col-span-2 sm:flex-col sm:items-stretch [&>button]:w-full"
+              blocked={!day ? t("Choose a date", "Choisissez une date") : !d(value).gt(0) ? t("Enter a rate above zero", "Saisissez un taux supérieur à zéro") : null}
+              pending={m.isPending}
+              onClick={() => m.mutate({ date: day, cdfPerUsd: d(value).toString() })}
+            >
               {t("Set rate", "Enregistrer le taux")}
-            </Button>
+            </SubmitButton>
           </div>
         )}
         <div>

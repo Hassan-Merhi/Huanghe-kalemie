@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
+import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
@@ -592,15 +592,15 @@ function ReverseDialog({ row, t, onClose }: { row: DaybookRow; t: T; onClose: ()
             <p className="font-medium">{row.memo || journalTypeLabel(row.type, t)}</p>
             <p><Num>{usd(row.amount)}</Num></p>
           </div>
-          <Field label={t("Reversal date", "Date de l'annulation")}>
+          <Field label={t("Reversal date", "Date de l'annulation")} required>
             <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
           </Field>
         </div>
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onClose}>{t("Keep it", "Garder")}</Button>
-          <Button variant="destructive" disabled={!validDate(day) || m.isPending} onClick={() => m.mutate({ date: day })}>
+          <SubmitButton variant="destructive" blocked={!validDate(day) && t("Choose a valid date", "Choisissez une date valide")} pending={m.isPending} onClick={() => m.mutate({ date: day })}>
             <RotateCcw className="mr-1 h-4 w-4" /> {t("Reverse", "Annuler la pièce")}
-          </Button>
+          </SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>
