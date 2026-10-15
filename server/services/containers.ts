@@ -247,6 +247,13 @@ export async function updateExpenseAllocation(
 ) {
   await lockEditable(tx, containerId);
   if (method === "line" && !targetLineId) throw badRequest("Pick the line this expense belongs to", "Choisissez la ligne à laquelle appartient cette dépense");
+  if (method === "line") {
+    const [line] = await tx
+      .select()
+      .from(containerLines)
+      .where(and(eq(containerLines.id, targetLineId!), eq(containerLines.containerId, containerId)));
+    if (!line) throw badRequest("That line is not in this container", "Cette ligne n'est pas dans ce conteneur");
+  }
   await tx
     .update(containerExpenses)
     .set({ method, targetLineId: method === "line" ? targetLineId : null })
