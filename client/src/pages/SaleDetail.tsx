@@ -131,7 +131,7 @@ function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () =
                   <MoneyAccountSelect value={accountId} onChange={(id) => setAccountId(id)} />
                 </Field>
                 {isCdf && (
-                  <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} hint={`${t("Pay out:", "À rendre\u00a0:")} ${cdf(Decimal.max(refund.times(d(effRate)).dividedBy(100).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).times(100), 100).toString())} ${t("(rounded to 100 FC)", "(arrondi à 100\u00a0FC)")}`} required>
+                  <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} hint={`${t("Pay out:", "À rendre\u00a0:")} ${cdf(refund.times(d(effRate)).dividedBy(100).toDecimalPlaces(0, Decimal.ROUND_FLOOR).times(100).toString())} ${t("(rounded down to 100 FC)", "(arrondi à 100\u00a0FC inférieurs)")}`} required>
                     <Input inputMode="decimal" thousands value={effRate} onChange={(e) => setRate(e.target.value)} />
                   </Field>
                 )}

@@ -5,7 +5,7 @@ import type { Tx } from "../db";
 import { badRequest, conflict, francDecimalsError, notFound } from "../errors";
 import { deMonth, monthText } from "@shared/french";
 import { postJournal, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
-import { applyAdvances } from "./operations";
+import { applyAdvances, reverseAdvances } from "./operations";
 import { monthRange } from "./periods";
 import { partyBalances } from "./reports";
 
@@ -133,7 +133,7 @@ export async function runPayroll(tx: Tx, input: PayrollRunInput, userId: number)
   if (journalId) await tx.update(journals).set({ sourceId: run.id }).where(eq(journals.id, journalId));
   // Salary advances paid in dollars come off salaries owed in francs.
   if (currency === "CDF") {
-    for (const l of lines) await applyAdvances(tx, l.partyId, date, `Avance déduite du salaire ${monthText(input.month)}`, userId);
+    for (const l of lines) await applyAdvances(tx, l.partyId, date, `Avance déduite du salaire ${monthText(input.month)}`, userId, { type: "payroll", id: run.id });
   }
   return run;
 }
@@ -148,5 +148,6 @@ export async function cancelRun(tx: Tx, month: string, date: string | null | und
   const cancelJournalId = run.journalId
     ? await reverseJournal(tx, run.journalId, { date: date || run.date, userId, memo: `Annulation des salaires ${monthText(month)}` })
     : null;
+  await reverseAdvances(tx, { type: "payroll", id: run.id }, date || run.date, userId);
   await tx.update(payrollRuns).set({ status: "cancelled", cancelledAt: new Date(), cancelledBy: userId, cancelJournalId }).where(eq(payrollRuns.id, run.id));
 }

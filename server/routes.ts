@@ -320,6 +320,7 @@ export function registerRoutes(app: Express) {
   }));
   app.patch("/api/variants/:id", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = variantSchema.parse(req.body);
+    if (Object.keys(body).length === 0) throw badRequest("Nothing to change", "Rien à modifier");
     const variant = await db.transaction((tx) => catalog.updateVariant(tx, paramId(req), body));
     await audit(req, "update", "variant", paramId(req), body);
     res.json(variant);

@@ -165,13 +165,18 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
         const owed = Decimal.max(dec(bal?.v ?? 0), 0);
         // Francs owed in francs may be paid in full whatever today's rate: in francs, or in dollars
         // at the day's rate.
-        const francsOwed = (await foreignBalance(tx, a.id, null, "CDF", input.date)).native.negated();
-        const francsOwedUsd = francsOwed.gt(0) ? cents(francsOwed.dividedBy((await rateFor(tx, input.date)).rate)) : new Decimal(0);
-        const withinFrancs = money.currency === "CDF" ? amount.lte(francsOwed) : dec(usd).lte(Decimal.max(owed, francsOwedUsd));
-        if (dec(usd).gt(owed) && !withinFrancs) {
+        const francs = await foreignBalance(tx, a.id, null, "CDF", input.date);
+        const francsOwed = francs.native.negated();
+        // In dollars: the dollars owed, plus the francs owed at the day's rate (not at their book value).
+        const dollarCap = francsOwed.gt(0)
+          ? Decimal.max(owed.minus(francs.usd.negated()), 0).plus(cents(francsOwed.dividedBy((await rateFor(tx, input.date)).rate)))
+          : owed;
+        const tooMuch = money.currency === "CDF" ? dec(usd).gt(owed) && !amount.lte(francsOwed) : dec(usd).gt(dollarCap);
+        if (tooMuch) {
+          const cap = money.currency === "CDF" ? owed : dollarCap;
           throw forbidden(
-            `Line ${n}: only ${owed.toFixed(2)} $ is owed on ${a.name}. Only the owner can pay more.`,
-            `Ligne ${n} : seulement ${frMoney(owed)} restent dus sur ${a.name}. Seul le propriétaire peut payer davantage.`,
+            `Line ${n}: only ${cap.toFixed(2)} $ is owed on ${a.name}. Only the owner can pay more.`,
+            `Ligne ${n} : seulement ${frMoney(cap)} restent dus sur ${a.name}. Seul le propriétaire peut payer davantage.`,
           );
         }
       }
