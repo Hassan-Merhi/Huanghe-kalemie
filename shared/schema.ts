@@ -60,6 +60,8 @@ export const settings = pgTable("settings", {
 export const exchangeRates = pgTable("exchange_rates", {
   date: date("date").primaryKey(),
   cdfPerUsd: numeric("cdf_per_usd", { precision: 14, scale: 4 }).notNull(),
+  /** Yuan per 1 USD, when known: used to restate what suppliers are owed in yuan at month end. */
+  cnyPerUsd: numeric("cny_per_usd", { precision: 14, scale: 4 }),
   createdBy: integer("created_by"),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
@@ -75,6 +77,8 @@ export const idempotencyKeys = pgTable("idempotency_keys", {
   userId: integer("user_id").notNull(),
   method: varchar("method", { length: 10 }).notNull(),
   path: text("path").notNull(),
+  /** Hash of the request body: the same key sent with a different body is refused, not answered. */
+  bodyHash: varchar("body_hash", { length: 64 }),
   /** Null while the first request is still running. */
   status: integer("status"),
   response: jsonb("response"),
@@ -392,6 +396,8 @@ export const periods = pgTable("periods", {
   closingJournalId: integer("closing_journal_id"),
   /** Month-end revaluation of franc balances at the closing rate, posted when the month closes. */
   revaluationJournalId: integer("revaluation_journal_id"),
+  /** Partner shares used when the month was first closed, so closing it again splits it the same way. */
+  shares: jsonb("shares"),
   closedAt: timestamp("closed_at"),
   closedBy: integer("closed_by"),
 });

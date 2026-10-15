@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { RequestHandler } from "express";
 import { and, eq, lt, sql } from "drizzle-orm";
 import { idempotencyKeys } from "@shared/schema";
@@ -18,15 +19,16 @@ export function idempotency(): RequestHandler {
     const key = req.get("Idempotency-Key");
     const userId = req.session?.userId;
     if (!key || req.method === "GET" || !userId || !/^[\w-]{8,100}$/.test(key)) return next();
+    const bodyHash = createHash("sha256").update(JSON.stringify(req.body ?? null)).digest("hex");
     try {
       const inserted = await db
         .insert(idempotencyKeys)
-        .values({ key, userId, method: req.method, path: req.originalUrl })
+        .values({ key, userId, method: req.method, path: req.originalUrl, bodyHash })
         .onConflictDoNothing()
         .returning({ key: idempotencyKeys.key });
       if (!inserted.length) {
         const [row] = await db.select().from(idempotencyKeys).where(eq(idempotencyKeys.key, key));
-        if (row && (row.userId !== userId || row.path !== req.originalUrl || row.method !== req.method)) {
+        if (row && (row.userId !== userId || row.path !== req.originalUrl || row.method !== req.method || (row.bodyHash && row.bodyHash !== bodyHash))) {
           return res.status(422).json({ message: "This request key was already used for something else", messageFr: "Cette clé de requête a déjà servi pour autre chose", code: "IDEMPOTENCY_MISMATCH" });
         }
         if (row && row.status !== null) return res.status(row.status).json(row.response);

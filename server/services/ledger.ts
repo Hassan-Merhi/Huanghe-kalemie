@@ -175,10 +175,12 @@ export function bookValue(bal: { native: Decimal; usd: Decimal }, native: Decima
  * is not created and null is returned.
  */
 export async function postJournal(tx: Tx, input: PostJournalInput): Promise<number | null> {
-  if (!input.skipPeriodCheck) await assertPeriodOpen(tx, input.date);
-  else monthOf(input.date);
+  if (!input.skipPeriodCheck) {
+    await assertPeriodOpen(tx, input.date);
+    assertNotFuture(input.date);
+  } else monthOf(input.date);
 
-  const lines = input.lines
+  const netted = input.lines
     .map((l) => ({ ...l, debit: cents(l.debit ?? 0), credit: cents(l.credit ?? 0) }))
     .map((l) => {
       if (l.debit.isNegative() || l.credit.isNegative()) {
@@ -190,8 +192,20 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
         return { ...l, debit: net.isPositive() ? net : dec(0), credit: net.isNegative() ? net.abs() : dec(0) };
       }
       return l;
-    })
-    .filter((l) => !l.debit.isZero() || !l.credit.isZero());
+    });
+
+  // Francs (or yuan) worth less than a cent would disappear from the books with no trace.
+  const tiny = netted.find((l) => l.debit.isZero() && l.credit.isZero() && l.nativeAmount != null && !cents(l.nativeAmount).isZero());
+  if (tiny && !input.skipPeriodCheck && !input.exactValues) {
+    const [account] = await tx.select({ name: accounts.name, isMoney: accounts.isMoney }).from(accounts).where(eq(accounts.id, tiny.accountId));
+    if (account?.isMoney || !l0(netted)) {
+      throw badRequest(
+        `${cents(tiny.nativeAmount!).toFixed(2)} is worth less than one cent: enter a larger amount`,
+        `${cents(tiny.nativeAmount!).toFixed(2)} vaut moins d'un centime de dollar : saisissez un montant plus grand`,
+      );
+    }
+  }
+  const lines = netted.filter((l) => !l.debit.isZero() || !l.credit.isZero());
 
   if (lines.length === 0) return null;
 
@@ -259,9 +273,16 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
     })
     .returning({ id: journals.id });
 
+  // Money paid out is checked against what the account holds, one posting at a time per account.
+  const paidFrom = input.skipPeriodCheck
+    ? []
+    : Array.from(new Set(values.filter((v) => v.credit.gt(0) && byId.get(v.accountId)?.isMoney).map((v) => v.accountId))).sort((a, b) => a - b);
+  for (const id of paidFrom) await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`money:${id}`}))`);
+
   await tx.insert(journalLines).values(
     values.map((v) => ({ ...v, debit: v.debit.toFixed(2), credit: v.credit.toFixed(2), journalId: journal.id })),
   );
+  for (const id of paidFrom) await assertNotOverdrawn(tx, byId.get(id)!, input.date);
   // Every posting is in the activity log, written in the same transaction so neither exists without the other.
   const total = values.reduce((s, v) => s.plus(v.debit), new Decimal(0));
   await tx.insert(auditLog).values({
@@ -272,6 +293,53 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
     data: { number, date: input.date, memo: input.memo ?? null, total: total.toFixed(2), sourceType: input.sourceType ?? null, sourceId: input.sourceId ?? null },
   });
   return journal.id;
+}
+
+/** True when the journal has any line with a USD amount. */
+function l0(lines: { debit: Decimal; credit: Decimal }[]): boolean {
+  return lines.some((l) => !l.debit.isZero() || !l.credit.isZero());
+}
+
+/** Today in Kalemie (UTC+2). */
+export function shopToday(): string {
+  return new Date(Date.now() + 2 * 3600_000).toISOString().slice(0, 10);
+}
+
+/** Refuse postings dated after tomorrow: a typo in the year would otherwise sit in the books unseen. */
+export function assertNotFuture(date: string): void {
+  const limit = new Date(Date.parse(`${shopToday()}T00:00:00Z`) + 86400_000).toISOString().slice(0, 10);
+  if (date > limit) {
+    throw badRequest(`${date} is in the future. Check the date.`, `La date ${date} est dans le futur. Vérifiez la date.`);
+  }
+}
+
+/**
+ * Refuse a payment that would take a cash, bank or mobile money account below zero, on its date
+ * or on any later day (a payment typed for an earlier day must not empty the till retroactively).
+ */
+async function assertNotOverdrawn(tx: Tx, account: typeof accounts.$inferSelect, date: string): Promise<void> {
+  const amount = account.currency === "USD" ? sql`${journalLines.debit} - ${journalLines.credit}` : sql`coalesce(${journalLines.nativeAmount}, 0)`;
+  const result = await tx.execute<{ low: string | null; date: string | null }>(sql`
+    with d as (
+      select ${journals.date} as date, sum(${amount}) as amt
+      from ${journalLines} join ${journals} on ${journals.id} = ${journalLines.journalId}
+      where ${journalLines.accountId} = ${account.id}
+      group by ${journals.date}
+    ), c as (select date, sum(amt) over (order by date) as cum from d)
+    select cum::text as low, date::text as date from c where date >= ${date} order by cum asc, date asc limit 1`);
+  const row = result.rows[0];
+  if (!row?.low) return;
+  const low = dec(row.low);
+  if (low.lt(-0.005)) {
+    const short = low.abs().toFixed(2);
+    const cur = account.currency === "CDF" ? "FC" : account.currency;
+    throw new AppError(
+      409,
+      `${account.name} does not hold enough: it would be ${short} ${cur} short on ${row.date}.`,
+      "INSUFFICIENT_FUNDS",
+      `Solde insuffisant sur ${account.name} : il manquerait ${short} ${cur} au ${row.date}.`,
+    );
+  }
 }
 
 type PendingLine = { accountId: number; debit: Decimal; credit: Decimal; partyId: number | null; currency: LineCurrency; nativeAmount: string | null; rate: string | null; memo: string | null };
@@ -374,6 +442,19 @@ export async function rateFor(tx: Tx, date: string): Promise<{ rate: Decimal; so
   return { rate: dec((setting?.value as string | undefined) ?? "2800"), source: "default" };
 }
 
+/** Set the rate of a day. A closed month's balances were valued at its rates, so they cannot change after. */
+export async function setExchangeRate(tx: Tx, input: { date: string; cdfPerUsd: string; cnyPerUsd?: string | null }, userId: number) {
+  await assertPeriodOpen(tx, input.date);
+  assertNotFuture(input.date);
+  const cny = input.cnyPerUsd ? { cnyPerUsd: input.cnyPerUsd } : {};
+  const [row] = await tx
+    .insert(exchangeRates)
+    .values({ date: input.date, cdfPerUsd: input.cdfPerUsd, createdBy: userId, ...cny })
+    .onConflictDoUpdate({ target: exchangeRates.date, set: { cdfPerUsd: input.cdfPerUsd, createdBy: userId, ...cny } })
+    .returning();
+  return row;
+}
+
 /** How far a typed rate may be from the day's rate, in percent. */
 export async function rateTolerancePct(tx: Tx): Promise<Decimal> {
   const [setting] = await tx.select().from(settings).where(eq(settings.key, "rateTolerancePct"));
@@ -457,26 +538,47 @@ export async function contactLines(
     // A payment (debit) settles what we owe them (negative); a receipt settles what they owe us.
     input.side === "debit" ? Decimal.max(b[field].negated(), 0) : Decimal.max(b[field], 0);
   const fc = owed(await foreignBalance(tx, input.accountId, input.partyId, "CDF", input.date), "native");
-  if (fc.isZero()) return plain;
-  let native: Decimal;
-  let nativeUsd: Decimal;
-  let rate: string;
-  if (input.money.currency === "CDF" && input.money.nativeAmount) {
-    // Francs settle the franc balance first.
-    native = cents(input.money.nativeAmount);
-    nativeUsd = usd;
-    rate = input.money.rate!;
-  } else {
-    // Dollars settle the dollar balance first; only what is left goes to the francs, at the day's rate.
-    const dollarsOwed = owed(await foreignBalance(tx, input.accountId, input.partyId, "USD", input.date), "usd");
-    nativeUsd = Decimal.max(usd.minus(dollarsOwed), 0);
-    if (nativeUsd.isZero()) return plain;
-    rate = await resolveRate(tx, input.date);
-    native = cents(nativeUsd.times(rate));
+  const paidInFrancs = input.money.currency === "CDF" && !!input.money.nativeAmount;
+  if (fc.isZero() && !paidInFrancs) return plain;
+  const dollarsOwed = owed(await foreignBalance(tx, input.accountId, input.partyId, "USD", input.date), "usd");
+  const lines: PostLine[] = [];
+  const fcLine = (u: Decimal, n: Decimal, rate: string) => {
+    if (u.gt(0) && n.gt(0)) lines.push({ ...base, [input.side]: u, currency: "CDF", nativeAmount: n, rate });
+  };
+  if (paidInFrancs) {
+    // Francs settle the franc balance first, then the dollar balance; anything beyond (an advance)
+    // stays in francs, so an advance in francs is later settled by a salary in francs.
+    const rate = input.money.rate!;
+    let nativeLeft = cents(input.money.nativeAmount!);
+    let usdLeft = usd;
+    const first = Decimal.min(nativeLeft, fc);
+    const firstUsd = first.equals(nativeLeft) ? usdLeft : cents(usdLeft.times(first).dividedBy(nativeLeft));
+    if (first.gt(0) && firstUsd.gt(0)) {
+      fcLine(firstUsd, first, rate);
+      nativeLeft = nativeLeft.minus(first);
+      usdLeft = usdLeft.minus(firstUsd);
+    }
+    const toDollars = Decimal.min(usdLeft, dollarsOwed);
+    if (toDollars.gt(0)) {
+      lines.push({ ...base, [input.side]: toDollars });
+      nativeLeft = toDollars.equals(usdLeft) ? new Decimal(0) : nativeLeft.minus(cents(nativeLeft.times(toDollars).dividedBy(usdLeft)));
+      usdLeft = usdLeft.minus(toDollars);
+    }
+    if (usdLeft.gt(0)) {
+      if (nativeLeft.gt(0)) fcLine(usdLeft, nativeLeft, rate);
+      else lines.push({ ...base, [input.side]: usdLeft });
+    }
+    return lines.length ? lines : plain;
   }
+  // Dollars settle the dollar balance first; only what is left goes to the francs, at the day's rate.
+  const nativeUsd = Decimal.max(usd.minus(dollarsOwed), 0);
+  if (nativeUsd.isZero()) return plain;
+  const rate = await resolveRate(tx, input.date);
+  const native = cents(nativeUsd.times(rate));
   const portion = Decimal.min(native, fc);
   const portionUsd = portion.equals(native) ? nativeUsd : cents(nativeUsd.times(portion).dividedBy(native));
-  const lines: PostLine[] = [{ ...base, [input.side]: portionUsd, currency: "CDF", nativeAmount: portion, rate }];
+  if (portionUsd.isZero()) return plain;
+  fcLine(portionUsd, portion, rate);
   if (usd.gt(portionUsd)) lines.push({ ...base, [input.side]: usd.minus(portionUsd) });
   return lines;
 }

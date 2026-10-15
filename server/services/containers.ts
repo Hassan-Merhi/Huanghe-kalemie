@@ -14,6 +14,7 @@ import { cents, dec, sum } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, notFound } from "../errors";
 import { moneyLeg, postJournal, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type ForeignCurrency } from "./ledger";
+import { assertSameCurrency } from "./operations";
 import { issueStock, linkMovementsToJournal, receiveStock, stockQty } from "./stock";
 import { variantColour } from "./catalog";
 
@@ -159,6 +160,7 @@ export async function addExpense(tx: Tx, containerId: number, input: ContainerEx
   let rate: string | null = null;
   if (input.paidFromAccountId) {
     const leg = await moneyLeg(tx, { accountId: input.paidFromAccountId, amount, rate: input.rate, date: input.date });
+    assertSameCurrency(input.currency, leg.currency);
     currency = leg.currency;
     amountUsd = leg.usd;
     rate = leg.rate;

@@ -20,8 +20,11 @@ import { badRequest, conflict, forbidden, notFound } from "../errors";
 import { moneyLeg, nextNumber, postJournal, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId } from "./ledger";
 import { issueStock, linkMovementsToJournal, receiveStock, stockQty } from "./stock";
 
-/** Rounding left over from paying in CDF, absorbed into exchange differences. */
-const ROUNDING_TOLERANCE = new Decimal("0.10");
+/**
+ * Francs cannot be counted to the cent of a dollar: a sale paid partly in francs may be over or under
+ * by up to 100 FC, absorbed into exchange differences. Dollar-only sales must match to the cent.
+ */
+const FRANC_ROUNDING = new Decimal(100);
 
 export interface SaleLineInput {
   variantId: number;
@@ -44,6 +47,8 @@ export interface CreateSaleInput {
   lines: SaleLineInput[];
   discount?: string | null;
   payments: SalePaymentInput[];
+  /** Change handed back from another drawer, e.g. francs paid and dollars given back. */
+  change?: SalePaymentInput | null;
   note?: string | null;
 }
 
@@ -87,6 +92,7 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
     const price = cents(l.unitPrice);
     if (price.isNegative()) throw badRequest("Prices cannot be negative", "Les prix ne peuvent pas être négatifs");
     const lineDiscount = cents(l.lineDiscount ?? 0);
+    if (lineDiscount.isNegative()) throw badRequest("A discount cannot be negative", "Une remise ne peut pas être négative");
     const amount = cents(q.times(price)).minus(lineDiscount);
     if (amount.isNegative()) throw badRequest("A line discount is bigger than the line", "Une remise de ligne dépasse le montant de la ligne");
     if (v.tracksSerials) {
@@ -126,15 +132,29 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
   for (const p of input.payments) {
     legs.push(await moneyLeg(tx, { accountId: p.accountId, amount: p.amount, rate: p.rate, date: input.date }));
   }
-  const paid = sum(legs.map((l) => l.usd));
+  const changeLeg = input.change && dec(input.change.amount).gt(0)
+    ? await moneyLeg(tx, { accountId: input.change.accountId, amount: input.change.amount, rate: input.change.rate, date: input.date })
+    : null;
+  const received = sum(legs.map((l) => l.usd));
+  if (changeLeg && dec(changeLeg.usd).gte(received)) {
+    throw badRequest("The change given back is more than the money received", "La monnaie rendue dépasse l'argent reçu");
+  }
+  const paid = received.minus(changeLeg?.usd ?? 0);
+  const francLegs = [...legs, ...(changeLeg ? [changeLeg] : [])].filter((l) => l.currency === "CDF" && l.rate);
+  const tolerance = francLegs.length
+    ? Decimal.max(...francLegs.map((l) => FRANC_ROUNDING.dividedBy(l.rate!).toDecimalPlaces(2, Decimal.ROUND_UP)))
+    : new Decimal(0);
+  // Positive: the customer paid a few cents short (a loss); negative: a few cents over (a gain).
   let rounding = new Decimal(0);
   let credit = total.minus(paid);
-  if (credit.isNegative()) {
-    if (credit.abs().gt(ROUNDING_TOLERANCE)) {
-      throw badRequest("Payments are more than the total. Enter only the money kept, not the change given back.", "Les paiements dépassent le total. Saisissez seulement l'argent encaissé, pas la monnaie rendue.");
-    }
-    rounding = credit.abs(); // customer paid a few cents more because of the CDF rate
+  if (!credit.isZero() && credit.abs().lte(tolerance)) {
+    rounding = credit;
     credit = new Decimal(0);
+  } else if (credit.isNegative()) {
+    throw badRequest(
+      "Payments are more than the total. Enter the change given back, or only the money kept.",
+      "Les paiements dépassent le total. Indiquez la monnaie rendue, ou seulement l'argent encaissé.",
+    );
   }
   if (credit.gt(0) && !input.customerId) throw badRequest("Choose a customer to sell on credit", "Choisissez un client pour vendre à crédit");
 
@@ -149,7 +169,7 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
       subtotal: subtotal.toFixed(2),
       discount: saleDiscount.toFixed(2),
       total: total.toFixed(2),
-      paidUsd: paid.minus(rounding).toFixed(2),
+      paidUsd: total.minus(credit).toFixed(2),
       creditUsd: credit.toFixed(2),
       cogs: "0",
       note: input.note ?? null,
@@ -215,6 +235,17 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
       })),
     );
   }
+  if (changeLeg) {
+    // Stored as a negative payment, so the drawer count for that account goes down by the change.
+    await tx.insert(salePayments).values({
+      saleId: sale.id,
+      accountId: changeLeg.accountId,
+      currency: changeLeg.currency,
+      amountNative: cents(input.change!.amount).negated().toFixed(2),
+      rate: changeLeg.rate,
+      amountUsd: dec(changeLeg.usd).negated().toFixed(2),
+    });
+  }
 
   const journalId = await postJournal(tx, {
     date: input.date,
@@ -227,7 +258,13 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
       ...legs.map((l) => ({ accountId: l.accountId, debit: l.usd, nativeAmount: l.nativeAmount, rate: l.rate })),
       { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.receivables), debit: credit, partyId: input.customerId },
       { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.sales), credit: total },
-      { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.fx), credit: rounding, memo: "Arrondi CDF" },
+      ...(changeLeg ? [{ accountId: changeLeg.accountId, credit: changeLeg.usd, nativeAmount: changeLeg.nativeAmount, rate: changeLeg.rate, memo: "Monnaie rendue" }] : []),
+      {
+        accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.fx),
+        debit: rounding.isPositive() ? rounding : 0,
+        credit: rounding.isNegative() ? rounding.abs() : 0,
+        memo: "Arrondi FC",
+      },
       { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.cogs), debit: cogsTotal },
       { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.inventory), credit: cogsTotal },
     ],

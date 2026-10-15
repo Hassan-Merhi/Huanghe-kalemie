@@ -24,7 +24,7 @@ interface Analytics {
   position: Position;
 }
 
-export interface Position { money: string; stock: string; transit: string; receivables: string; payables: string; net: string }
+export interface Position { money: string; stock: string; transit: string; receivables: string; payables: string; otherAssets?: string; otherLiabilities?: string; net: string }
 
 // Palette: primary for the main series, a muted second colour, emerald for profit.
 const C_MAIN = "hsl(var(--primary))";
@@ -238,6 +238,8 @@ export function PositionCard({ position: p }: { position: Position }) {
     [t("Customers owe us", "Clients nous doivent"), p.receivables],
     [t("We owe", "Nous devons"), p.payables, true],
   ];
+  if (p.otherAssets && !d(p.otherAssets).isZero()) rows.splice(4, 0, [t("Advances and deposits", "Avances et dépôts"), p.otherAssets]);
+  if (p.otherLiabilities && !d(p.otherLiabilities).isZero()) rows.push([t("Other debts (withholdings…)", "Autres dettes (retenues…)"), p.otherLiabilities, true]);
   return (
     <Card>
       <CardHeader className="p-4 pb-2"><CardTitle className="text-base">{t("Net position", "Situation nette")}</CardTitle></CardHeader>

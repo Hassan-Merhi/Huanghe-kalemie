@@ -56,7 +56,7 @@ import * as reports from "./services/reports";
 import * as checks from "./services/checks";
 import * as backup from "./services/backup";
 import { getSetting } from "./setup";
-import { reverseJournal } from "./services/ledger";
+import { reverseJournal, setExchangeRate } from "./services/ledger";
 import { transferStock } from "./services/stock";
 import * as vouchers from "./services/vouchers";
 import { registerErpRoutes } from "./routes/erp";
@@ -163,12 +163,8 @@ export function registerRoutes(app: Express) {
   }));
 
   app.post("/api/exchange-rates", requireRole(...STAFF), asyncHandler(async (req, res) => {
-    const body = z.object({ date: isoDate, cdfPerUsd: positiveDecimal }).parse(req.body);
-    const [row] = await db
-      .insert(exchangeRates)
-      .values({ date: body.date, cdfPerUsd: body.cdfPerUsd, createdBy: uid(req) })
-      .onConflictDoUpdate({ target: exchangeRates.date, set: { cdfPerUsd: body.cdfPerUsd, createdBy: uid(req) } })
-      .returning();
+    const body = z.object({ date: isoDate, cdfPerUsd: positiveDecimal, cnyPerUsd: positiveDecimal.nullish() }).parse(req.body);
+    const row = await db.transaction((tx) => setExchangeRate(tx, body, uid(req)));
     await audit(req, "set_rate", "exchange_rate", null, body);
     res.json(row);
   }));
@@ -458,7 +454,8 @@ export function registerRoutes(app: Express) {
     // Before replacing anything, keep what is there now so the restore itself can be undone.
     if (replace && !(await backup.isEmptyShop(db))) await backup.saveSnapshot("before_restore");
     const result = await db.transaction((tx) => backup.restore(tx, file, { replace }));
-    await db.insert(auditLog).values({ userId: null, action: "restore", entity: "backup", entityId: null, data: { exportedAt: file.exportedAt, rows: result.rows, replace } });
+    // The restored users may not include whoever restored, so their name is kept with the id.
+    await db.insert(auditLog).values({ userId: uid(req), action: "restore", entity: "backup", entityId: null, data: { exportedAt: file.exportedAt, rows: result.rows, replace, by: req.user!.username } });
     res.json(result);
   }));
   app.get("/api/stock/adjustments", requireRole(...READERS), asyncHandler(async (_req, res) => {
@@ -563,6 +560,16 @@ export function registerRoutes(app: Express) {
     const [existing] = await db.select().from(accounts).where(eq(accounts.id, paramId(req)));
     if (!existing) throw notFound("Account", "Compte introuvable");
     if ((existing.systemKey || existing.partnerId) && body.active === false) throw badRequest("This account is used by the app and cannot be switched off", "Ce compte est utilisé par l'application et ne peut pas être désactivé");
+    if (body.active === false) {
+      // Money left in a switched-off account would vanish from every screen that lists active accounts.
+      const bal = (await reports.accountBalances(db)).find((b) => b.id === existing.id);
+      if (bal && (!dec(bal.balance).isZero() || !dec(bal.nativeBalance).isZero())) {
+        throw badRequest(
+          `${existing.name} still holds ${bal.nativeBalance} ${existing.currency}. Move it to another account first.`,
+          `${existing.name} contient encore ${bal.nativeBalance} ${existing.currency === "CDF" ? "FC" : existing.currency}. Transférez-le d'abord vers un autre compte.`,
+        );
+      }
+    }
     const [row] = await db.update(accounts).set(body).where(eq(accounts.id, existing.id)).returning();
     await audit(req, "update", "account", row.id, body);
     res.json(row);
@@ -570,7 +577,17 @@ export function registerRoutes(app: Express) {
   app.get("/api/accounts/:id/ledger", requireRole(...READERS), asyncHandler(async (req, res) => {
     const q = z.object({ from: isoDate, to: isoDate }).parse(req.query);
     await assertAccountVisible(req, paramId(req));
-    res.json(await reports.accountLedger(db, paramId(req), q.from, q.to));
+    const ledger = await reports.accountLedger(db, paramId(req), q.from, q.to);
+    if (req.user!.role === "partner") {
+      // A cash line from another partner's withdrawal stays, without saying whose it was.
+      const hidden = await reports.otherPartnerAccountIds(db, req.user!.partnerId);
+      const ids = ledger.rows.filter((r) => r.type === "partner_contribution" || r.type === "partner_withdrawal").map((r) => r.journalId);
+      const touched = ids.length && hidden.size
+        ? new Set((await db.select({ id: journalLines.journalId }).from(journalLines).where(and(inArray(journalLines.journalId, ids), inArray(journalLines.accountId, Array.from(hidden))))).map((r) => r.id))
+        : new Set<number>();
+      ledger.rows = ledger.rows.map((r) => (touched.has(r.journalId) ? { ...r, memo: "Mouvement d'un autre associé", lineMemo: null } : r));
+    }
+    res.json(ledger);
   }));
 
   app.get("/api/journals", requireRole(...READERS), asyncHandler(async (req, res) => {
@@ -588,7 +605,14 @@ export function registerRoutes(app: Express) {
           .leftJoin(parties, eq(parties.id, journalLines.partyId))
           .where(inArray(journalLines.journalId, js.map((j) => j.id)))
       : [];
-    res.json(js.map((j) => ({ ...j, lines: lines.filter((l) => l.line.journalId === j.id).map((l) => ({ ...l.line, accountName: l.accountName, accountCode: l.accountCode, partyName: l.partyName })) })));
+    const hidden = req.user!.role === "partner" ? await reports.otherPartnerAccountIds(db, req.user!.partnerId) : new Set<number>();
+    res.json(
+      js.map((j) => {
+        const ls = lines.filter((l) => l.line.journalId === j.id).map((l) => ({ ...l.line, accountName: l.accountName, accountCode: l.accountCode, partyName: l.partyName }));
+        const m = reports.maskPartnerJournal(j, ls, hidden);
+        return { ...m.journal, lines: m.lines };
+      }),
+    );
   }));
 
   const manualLine = z.object({ accountId: id, debit: optionalDecimal, credit: optionalDecimal, partyId: optionalId, nativeAmount: optionalDecimal, rate: optionalDecimal, memo: z.string().max(300).optional().nullable() });
@@ -832,12 +856,16 @@ export function registerRoutes(app: Express) {
         note: z.string().max(500).optional().nullable(),
         lines: z.array(z.object({ variantId: id, unitId: optionalId, qty: positiveDecimal, unitPrice: nonNegativeDecimal, lineDiscount: optionalDecimal })).min(1),
         payments: z.array(paymentSchema),
+        change: paymentSchema.nullish(),
       })
       .parse(req.body);
     // Cashiers always sell today.
     const date = req.user!.role === "cashier" || !body.date ? todayIso() : body.date;
     // Cashiers take francs at the day's rate.
-    if (req.user!.role === "cashier") body.payments = body.payments.map((p) => ({ ...p, rate: null }));
+    if (req.user!.role === "cashier") {
+      body.payments = body.payments.map((p) => ({ ...p, rate: null }));
+      if (body.change) body.change = { ...body.change, rate: null };
+    }
     const sale = await db.transaction((tx) => salesSvc.createSale(tx, { ...body, date }, uid(req), { role: req.user!.role }));
     res.status(201).json(req.user!.role === "cashier" ? withoutCost(sale) : sale);
   }));
@@ -872,8 +900,8 @@ export function registerRoutes(app: Express) {
         const row = existing.find((e) => e.id === p.id);
         if (!row) throw notFound("Partner", "Associé introuvable");
         await tx.update(partners).set({ name: p.name, sharePct: dec(p.sharePct).toFixed(2), bearsOperatingExpenses: p.bearsOperatingExpenses }).where(eq(partners.id, p.id));
-        await tx.update(accounts).set({ name: `${p.name}: capital` }).where(eq(accounts.id, row.capitalAccountId));
-        await tx.update(accounts).set({ name: `${p.name}: profit share (current account)` }).where(eq(accounts.id, row.currentAccountId));
+        await tx.update(accounts).set({ name: `${p.name} : capital` }).where(eq(accounts.id, row.capitalAccountId));
+        await tx.update(accounts).set({ name: `${p.name} : compte de bénéfices` }).where(eq(accounts.id, row.currentAccountId));
       }
     });
     await audit(req, "update", "partners", null, body);
@@ -906,8 +934,10 @@ export function registerRoutes(app: Express) {
 
   // ---------------------------------------------------------------- Reports
 
-  app.get("/api/reports/dashboard", requireRole(...READERS), asyncHandler(async (_req, res) => {
-    res.json(await reports.dashboard(db, todayIso()));
+  app.get("/api/reports/dashboard", requireRole(...READERS), asyncHandler(async (req, res) => {
+    const data = await reports.dashboard(db, todayIso());
+    if (req.user!.role === "partner") data.partners = data.partners.filter((p) => p.id === req.user!.partnerId);
+    res.json(data);
   }));
   app.get("/api/reports/profit-loss", requireRole(...READERS), asyncHandler(async (req, res) => {
     const q = z.object({ from: isoDate, to: isoDate }).parse(req.query);
@@ -919,6 +949,10 @@ export function registerRoutes(app: Express) {
   app.get("/api/reports/ageing", requireRole(...READERS), asyncHandler(async (req, res) => {
     const q = z.object({ asOf: isoDate.optional() }).parse(req.query);
     res.json(await checks.customerAgeing(db, q.asOf ?? todayIso()));
+  }));
+  app.get("/api/reports/balance-sheet", requireRole(...READERS), asyncHandler(async (req, res) => {
+    const q = z.object({ asOf: isoDate.optional() }).parse(req.query);
+    res.json(await reports.balanceSheet(db, q.asOf, req.user!.role === "partner" ? req.user!.partnerId : undefined));
   }));
   app.get("/api/reports/trial-balance", requireRole(...READERS), asyncHandler(async (req, res) => {
     const q = z.object({ asOf: isoDate.optional() }).parse(req.query);

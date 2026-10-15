@@ -13,7 +13,7 @@ import {
   stockLevels,
   variants,
 } from "@shared/schema";
-import { dec, sum } from "@shared/money";
+import { dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { notFound } from "../errors";
 import { monthRange, pnlByAccount, summarizePnl } from "./periods";
@@ -98,6 +98,83 @@ export function maskOtherPartners(rows: BalanceRow[], partnerId: number | null |
   const at = rows.indexOf(others[0]);
   const before = rows.slice(0, at).filter((r) => !others.includes(r)).length;
   return [...kept.slice(0, before), merged, ...kept.slice(before)];
+}
+
+/**
+ * What the shop owns, what it owes, and what belongs to the partners, on a date. Profit not yet
+ * shared out by a month close shows as its own equity line, so the two sides always agree.
+ */
+export async function balanceSheet(tx: Tx, asOf?: string, partnerId?: number | null) {
+  const all = await accountBalances(tx, asOf);
+  const rows = partnerId === undefined ? all : maskOtherPartners(all, partnerId);
+  const line = (r: BalanceRow, sign: 1 | -1) => ({
+    id: r.id,
+    code: r.code,
+    name: r.name,
+    currency: r.currency,
+    nativeBalance: r.currency === "CDF" ? dec(r.nativeBalance).times(sign).toFixed(2) : null,
+    amount: dec(r.balance).times(sign).toFixed(2),
+  });
+  const nonZero = (r: BalanceRow) => !dec(r.balance).isZero();
+  const assets = rows.filter((r) => r.type === "asset" && nonZero(r)).map((r) => line(r, 1));
+  const liabilities = rows.filter((r) => r.type === "liability" && nonZero(r)).map((r) => line(r, -1));
+  const equity = rows.filter((r) => r.type === "equity" && nonZero(r)).map((r) => line(r, -1));
+  // Income is a credit, costs a debit: what is left in them is this period's profit, not yet shared.
+  const result = sum(rows.filter((r) => ["income", "cost_of_sales", "expense"].includes(r.type)).map((r) => r.balance)).negated();
+  if (!result.isZero()) {
+    equity.push({ id: 0, code: "", name: "Résultat non encore réparti (mois non clôturés)", currency: "USD", nativeBalance: null, amount: result.toFixed(2) });
+  }
+  const total = (xs: { amount: string }[]) => sum(xs.map((x) => x.amount));
+  const totalAssets = total(assets);
+  const totalLiabilities = total(liabilities);
+  const totalEquity = total(equity);
+  return {
+    asOf: asOf ?? null,
+    assets,
+    liabilities,
+    equity,
+    totalAssets: totalAssets.toFixed(2),
+    totalLiabilities: totalLiabilities.toFixed(2),
+    totalEquity: totalEquity.toFixed(2),
+    balanced: totalAssets.equals(totalLiabilities.plus(totalEquity)),
+  };
+}
+
+/** Accounts a partner must not see in detail: the other partners' capital and current accounts. */
+export async function otherPartnerAccountIds(tx: Tx, viewer: number | null | undefined): Promise<Set<number>> {
+  const rows = await tx.select({ id: accounts.id, partnerId: accounts.partnerId }).from(accounts).where(sql`${accounts.partnerId} is not null`);
+  return new Set(rows.filter((r) => r.partnerId !== viewer).map((r) => r.id));
+}
+
+const PARTNER_MONEY_TYPES = new Set(["partner_contribution", "partner_withdrawal"]);
+
+/**
+ * A journal as a partner sees it: the other partners' lines are added up into one "Autres associés"
+ * line (as in the trial balance), and a contribution or withdrawal by another partner loses its name.
+ */
+export function maskPartnerJournal<
+  J extends { type: string; memo: string | null },
+  L extends { accountId: number; debit: string; credit: string; accountName: string; memo: string | null },
+>(journal: J, lines: L[], hidden: Set<number>): { journal: J; lines: L[] } {
+  const masked = lines.filter((l) => hidden.has(l.accountId));
+  if (!masked.length) return { journal, lines };
+  const net = masked.reduce((s, l) => s.plus(l.debit).minus(l.credit), new Decimal(0));
+  const kept = lines.filter((l) => !hidden.has(l.accountId));
+  const at = lines.indexOf(masked[0]);
+  const merged = {
+    ...masked[0],
+    accountId: -1,
+    accountName: "Autres associés",
+    ...("accountCode" in masked[0] ? { accountCode: "" } : {}),
+    memo: null,
+    debit: net.isPositive() ? net.toFixed(2) : "0.00",
+    credit: net.isNegative() ? net.abs().toFixed(2) : "0.00",
+  } as L;
+  const out = net.isZero() ? kept : [...kept.slice(0, lines.slice(0, at).filter((l) => !hidden.has(l.accountId)).length), merged, ...kept.slice(lines.slice(0, at).filter((l) => !hidden.has(l.accountId)).length)];
+  return {
+    journal: PARTNER_MONEY_TYPES.has(journal.type) ? { ...journal, memo: "Mouvement d'un autre associé" } : journal,
+    lines: out,
+  };
 }
 
 export async function trialBalance(tx: Tx, asOf?: string, partnerId?: number | null) {
@@ -418,12 +495,19 @@ export function netPosition(balances: Awaited<ReturnType<typeof accountBalances>
   const transit = by(SYSTEM_ACCOUNTS.goodsInTransit);
   const receivables = by(SYSTEM_ACCOUNTS.receivables);
   const payables = by(SYSTEM_ACCOUNTS.payables).negated();
+  const named: string[] = [SYSTEM_ACCOUNTS.inventory, SYSTEM_ACCOUNTS.goodsInTransit, SYSTEM_ACCOUNTS.receivables, SYSTEM_ACCOUNTS.payables];
+  const rest = balances.filter((b) => !b.isMoney && !(b.systemKey && named.includes(b.systemKey)));
+  // Everything else on the balance sheet: deposits and advances, withholdings to remit, loans…
+  const otherAssets = sum(rest.filter((b) => b.type === "asset").map((b) => b.balance));
+  const otherLiabilities = sum(rest.filter((b) => b.type === "liability").map((b) => b.balance)).negated();
   return {
     money: money.toFixed(2),
     stock: stock.toFixed(2),
     transit: transit.toFixed(2),
     receivables: receivables.toFixed(2),
     payables: payables.toFixed(2),
-    net: money.plus(stock).plus(transit).plus(receivables).minus(payables).toFixed(2),
+    otherAssets: otherAssets.toFixed(2),
+    otherLiabilities: otherLiabilities.toFixed(2),
+    net: money.plus(stock).plus(transit).plus(receivables).plus(otherAssets).minus(payables).minus(otherLiabilities).toFixed(2),
   };
 }

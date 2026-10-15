@@ -66,11 +66,17 @@ export function registerErpRoutes(
       .leftJoin(parties, eq(parties.id, journalLines.partyId))
       .where(eq(journalLines.journalId, j.journal.id))
       .orderBy(journalLines.id);
+    const hidden = req.user!.role === "partner" ? await reports.otherPartnerAccountIds(db, req.user!.partnerId) : new Set<number>();
+    const m = reports.maskPartnerJournal(
+      j.journal,
+      lines.map((l) => ({ ...l.line, accountName: l.accountName, accountCode: l.accountCode, accountType: l.accountType, isMoney: l.isMoney, partyName: l.partyName })),
+      hidden,
+    );
     res.json({
-      ...j.journal,
+      ...m.journal,
       createdByName: j.createdByName,
-      total: lines.reduce((s, l) => s.plus(l.line.debit), dec(0)).toFixed(2),
-      lines: lines.map((l) => ({ ...l.line, accountName: l.accountName, accountCode: l.accountCode, accountType: l.accountType, isMoney: l.isMoney, partyName: l.partyName })),
+      total: m.lines.reduce((s, l) => s.plus(l.debit), dec(0)).toFixed(2),
+      lines: m.lines,
     });
   }));
 
@@ -123,8 +129,15 @@ export function registerErpRoutes(
     for (const l of lines) byJournal.set(l.line.journalId, [...(byJournal.get(l.line.journalId) ?? []), l]);
     let moneyIn = dec(0);
     let moneyOut = dec(0);
-    const rows = js.map(({ journal, createdByName }) => {
-      const ls = byJournal.get(journal.id) ?? [];
+    const hidden = req.user!.role === "partner" ? await reports.otherPartnerAccountIds(db, req.user!.partnerId) : new Set<number>();
+    const rows = js.map(({ journal: raw, createdByName }) => {
+      const ls = byJournal.get(raw.id) ?? [];
+      const masked = reports.maskPartnerJournal(
+        raw,
+        ls.map((l) => ({ ...l.line, accountName: l.accountName, accountCode: l.accountCode, isMoney: l.isMoney, partyName: l.partyName })),
+        hidden,
+      );
+      const journal = masked.journal;
       for (const l of ls) {
         if (!l.isMoney) continue;
         moneyIn = moneyIn.plus(l.line.debit);
@@ -145,7 +158,7 @@ export function registerErpRoutes(
           .filter((l) => !(SALE_JOURNALS.has(journal.type) && (l.systemKey === "cogs" || l.systemKey === "inventory")))
           .reduce((s, l) => s.plus(l.line.debit), dec(0))
           .toFixed(2),
-        lines: ls.map((l) => ({ ...l.line, accountName: l.accountName, accountCode: l.accountCode, isMoney: l.isMoney, partyName: l.partyName })),
+        lines: masked.lines,
       };
     });
     res.json({ from: q.from, to: q.to, rows, moneyIn: moneyIn.toFixed(2), moneyOut: moneyOut.toFixed(2), truncated: js.length === 1000 });

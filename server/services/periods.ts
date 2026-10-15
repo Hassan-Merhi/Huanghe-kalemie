@@ -1,5 +1,5 @@
-import { and, asc, desc, eq, gte, lte, ne, sql } from "drizzle-orm";
-import { accounts, journalLines, journals, partners, periods } from "@shared/schema";
+import { and, asc, desc, eq, gte, inArray, isNotNull, lte, ne, sql } from "drizzle-orm";
+import { accounts, exchangeRates, journalLines, journals, partners, periods } from "@shared/schema";
 import { splitProfit, type PartnerSplitResult } from "@shared/partnerSplit";
 import { dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
@@ -75,36 +75,50 @@ export function summarizePnl(rows: PnlAccountRow[]) {
  * Month-end revaluation: every franc balance (cash, bank, a contact's francs) is restated at the
  * rate of the month's last day. Returns the lines and the net gain (negative for a loss).
  */
-export async function revaluationLines(tx: Tx, month: string): Promise<{ lines: PostLine[]; gain: Decimal; rate: Decimal }> {
+export async function revaluationLines(
+  tx: Tx,
+  month: string,
+): Promise<{ lines: PostLine[]; gain: Decimal; rate: Decimal; cnyRate: Decimal | null }> {
   const { to } = monthRange(month);
   const { rate } = await rateFor(tx, to);
-  const rows = await tx
-    .select({
-      accountId: journalLines.accountId,
-      partyId: journalLines.partyId,
-      native: sql<string>`coalesce(sum(${journalLines.nativeAmount}), 0)`,
-      usd: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)`,
-    })
-    .from(journalLines)
-    .innerJoin(journals, eq(journals.id, journalLines.journalId))
-    .where(and(eq(journalLines.currency, "CDF"), lte(journals.date, to)))
-    .groupBy(journalLines.accountId, journalLines.partyId);
+  // Yuan are restated only once a yuan rate has been entered; until then they stay at cost.
+  const [cnyRow] = await tx
+    .select({ rate: exchangeRates.cnyPerUsd })
+    .from(exchangeRates)
+    .where(and(lte(exchangeRates.date, to), isNotNull(exchangeRates.cnyPerUsd)))
+    .orderBy(desc(exchangeRates.date))
+    .limit(1);
+  const cnyRate = cnyRow?.rate ? dec(cnyRow.rate) : null;
   const lines: PostLine[] = [];
   let gain = new Decimal(0);
-  for (const r of rows) {
-    const diff = cents(dec(r.native).dividedBy(rate)).minus(r.usd);
-    if (diff.isZero()) continue;
-    gain = gain.plus(diff);
-    lines.push({
-      accountId: r.accountId,
-      partyId: r.partyId,
-      debit: diff.isPositive() ? diff : 0,
-      credit: diff.isNegative() ? diff.abs() : 0,
-      currency: "CDF",
-      nativeAmount: "0",
-      rate,
-      memo: `Réévaluation au taux de fin de mois (${rate.toString()} FC)`,
-    });
+  for (const [currency, r] of [["CDF", rate], ["CNY", cnyRate]] as const) {
+    if (!r) continue;
+    const rows = await tx
+      .select({
+        accountId: journalLines.accountId,
+        partyId: journalLines.partyId,
+        native: sql<string>`coalesce(sum(${journalLines.nativeAmount}), 0)`,
+        usd: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)`,
+      })
+      .from(journalLines)
+      .innerJoin(journals, eq(journals.id, journalLines.journalId))
+      .where(and(eq(journalLines.currency, currency), lte(journals.date, to)))
+      .groupBy(journalLines.accountId, journalLines.partyId);
+    for (const row of rows) {
+      const diff = cents(dec(row.native).dividedBy(r)).minus(row.usd);
+      if (diff.isZero()) continue;
+      gain = gain.plus(diff);
+      lines.push({
+        accountId: row.accountId,
+        partyId: row.partyId,
+        debit: diff.isPositive() ? diff : 0,
+        credit: diff.isNegative() ? diff.abs() : 0,
+        currency,
+        nativeAmount: "0",
+        rate: r,
+        memo: `Réévaluation au taux de fin de mois (1 $ = ${r.toString()} ${currency === "CDF" ? "FC" : "CNY"})`,
+      });
+    }
   }
   if (lines.length) {
     lines.push({
@@ -114,11 +128,31 @@ export async function revaluationLines(tx: Tx, month: string): Promise<{ lines: 
       memo: "Écart de change de réévaluation",
     });
   }
-  return { lines, gain, rate };
+  return { lines, gain, rate, cnyRate };
 }
 
 export async function activePartners(tx: Tx) {
   return tx.select().from(partners).where(eq(partners.active, true)).orderBy(asc(partners.id));
+}
+
+export interface StoredShare {
+  id: number;
+  name: string;
+  sharePct: string;
+  bearsOperatingExpenses: boolean;
+}
+
+/**
+ * The shares a month is split by: the ones stored when it was first closed (so a month reopened to
+ * fix a typo is split the same way again), else the partners' current shares.
+ */
+async function sharesFor(tx: Tx, stored: unknown) {
+  if (Array.isArray(stored) && stored.length) {
+    const shares = stored as StoredShare[];
+    const rows = await tx.select().from(partners).where(inArray(partners.id, shares.map((p) => p.id)));
+    return shares.map((p) => ({ ...rows.find((r) => r.id === p.id)!, sharePct: p.sharePct, bearsOperatingExpenses: p.bearsOperatingExpenses }));
+  }
+  return activePartners(tx);
 }
 
 export interface PeriodPreview {
@@ -152,7 +186,7 @@ export async function previewPeriod(tx: Tx, month: string): Promise<PeriodPrevie
     }
   }
   const totals = summarizePnl(rows.filter((r) => !dec(r.amount).isZero()));
-  const ps = await activePartners(tx);
+  const ps = await sharesFor(tx, period?.shares);
   const split = splitProfit(
     totals.grossProfit,
     totals.operatingExpenses,
@@ -200,7 +234,7 @@ export async function closePeriod(tx: Tx, month: string, userId: number) {
     ? await postJournal(tx, {
         date: to,
         type: "revaluation",
-        memo: `Réévaluation des francs au ${to} (1 $ = ${reval.rate.toString()} FC)`,
+        memo: `Réévaluation des devises au ${to} (1 $ = ${reval.rate.toString()} FC${reval.cnyRate ? ` ; ${reval.cnyRate.toString()} CNY` : ""})`,
         sourceType: "period",
         sourceId: period.id,
         userId,
@@ -210,7 +244,7 @@ export async function closePeriod(tx: Tx, month: string, userId: number) {
     : null;
 
   const preview = await previewPeriod(tx, month);
-  const ps = await activePartners(tx);
+  const ps = await sharesFor(tx, period.shares);
   const lines = preview.accounts.map((r) => {
     const amount = dec(r.amount);
     // Income has a credit balance: debit it to zero. Costs and expenses: credit them.
@@ -246,6 +280,7 @@ export async function closePeriod(tx: Tx, month: string, userId: number) {
       result: stored,
       closingJournalId: journalId,
       revaluationJournalId,
+      shares: ps.map((p) => ({ id: p.id, name: p.name, sharePct: p.sharePct, bearsOperatingExpenses: p.bearsOperatingExpenses })),
       closedAt: new Date(),
       closedBy: userId,
     })

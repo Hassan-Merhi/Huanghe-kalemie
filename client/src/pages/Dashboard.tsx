@@ -22,7 +22,7 @@ interface DashboardData {
   openContainers: { id: number; number: string; status: string; arrivalDate: string | null; purchaseUsd: string }[];
   recentSales: { id: number; number: string; date: string; total: string; status: string; customerName: string | null }[];
   partners: { id: number; name: string; sharePct: string; bearsOperatingExpenses: boolean; currentBalance: string; capitalBalance: string }[];
-  position?: { money: string; stock: string; transit: string; receivables: string; payables: string; net: string };
+  position?: { money: string; stock: string; transit: string; receivables: string; payables: string; otherAssets?: string; otherLiabilities?: string; net: string };
 }
 
 const STATUS_LABEL: Record<string, [string, string]> = {
@@ -224,6 +224,8 @@ function PositionCard({ p, onTheWay }: { p: NonNullable<DashboardData["position"
     [t("Customers owe us", "Clients nous doivent"), p.receivables, false],
     [t("We owe", "Nous devons"), p.payables, true],
   ];
+  if (p.otherAssets && !d(p.otherAssets).isZero()) rows.splice(4, 0, [t("Advances and deposits", "Avances et dépôts"), p.otherAssets, false]);
+  if (p.otherLiabilities && !d(p.otherLiabilities).isZero()) rows.push([t("Other debts (withholdings…)", "Autres dettes (retenues…)"), p.otherLiabilities, true]);
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">

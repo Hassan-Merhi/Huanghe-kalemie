@@ -95,10 +95,14 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
       if (kind === "receipt" && a.type === "expense") {
         throw badRequest(`Line ${n}: an expense refund is recorded by cancelling the expense`, `Ligne ${n} : un remboursement de dépense s'enregistre en annulant la dépense`);
       }
+      // Francs paid into or out of a balance sheet account (withholdings to remit, deposits…) stay
+      // francs there, so paying out what was withheld in francs empties it in francs too.
+      const keepsFrancs = money.currency === "CDF" && (a.type === "asset" || a.type === "liability");
       lines.push({
         ...side,
         usd,
         accountId: a.id,
+        ...(keepsFrancs ? { currency: "CDF" as const, nativeAmount: amount.toFixed(2), rate: money.rate } : {}),
         memo: l.memo || null,
         expense: a.type === "expense" && kind === "payment" ? { accountId: a.id, name: a.name, native: amount.toFixed(2), description: l.memo || input.memo || a.name } : undefined,
       });
