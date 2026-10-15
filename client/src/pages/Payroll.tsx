@@ -258,7 +258,9 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
 
   const grid = active.map((e) => {
     const ed = edits[e.id] ?? {};
-    const salary = ed.salary ?? (e.monthlySalary ? d(e.monthlySalary).toString() : "");
+    // Monthly salaries are kept in dollars; a franc payroll starts from them at the rate.
+    const base = e.monthlySalary ? d(e.monthlySalary) : null;
+    const salary = ed.salary ?? (base ? (currency === "CDF" ? (d(rate).gt(0) ? base.times(d(rate)).toDecimalPlaces(0).toString() : "") : base.toString()) : "");
     const bonus = ed.bonus ?? "";
     const withheld = ed.withheld ?? "";
     const penalty = ed.penalty ?? "";
@@ -270,6 +272,20 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
   const total = included.reduce((s, g) => s.plus(g.net), d(0));
   const negative = included.find((g) => g.net.isNegative());
   const dayInMonth = effectiveDay.slice(0, 7) === month;
+
+  /** Switching currency converts what was typed at the rate, so 250 $ does not become 250 FC. */
+  function changeCurrency(next: "USD" | "CDF") {
+    if (next === currency) return;
+    const r = d(rate);
+    const conv = (v: string | undefined) => {
+      if (v === undefined || !v.trim() || !r.gt(0)) return v;
+      return next === "CDF" ? d(v).times(r).toDecimalPlaces(0).toString() : d(v).dividedBy(r).toDecimalPlaces(2).toString();
+    };
+    setEdits((prev) =>
+      Object.fromEntries(Object.entries(prev).map(([k, e]) => [k, { ...e, salary: conv(e.salary), bonus: conv(e.bonus), withheld: conv(e.withheld), penalty: conv(e.penalty) }])),
+    );
+    setCurrency(next);
+  }
 
   function setEdit(id: number, patch: GridEdit) {
     setEdits((prev) => ({ ...prev, [id]: { ...prev[id], ...patch } }));
@@ -363,7 +379,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                 <Input type="date" value={effectiveDay} onChange={(e) => setDay(e.target.value)} />
               </Field>
               <Field label={t("Salaries owed in", "Salaires dus en")}>
-                <Select value={currency} onValueChange={(v) => setCurrency(v as "USD" | "CDF")}>
+                <Select value={currency} onValueChange={(v) => changeCurrency(v as "USD" | "CDF")}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="USD">{t("Dollars ($)", "Dollars ($)")}</SelectItem>

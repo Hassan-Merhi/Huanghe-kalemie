@@ -55,10 +55,21 @@ export interface SetupOptions {
 /** Create what the app needs to run. Safe to run on every start. */
 export async function ensureSetup(tx: Tx, opts: SetupOptions = {}) {
   for (const a of CHART) {
-    await tx
-      .insert(accounts)
-      .values({ code: a.code, name: a.name, type: a.type, systemKey: a.systemKey ?? null, isMoney: a.isMoney ?? false, currency: a.currency ?? "USD" })
-      .onConflictDoNothing();
+    const values = { code: a.code, name: a.name, type: a.type, systemKey: a.systemKey ?? null, isMoney: a.isMoney ?? false, currency: a.currency ?? "USD" };
+    if (a.systemKey) {
+      const [has] = await tx.select({ id: accounts.id }).from(accounts).where(eq(accounts.systemKey, a.systemKey));
+      if (has) continue;
+      // A system account added in a later version: if the shop already uses its code, take the next free one.
+      let code = Number(a.code);
+      for (;;) {
+        const [taken] = await tx.select({ id: accounts.id }).from(accounts).where(eq(accounts.code, String(code)));
+        if (!taken) break;
+        code += 1;
+      }
+      await tx.insert(accounts).values({ ...values, code: String(code) });
+      continue;
+    }
+    await tx.insert(accounts).values(values).onConflictDoNothing();
   }
 
   const [{ count: locationCount }] = await tx.select({ count: sql<number>`count(*)::int` }).from(locations);
