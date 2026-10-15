@@ -116,6 +116,17 @@ export function money(value: unknown, currency: string = "USD"): string {
   return `${nf(2, 2).format(num(value))}${NB}${currency === "CNY" ? "¥" : currency}`;
 }
 
+/** How a currency is written in the shop: FC and $, never CDF / USD. */
+export function curLabel(currency: string | null | undefined): string {
+  return currency === "CDF" ? "FC" : currency === "USD" ? "$" : currency === "CNY" ? "¥" : currency ?? "";
+}
+
+/** An account name with its currency, unless the name already says it: "M-Pesa ($)", "Caisse FC". */
+export function accountLabel(name: string, currency: string | null | undefined): string {
+  if (/\b(FC|CDF|USD|\$|CNY|RMB)\b|\$/i.test(name)) return name;
+  return `${name} (${curLabel(currency)})`;
+}
+
 export function qty(value: unknown): string {
   return nf(0, 3).format(num(value));
 }
@@ -192,6 +203,12 @@ export function d(value: unknown): Decimal {
   } catch {
     return new Decimal(0);
   }
+}
+
+/** French spacing before ! ? ; : in text people typed ("Merci pour votre achat!" → "Merci pour votre achat !"). */
+export function frenchPunctuation(text: string): string {
+  if (lang !== "fr") return text;
+  return text.replace(/([^\s\d/])[ \u202f]?([!?;:])(?=\s|$)/g, "$1\u00a0$2");
 }
 
 export function variantText(attributes: Record<string, string> | null | undefined): string {

@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
+import { DecimalInput, Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -461,7 +461,7 @@ export function AdjustForm({
           {kind === "opening"
             ? t(
                 "Opening stock is the stock already in the shop when you start using the system. Its value is posted against “Opening balances” (capital), not as profit or loss.",
-                "Le stock d'ouverture est le stock déjà présent au magasin quand vous commencez à utiliser le système. Sa valeur est passée en « Soldes d'ouverture » (capital), pas en profit ni en perte.",
+                "Le stock d'ouverture est le stock déjà présent au magasin quand vous commencez à utiliser le système. Sa valeur est passée en «\u00a0Soldes d'ouverture\u00a0» (capital), pas en profit ni en perte.",
               )
             : t(
                 "Counts, damage, losses and found items are booked as stock losses or gains at average cost. They reduce or increase the gross profit shared by both partners at month close.",
@@ -519,7 +519,7 @@ export function AdjustForm({
                 </div>
                 <div className="mt-2 grid gap-3 sm:grid-cols-3">
                   <Field label={onlyRemove ? t("Qty removed", "Qté retirée") : onlyAdd ? t("Qty", "Qté") : t("Qty change (+/−)", "Variation (+/−)")} required>
-                    <Input inputMode={signed ? "text" : "decimal"} value={l.qty} onChange={(e) => setQty(l, e.target.value)} />
+                    <DecimalInput inputMode={signed ? "text" : "decimal"} value={l.qty} onChange={(e) => setQty(l, e.target.value)} />
                   </Field>
                   {c.gt(0) && (
                     <Field
@@ -561,7 +561,7 @@ export function AdjustForm({
           })}
           {lines.length > 0 && (
             <p className="text-right text-sm">
-              {t("Estimated value change", "Variation de valeur estimée")}: <span className="font-semibold">{usd(totalChange.toFixed(2))}</span>
+              {t("Estimated value change:", "Variation de valeur estimée\u00a0:")} <span className="font-semibold">{usd(totalChange.toFixed(2))}</span>
             </p>
           )}
         </CardContent>
@@ -572,7 +572,7 @@ export function AdjustForm({
         <div className="flex flex-wrap justify-end gap-2">
           {onSaveDraft && (
             <Button variant="outline" disabled={savingDraft || lines.length === 0} onClick={() => onSaveDraft({ date: dateValue, memo: reason.trim() || null, payload: draftPayload() })}>
-              {t("Save as optional", "Enregistrer comme facultative")}
+              {t("Save as pending", "Mettre en attente")}
             </Button>
           )}
           <SubmitButton onClick={submit} blocked={lines.length === 0 && t("Add at least one item", "Ajoutez au moins un article")} pending={m.isPending}>{t("Save adjustment", "Enregistrer l'ajustement")}</SubmitButton>

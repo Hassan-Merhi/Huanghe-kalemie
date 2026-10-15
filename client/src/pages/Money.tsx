@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import { ArrowDownToLine, ArrowLeftRight, ArrowUpFromLine, HandCoins, Landmark, Send, Wallet } from "lucide-react";
+import { ArrowDownToLine, ArrowLeftRight, ArrowUpFromLine, HandCoins, Landmark, MoreHorizontal, Send, Wallet } from "lucide-react";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
 import { MoneyAccountSelect, PartySelect, RateInput, useMoneyAccounts, useRate, useRateField } from "@/components/pickers";
 import { Button } from "@/components/ui/button";
@@ -43,30 +44,40 @@ export default function Money() {
         description={t("Cash boxes, bank and mobile money, what customers owe and what we owe.", "Caisses, banque et mobile money, ce que les clients doivent et ce que nous devons.")}
         actions={
           <>
+            {can("manager") && (
+              <Button onClick={() => setAction("transfer")}>
+                <ArrowLeftRight className="mr-1 h-4 w-4" /> {t("Transfer / exchange", "Transfert / change")}
+              </Button>
+            )}
             {can("manager", "cashier") && (
               <Button variant="outline" onClick={() => setAction("customer")}>
                 <ArrowDownToLine className="mr-1 h-4 w-4" /> {t("Customer payment", "Paiement client")}
               </Button>
             )}
+            {/* The less frequent movements stay one tap away, so the header keeps to one row. */}
             {can("manager") && (
-              <>
-                <Button variant="outline" onClick={() => setAction("party")}>
-                  <Send className="mr-1 h-4 w-4" /> {t("Pay supplier / agent / employee", "Payer fournisseur / agent / employé")}
-                </Button>
-                <Button onClick={() => setAction("transfer")}>
-                  <ArrowLeftRight className="mr-1 h-4 w-4" /> {t("Transfer / exchange", "Transfert / change")}
-                </Button>
-              </>
-            )}
-            {can() && (
-              <>
-                <Button variant="outline" onClick={() => setAction("contribution")}>
-                  <HandCoins className="mr-1 h-4 w-4" /> {t("Partner puts money in", "Apport d'un associé")}
-                </Button>
-                <Button variant="outline" onClick={() => setAction("withdrawal")}>
-                  <ArrowUpFromLine className="mr-1 h-4 w-4" /> {t("Partner withdrawal", "Retrait d'un associé")}
-                </Button>
-              </>
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button variant="outline">
+                    <MoreHorizontal className="mr-1 h-4 w-4" /> {t("More", "Plus")}
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onSelect={() => setAction("party")}>
+                    <Send className="mr-2 h-4 w-4" /> {t("Pay supplier / agent / employee", "Payer fournisseur / agent / employé")}
+                  </DropdownMenuItem>
+                  {can() && (
+                    <>
+                      <DropdownMenuItem onSelect={() => setAction("contribution")}>
+                        <HandCoins className="mr-2 h-4 w-4" /> {t("Partner puts money in", "Apport d'un associé")}
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => setAction("withdrawal")}>
+                        <ArrowUpFromLine className="mr-2 h-4 w-4" /> {t("Partner withdrawal", "Retrait d'un associé")}
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
             )}
           </>
         }
@@ -91,8 +102,9 @@ export default function Money() {
                       <>
                         <p className="mt-1 break-words text-lg font-semibold tabular sm:text-2xl">{cdf(a.nativeBalance)}</p>
                         <p className="text-xs text-muted-foreground">
-                          {t("Book value", "Valeur comptable")} {usd(a.balance)}
-                          {todayRate.gt(0) && <> · {t("today", "aujourd'hui")} ≈ {usd(d(a.nativeBalance).dividedBy(todayRate).toFixed(2))}</>}
+                          {todayRate.gt(0)
+                            ? <>≈ {usd(d(a.nativeBalance).dividedBy(todayRate).toFixed(2))} {t("at today's rate", "au taux du jour")} <span className="block">{t("In the books:", "Dans les comptes\u00a0:")} {usd(a.balance)}</span></>
+                            : <>{t("In the books:", "Dans les comptes\u00a0:")} {usd(a.balance)}</>}
                         </p>
                       </>
                     ) : (
@@ -104,7 +116,7 @@ export default function Money() {
             ))}
           </div>
           <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
-            <StatCard label={t("All money (book value)", "Toute la trésorerie (valeur comptable)")} value={usd(totalUsd.toFixed(2))} />
+            <StatCard label={t("All money (in $, as in the books)", "Toute la trésorerie (en $, selon les comptes)")} value={usd(totalUsd.toFixed(2))} />
             <StatCard label={t("Customers owe us", "Les clients nous doivent")} value={usd(receivables?.balance ?? 0)} />
             <StatCard label={t("We owe suppliers / agents / staff", "Nous devons aux fournisseurs / agents / employés")} value={usd(d(payables?.balance ?? 0).negated().toFixed(2))} tone={d(payables?.balance ?? 0).lt(0) ? "bad" : undefined} />
           </div>
@@ -642,12 +654,14 @@ function RatesCard() {
   const todayQ = useRate(today);
   const listQ = useQuery<{ date: string; cdfPerUsd: string }[]>({ queryKey: ["/api/exchange-rates"] });
   const [day, setDay] = useState(today);
-  const [value, setValue] = useState("");
+  // The field starts at the current rate (a real value, not a grey hint) until someone types.
+  const [typed, setValue] = useState<string | null>(null);
   const m = useApiMutation<{ date: string; cdfPerUsd: string }>("POST", "/api/exchange-rates", {
     success: t("Rate saved", "Taux enregistré"),
-    onSuccess: () => setValue(""),
+    onSuccess: () => setValue(null),
   });
   const current = todayQ.data;
+  const value = typed ?? (current ? d(current.cdfPerUsd).toString() : "");
   const isToday = current?.source === today;
 
   return (
@@ -666,20 +680,20 @@ function RatesCard() {
             <p className="text-xs text-amber-700 dark:text-amber-400">
               {current.source === "default"
                 ? t("No rate set yet: using the default rate.", "Aucun taux saisi\u00a0: taux par défaut utilisé.")
-                : t(`Not set today: using the rate of ${date(current.source)}.`, `Pas saisi aujourd'hui : taux du ${date(current.source)} utilisé.`)}
+                : t(`Not set today: using the rate of ${date(current.source)}.`, `Pas saisi aujourd'hui\u00a0: taux du ${date(current.source)} utilisé.`)}
             </p>
           )}
         </div>
         {can("manager") && (
-          <div className="grid grid-cols-2 gap-2">
-            <Field label={t("Date", "Date")} required>
+          <div className="flex flex-wrap gap-2">
+            <Field label={t("Date", "Date")} required className="w-44 shrink-0">
               <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
             </Field>
-            <Field label={t("CDF per USD", "FC pour 1 $")} required>
-              <Input inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} placeholder={current ? d(current.cdfPerUsd).toString() : "2800"} />
+            <Field label={t("FC per $1", "FC pour 1 $")} required className="min-w-[7rem] flex-1">
+              <Input inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} />
             </Field>
             <SubmitButton
-              className="col-span-2 sm:flex-col sm:items-stretch [&>button]:w-full"
+              className="w-full sm:flex-col sm:items-stretch [&>button]:w-full"
               blocked={!day ? t("Choose a date", "Choisissez une date") : !d(value).gt(0) ? t("Enter a rate above zero", "Saisissez un taux supérieur à zéro") : null}
               pending={m.isPending}
               onClick={() => m.mutate({ date: day, cdfPerUsd: d(value).toString() })}

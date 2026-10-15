@@ -215,7 +215,7 @@ function ItemsImport() {
     try {
       const { rows: raw, found } = await readSheet(file, STOCK_FIELDS);
       if (!found.includes("name")) {
-        setFileError(t("No item name column found. Name a column \"Article\" (or \"Item\", \"Désignation\").", "Aucune colonne de nom d'article trouvée. Nommez une colonne « Article » (ou « Item », « Désignation »)."));
+        setFileError(t("No item name column found. Name a column \"Article\" (or \"Item\", \"Désignation\").", "Aucune colonne de nom d'article trouvée. Nommez une colonne «\u00a0Article\u00a0» (ou «\u00a0Item\u00a0», «\u00a0Désignation\u00a0»)."));
         return;
       }
       if (!raw.length) {
@@ -266,7 +266,7 @@ function ItemsImport() {
           <CardDescription>
             {t(
               "One row per variant (size or colour). Rows with a quantity are booked as opening stock (Dr stock, Cr opening balances); if one row is wrong the whole file is refused.",
-              "Une ligne par variante (taille ou couleur). Les lignes avec une quantité sont enregistrées comme stock d'ouverture (Débit stock, Crédit soldes d'ouverture) ; si une ligne est fausse, tout le fichier est refusé.",
+              "Une ligne par variante (taille ou couleur). Les lignes avec une quantité sont enregistrées comme stock de départ\u00a0; si une ligne est fausse, tout le fichier est refusé.",
             )}
           </CardDescription>
         </CardHeader>
@@ -539,7 +539,7 @@ function ExportItems() {
         <CardDescription>
           {t(
             "Same columns as the import template: edit prices or details in Excel, then load it again. Leave Quantity empty when re-importing, otherwise it is added as opening stock.",
-            "Mêmes colonnes que le modèle d'import : modifiez les prix ou les détails dans Excel, puis rechargez le fichier. Laissez la quantité vide pour réimporter, sinon elle est ajoutée comme stock d'ouverture.",
+            "Mêmes colonnes que le modèle d'import\u00a0: modifiez les prix ou les détails dans Excel, puis rechargez le fichier. Laissez la quantité vide pour réimporter, sinon elle est ajoutée comme stock d'ouverture.",
           )}
         </CardDescription>
       </CardHeader>
@@ -610,7 +610,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
     try {
       const { rows: raw, found } = await readSheet(file, CONTAINER_FIELDS);
       if (!found.includes("name")) {
-        setFileError(t("No item name column found. Name a column \"Article\" (or \"Item\").", "Aucune colonne de nom d'article trouvée. Nommez une colonne « Article » (ou « Item »)."));
+        setFileError(t("No item name column found. Name a column \"Article\" (or \"Item\").", "Aucune colonne de nom d'article trouvée. Nommez une colonne «\u00a0Article\u00a0» (ou «\u00a0Item\u00a0»)."));
         return;
       }
       if (!found.includes("quantity") || !found.includes("unitPrice")) {
@@ -655,7 +655,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
           <DialogDescription>
             {t(
               `One row per item and size. Unit prices are in the invoice currency (${currency}); weight and volume are totals for the line. Missing items are created.`,
-              `Une ligne par article et taille. Les prix unitaires sont dans la devise de la facture (${currency}) ; le poids et le volume sont des totaux pour la ligne. Les articles manquants sont créés.`,
+              `Une ligne par article et taille. Les prix unitaires sont dans la devise de la facture (${currency})\u00a0; le poids et le volume sont des totaux pour la ligne. Les articles manquants sont créés.`,
             )}
           </DialogDescription>
         </DialogHeader>

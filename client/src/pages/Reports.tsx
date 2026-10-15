@@ -126,11 +126,11 @@ export default function Reports() {
             <TabsTrigger value="checks">{t("Self-check", "Contrôles")}</TabsTrigger>
           </TabsList>
         </div>
-        <TabsContent value="pnl"><TabNote>{t("What the shop earned in the period: sales minus the cost of the goods sold and the running costs.", "Ce que la boutique a gagné sur la période : les ventes moins le coût des articles vendus et les frais de fonctionnement.")}</TabNote><ProfitLoss /></TabsContent>
+        <TabsContent value="pnl"><TabNote>{t("What the shop earned in the period: sales minus the cost of the goods sold and the running costs.", "Ce que la boutique a gagné sur la période\u00a0: les ventes moins le coût des articles vendus et les frais de fonctionnement.")}</TabNote><ProfitLoss /></TabsContent>
         <TabsContent value="items"><TabNote>{t("Which items sold, how many, and what each one earned after its cost.", "Quels articles se sont vendus, combien, et ce que chacun a rapporté après son coût.")}</TabNote><SalesByItem /></TabsContent>
-        <TabsContent value="daily"><TabNote>{t("One day at the till: sales by payment type, then what each cash box and account should hold at closing.", "Une journée de caisse : les ventes par moyen de paiement, puis ce que chaque caisse et compte doit contenir à la fermeture.")}</TabNote><DailyCash /></TabsContent>
+        <TabsContent value="daily"><TabNote>{t("One day at the till: sales by payment type, then what each cash box and account should hold at closing.", "Une journée de caisse\u00a0: les ventes par moyen de paiement, puis ce que chaque caisse et compte doit contenir à la fermeture.")}</TabNote><DailyCash /></TabsContent>
         <TabsContent value="bs"><TabNote>{t("What the shop owns, what it owes, and what is left for the partners, on a date.", "Ce que la boutique possède, ce qu'elle doit, et ce qui revient aux associés, à une date.")}</TabNote><BalanceSheet /></TabsContent>
-        <TabsContent value="tb"><TabNote>{t("Every account's balance on a date. Both columns must be equal: that proves nothing is missing from the books.", "Le solde de chaque compte à une date. Les deux colonnes doivent être égales : cela prouve que rien ne manque dans les comptes.")}</TabNote><TrialBalance /></TabsContent>
+        <TabsContent value="tb"><TabNote>{t("Every account's balance on a date. Both columns must be equal: that proves nothing is missing from the books.", "Le solde de chaque compte à une date. Les deux colonnes doivent être égales\u00a0: cela prouve que rien ne manque dans les comptes.")}</TabNote><TrialBalance /></TabsContent>
         <TabsContent value="journal"><TabNote>{t("Every entry in date order, with the accounts each one moved.", "Toutes les écritures par date, avec les comptes que chacune a touchés.")}</TabNote><Journals /></TabsContent>
         <TabsContent value="ledger"><TabNote>{t("Everything that went through one account, line by line, with the running balance.", "Tout ce qui est passé par un compte, ligne par ligne, avec le solde au fur et à mesure.")}</TabNote><Ledger /></TabsContent>
         <TabsContent value="ageing"><TabNote>{t("Each customer who owes money, split by how long it has been owed. Payments clear the oldest amounts first.", "Chaque client qui doit de l'argent, réparti selon depuis combien de temps. Les paiements soldent d'abord les montants les plus anciens.")}</TabNote><Ageing /></TabsContent>
@@ -947,7 +947,7 @@ function Journals() {
                                       <TableCell className="text-right"><Num>{d(l.debit).isZero() ? "" : usd(l.debit)}</Num></TableCell>
                                       <TableCell className="text-right"><Num>{d(l.credit).isZero() ? "" : usd(l.credit)}</Num></TableCell>
                                       <TableCell className="text-right text-xs text-muted-foreground">
-                                        <Num>{l.nativeAmount != null ? `${cdf(l.nativeAmount)}${l.rate ? ` @ ${qty(l.rate)}` : ""}` : ""}</Num>
+                                        <Num>{l.nativeAmount != null ? `${cdf(l.nativeAmount)}${l.rate ? ` · ${t("rate", "taux")} ${qty(l.rate)}\u00a0FC/$` : ""}` : ""}</Num>
                                       </TableCell>
                                     </TableRow>
                                   ))}
@@ -1117,10 +1117,10 @@ function ManualJournalDialog({ onClose }: { onClose: () => void }) {
           </Button>
         </div>
         <div className="flex flex-wrap justify-end gap-4 rounded-lg bg-muted p-3 text-sm">
-          <span>{t("Debits", "Débits")}: <Num className="font-medium">{usd(totalDebit.toFixed(2))}</Num></span>
-          <span>{t("Credits", "Crédits")}: <Num className="font-medium">{usd(totalCredit.toFixed(2))}</Num></span>
+          <span>{t("Debits:", "Débits\u00a0:")} <Num className="font-medium">{usd(totalDebit.toFixed(2))}</Num></span>
+          <span>{t("Credits:", "Crédits\u00a0:")} <Num className="font-medium">{usd(totalCredit.toFixed(2))}</Num></span>
           <span className={cn("font-semibold", diff.isZero() ? "text-green-700 dark:text-green-400" : "text-destructive")}>
-            {t("Difference", "Écart")}: <Num>{usd(diff.toFixed(2))}</Num>
+            {t("Difference:", "Écart\u00a0:")} <Num>{usd(diff.toFixed(2))}</Num>
           </span>
         </div>
         <DialogFooter>

@@ -15,7 +15,7 @@ import { LocationSelect, MoneyAccountSelect, PartySelect, RateInput, VariantSear
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
-import { cdf, d, date as fmtDate, money, qty as fmtQty, todayLocal, usd, variantText } from "@/lib/format";
+import { cdf, d, date as fmtDate, frenchPunctuation, money, qty as fmtQty, todayLocal, usd, variantText } from "@/lib/format";
 import type { Account, MotorcycleUnit, Party, Settings, VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -59,6 +59,7 @@ export interface SaleReturnRow {
   refundAccountId: number | null;
   reason: string | null;
   createdAt: string;
+  lines?: { saleLineId: number; qty: string; amount: string }[];
 }
 
 export interface SaleFull {
@@ -134,7 +135,7 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
         return (
           <div key={l.id} className="mb-1">
             <p className="font-semibold">{l.productName}{label ? ` ${label}` : ""}</p>
-            {l.chassisNo && <p>{t("Chassis", "Châssis")}: {l.chassisNo}{l.engineNo ? ` · ${t("Engine", "Moteur")}: ${l.engineNo}` : ""}</p>}
+            {l.chassisNo && <p>{t("Chassis:", "Châssis\u00a0:")} {l.chassisNo}{l.engineNo ? ` · ${t("Engine:", "Moteur\u00a0:")} ${l.engineNo}` : ""}</p>}
             <ReceiptRow left={`${fmtQty(l.qty)} x ${usd(l.unitPrice)}`} right={usd(c2(d(l.qty).times(l.unitPrice)).toFixed(2))} />
           </div>
         );
@@ -163,7 +164,7 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
       )}
       {sale.note && <p className="mt-1">{sale.note}</p>}
       {dash}
-      <p className="whitespace-pre-line text-center">{settings?.receiptFooter || t("Thank you for your purchase!", "Merci pour votre achat\u00a0!")}</p>
+      <p className="whitespace-pre-line text-center">{(settings?.receiptFooter && frenchPunctuation(settings.receiptFooter)) || t("Thank you for your purchase!", "Merci pour votre achat\u00a0!")}</p>
     </div>
   );
 }
@@ -262,7 +263,7 @@ function ChassisPicker({ line, locationId, takenUnitIds, onChange }: { line: Car
         <p className="text-xs text-muted-foreground">
           {t(
             `${missingChassis === 1 ? "1 unit has" : `${missingChassis} units have`} no chassis number: a manager must enter it on the Motorcycles page before they can be sold.`,
-            `${missingChassis === 1 ? "1 moto" : `${missingChassis} motos`} sans numéro de châssis : un gérant doit le saisir dans la page Motos avant de pouvoir les vendre.`,
+            `${missingChassis === 1 ? "1 moto" : `${missingChassis} motos`} sans numéro de châssis\u00a0: un gérant doit le saisir dans la page Motos avant de pouvoir les vendre.`,
           )}
         </p>
       )}
@@ -625,7 +626,7 @@ export default function POS() {
               <Field label={t("Customer (optional, required for credit)", "Client (facultatif, obligatoire pour le crédit)")}>
                 <PartySelect types={["customer"]} value={customerId} onChange={(id, p) => { setCustomerId(id); setCustomer(p ?? null); }} placeholder={t("Walk-in customer", "Client de passage")} />
                 {customer && d(customer.balance).gt(0) && (
-                  <p className="text-xs text-amber-600 dark:text-amber-400">{t("Already owes", "Doit déjà")} {usd(customer.balance)}</p>
+                  <p className="text-xs text-amber-700 dark:text-amber-400">{t("Already owes", "Doit déjà")} {usd(customer.balance)}</p>
                 )}
               </Field>
               <Field label={t("Sale discount $", "Remise sur la vente $")}>

@@ -78,7 +78,7 @@ export default function OptionalVouchers() {
     },
   });
   const remove = useApiMutation<{ id: number }>("DELETE", (b) => `/api/voucher-drafts/${b.id}`, {
-    success: t("Optional voucher deleted", "Pièce facultative supprimée"),
+    success: t("Pending voucher deleted", "Pièce en attente supprimée"),
   });
 
   function run() {
@@ -129,10 +129,10 @@ export default function OptionalVouchers() {
   return (
     <div>
       <PageHeader
-        title={t("Optional vouchers", "Pièces facultatives")}
+        title={t("Pending vouchers", "Pièces en attente")}
         description={t(
           "Optional vouchers are saved but change no balance, stock or report until they are validated.",
-          "Les pièces facultatives sont enregistrées mais ne changent aucun solde, stock ni rapport tant qu'elles ne sont pas validées.",
+          "Les pièces en attente sont enregistrées mais ne changent aucun solde, stock ni rapport tant qu'elles ne sont pas validées.",
         )}
         actions={
           canSave ? (
@@ -142,7 +142,7 @@ export default function OptionalVouchers() {
       />
 
       <div className="mb-4 grid grid-cols-2 gap-3 sm:max-w-md">
-        <StatCard label={filtered ? t("Shown", "Affichées") : t("Optional vouchers", "Pièces facultatives")} value={rows.length} />
+        <StatCard label={filtered ? t("Shown", "Affichées") : t("Pending vouchers", "Pièces en attente")} value={rows.length} />
         <StatCard label={t("Total (USD)", "Total (USD)")} value={usd(total.toFixed(2))} sub={t("Stock adjustments have no total", "Les ajustements de stock n'ont pas de total")} />
       </div>
 
@@ -172,8 +172,8 @@ export default function OptionalVouchers() {
       ) : q.error ? (
         <ErrorText error={q.error} />
       ) : rows.length === 0 ? (
-        <EmptyState title={filtered ? t("Nothing matches these filters", "Rien ne correspond à ces filtres") : t("No optional vouchers", "Aucune pièce facultative")}>
-          {!filtered && t("Use “Save as optional” on a voucher to keep it here before posting it.", "Utilisez « Enregistrer comme facultative » sur une pièce pour la garder ici avant de la passer.")}
+        <EmptyState title={filtered ? t("Nothing matches these filters", "Rien ne correspond à ces filtres") : t("No pending vouchers", "Aucune pièce en attente")}>
+          {!filtered && t("Use “Save as optional” on a voucher to keep it here before posting it.", "Utilisez «\u00a0Mettre en attente\u00a0» sur une pièce pour la garder ici avant de la passer.")}
         </EmptyState>
       ) : (
         <>
@@ -235,13 +235,13 @@ export default function OptionalVouchers() {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {confirm?.action === "finalize" ? t("Validate this voucher?", "Valider cette pièce\u00a0?") : t("Delete this optional voucher?", "Supprimer cette pièce facultative\u00a0?")}
+              {confirm?.action === "finalize" ? t("Validate this voucher?", "Valider cette pièce\u00a0?") : t("Delete this pending voucher?", "Supprimer cette pièce en attente\u00a0?")}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {confirm?.action === "finalize"
                 ? t(
                     "It will be posted with all the usual checks: balances, stock and reports change, and it leaves this list.",
-                    "Elle sera passée avec tous les contrôles habituels : les soldes, le stock et les rapports changent, et elle quitte cette liste.",
+                    "Elle sera passée avec tous les contrôles habituels\u00a0: les soldes, le stock et les rapports changent, et elle quitte cette liste.",
                   )
                 : t("Nothing was posted from it, so nothing else changes. This cannot be undone.", "Rien n'a été passé à partir d'elle, donc rien d'autre ne change. Action irréversible.")}
               {confirm && (

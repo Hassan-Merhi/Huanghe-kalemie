@@ -192,7 +192,7 @@ function CancelDialog({ row, onClose }: { row: ExpenseRow; onClose: () => void }
         <p className="text-sm">
           {t(
             "A reversal is posted on the date below: the money goes back to the account it was paid from (or the debt is cancelled). The expense stays in the list, marked cancelled.",
-            "Une écriture d'annulation est passée à la date ci-dessous : l'argent revient au compte qui a payé (ou la dette est annulée). La dépense reste dans la liste, marquée annulée.",
+            "Une écriture d'annulation est passée à la date ci-dessous\u00a0: l'argent revient au compte qui a payé (ou la dette est annulée). La dépense reste dans la liste, marquée annulée.",
           )}
         </p>
         <Field label={t("Cancellation date", "Date d'annulation")} required>
@@ -271,7 +271,7 @@ function AddExpenseDialog({ onClose }: { onClose: () => void }) {
             <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
           </Field>
           <Field label={t("Category", "Catégorie")} required>
-            <AccountSelect types={["expense"]} value={accountId} onChange={setAccountId} placeholder={t("Choose category", "Choisir la catégorie")} />
+            <AccountSelect hideCode types={["expense"]} value={accountId} onChange={setAccountId} placeholder={t("Choose category", "Choisir la catégorie")} />
           </Field>
           <Field label={t("Description", "Description")} className="sm:col-span-2" required>
             <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder={t("e.g. October rent", "ex. loyer d'octobre")} />

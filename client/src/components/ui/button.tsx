@@ -9,7 +9,8 @@ const buttonVariants = cva(
   {
     variants: {
       variant: {
-        default: "bg-primary text-primary-foreground border border-primary-border",
+        // Disabled: grey, not a faded orange (faded orange on a dark card read as brown on brown).
+        default: "bg-primary text-primary-foreground border border-primary-border disabled:border-transparent disabled:bg-muted disabled:text-muted-foreground disabled:opacity-100",
         destructive: "bg-destructive text-destructive-foreground border border-destructive-border",
         outline:
           // Shows the background color of whatever card / sidebar / accent background it is inside of.

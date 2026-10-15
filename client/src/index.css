@@ -45,7 +45,8 @@
 
   --popover-border: 30 7% 82%;
 
-  --primary: 24 95% 50%;
+  /* #C2410C: white text on it reaches 5:1 (the brighter orange was 2.9:1). */
+  --primary: 17 88% 40%;
 
   --primary-foreground: 0 0% 100%;
 
@@ -67,7 +68,7 @@
   --destructive-foreground: 0 20% 98%;
 
   --input: 30 12% 76%;
-  --ring: 24 95% 50%;
+  --ring: 17 88% 40%;
   --chart-1: 24 95% 50%;
   --chart-2: 142 76% 28%;
   --chart-3: 30 88% 42%;
@@ -92,7 +93,7 @@
   /* Border colors (static values for better browser compatibility) */
   --sidebar-primary-border: 24 95% 40%;
   --sidebar-accent-border: 30 8% 78%;
-  --primary-border: 24 95% 40%;
+  --primary-border: 17 88% 32%;
   --secondary-border: 30 6% 76%;
   --muted-border: 30 10% 79%;
   --accent-border: 30 12% 78%;
@@ -144,7 +145,8 @@
 
   --primary: 24 95% 53%;
 
-  --primary-foreground: 0 0% 100%;
+  /* Dark text on the bright orange: 7:1, where white was 2.8:1. */
+  --primary-foreground: 24 40% 7%;
 
   --secondary: 30 6% 18%;
 

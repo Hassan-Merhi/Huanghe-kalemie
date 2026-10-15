@@ -105,8 +105,8 @@ export default function ProductDetail() {
         {p.tracksSerials && (
           <Badge variant="outline" className="gap-1"><Bike className="h-3 w-3" /> {t("Motorcycle — chassis numbers tracked", "Moto — numéros de châssis suivis")}</Badge>
         )}
-        <Badge variant="outline">{t("In stock", "En stock")}: {qty(totalQty.toString())}</Badge>
-        {showCost && <Badge variant="outline">{t("Stock value", "Valeur du stock")}: {usd(totalValue.toFixed(2))}</Badge>}
+        <Badge variant="outline">{t("In stock:", "En stock\u00a0:")} {qty(totalQty.toString())}</Badge>
+        {showCost && <Badge variant="outline">{t("Stock value:", "Valeur du stock\u00a0:")} {usd(totalValue.toFixed(2))}</Badge>}
       </div>
       {p.description && <p className="mb-4 whitespace-pre-line text-sm text-muted-foreground">{p.description}</p>}
 

@@ -134,7 +134,7 @@ function marginPct(sell: string | undefined, cost: string | null | undefined) {
 function MarginCell({ sell, cost }: { sell: string | undefined; cost: string | null | undefined }) {
   const m = marginPct(sell, cost);
   if (!m) return <span className="text-muted-foreground">—</span>;
-  const cls = m.isNegative() ? "text-destructive font-medium" : m.lt(10) ? "text-amber-600 dark:text-amber-400" : "text-green-700 dark:text-green-400";
+  const cls = m.isNegative() ? "text-destructive font-medium" : m.lt(10) ? "text-amber-700 dark:text-amber-400" : "text-green-700 dark:text-green-400";
   return <Num className={cls}>{pct(m.toNumber())}</Num>;
 }
 
@@ -504,7 +504,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                         <Input className="text-right" inputMode="decimal" value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
                       </Field>
                       <Field label={t(`Unit price (${c.currency})`, `Prix unitaire (${c.currency})`)}>
-                        <Input className="text-right" inputMode="decimal" value={r.unitPrice} placeholder="0.00" onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
+                        <Input className="text-right" inputMode="decimal" value={r.unitPrice} placeholder="0" onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
                       </Field>
                       <Field label={t("Total weight (kg)", "Poids total (kg)")}>
                         <Input className="text-right" inputMode="decimal" placeholder={t("total kg", "kg total")} value={r.weightKg} onChange={(e) => update(r.key, { weightKg: e.target.value })} />
@@ -568,7 +568,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                             <Input className="ml-auto w-20 text-right" inputMode="decimal" value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
                           </TableCell>
                           <TableCell className="text-right">
-                            <Input className="ml-auto w-28 text-right" inputMode="decimal" value={r.unitPrice} placeholder="0.00" onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
+                            <Input className="ml-auto w-28 text-right" inputMode="decimal" value={r.unitPrice} placeholder="0" onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
                           </TableCell>
                           <TableCell className="text-right">
                             <Input className="ml-auto w-24 text-right" inputMode="decimal" aria-label={t("Total weight for the line (kg)", "Poids total de la ligne (kg)")} placeholder={t("total kg", "kg total")} value={r.weightKg} onChange={(e) => update(r.key, { weightKg: e.target.value })} />
@@ -658,7 +658,7 @@ function ExpensesSection({ c, editable }: { c: ContainerFull; editable: boolean 
           <CardDescription className="mt-1">
             {t(
               "Freight, duties, clearing, transport to Kalemie… These are added to the cost of the items when you offload, so both partners share them through the item cost. They are not shop running costs.",
-              "Fret, douane, dédouanement, transport jusqu'à Kalemie… Ces frais s'ajoutent au coût des articles au déchargement : les deux associés les partagent donc via le coût des articles. Ce ne sont pas des dépenses de fonctionnement.",
+              "Fret, douane, dédouanement, transport jusqu'à Kalemie… Ces frais s'ajoutent au coût des articles au déchargement\u00a0: les deux associés les partagent donc via le coût des articles. Ce ne sont pas des dépenses de fonctionnement.",
             )}
           </CardDescription>
         </div>
@@ -814,11 +814,11 @@ function DeleteExpenseDialog({ c, e, onClose }: { c: ContainerFull; e: Container
           {e.paidFromAccountId
             ? t(
                 "The payment is reversed today: the money goes back into the account it was paid from.",
-                "Le paiement est annulé aujourd'hui : l'argent revient dans le compte qui l'avait payé.",
+                "Le paiement est annulé aujourd'hui\u00a0: l'argent revient dans le compte qui l'avait payé.",
               )
             : t(
                 "The debt is reversed today: we no longer owe this amount to the agent or supplier.",
-                "La dette est annulée aujourd'hui : nous ne devons plus ce montant à l'agent ou au fournisseur.",
+                "La dette est annulée aujourd'hui\u00a0: nous ne devons plus ce montant à l'agent ou au fournisseur.",
               )}
         </p>
         <DialogFooter>
@@ -1020,7 +1020,7 @@ function PreviewSection({ c, priceOf }: { c: ContainerFull; priceOf: Map<number,
         <CardDescription>
           {t(
             "What each item will cost once in Kalemie: purchase value plus its share of the container costs. Based on the saved lines.",
-            "Ce que chaque article coûtera une fois à Kalemie : valeur d'achat plus sa part des frais du conteneur. Calculé sur les lignes enregistrées.",
+            "Ce que chaque article coûtera une fois à Kalemie\u00a0: valeur d'achat plus sa part des frais du conteneur. Calculé sur les lignes enregistrées.",
           )}
         </CardDescription>
       </CardHeader>
@@ -1192,8 +1192,8 @@ function OffloadButton({ c, disabledReason }: { c: ContainerFull; disabledReason
               </li>
               {motos.gt(0) && (
                 <li>{motos.equals(1)
-                    ? t("1 motorcycle record is created; add its chassis number before selling.", "1 fiche moto est créée ; ajoutez le numéro de châssis avant de vendre.")
-                    : t(`${motos.toString()} motorcycle records are created; add their chassis numbers before selling.`, `${motos.toString()} fiches moto sont créées ; ajoutez les numéros de châssis avant de vendre.`)}</li>
+                    ? t("1 motorcycle record is created; add its chassis number before selling.", "1 fiche moto est créée\u00a0; ajoutez le numéro de châssis avant de vendre.")
+                    : t(`${motos.toString()} motorcycle records are created; add their chassis numbers before selling.`, `${motos.toString()} fiches moto sont créées\u00a0; ajoutez les numéros de châssis avant de vendre.`)}</li>
               )}
               <li>{t("The container is locked: lines and costs can no longer change.", "Le conteneur est verrouillé\u00a0: lignes et frais ne peuvent plus changer.")}</li>
             </ul>

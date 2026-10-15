@@ -190,7 +190,7 @@ export async function saveDraft(
   const values = { kind: input.kind, date: input.date, memo: input.memo ?? null, payload: input.payload, totalUsd: await draftTotal(tx, input.kind, input.payload) };
   if (input.id) {
     const [row] = await tx.update(voucherDrafts).set({ ...values, updatedAt: new Date() }).where(eq(voucherDrafts.id, input.id)).returning();
-    if (!row) throw notFound("Optional voucher", "Pièce facultative introuvable");
+    if (!row) throw notFound("Pending voucher", "Pièce en attente introuvable");
     return row;
   }
   const [row] = await tx.insert(voucherDrafts).values({ ...values, createdBy: userId }).returning();
@@ -199,7 +199,7 @@ export async function saveDraft(
 
 export async function deleteDraft(tx: Tx, id: number) {
   const rows = await tx.delete(voucherDrafts).where(eq(voucherDrafts.id, id)).returning({ id: voucherDrafts.id });
-  if (!rows.length) throw notFound("Optional voucher", "Pièce facultative introuvable");
+  if (!rows.length) throw notFound("Pending voucher", "Pièce en attente introuvable");
 }
 
 /** Post a draft through the same service a voucher saved directly would use, then remove it. */
@@ -212,7 +212,7 @@ export async function finalizeDraft(
   parse: (kind: DraftKind, payload: Record<string, unknown>) => Record<string, unknown>,
 ) {
   const [draft] = await tx.select().from(voucherDrafts).where(eq(voucherDrafts.id, id)).for("update");
-  if (!draft) throw notFound("Optional voucher", "Pièce facultative introuvable");
+  if (!draft) throw notFound("Pending voucher", "Pièce en attente introuvable");
   const p = parse(draft.kind, { ...draft.payload, date: draft.date });
   let result: unknown;
   switch (draft.kind) {

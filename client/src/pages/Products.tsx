@@ -88,7 +88,7 @@ export default function Products() {
         <ErrorText error={q.error} />
       ) : rows.length === 0 ? (
         <EmptyState title={t("No items found", "Aucun article trouvé")}>
-          {can("manager") ? t("Create your first item with “New item”.", "Créez votre premier article avec « Nouvel article ».") : null}
+          {can("manager") ? t("Create your first item with “New item”.", "Créez votre premier article avec «\u00a0Nouvel article\u00a0».") : null}
         </EmptyState>
       ) : (
         <Card className="overflow-x-auto">
@@ -365,7 +365,7 @@ function NewProductDialog({ onClose, onCreated }: { onClose: () => void; onCreat
           ) : (
             <>
               <p className="text-xs text-muted-foreground">
-                {t("Define attributes, e.g. Size = “2.75-17, 3.00-18” and Colour = “Black, Red”, then generate every combination.", "Définissez les attributs, ex. Taille = « 2.75-17, 3.00-18 » et Couleur = « Noir, Rouge », puis générez toutes les combinaisons.")}
+                {t("Define attributes, e.g. Size = “2.75-17, 3.00-18” and Colour = “Black, Red”, then generate every combination.", "Définissez les attributs, ex. Taille = «\u00a02.75-17, 3.00-18\u00a0» et Couleur = «\u00a0Noir, Rouge\u00a0», puis générez toutes les combinaisons.")}
               </p>
               <div className="space-y-2">
                 {attrs.map((a, i) => (

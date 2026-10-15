@@ -53,7 +53,7 @@ export function BackupPanel() {
             </a>
           </Button>
           {q.data && (
-            <p className={stale ? "text-sm text-amber-600 dark:text-amber-400" : "text-sm text-muted-foreground"}>
+            <p className={stale ? "text-sm text-amber-700 dark:text-amber-400" : "text-sm text-muted-foreground"}>
               {last
                 ? t(`Last download: ${dateTime(last)}`, `Dernier téléchargement : ${dateTime(last)}`)
                 : t("No backup has been downloaded yet.", "Aucune sauvegarde n'a encore été téléchargée.")}
@@ -244,7 +244,7 @@ function RestoreCard({ empty }: { empty: boolean }) {
               )}
             </p>
             <p className="text-xs text-muted-foreground">
-              {t("Checked", "Vérifié")}: {result.checks.length} {t("totals", "totaux")} · {t("debits", "débits")} {usd(result.checks.find((c) => c.label === "debit")?.actual ?? "0")} · {t("stock", "stock")} {usd(result.checks.find((c) => c.label === "stockValue")?.actual ?? "0")}
+              {t("Checked:", "Vérifié\u00a0:")} {result.checks.length} {t("totals", "totaux")} · {t("debits", "débits")} {usd(result.checks.find((c) => c.label === "debit")?.actual ?? "0")} · {t("stock", "stock")} {usd(result.checks.find((c) => c.label === "stockValue")?.actual ?? "0")}
             </p>
           </div>
         )}

@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import { useEffect, type ReactNode } from "react";
 import { roleLabel } from "@/lib/labels";
 import { Link, useLocation } from "wouter";
 import {
@@ -101,8 +101,8 @@ const NAV: { en: string; fr: string; items: NavItem[] }[] = [
     ],
   },
   {
-    en: "Analysis",
-    fr: "Analyses",
+    en: "Figures",
+    fr: "Chiffres",
     items: [
       { href: "/analytics", en: "Analytics", fr: "Analyses", icon: TrendingUp, roles: ["manager", "partner"] },
       { href: "/reports", en: "Reports", fr: "Rapports", icon: BarChart3, roles: ["manager", "partner"] },
@@ -126,7 +126,7 @@ const SECTIONS: { href: string; en: string; fr: string; roles: Role[] }[][] = [
   ],
   [
     { href: "/vouchers", en: "Vouchers", fr: "Pièces", roles: ["manager", "partner"] },
-    { href: "/optional-vouchers", en: "Optional vouchers", fr: "Pièces facultatives", roles: ["manager", "partner"] },
+    { href: "/optional-vouchers", en: "Pending vouchers", fr: "Pièces en attente", roles: ["manager", "partner"] },
   ],
 ];
 
@@ -164,6 +164,10 @@ function NavLinks() {
   const { lang } = useI18n();
   const [location] = useLocation();
   const { setOpenMobile } = useSidebar();
+  // Keep the current page's entry in view when the menu is taller than the screen.
+  useEffect(() => {
+    document.querySelector<HTMLElement>('[data-sidebar="content"] [data-active="true"]')?.scrollIntoView({ block: "nearest" });
+  }, [location]);
   return (
     <>
       {NAV.map((group) => {
@@ -216,11 +220,12 @@ export function AppLayout({ children }: { children: ReactNode }) {
             <p className="text-xs text-sidebar-foreground/70">Kalemie</p>
           </div>
         </SidebarHeader>
-        <SidebarContent>
+        {/* The menu scrolls on its own above the footer, so a short screen never hides an entry under it. */}
+        <SidebarContent className="[scrollbar-color:hsl(var(--sidebar-border))_transparent] [scrollbar-width:thin]">
           <NavLinks />
         </SidebarContent>
-        <SidebarFooter>
-          <div className="px-2 pb-2 text-xs text-sidebar-foreground/70">
+        <SidebarFooter className="border-t border-sidebar-border">
+          <div className="truncate px-2 py-1 text-xs text-sidebar-foreground/70">
             {user?.fullName} · {user ? roleLabel(user.role, t) : ""}
           </div>
         </SidebarFooter>
@@ -229,7 +234,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
         <header className="sticky top-0 z-20 flex h-14 items-center gap-2 border-b bg-background/95 px-3 backdrop-blur">
           <SidebarTrigger />
           <div className="flex-1" />
-          <Button variant="ghost" size="sm" onClick={() => setLang(lang === "fr" ? "en" : "fr")} aria-label="Language">
+          <Button variant="ghost" size="sm" onClick={() => setLang(lang === "fr" ? "en" : "fr")} aria-label={t("Language: switch to French", "Langue\u00a0: passer en anglais")}>
             {lang === "fr" ? "EN" : "FR"}
           </Button>
           <ThemeToggle />

@@ -14,7 +14,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
-import { d, date, qty, usd } from "@/lib/format";
+import { d, date, formatLang, qty, usd } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 
@@ -229,11 +229,11 @@ function NewContainerDialog({ onClose, onCreated }: { onClose: () => void; onCre
           {foreign ? (
             <Field
               label={t(`USD for 1 ${currency}`, `USD pour 1 ${currency}`)}
-              hint={t(`Example: 1 CNY = 0.14 USD`, `Exemple : 1 CNY = 0,14 USD`)}
+              hint={t(`Example: 1 CNY = 0.14 USD`, `Exemple\u00a0: 1 CNY = 0,14 USD`)}
               error={rateToUsd && !rateOk ? t("Enter a rate above zero", "Saisissez un taux supérieur à zéro") : null}
               required
             >
-              <Input inputMode="decimal" value={rateToUsd} onChange={(e) => setRateToUsd(e.target.value)} placeholder="0.14" />
+              <Input inputMode="decimal" value={rateToUsd} onChange={(e) => setRateToUsd(e.target.value)} placeholder={formatLang() === "fr" ? "0,14" : "0.14"} />
             </Field>
           ) : (
             <div className="hidden sm:block" />

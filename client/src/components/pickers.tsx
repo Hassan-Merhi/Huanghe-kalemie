@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field } from "@/components/common";
 import { useI18n, useT } from "@/lib/i18n";
-import { d, todayLocal, usd, qty as fmtQty } from "@/lib/format";
+import { accountLabel, d, todayLocal, usd, qty as fmtQty } from "@/lib/format";
 import { api, invalidateAll, withQuery } from "@/lib/api";
 import type { Account, Category, Location, Party, Settings, VariantRow } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
@@ -28,14 +28,15 @@ export function MoneyAccountSelect({ value, onChange, placeholder }: { value: nu
       <SelectTrigger><SelectValue placeholder={placeholder ?? t("Choose account", "Choisir le compte")} /></SelectTrigger>
       <SelectContent>
         {data.map((a) => (
-          <SelectItem key={a.id} value={String(a.id)}>{a.name} ({a.currency})</SelectItem>
+          <SelectItem key={a.id} value={String(a.id)}>{accountLabel(a.name, a.currency)}</SelectItem>
         ))}
       </SelectContent>
     </Select>
   );
 }
 
-export function AccountSelect({ value, onChange, types, placeholder }: { value: number | null; onChange: (id: number) => void; types?: Account["type"][]; placeholder?: string }) {
+/** Account picker. `hideCode` drops the chart number ("6000 · Loyer" → "Loyer") on pages for the shop, not the books. */
+export function AccountSelect({ value, onChange, types, placeholder, hideCode }: { value: number | null; onChange: (id: number) => void; types?: Account["type"][]; placeholder?: string; hideCode?: boolean }) {
   const t = useT();
   const q = useQuery<Account[]>({ queryKey: ["/api/accounts"] });
   const rows = (q.data ?? []).filter((a) => a.active && (!types || types.includes(a.type)));
@@ -44,7 +45,7 @@ export function AccountSelect({ value, onChange, types, placeholder }: { value: 
       <SelectTrigger><SelectValue placeholder={placeholder ?? t("Choose account", "Choisir le compte")} /></SelectTrigger>
       <SelectContent>
         {rows.map((a) => (
-          <SelectItem key={a.id} value={String(a.id)}>{a.code} · {a.name}</SelectItem>
+          <SelectItem key={a.id} value={String(a.id)}>{hideCode ? a.name : `${a.code} · ${a.name}`}</SelectItem>
         ))}
       </SelectContent>
     </Select>

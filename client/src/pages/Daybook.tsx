@@ -15,7 +15,7 @@ import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
 import { downloadCsv } from "@/lib/sheets";
-import { cdf, d, date as fmtDate, todayLocal, usd } from "@/lib/format";
+import { cdf, d, date as fmtDate, qty, todayLocal, usd } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { RangePicker, useRange } from "@/pages/Reports";
 import { journalTypeLabel } from "@/pages/ContactDetail";
@@ -553,7 +553,7 @@ function LinesTable({ lines, t }: { lines: DaybookLine[]; t: T }) {
               <td className="py-1 pr-3 text-right"><Num>{d(l.credit).isZero() ? "" : usd(l.credit)}</Num></td>
               <td className="py-1 text-right text-xs">
                 <Num>{l.nativeAmount != null ? cdf(l.nativeAmount) : ""}</Num>
-                {l.nativeAmount != null && l.rate && <span className="block text-muted-foreground">@ {l.rate}</span>}
+                {l.nativeAmount != null && l.rate && <span className="block text-muted-foreground">{t("rate", "taux")} {qty(l.rate)}{"\u00a0"}FC/$</span>}
               </td>
             </tr>
           ))}

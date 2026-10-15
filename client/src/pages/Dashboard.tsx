@@ -150,7 +150,7 @@ export default function Dashboard() {
                 <p className="mb-2 text-xs text-muted-foreground">
                   {t(
                     "At each month close, gross profit is split 75/25; shop running costs then come off the 75% partner's share only.",
-                    "À chaque clôture mensuelle, la marge brute est partagée 75/25 ; les charges de la boutique sont ensuite déduites uniquement de la part de l'associé à 75 %.",
+                    "À chaque clôture mensuelle, la marge brute est partagée 75/25\u00a0; les charges de la boutique sont ensuite déduites uniquement de la part de l'associé à 75 %.",
                   )}
                 </p>
                 <div className="divide-y text-sm">
