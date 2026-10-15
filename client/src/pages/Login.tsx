@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Eye, EyeOff } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Field, ErrorText, SubmitButton } from "@/components/common";
@@ -13,6 +14,7 @@ export default function Login() {
   const [password, setPassword] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
+  const [show, setShow] = useState(false);
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
@@ -48,7 +50,18 @@ export default function Login() {
               <Input autoFocus autoCapitalize="none" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} />
             </Field>
             <Field label={t("Password", "Mot de passe")} required>
-              <Input type="password" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+              <div className="relative">
+                <Input type={show ? "text" : "password"} className="pr-10" autoComplete="current-password" value={password} onChange={(e) => setPassword(e.target.value)} />
+                <button
+                  type="button"
+                  className="absolute inset-y-0 right-0 flex w-10 items-center justify-center text-muted-foreground hover:text-foreground"
+                  onClick={() => setShow((v) => !v)}
+                  aria-label={show ? t("Hide password", "Masquer le mot de passe") : t("Show password", "Afficher le mot de passe")}
+                  aria-pressed={show}
+                >
+                  {show ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+                </button>
+              </div>
             </Field>
             <ErrorText error={error} />
             <SubmitButton
@@ -59,6 +72,9 @@ export default function Login() {
             >
               {t("Sign in", "Se connecter")}
             </SubmitButton>
+            <p className="text-center text-xs text-muted-foreground">
+              {t("Forgot your password? Ask the owner to set a new one.", "Mot de passe oublié\u00a0? Demandez au propriétaire d'en définir un nouveau.")}
+            </p>
             <button type="button" className="w-full text-center text-xs text-muted-foreground" onClick={() => setLang(lang === "fr" ? "en" : "fr")}>
               {lang === "fr" ? "English" : "Français"}
             </button>

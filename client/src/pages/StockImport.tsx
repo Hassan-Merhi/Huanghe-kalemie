@@ -95,7 +95,7 @@ function PreviewCounts({ rows }: { rows: { status: PreviewRow["status"] }[] }) {
   const n = (s: PreviewRow["status"]) => rows.filter((r) => r.status === s).length;
   return (
     <div className="flex flex-wrap gap-2 text-sm">
-      <Badge variant="outline">{count(t, rows.length, ["row", "rows"], ["ligne", "lignes"])}</Badge>
+      <Badge variant="outline">{count(t, rows.length - n("error"), ["row to import", "rows to import"], ["ligne à importer", "lignes à importer"])}</Badge>
       <Badge variant="secondary">{count(t, n("existing"), ["existing", "existing"], ["existant", "existants"])}</Badge>
       <Badge variant="outline">{count(t, n("new_variant"), ["new variant", "new variants"], ["nouvelle variante", "nouvelles variantes"])}</Badge>
       <Badge variant="outline">{count(t, n("new_item"), ["new item", "new items"], ["nouvel article", "nouveaux articles"])}</Badge>
@@ -437,7 +437,7 @@ function PricesImport() {
       {rows.length > 0 && (
         <Card>
           <CardContent className="space-y-3 p-4">
-            <p className="text-sm text-muted-foreground">{count(t, rows.length, ["row", "rows"], ["ligne", "lignes"])}{errors > 0 && <span className="text-destructive"> · {count(t, errors, ["error", "errors"], ["erreur", "erreurs"])}</span>}</p>
+            <p className="text-sm text-muted-foreground">{count(t, rows.length - errors, ["price to update", "prices to update"], ["prix à mettre à jour", "prix à mettre à jour"])}{errors > 0 && <span className="text-destructive"> · {count(t, errors, ["error", "errors"], ["erreur", "erreurs"])}</span>}</p>
             <div className="max-h-[420px] overflow-auto rounded-md border">
               <Table>
                 <TableHeader>
@@ -639,7 +639,8 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
     return { r, p, err, status: (err ? "error" : p?.status ?? "existing") as PreviewRow["status"] };
   });
   const errors = merged.filter((m) => m.err).length;
-  const total = rows.reduce((s, r) => s.plus(d(r.quantity).times(d(r.unitPrice))), d(0));
+  // Rows with an error are not imported, so they are not in the total either.
+  const total = merged.filter((m) => !m.err).reduce((s, { r }) => s.plus(d(r.quantity).times(d(r.unitPrice))), d(0));
 
   const run = useApiMutation<unknown, { imported: number; created: number; newVariants: number }>("POST", `/api/containers/${containerId}/import-lines`, {
     success: t("Lines imported", "Lignes importées"),

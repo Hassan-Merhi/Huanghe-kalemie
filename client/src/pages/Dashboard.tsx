@@ -19,7 +19,7 @@ interface DashboardData {
   payables: string;
   stockValue: string;
   lowStockCount: number;
-  openContainers: { id: number; number: string; status: string; arrivalDate: string | null }[];
+  openContainers: { id: number; number: string; status: string; arrivalDate: string | null; purchaseUsd: string }[];
   recentSales: { id: number; number: string; date: string; total: string; status: string; customerName: string | null }[];
   partners: { id: number; name: string; sharePct: string; bearsOperatingExpenses: boolean; currentBalance: string; capitalBalance: string }[];
   position?: { money: string; stock: string; transit: string; receivables: string; payables: string; net: string };
@@ -90,7 +90,7 @@ export default function Dashboard() {
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
-            {data.position && <PositionCard p={data.position} />}
+            {data.position && <PositionCard p={data.position} onTheWay={data.openContainers} />}
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
                 <CardTitle className="text-base">{t("Money", "Trésorerie")}</CardTitle>
@@ -214,12 +214,13 @@ export default function Dashboard() {
   );
 }
 
-function PositionCard({ p }: { p: NonNullable<DashboardData["position"]> }) {
+function PositionCard({ p, onTheWay }: { p: NonNullable<DashboardData["position"]>; onTheWay: DashboardData["openContainers"] }) {
   const t = useT();
+  const purchase = onTheWay.reduce((s, c) => s.plus(d(c.purchaseUsd)), d(0));
   const rows: [string, string, boolean][] = [
     [t("Money", "Trésorerie"), p.money, false],
     [t("Stock (at cost)", "Stock (au coût)"), p.stock, false],
-    [t("On the way", "En route"), p.transit, false],
+    [t("Container costs paid (on the way)", "Frais payés (conteneurs en route)"), p.transit, false],
     [t("Customers owe us", "Clients nous doivent"), p.receivables, false],
     [t("We owe", "Nous devons"), p.payables, true],
   ];
@@ -242,6 +243,14 @@ function PositionCard({ p }: { p: NonNullable<DashboardData["position"]> }) {
             <Num className={d(p.net).lt(0) ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"}>{usd(p.net)}</Num>
           </div>
         </div>
+        {purchase.gt(0) && (
+          <p className="mt-1 text-xs text-muted-foreground">
+            {t(
+              `Not counted yet: ${usd(purchase.toFixed(2))} of goods bought in containers on the way. They enter stock, with the supplier debt, on offload.`,
+              `Pas encore compté\u00a0: ${usd(purchase.toFixed(2))} de marchandises achetées dans les conteneurs en route. Elles entrent en stock, avec la dette fournisseur, au déchargement.`,
+            )}
+          </p>
+        )}
       </CardContent>
     </Card>
   );

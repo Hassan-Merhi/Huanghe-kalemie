@@ -2,7 +2,7 @@ import type { Express, Request } from "express";
 import { and, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { accounts, DRAFT_KINDS, journalLines, journals, parties, saleReturns, users, type DraftKind } from "@shared/schema";
-import { dec } from "@shared/money";
+import { dec, parseTypedNumber } from "@shared/money";
 import { db } from "../db";
 import { forbidden, notFound } from "../errors";
 import { requireRole } from "../auth";
@@ -77,6 +77,15 @@ export function registerErpRoutes(
   // ---------------------------------------------------------------- Daybook
 
   const SALE_JOURNALS = new Set<string>(["sale", "sale_void", "sale_return"]);
+  /** The nearest day before (or after) the given one that has postings, for the daybook's jump buttons. */
+  app.get("/api/daybook/active-day", requireRole(...READERS), asyncHandler(async (req, res) => {
+    const q = z.object({ date: isoDate, dir: z.enum(["before", "after"]).default("before") }).parse(req.query);
+    const [row] = await db
+      .select({ day: q.dir === "before" ? sql<string | null>`max(${journals.date})` : sql<string | null>`min(${journals.date})` })
+      .from(journals)
+      .where(q.dir === "before" ? sql`${journals.date} < ${q.date}` : sql`${journals.date} > ${q.date}`);
+    res.json({ date: row?.day ?? null });
+  }));
   app.get("/api/daybook", requireRole(...READERS), asyncHandler(async (req, res) => {
     const q = z.object({ from: isoDate, to: isoDate, type: z.string().max(40).optional(), q: z.string().max(100).optional() }).parse(req.query);
     const conds = [gte(journals.date, q.from), lte(journals.date, q.to)];
@@ -217,11 +226,8 @@ export function registerErpRoutes(
   // ---------------------------------------------------------------- Spreadsheet imports
 
   const cell = z.union([z.string().max(200), z.number(), z.null()]).optional().transform((v) => (v === undefined || v === null ? null : String(v).trim()));
-  const num = z.union([z.string().max(40), z.number(), z.null()]).optional().transform((v) => {
-    if (v === undefined || v === null) return null;
-    const s = String(v).replace(/[\s,]/g, "").replace(/\$/g, "");
-    return s === "" ? null : s;
-  });
+  // "12,50" from a French spreadsheet is twelve and a half, not 1250.
+  const num = z.union([z.string().max(40), z.number(), z.null()]).optional().transform((v) => parseTypedNumber(v));
   const itemRow = z.object({
     name: cell.transform((v) => v ?? ""),
     category: cell,

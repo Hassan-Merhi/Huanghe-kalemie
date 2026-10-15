@@ -1,4 +1,5 @@
 import * as XLSX from "xlsx";
+import { parseTypedNumber } from "@shared/money";
 
 /*
  * Spreadsheet helpers: CSV download, Excel templates and reading an uploaded .xlsx / .xls / .csv.
@@ -43,14 +44,44 @@ const strip = (s: string) =>
     .toLowerCase()
     .replace(/[^a-z0-9]/g, "");
 
+/** CSV text in UTF-8 (with or without the mark Excel adds) or, failing that, in Windows Western encoding. */
+export function decodeCsv(bytes: ArrayBuffer): string {
+  let text: string;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);
+  } catch {
+    text = new TextDecoder("windows-1252").decode(bytes);
+  }
+  return text.replace(/^\uFEFF/, "");
+}
+
+/** The separator a CSV uses: French Excel writes ";", others ",", some tabs. */
+export function csvSeparator(text: string): string {
+  const first = text.split(/\r?\n/, 1)[0] ?? "";
+  const counts = [";", ",", "\t"].map((c) => [c, first.split(c).length - 1] as const);
+  return counts.sort((a, b) => b[1] - a[1])[0][1] > 0 ? counts[0][0] : ",";
+}
+
+/** Columns that hold numbers: "12,50" and "1 250,00" are read the French way. */
+const NUMBER_FIELDS = new Set(["sellPrice", "reorderLevel", "qty", "unitCost", "quantity", "unitPrice", "weightKg", "volumeCbm"]);
+
+async function readWorkbook(file: File) {
+  const buf = await file.arrayBuffer();
+  if (/\.(csv|txt)$/i.test(file.name) || file.type === "text/csv") {
+    const text = decodeCsv(buf);
+    // Cells stay text (raw), so "12,50" is not read as 1250; the server reads French and English numbers.
+    return XLSX.read(text, { type: "string", raw: true, FS: csvSeparator(text), cellDates: false });
+  }
+  return XLSX.read(buf, { type: "array", cellDates: false });
+}
+
 /**
  * Read the first sheet of a file into objects keyed by our field names.
  * `fields` maps a field to the header names it accepts (any case, accents and spaces ignored).
  * Returns the rows and the fields whose column was found.
  */
 export async function readSheet<F extends string>(file: File, fields: Record<F, string[]>) {
-  const buf = await file.arrayBuffer();
-  const wb = XLSX.read(buf, { type: "array", cellDates: false });
+  const wb = await readWorkbook(file);
   const ws = wb.Sheets[wb.SheetNames[0]];
   if (!ws) return { rows: [] as Record<F, string | null>[], found: [] as F[] };
   const grid = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true, defval: null, blankrows: false });
@@ -69,7 +100,7 @@ export async function readSheet<F extends string>(file: File, fields: Record<F, 
       const o = {} as Record<F, string | null>;
       for (const f of Object.keys(fields) as F[]) {
         const v = colOf[f] >= 0 ? r[colOf[f]] : null;
-        o[f] = v === null || v === undefined || String(v).trim() === "" ? null : String(v).trim();
+        o[f] = v === null || v === undefined || String(v).trim() === "" ? null : NUMBER_FIELDS.has(f) ? parseTypedNumber(v) : String(v).trim();
       }
       return o;
     });
