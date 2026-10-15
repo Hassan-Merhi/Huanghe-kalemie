@@ -204,7 +204,7 @@ function PaymentDialog({ party, balance, onClose }: { party: Statement["party"];
     onSuccess: onClose,
   });
   const b = d(balance);
-  const outstanding = isCustomer ? (b.isPositive() ? b : null) : b.isNegative() ? b.abs() : null;
+  const outstanding = isCustomer ? (b.gt(0) ? b : null) : b.isNegative() ? b.abs() : null;
   const valid = !!account && d(amount).gt(0) && (!isCdf || d(rate).gt(0));
 
   function save() {

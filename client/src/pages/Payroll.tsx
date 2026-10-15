@@ -97,7 +97,7 @@ export default function Payroll() {
   const employees = data?.employees ?? [];
   const active = employees.filter((e) => e.active);
   const owed = employees.reduce((s, e) => (d(e.balance).isNegative() ? s.plus(d(e.balance).abs()) : s), d(0));
-  const advances = employees.reduce((s, e) => (d(e.balance).isPositive() ? s.plus(e.balance) : s), d(0));
+  const advances = employees.reduce((s, e) => (d(e.balance).gt(0) ? s.plus(e.balance) : s), d(0));
   const monthly = active.reduce((s, e) => s.plus(d(e.monthlySalary)), d(0));
 
   return (
@@ -236,7 +236,9 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
   const run = data.runs.find((r) => r.month === month) ?? null;
   const active = data.employees.filter((e) => e.active);
   const effectiveAccount = accountId ?? data.salaryAccountId;
-  const effectiveDay = day || lastDayOfMonth(month);
+  // The current month defaults to today, not its last day: a future-dated entry would be missing from today's reports.
+  const today = todayLocal();
+  const effectiveDay = day || (month === today.slice(0, 7) ? today : lastDayOfMonth(month));
 
   const grid = active.map((e) => {
     const ed = edits[e.id] ?? {};
@@ -401,7 +403,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
               <div className="flex justify-end">
                 <Button
                   onClick={submit}
-                  disabled={post.isPending || !effectiveAccount || !dayInMonth || included.length === 0 || !!negative || !total.isPositive()}
+                  disabled={post.isPending || !effectiveAccount || !dayInMonth || included.length === 0 || !!negative || !total.gt(0)}
                 >
                   {t("Book salaries", "Comptabiliser les salaires")}
                 </Button>
@@ -428,7 +430,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
             <AlertDialogCancel>{t("Back", "Retour")}</AlertDialogCancel>
             <AlertDialogAction
               disabled={cancel.isPending}
-              onClick={(e) => { e.preventDefault(); cancel.mutate({ date: todayLocal() }); }}
+              onClick={(e) => { e.preventDefault(); cancel.mutate({}); }}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
               {t("Cancel the run", "Annuler le passage")}
@@ -500,7 +502,7 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
 
   const isCdf = account?.currency === "CDF";
   const r = d(rate);
-  const lines = rows.map((e) => ({ e, usdAmount: d(amountOf(e)) })).filter((l) => l.usdAmount.isPositive());
+  const lines = rows.map((e) => ({ e, usdAmount: d(amountOf(e)) })).filter((l) => l.usdAmount.gt(0));
   const total = lines.reduce((s, l) => s.plus(l.usdAmount), d(0));
   const frMonth = formatMonth(month, "fr");
 
@@ -572,7 +574,7 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
                       </div>
                       <div className="text-right">
                         <Input className="w-28 text-right" inputMode="decimal" value={amountOf(e)} onChange={(ev) => setAmounts((p) => ({ ...p, [e.id]: ev.target.value }))} />
-                        {isCdf && r.isPositive() && <p className="mt-0.5 text-xs text-muted-foreground">{cdf(a.times(r).toFixed(0))}</p>}
+                        {isCdf && r.gt(0) && <p className="mt-0.5 text-xs text-muted-foreground">{cdf(a.times(r).toFixed(0))}</p>}
                       </div>
                     </div>
                   );
@@ -583,7 +585,7 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
               <span>{t("Total", "Total")} · {lines.length} {t("employees", "employés")}</span>
               <Num className="font-semibold">
                 {usd(total.toFixed(2))}
-                {isCdf && r.isPositive() && <span className="ml-2 font-normal text-muted-foreground">{cdf(total.times(r).toFixed(0))}</span>}
+                {isCdf && r.gt(0) && <span className="ml-2 font-normal text-muted-foreground">{cdf(total.times(r).toFixed(0))}</span>}
               </Num>
             </div>
           </div>
@@ -591,7 +593,7 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{doneId ? t("Close", "Fermer") : t("Cancel", "Annuler")}</Button>
           {!doneId && (
-            <Button onClick={submit} disabled={pay.isPending || !account || lines.length === 0 || (isCdf && !r.isPositive())}>
+            <Button onClick={submit} disabled={pay.isPending || !account || lines.length === 0 || (isCdf && !r.gt(0))}>
               {t("Pay", "Payer")} {usd(total.toFixed(2))}
             </Button>
           )}
@@ -615,7 +617,7 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
   const isCdf = account?.currency === "CDF";
   const r = d(rate);
   const a = d(amount);
-  const outstanding = employees.filter((e) => d(e.balance).isPositive());
+  const outstanding = employees.filter((e) => d(e.balance).gt(0));
   const outstandingTotal = outstanding.reduce((s, e) => s.plus(e.balance), d(0));
 
   const give = useApiMutation<Record<string, unknown>, { id: number; total: string }>("POST", "/api/vouchers/payment", {
@@ -663,7 +665,7 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
               </Field>
               <Field
                 label={`${t("Amount", "Montant")}${account ? ` (${account.currency})` : ""}`}
-                hint={isCdf && a.isPositive() && r.isPositive() ? `≈ ${usd(a.div(r).toFixed(2))}` : undefined}
+                hint={isCdf && a.gt(0) && r.gt(0) ? `≈ ${usd(a.div(r).toFixed(2))}` : undefined}
               >
                 <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
               </Field>
@@ -682,7 +684,7 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
                   <Link href={`/vouchers/${doneId}`}><Printer className="mr-1 h-4 w-4" /> {t("Print voucher", "Imprimer la pièce")}</Link>
                 </Button>
               )}
-              <Button onClick={submit} disabled={give.isPending || !partyId || !account || !a.isPositive() || (isCdf && !r.isPositive())}>
+              <Button onClick={submit} disabled={give.isPending || !partyId || !account || !a.gt(0) || (isCdf && !r.gt(0))}>
                 {t("Give the advance", "Donner l'avance")}
               </Button>
             </div>

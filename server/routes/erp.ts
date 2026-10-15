@@ -75,6 +75,7 @@ export function registerErpRoutes(
 
   // ---------------------------------------------------------------- Daybook
 
+  const SALE_JOURNALS = new Set<string>(["sale", "sale_void", "sale_return"]);
   app.get("/api/daybook", requireRole(...READERS), asyncHandler(async (req, res) => {
     const q = z.object({ from: isoDate, to: isoDate, type: z.string().max(40).optional(), q: z.string().max(100).optional() }).parse(req.query);
     const conds = [gte(journals.date, q.from), lte(journals.date, q.to)];
@@ -99,7 +100,7 @@ export function registerErpRoutes(
     const ids = js.map((j) => j.journal.id);
     const lines = ids.length
       ? await db
-          .select({ line: journalLines, accountName: accounts.name, accountCode: accounts.code, isMoney: accounts.isMoney, partyName: parties.name })
+          .select({ line: journalLines, accountName: accounts.name, accountCode: accounts.code, isMoney: accounts.isMoney, systemKey: accounts.systemKey, partyName: parties.name })
           .from(journalLines)
           .innerJoin(accounts, eq(accounts.id, journalLines.accountId))
           .leftJoin(parties, eq(parties.id, journalLines.partyId))
@@ -129,7 +130,11 @@ export function registerErpRoutes(
             : journal.sourceType === "sale_return"
               ? (returns.find((r) => r.id === journal.sourceId)?.saleId ?? null)
               : null,
-        amount: ls.reduce((s, l) => s.plus(l.line.debit), dec(0)).toFixed(2),
+        // A sale's amount is what the customer pays, not that plus the cost of the goods (cost of sales / stock lines).
+        amount: ls
+          .filter((l) => !(SALE_JOURNALS.has(journal.type) && (l.systemKey === "cogs" || l.systemKey === "inventory")))
+          .reduce((s, l) => s.plus(l.line.debit), dec(0))
+          .toFixed(2),
         lines: ls.map((l) => ({ ...l.line, accountName: l.accountName, accountCode: l.accountCode, isMoney: l.isMoney, partyName: l.partyName })),
       };
     });
@@ -199,7 +204,7 @@ export function registerErpRoutes(
   app.post("/api/payroll/runs/:month/cancel", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const m = month.parse(req.params.month);
     const body = z.object({ date: isoDate.optional() }).parse(req.body ?? {});
-    await db.transaction((tx) => payroll.cancelRun(tx, m, body.date ?? todayIso(), uid(req)));
+    await db.transaction((tx) => payroll.cancelRun(tx, m, body.date ?? null, uid(req)));
     await audit(req, "cancel", "payroll_run", null, { month: m });
     res.json({ ok: true });
   }));

@@ -165,7 +165,7 @@ function Chart({ onOpen }: { onOpen: (id: number) => void }) {
       {q.isLoading && <Loading />}
       {q.data && !groups.length && <EmptyState title={t("No accounts match", "Aucun compte ne correspond")} />}
 
-      <div className="grid gap-4 lg:grid-cols-2">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
         {groups.map((g) => (
           <Card key={g.type}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">

@@ -195,7 +195,7 @@ function Body({ a }: { a: Analytics }) {
             {a.topItems.length === 0 ? (
               <div className="p-4"><EmptyState title={t("No sales for this period", "Aucune vente sur cette période")} /></div>
             ) : (
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto [contain:inline-size]">
                 <Table>
                   <TableHeader>
                     <TableRow>

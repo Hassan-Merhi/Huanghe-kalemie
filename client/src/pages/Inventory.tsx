@@ -183,7 +183,7 @@ function ByLocationTab() {
     const map = new Map<number, { id: number; name: string; items: number; value: ReturnType<typeof d>; retail: ReturnType<typeof d> }>();
     for (const r of all) {
       const cur = map.get(r.locationId) ?? { id: r.locationId, name: r.locationName, items: 0, value: d(0), retail: d(0) };
-      if (d(r.qty).isPositive()) cur.items += 1;
+      if (d(r.qty).gt(0)) cur.items += 1;
       cur.value = cur.value.plus(r.value);
       cur.retail = cur.retail.plus(r.retailValue);
       map.set(r.locationId, cur);

@@ -197,6 +197,7 @@ export async function importItems(
 export async function previewItems(tx: Tx, rows: ImportItemRow[]) {
   const caches = await loadCaches(tx);
   const out: RowResult[] = [];
+  const newItems = new Set<string>();
   for (const [i, r] of rows.entries()) {
     const n = i + 2;
     const sku = r.sku?.trim().toUpperCase() || null;
@@ -214,7 +215,9 @@ export async function previewItems(tx: Tx, rows: ImportItemRow[]) {
     }
     const product = caches.products.get(norm(r.name));
     if (!product) {
-      out.push({ row: n, variantId: null, sku, status: "new_item" });
+      // A later row of an item that an earlier row creates is a new variant of it, as the import counts it.
+      out.push({ row: n, variantId: null, sku, status: newItems.has(norm(r.name)) ? "new_variant" : "new_item" });
+      newItems.add(norm(r.name));
       continue;
     }
     const vs = await tx.select({ id: variants.id, sku: variants.sku, attributes: variants.attributes }).from(variants).where(eq(variants.productId, product.id));

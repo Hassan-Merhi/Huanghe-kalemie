@@ -1,6 +1,6 @@
 import { beforeAll, describe, expect, it } from "vitest";
 import { eq } from "drizzle-orm";
-import { accounts, containers, expenses, locations, parties, variants, voucherDrafts } from "@shared/schema";
+import { accounts, containers, expenses, journals, locations, parties, variants, voucherDrafts } from "@shared/schema";
 import { hasDb, resetDatabase } from "./helpers";
 import type { Db } from "../../server/db";
 
@@ -113,14 +113,20 @@ describe.skipIf(!hasDb)("Vouchers, optional vouchers, payroll, imports and inven
     staff = await payroll.employees(db);
     expect(staff.every((e) => e.balance === "0.00")).toBe(true);
 
-    await db.transaction((tx) => payroll.cancelRun(tx, "2026-09", "2026-09-30", userId));
+    // A cancellation cannot be dated before the entry it cancels (the run is dated 30 September).
+    await expect(db.transaction((tx) => payroll.cancelRun(tx, "2026-09", "2026-09-15", userId))).rejects.toThrow(/before/);
+    expect(await payroll.listRuns(db)).toHaveLength(1);
+    // Without a date the cancellation is dated like the run, so September loses the salaries (not the day it is cancelled).
+    await db.transaction((tx) => payroll.cancelRun(tx, "2026-09", null, userId));
     expect((await payroll.listRuns(db))).toHaveLength(0);
+    const [reversal] = await db.select().from(journals).where(eq(journals.reversesJournalId, run.journalId!));
+    expect(reversal.date).toBe("2026-09-30");
     expect((await reports.profitAndLoss(db, "2026-09-01", "2026-09-30")).accounts.find((a) => a.accountId === salaries)).toBeUndefined();
   });
 
   it("imports items with opening stock and keeps stock equal to the ledger", async () => {
-    const preview = await db.transaction((tx) => imports.previewItems(tx, [{ name: "Pneu", size: "3.00-17" }, { name: "" }]));
-    expect(preview.map((p) => p.status)).toEqual(["new_item", "error"]);
+    const preview = await db.transaction((tx) => imports.previewItems(tx, [{ name: "Pneu", size: "3.00-17" }, { name: "" }, { name: "pneu", size: "2.75-17" }]));
+    expect(preview.map((p) => p.status)).toEqual(["new_item", "error", "new_variant"]);
     const res = await db.transaction((tx) =>
       imports.importItems(
         tx,

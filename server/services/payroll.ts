@@ -92,9 +92,10 @@ export async function runPayroll(tx: Tx, input: PayrollRunInput, userId: number)
   return run;
 }
 
-export async function cancelRun(tx: Tx, month: string, date: string, userId: number) {
+/** Undo a month's salaries. Without a date the reversal is dated like the run, so that month's profit loses them, not today's. */
+export async function cancelRun(tx: Tx, month: string, date: string | null | undefined, userId: number) {
   const [run] = await tx.select().from(payrollRuns).where(eq(payrollRuns.month, month)).for("update");
   if (!run) throw notFound("Payroll run", "Passage de paie introuvable");
-  if (run.journalId) await reverseJournal(tx, run.journalId, { date, userId, memo: `Annulation des salaires ${month}` });
+  if (run.journalId) await reverseJournal(tx, run.journalId, { date: date || run.date, userId, memo: `Annulation des salaires ${month}` });
   await tx.delete(payrollRuns).where(eq(payrollRuns.id, run.id));
 }

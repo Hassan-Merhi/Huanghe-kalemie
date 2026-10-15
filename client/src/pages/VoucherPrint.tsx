@@ -145,7 +145,7 @@ export default function VoucherPrint() {
                   <tr key={l.id} className="border-b align-top">
                     <td className="py-2 pr-2"><span className="font-mono text-xs text-muted-foreground">{l.accountCode}</span> {l.accountName}</td>
                     <td className="py-2 pr-2">{l.partyName ?? ""}</td>
-                    <td className="py-2 pr-2 text-muted-foreground">{l.memo ?? ""}</td>
+                    <td className="py-2 pr-2 text-muted-foreground">{l.memo && l.memo !== l.partyName ? l.memo : ""}</td>
                     {hasCdf && (
                       <td className="py-2 pr-2 text-right">
                         {l.nativeAmount && d(l.nativeAmount).abs().gt(0) ? (

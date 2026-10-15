@@ -364,7 +364,7 @@ export default function Daybook() {
           {/* Desktop table */}
           <Card className="hidden md:block">
             <CardContent className="p-0">
-              <div className="overflow-x-auto">
+              <div className="overflow-x-auto [contain:inline-size]">
                 <Table>
                   <TableHeader>
                     <TableRow>
@@ -485,7 +485,7 @@ function RowActions({ r, t, isOwner, onReverse }: { r: DaybookRow; t: T; isOwner
 
 function LinesTable({ lines, t }: { lines: DaybookLine[]; t: T }) {
   return (
-    <div className="overflow-x-auto">
+    <div className="overflow-x-auto [contain:inline-size]">
       <table className="w-full text-sm">
         <thead>
           <tr className="text-xs text-muted-foreground">
@@ -503,7 +503,7 @@ function LinesTable({ lines, t }: { lines: DaybookLine[]; t: T }) {
                 <Link href={`/accounts?account=${l.accountId}`} className="hover:underline">
                   <span className="font-mono text-xs text-muted-foreground">{l.accountCode}</span> {l.accountName}
                 </Link>
-                {l.memo && <span className="block text-xs text-muted-foreground">{l.memo}</span>}
+                {l.memo && l.memo !== l.partyName && <span className="block text-xs text-muted-foreground">{l.memo}</span>}
               </td>
               <td className="py-1 pr-3">{l.partyName ?? ""}</td>
               <td className="py-1 pr-3 text-right"><Num>{d(l.debit).isZero() ? "" : usd(l.debit)}</Num></td>

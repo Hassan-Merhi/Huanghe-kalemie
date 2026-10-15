@@ -30,7 +30,8 @@ export function qty(value: unknown): string {
 export function unitCost(value: unknown): string {
   const n = num(value);
   const decimals = Math.abs(n) < 1 && n !== 0 ? 4 : 2;
-  return `$${n.toFixed(decimals)}`;
+  const abs = Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+  return `${n < 0 ? "-" : ""}$${abs}`;
 }
 
 export function date(value: string | null | undefined): string {
