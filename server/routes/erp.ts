@@ -212,11 +212,13 @@ export function registerErpRoutes(
     const body = z
       .object({ id: optionalId, kind: z.enum(DRAFT_KINDS), date: isoDate, memo: z.string().max(300).optional().nullable(), payload: z.record(z.string(), z.unknown()) })
       .parse(req.body);
-    const row = await db.transaction((tx) => vouchers.saveDraft(tx, body, uid(req)));
+    const rights = { owner: req.user!.role === "owner" };
+    const row = await db.transaction((tx) => vouchers.saveDraft(tx, body, uid(req), rights));
+    await audit(req, body.id ? "update" : "create", "voucher_draft", row.id, { kind: body.kind, date: body.date, payload: body.payload });
     res.status(body.id ? 200 : 201).json(row);
   }));
   app.delete("/api/voucher-drafts/:id", requireRole(...STAFF), asyncHandler(async (req, res) => {
-    await db.transaction((tx) => vouchers.deleteDraft(tx, paramId(req)));
+    await db.transaction((tx) => vouchers.deleteDraft(tx, paramId(req), uid(req), { owner: req.user!.role === "owner" }));
     await audit(req, "delete", "voucher_draft", paramId(req));
     res.json({ ok: true });
   }));

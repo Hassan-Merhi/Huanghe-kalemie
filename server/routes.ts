@@ -538,6 +538,7 @@ export function registerRoutes(app: Express) {
   }));
   app.patch("/api/parties/:id", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = partySchema.omit({ type: true }).partial().parse(req.body);
+    if (Object.keys(body).length === 0) throw badRequest("Nothing to change (a contact's type cannot change)", "Rien à modifier (le type d'un contact ne change pas)");
     const [row] = await db.update(parties).set(body).where(eq(parties.id, paramId(req))).returning();
     if (!row) throw notFound("Contact", "Contact introuvable");
     await audit(req, "update", "contact", row.id, body);

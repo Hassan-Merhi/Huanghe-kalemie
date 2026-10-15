@@ -16,7 +16,7 @@ import { cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, notFound } from "../errors";
 import { moneyLeg, postJournal, rateFor, rateTolerancePct, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type ForeignCurrency } from "./ledger";
-import { assertSameCurrency } from "./operations";
+import { advanceToYuanLines, assertSameCurrency } from "./operations";
 import { issueStock, linkMovementsToJournal, receiveStock, stockQty } from "./stock";
 import { variantColour } from "./catalog";
 
@@ -426,6 +426,15 @@ export async function finalizeContainer(tx: Tx, containerId: number, offloadDate
       finalizedBy: userId,
     })
     .where(eq(containers.id, containerId));
+  // A dollar deposit already paid to the supplier settles the yuan invoice now, so the yuan owed is
+  // what is really left to pay.
+  if (container.currency === "CNY") {
+    const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
+    const lines = await advanceToYuanLines(tx, payables, container.supplierId, offloadDate);
+    if (lines.length) {
+      await postJournal(tx, { date: offloadDate, type: "supplier_payment", memo: `Avance imputée sur le conteneur ${container.number}`, sourceType: "container", sourceId: containerId, userId, lines });
+    }
+  }
   return result;
 }
 

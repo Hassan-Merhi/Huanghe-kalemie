@@ -240,6 +240,29 @@ export async function receiveFromCustomer(tx: Tx, input: PartyPaymentInput, user
 }
 
 /**
+ * Lines applying a dollar advance paid to a supplier to the yuan they are still owed (beyond
+ * `settledNative`, already settled by the same entry), so they are not paid twice. The yuan go at
+ * the yuan rate on file, else at their cost; the exchange difference is booked when posted.
+ */
+export async function advanceToYuanLines(tx: Tx, payables: number, partyId: number, date: string, settledNative: Decimal = new Decimal(0)): Promise<PostLine[]> {
+  const cny = await foreignBalance(tx, payables, partyId, "CNY", date);
+  const advance = Decimal.max((await foreignBalance(tx, payables, partyId, "USD", date)).usd, 0);
+  if (!cny.native.isNegative() || !cny.usd.isNegative() || advance.isZero()) return [];
+  const owedNative = cny.native.abs();
+  const left = owedNative.minus(settledNative);
+  if (left.lte(0)) return [];
+  const dayRate = await cnyRateFor(tx, date);
+  const leftUsd = dayRate ? cents(left.dividedBy(dayRate)) : cents(cny.usd.abs().times(left).dividedBy(owedNative));
+  const applyUsd = Decimal.min(advance, leftUsd);
+  const applyNative = applyUsd.equals(leftUsd) ? left : dayRate ? cents(applyUsd.times(dayRate)) : cents(owedNative.times(applyUsd).dividedBy(cny.usd.abs()));
+  if (applyUsd.lte(0) || applyNative.lte(0)) return [];
+  return [
+    { accountId: payables, partyId, debit: applyUsd, currency: "CNY", nativeAmount: applyNative, rate: applyNative.dividedBy(applyUsd).toFixed(4), memo: "Avance imputée" },
+    { accountId: payables, partyId, credit: applyUsd, memo: "Avance imputée" },
+  ];
+}
+
+/**
  * The payables side of money paid to a supplier, agent or employee. When they are owed in yuan (and
  * not in francs), the money settles, after any dollars owed, the yuan: as many yuan as the money
  * buys at the yuan rate on file (else at what the yuan cost), and the exchange difference goes to
@@ -282,19 +305,7 @@ export async function payablesLines(
       cnyUsd = new Decimal(0);
       native = new Decimal(0);
     }
-    // An advance paid in dollars settles the yuan still owed, so they are not paid twice.
-    const left = owedNative.minus(native);
-    if (advance.gt(0) && left.gt(0)) {
-      const leftUsd = dayRate ? cents(left.dividedBy(dayRate)) : cents(cny.usd.abs().times(left).dividedBy(owedNative));
-      const applyUsd = Decimal.min(advance, leftUsd);
-      const applyNative = applyUsd.equals(leftUsd) ? left : dayRate ? cents(applyUsd.times(dayRate)) : cents(owedNative.times(applyUsd).dividedBy(cny.usd.abs()));
-      if (applyUsd.gt(0) && applyNative.gt(0)) {
-        lines.push(
-          { accountId: payables, partyId, debit: applyUsd, currency: "CNY", nativeAmount: applyNative, rate: applyNative.dividedBy(applyUsd).toFixed(4), memo: memo ?? "Avance imputée" },
-          { accountId: payables, partyId, credit: applyUsd, memo: "Avance imputée" },
-        );
-      }
-    }
+    if (advance.gt(0)) lines.push(...(await advanceToYuanLines(tx, payables, partyId, input.date, native)));
   }
   const rest = total.minus(cnyUsd);
   if (rest.gt(0)) {
@@ -324,10 +335,12 @@ export async function payParty(tx: Tx, input: PartyPaymentInput, userId: number)
   let partyLines: PostLine[];
   if (input.settleNative && dec(input.settleNative).gt(0)) {
     // Dollars paid against an invoice in yuan: the yuan settled leave at their book cost.
+    // A dollar advance goes to the yuan first; only what is left is owed.
+    const advanceLines = await advanceToYuanLines(tx, payables, party.id, input.date);
     const cny = await foreignBalance(tx, payables, party.id, "CNY", input.date);
-    const owed = cny.native.negated();
+    const owed = cny.native.negated().minus(advanceLines.length ? dec(advanceLines[0].nativeAmount!) : 0);
     const settle = cents(input.settleNative);
-    if (owed.lte(0)) throw badRequest(`${party.name} is not owed anything in yuan`, `${party.name} n'a rien à recevoir en yuans`);
+    if (owed.lte(0)) throw badRequest(`${party.name} is not owed anything in yuan${advanceLines.length ? " once their advance is counted" : ""}`, `${party.name} n'a rien à recevoir en yuans${advanceLines.length ? " une fois son avance déduite" : ""}`);
     if (settle.gt(owed)) throw badRequest(`${party.name} is owed only ${owed.toFixed(2)} CNY`, `${party.name} n'attend que ${owed.toFixed(2)} CNY`);
     if (leg.currency !== "USD") throw badRequest("Pay a yuan invoice from a dollar account", "Payez une facture en yuans depuis un compte en dollars");
     // The yuan settled must be worth roughly what the dollars paid: compare with the yuan rate of the
@@ -338,7 +351,7 @@ export async function payParty(tx: Tx, input: PartyPaymentInput, userId: number)
       const tolerance = Decimal.max(await rateTolerancePct(tx), 5);
       await assertImpliedRate(tx, input.date, settle.dividedBy(leg.usd), reference, "CNY", tolerance);
     }
-    partyLines = [{ accountId: payables, partyId: party.id, debit: leg.usd, currency: "CNY", nativeAmount: settle, rate: settle.dividedBy(leg.usd).toFixed(4) }];
+    partyLines = [...advanceLines, { accountId: payables, partyId: party.id, debit: leg.usd, currency: "CNY", nativeAmount: settle, rate: settle.dividedBy(leg.usd).toFixed(4) }];
   } else {
     partyLines = await payablesLines(tx, { payables, partyId: party.id, usd: leg.usd, money: leg, date: input.date });
   }
@@ -457,37 +470,38 @@ export interface AdjustmentInput {
 }
 
 /**
- * Stock found or counted in is a gain shared by the partners at its cost, so a staff member may only
- * value it near what that item already costs (its average, else its last receipt). Anything else is
- * for the owner.
+ * Stock found or counted in is a gain shared by the partners at its cost, so staff do not choose
+ * it: an item in stock comes back at its average cost (so taking stock out and counting it back in
+ * never changes its value), and an item with none at what it cost when bought, weighted by the
+ * quantities bought (so one tiny purchase line cannot set it), within 10%. Anything else is for
+ * the owner.
  */
-async function assertGainCost(tx: Tx, variant: typeof variants.$inferSelect, name: string, unit: Decimal) {
-  // The reference is what the item last cost when bought (a container or opening stock), so gains
-  // booked by adjustments cannot raise their own reference count after count. Without a purchase,
-  // the average cost.
-  let reference: Decimal | null = null;
-  const [last] = await tx
-    .select({ qty: stockMovements.qty, value: stockMovements.value })
-    .from(stockMovements)
-    .where(and(eq(stockMovements.variantId, variant.id), inArray(stockMovements.type, ["container_in", "opening"]), sql`${stockMovements.qty} > 0`, sql`${stockMovements.value} > 0`))
-    .orderBy(desc(stockMovements.date), desc(stockMovements.id))
-    .limit(1);
-  if (last) reference = dec(last.value).dividedBy(last.qty);
-  else {
-    const q = dec(variant.stockQty);
-    if (q.gt(0)) reference = dec(variant.stockValue).dividedBy(q);
+async function staffGainCost(tx: Tx, variant: typeof variants.$inferSelect, name: string, typed: Decimal | null): Promise<Decimal> {
+  const q = dec(variant.stockQty);
+  if (q.gt(0)) {
+    const avg = dec(variant.stockValue).dividedBy(q);
+    if (typed && typed.minus(avg).abs().gt(Decimal.max(avg.times("0.01"), "0.01"))) {
+      throw forbidden(
+        `${name}: stock found goes in at its average cost (${avg.toFixed(2)}). Leave the cost empty, or ask the owner.`,
+        `${name} : le stock retrouvé entre à son coût moyen (${avg.toFixed(2)} $). Laissez le coût vide, ou demandez au propriétaire.`,
+      );
+    }
+    return avg;
   }
-  const ok = reference ? unit.minus(reference).abs().lte(reference.times("0.10").plus("0.01")) : false;
-  if (!ok) {
+  const [bought] = await tx
+    .select({ qty: sql<string>`coalesce(sum(${stockMovements.qty}), 0)`, value: sql<string>`coalesce(sum(${stockMovements.value}), 0)` })
+    .from(stockMovements)
+    .where(and(eq(stockMovements.variantId, variant.id), inArray(stockMovements.type, ["container_in", "opening"]), sql`${stockMovements.qty} > 0`));
+  const boughtQty = dec(bought?.qty ?? 0);
+  const reference = boughtQty.gte(1) && dec(bought.value).gt(0) ? dec(bought.value).dividedBy(boughtQty) : null;
+  if (!reference) throw forbidden(`${name} has no cost yet. Ask the owner to enter it.`, `${name} n'a pas encore de coût. Demandez au propriétaire de le saisir.`);
+  if (typed && typed.minus(reference).abs().gt(reference.times("0.10").plus("0.01"))) {
     throw forbidden(
-      reference
-        ? `${name}: ${unit.toFixed(2)} is far from its cost (${reference.toFixed(2)}). Leave the cost empty to use it, or ask the owner.`
-        : `${name} has no cost yet. Ask the owner to enter it.`,
-      reference
-        ? `${name} : ${unit.toFixed(2)} $ s'écarte de son coût (${reference.toFixed(2)} $). Laissez le coût vide pour l'utiliser, ou demandez au propriétaire.`
-        : `${name} n'a pas encore de coût. Demandez au propriétaire de le saisir.`,
+      `${name}: ${typed.toFixed(2)} is far from its cost (${reference.toFixed(2)}). Leave the cost empty to use it, or ask the owner.`,
+      `${name} : ${typed.toFixed(2)} $ s'écarte de son coût (${reference.toFixed(2)} $). Laissez le coût vide pour l'utiliser, ou demandez au propriétaire.`,
     );
   }
+  return typed ?? reference;
 }
 
 export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number, opts: { owner: boolean } = { owner: true }) {
@@ -526,13 +540,14 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
         throw badRequest("Damage and loss can only remove stock", "Les dégâts et pertes ne peuvent que retirer du stock");
       }
       let unit = line.unitCost != null && line.unitCost !== "" ? dec(line.unitCost, "unit cost") : null;
+      if (unit?.isNegative()) throw badRequest("Cost cannot be negative", "Le coût ne peut pas être négatif");
+      if (!opts.owner && input.kind !== "opening") unit = await staffGainCost(tx, v.variant, v.name, unit);
       if (!unit) {
         const q = dec(v.variant.stockQty);
         if (q.isZero()) throw badRequest(`Give a cost per unit for ${v.name} (${v.variant.sku}); it has no stock to take an average from`, `Indiquez un coût unitaire pour ${v.name} (${v.variant.sku}) : il n'a pas de stock pour calculer une moyenne`);
         unit = dec(v.variant.stockValue).dividedBy(q);
       }
       if (unit.isNegative()) throw badRequest("Cost cannot be negative", "Le coût ne peut pas être négatif");
-      if (!opts.owner && input.kind !== "opening") await assertGainCost(tx, v.variant, v.name, unit);
       const value = cents(unit.times(change));
       await receiveStock(tx, {
         date: input.date,

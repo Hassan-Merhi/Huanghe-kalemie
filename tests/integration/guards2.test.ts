@@ -82,7 +82,7 @@ describe.skipIf(!hasDb)("Guards against moving value between partners", async ()
   it("lets staff value found stock only near its cost, and records a count with no change", async () => {
     await expect(
       db.transaction((tx) => ops.adjustStock(tx, { date: "2026-08-05", locationId, kind: "found", reason: "Trouvé", lines: [{ variantId: oil, qtyChange: "1", unitCost: "5000" }] }, userId, staff)),
-    ).rejects.toThrow(/far from its cost/);
+    ).rejects.toThrow(/average cost/);
     await db.transaction((tx) => ops.adjustStock(tx, { date: "2026-08-05", locationId, kind: "found", reason: "Trouvé", lines: [{ variantId: oil, qtyChange: "1" }] }, userId, staff));
     const count = await db.transaction((tx) => ops.adjustStock(tx, { date: "2026-08-05", locationId, kind: "count", reason: "Comptage", lines: [{ variantId: oil, qtyChange: "0" }] }, userId, staff));
     expect(count.journalId).toBeNull();
