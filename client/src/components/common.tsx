@@ -7,11 +7,11 @@ import { cn } from "@/lib/utils";
 export function PageHeader({ title, description, actions }: { title: string; description?: string; actions?: ReactNode }) {
   return (
     <div className="mb-5 flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
-      <div>
+      <div className="min-w-0">
         <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
         {description && <p className="mt-1 text-sm text-muted-foreground">{description}</p>}
       </div>
-      {actions && <div className="flex flex-wrap gap-2">{actions}</div>}
+      {actions && <div className="flex flex-wrap gap-2 sm:max-w-[60%] sm:shrink-0 sm:justify-end">{actions}</div>}
     </div>
   );
 }

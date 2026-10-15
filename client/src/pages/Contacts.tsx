@@ -15,7 +15,7 @@ import { PARTY_LABELS } from "@/components/pickers";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
-import { useT } from "@/lib/i18n";
+import { useT, count } from "@/lib/i18n";
 import { d, usd } from "@/lib/format";
 import type { Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -32,6 +32,13 @@ export function BalanceWords({ balance, className }: { balance: string; classNam
   }
   return <span className={cn("font-medium text-blue-700 dark:text-blue-400", className)}>{t(`we owe ${usd(b.abs().toFixed(2))}`, `nous devons ${usd(b.abs().toFixed(2))}`)}</span>;
 }
+
+const COUNT_WORDS: Record<PartyType, [[string, string], [string, string]]> = {
+  customer: [["customer", "customers"], ["client", "clients"]],
+  supplier: [["supplier", "suppliers"], ["fournisseur", "fournisseurs"]],
+  agent: [["agent", "agents"], ["agent", "agents"]],
+  employee: [["employee", "employees"], ["employé", "employés"]],
+};
 
 export default function Contacts() {
   const t = useT();
@@ -115,6 +122,11 @@ export default function Contacts() {
                       <TableCell className="font-medium">
                         {p.name}
                         {!p.active && <Badge variant="secondary" className="ml-2">{t("Inactive", "Inactif")}</Badge>}
+                        {type === "employee" && (p.position || p.monthlySalary) && (
+                          <span className="block text-xs text-muted-foreground">
+                            {[p.position, p.monthlySalary ? `${usd(p.monthlySalary)} / ${t("month", "mois")}` : null].filter(Boolean).join(" · ")}
+                          </span>
+                        )}
                         {p.notes && <span className="block max-w-xs truncate text-xs text-muted-foreground">{p.notes}</span>}
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{p.phone}</TableCell>
@@ -131,7 +143,7 @@ export default function Contacts() {
                 </TableBody>
                 <TableFooter>
                   <TableRow>
-                    <TableCell colSpan={2}>{t("Total", "Total")} · {labels[type]}</TableCell>
+                    <TableCell colSpan={2}>{t("Total", "Total")} · {count(t, rows.length, ...COUNT_WORDS[type])}</TableCell>
                     <TableCell className="text-right">
                       <Num>
                         <span className="block">{t("owed to us", "à recevoir")} {usd(owedToUs.toFixed(2))}</span>
@@ -158,13 +170,22 @@ export function PartyDialog({ type, party, onClose }: { type: PartyType; party: 
   const [phone, setPhone] = useState(party?.phone ?? "");
   const [notes, setNotes] = useState(party?.notes ?? "");
   const [active, setActive] = useState(party?.active ?? true);
+  const [position, setPosition] = useState(party?.position ?? "");
+  const [monthlySalary, setMonthlySalary] = useState(party?.monthlySalary ? d(party.monthlySalary).toString() : "");
+  const [startDate, setStartDate] = useState(party?.startDate?.slice(0, 10) ?? "");
+  const isEmployee = (party?.type ?? type) === "employee";
   const create = useApiMutation("POST", "/api/parties", { success: t("Saved", "Enregistré"), onSuccess: onClose });
   const update = useApiMutation("PATCH", `/api/parties/${party?.id}`, { success: t("Saved", "Enregistré"), onSuccess: onClose });
   const label = PARTY_LABELS[party?.type ?? type];
   const busy = create.isPending || update.isPending;
 
   function save() {
-    const body = { name: name.trim(), phone: phone.trim() || null, notes: notes.trim() || null, active };
+    const body: Record<string, unknown> = { name: name.trim(), phone: phone.trim() || null, notes: notes.trim() || null, active };
+    if (isEmployee) {
+      body.position = position.trim() || null;
+      body.monthlySalary = monthlySalary.trim() ? d(monthlySalary).toFixed(2) : null;
+      body.startDate = startDate || null;
+    }
     if (party) update.mutate(body);
     else create.mutate({ ...body, type });
   }
@@ -182,6 +203,21 @@ export function PartyDialog({ type, party, onClose }: { type: PartyType; party: 
           <Field label={t("Phone", "Téléphone")}>
             <Input inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
           </Field>
+          {isEmployee && (
+            <>
+              <Field label={t("Position", "Poste")}>
+                <Input value={position} onChange={(e) => setPosition(e.target.value)} placeholder={t("e.g. Mechanic, Seller", "ex. Mécanicien, Vendeur")} />
+              </Field>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                <Field label={t("Monthly salary (USD)", "Salaire mensuel (USD)")}>
+                  <Input inputMode="decimal" value={monthlySalary} onChange={(e) => setMonthlySalary(e.target.value)} placeholder="0.00" />
+                </Field>
+                <Field label={t("Start date", "Date d'embauche")}>
+                  <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
+                </Field>
+              </div>
+            </>
+          )}
           <Field label={t("Notes", "Notes")}>
             <Textarea rows={3} value={notes} onChange={(e) => setNotes(e.target.value)} />
           </Field>

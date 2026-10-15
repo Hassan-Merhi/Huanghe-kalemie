@@ -2,6 +2,7 @@ import { and, eq, inArray } from "drizzle-orm";
 import {
   accounts,
   expenses,
+  journals,
   motorcycleUnits,
   parties,
   partners,
@@ -111,6 +112,10 @@ export async function voidExpense(tx: Tx, id: number, date: string, userId: numb
   const [expense] = await tx.select().from(expenses).where(eq(expenses.id, id)).for("update");
   if (!expense) throw notFound("Expense", "Dépense introuvable");
   if (expense.voidedAt) throw conflict("This expense is already cancelled", "Cette dépense est déjà annulée");
+  const [j] = await tx.select({ type: journals.type, number: journals.number }).from(journals).where(eq(journals.id, expense.journalId!));
+  if (j?.type === "payment") {
+    throw conflict(`This expense is part of payment voucher ${j.number}. Cancel the voucher from the daybook.`, `Cette dépense fait partie de la pièce de paiement ${j.number}. Annulez la pièce depuis le journal du jour.`);
+  }
   const voidJournalId = await reverseJournal(tx, expense.journalId!, { date, userId, memo: `Dépense annulée : ${expense.description}` });
   await tx.update(expenses).set({ voidedAt: new Date(), voidJournalId }).where(eq(expenses.id, id));
 }

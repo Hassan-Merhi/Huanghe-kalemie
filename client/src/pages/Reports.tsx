@@ -14,6 +14,7 @@ import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from
 import { AccountSelect, PartySelect } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
+import { downloadCsv } from "@/lib/sheets";
 import { useT } from "@/lib/i18n";
 import { cdf, d, date as fmtDate, money, monthStart, previousMonth, qty, todayLocal, usd, variantText } from "@/lib/format";
 import type { Account } from "@/lib/types";
@@ -22,39 +23,24 @@ import { WIDE_PRINT_CSS, journalTypeLabel } from "@/pages/ContactDetail";
 
 type T = (en: string, fr: string) => string;
 
-export function accountTypeLabel(type: string, t: T): string {
-  const map: Record<string, [string, string]> = {
-    asset: ["Asset", "Actif"],
-    liability: ["Liability", "Passif"],
-    equity: ["Equity", "Capitaux propres"],
-    income: ["Income", "Produits"],
-    cost_of_sales: ["Cost of sales", "Coût des ventes"],
-    expense: ["Running cost", "Charge de fonctionnement"],
+/** Name of an account type: singular for one account, `plural` for a group heading or filter ("Charges de fonctionnement"). */
+export function accountTypeLabel(type: string, t: T, plural = false): string {
+  const map: Record<string, [string, string, string, string]> = {
+    asset: ["Asset", "Actif", "Assets", "Actifs"],
+    liability: ["Liability", "Passif", "Liabilities", "Passifs"],
+    equity: ["Equity", "Capitaux propres", "Equity", "Capitaux propres"],
+    income: ["Income", "Produit", "Income", "Produits"],
+    cost_of_sales: ["Cost of sales", "Coût des ventes", "Cost of sales", "Coût des ventes"],
+    expense: ["Running cost", "Charge de fonctionnement", "Running costs", "Charges de fonctionnement"],
   };
   const m = map[type];
-  return m ? t(m[0], m[1]) : type;
+  if (!m) return type;
+  return plural ? t(m[2], m[3]) : t(m[0], m[1]);
 }
 
 // ---------------------------------------------------------------- CSV
 
-function csvCell(v: unknown): string {
-  const s = v == null ? "" : String(v);
-  return /[",;\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-function downloadCsv(filename: string, rows: unknown[][]) {
-  const text = "﻿" + rows.map((r) => r.map(csvCell).join(",")).join("\r\n");
-  const url = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function CsvButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
+export function CsvButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
   return (
     <Button variant="outline" size="sm" onClick={onClick} disabled={disabled}>
       <Download className="mr-1 h-4 w-4" /> CSV
@@ -69,13 +55,13 @@ function lastDay(month: string) {
   return `${month}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, "0")}`;
 }
 
-function useRange() {
+export function useRange() {
   const [from, setFrom] = useState(monthStart());
   const [to, setTo] = useState(todayLocal());
   return { from, to, setFrom, setTo };
 }
 
-function RangePicker({ range }: { range: ReturnType<typeof useRange> }) {
+export function RangePicker({ range }: { range: ReturnType<typeof useRange> }) {
   const t = useT();
   const today = todayLocal();
   const pm = previousMonth();
@@ -231,7 +217,7 @@ function ProfitLoss() {
             </CardContent>
           </Card>
           <p className="text-xs text-muted-foreground">
-            {t("Month-close entries are left out, so closed months still show their real result.", "Les écritures de clôture sont exclues : les mois clôturés montrent leur vrai résultat.")}
+            {t("Month-close entries are left out, so closed months still show their real result.", "Les écritures de clôture sont exclues\u00a0: les mois clôturés montrent leur vrai résultat.")}
           </p>
         </>
       )}

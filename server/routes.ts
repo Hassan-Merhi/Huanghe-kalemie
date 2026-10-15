@@ -56,6 +56,8 @@ import * as reports from "./services/reports";
 import { getSetting } from "./setup";
 import { reverseJournal } from "./services/ledger";
 import { transferStock } from "./services/stock";
+import * as vouchers from "./services/vouchers";
+import { registerErpRoutes } from "./routes/erp";
 
 const STAFF = ["manager"] as const; // owner is always allowed
 const READERS = ["manager", "partner"] as const;
@@ -418,7 +420,16 @@ export function registerRoutes(app: Express) {
     }
     res.json(rows);
   }));
-  const partySchema = z.object({ type: z.enum(PARTY_TYPES), name: z.string().min(1).max(120), phone: z.string().max(40).optional().nullable(), notes: z.string().max(1000).optional().nullable(), active: z.boolean().optional() });
+  const partySchema = z.object({
+    type: z.enum(PARTY_TYPES),
+    name: z.string().min(1).max(120),
+    phone: z.string().max(40).optional().nullable(),
+    notes: z.string().max(1000).optional().nullable(),
+    position: z.string().max(120).optional().nullable(),
+    monthlySalary: optionalDecimal,
+    startDate: z.union([isoDate, z.literal(""), z.null()]).optional().transform((v) => (v === "" ? null : v)),
+    active: z.boolean().optional(),
+  });
   app.post("/api/parties", requireRole(...SELLERS), asyncHandler(async (req, res) => {
     const body = partySchema.parse(req.body);
     if (req.user!.role === "cashier" && body.type !== "customer") throw badRequest("Cashiers can only add customers", "Les caissiers ne peuvent ajouter que des clients");
@@ -485,8 +496,9 @@ export function registerRoutes(app: Express) {
   }));
 
   const manualLine = z.object({ accountId: id, debit: optionalDecimal, credit: optionalDecimal, partyId: optionalId, nativeAmount: optionalDecimal, rate: optionalDecimal, memo: z.string().max(300).optional().nullable() });
+  const journalSchema = z.object({ date: isoDate, memo: z.string().min(1).max(300), type: z.enum(["manual", "opening"]).optional(), lines: z.array(manualLine).min(2) });
   app.post("/api/journals", requireRole(), asyncHandler(async (req, res) => {
-    const body = z.object({ date: isoDate, memo: z.string().min(1).max(300), type: z.enum(["manual", "opening"]).optional(), lines: z.array(manualLine).min(2) }).parse(req.body);
+    const body = journalSchema.parse(req.body);
     const journalId = await db.transaction((tx) => ops.manualJournal(tx, body, uid(req)));
     await audit(req, "create", "journal", journalId, body);
     res.status(201).json({ id: journalId });
@@ -495,10 +507,12 @@ export function registerRoutes(app: Express) {
     const body = z.object({ date: isoDate }).parse(req.body);
     const [j] = await db.select().from(journals).where(eq(journals.id, paramId(req)));
     if (!j) throw notFound("Journal", "Écriture introuvable");
-    if (!["manual", "opening", "transfer", "customer_receipt", "supplier_payment", "partner_contribution", "partner_withdrawal"].includes(j.type)) {
+    if (!["manual", "opening", "transfer", "customer_receipt", "supplier_payment", "partner_contribution", "partner_withdrawal", "payment", "receipt"].includes(j.type)) {
       throw badRequest("Cancel this from its own screen (sale, expense, container or month close)", "Annulez ceci depuis son propre écran (vente, dépense, conteneur ou clôture du mois)");
     }
-    const reversalId = await db.transaction((tx) => reverseJournal(tx, j.id, { date: body.date, userId: uid(req) }));
+    const reversalId = await db.transaction((tx) =>
+      j.type === "payment" || j.type === "receipt" ? vouchers.reverseVoucher(tx, j.id, body.date, uid(req)) : reverseJournal(tx, j.id, { date: body.date, userId: uid(req) }),
+    );
     await audit(req, "reverse", "journal", j.id);
     res.json({ id: reversalId });
   }));
@@ -514,8 +528,9 @@ export function registerRoutes(app: Express) {
     const body = partyPayment.parse(req.body);
     res.status(201).json({ id: await db.transaction((tx) => ops.payParty(tx, body, uid(req))) });
   }));
+  const transferSchema = z.object({ date: isoDate, fromAccountId: id, fromAmount: positiveDecimal, toAccountId: id, toAmount: positiveDecimal, rate: optionalDecimal, memo: z.string().max(300).optional().nullable() });
   app.post("/api/money/transfer", requireRole(...STAFF), asyncHandler(async (req, res) => {
-    const body = z.object({ date: isoDate, fromAccountId: id, fromAmount: positiveDecimal, toAccountId: id, toAmount: positiveDecimal, rate: optionalDecimal, memo: z.string().max(300).optional().nullable() }).parse(req.body);
+    const body = transferSchema.parse(req.body);
     res.status(201).json({ id: await db.transaction((tx) => ops.transferMoney(tx, body, uid(req))) });
   }));
   const partnerMoney = z.object({ date: isoDate, partnerId: id, accountId: id, amount: positiveDecimal, rate: optionalDecimal, memo: z.string().max(300).optional().nullable() });
@@ -871,4 +886,6 @@ export function registerRoutes(app: Express) {
       .limit(300);
     res.json(rows.map((r) => ({ ...r.log, username: r.username })));
   }));
+
+  registerErpRoutes(app, { adjustmentSchema, journalSchema, transferSchema, audit });
 }

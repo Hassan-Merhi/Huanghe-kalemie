@@ -12,7 +12,16 @@ Built on the same stack as MotoTrack (React + Vite + shadcn/ui, Express, Drizzle
 | Containers | Enter the supplier invoice lines and every container expense (freight, duties, clearing, transport to Kalemie, handling…). See the landed cost per item before you confirm, then offload into stock. |
 | Point of sale | Scan or search, pick the chassis for bikes, take USD cash, CDF cash, mobile money or a mix, sell on credit to a named customer, print an 80 mm receipt. |
 | Stock | Weighted average cost per variant, opening stock, counts, damage/loss, transfers between locations, movement history, low-stock list. |
-| Expenses | Rent, salaries, electricity and other running costs, paid or owed. |
+| Expenses | Rent, electricity and other running costs, paid or owed. |
+| Vouchers | Payment and receipt vouchers with many lines (expenses, suppliers, agents, staff, customers, other accounts) from one cash box, journal entries, transfers and stock adjustments, each printable. |
+| Optional vouchers | Save any voucher as a draft that changes no balance, stock or report until someone validates it. |
+| Daybook | Every entry day by day with filters, search, detail lines, cancel and CSV. |
+| Accounts | Chart of accounts with balances at any date, account statement with running balance, month-by-month summary. |
+| Payroll | Employees with monthly salary, advances, one salary run per month (salaries are a running expense, so the 75% partner carries them), and paying what is owed. |
+| Inventory | Stock by location, goods on the way in containers, stock at any past date, month-by-month history per item. |
+| Imports | Items and opening stock from Excel, bulk price updates, container packing lists from Excel. |
+| Sales tools | Price list with bulk price changes and printing, reorder list, today's sales. |
+| Analytics | Sales and profit charts, 12-month trend, sales by category, payment mix, expenses, stock by category, net position. |
 | Money | Cash boxes (USD and CDF), mobile money, bank, transfers and currency exchange, customer payments, supplier and agent payments, partner capital and withdrawals. |
 | Partners | Month close with the 75/25 split, partner statements, months locked once closed. |
 | Reports | Dashboard, profit and loss, sales by item, daily cash report, trial balance, journal, account ledger, CSV export. |
@@ -76,7 +85,7 @@ Database migrations run automatically on start, and the first start creates the 
 ### Starting with existing stock and cash
 
 1. Settings → set partner names, shop name, CDF rate; create users.
-2. Stock → Adjust stock → kind *Opening stock*: enter each item's quantity and cost (and chassis numbers for bikes).
+2. Stock import → download the template, fill items with quantity and cost, upload (books opening stock), or Stock → Adjust stock → kind *Opening stock* for a few items (and chassis numbers for bikes).
 3. Reports → Journal → manual entry with *Opening balance* switched on for cash balances (or Money → partner capital if the partners are putting money in).
 
 ### Tests

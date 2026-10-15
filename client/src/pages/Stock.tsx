@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { AlertTriangle, ArrowRightLeft, Bike, CheckCircle2, ChevronDown, ChevronRight, Search, Trash2 } from "lucide-react";
@@ -16,9 +16,10 @@ import { Textarea } from "@/components/ui/textarea";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
 import { LocationSelect, useLocations, VariantSearch } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
-import { d, date, monthStart, qty, todayLocal, unitCost, usd, variantText } from "@/lib/format";
+import { api, withQuery } from "@/lib/api";
+import { d, date, monthStart, qty, qtyTotal, todayLocal, unitCost, usd, variantText } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
-import { useT } from "@/lib/i18n";
+import { useT, count } from "@/lib/i18n";
 import type { MotorcycleUnit, VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -91,7 +92,7 @@ export default function Stock() {
   const { data: locations = [] } = useLocations();
   const isManager = can("manager");
   const multiLocation = locations.filter((l) => l.active).length > 1;
-  const [tab, setTab] = useState("valuation");
+  const [tab, setTab] = useState(() => new URLSearchParams(window.location.search).get("tab") ?? "valuation");
 
   return (
     <div>
@@ -137,7 +138,7 @@ function Valuation() {
   }, [data, search, lowOnly, hideEmpty]);
   const shown = useMemo(
     () => ({
-      qty: rows.reduce((s, i) => s.plus(d(i.qty)), d(0)),
+      qty: qtyTotal(rows),
       value: rows.reduce((s, i) => s.plus(d(i.value)), d(0)),
       retail: rows.reduce((s, i) => s.plus(d(i.retailValue)), d(0)),
     }),
@@ -169,7 +170,7 @@ function Valuation() {
           <AlertTriangle className="h-4 w-4" />
           <AlertTitle>{t("Stock value does not match the ledger", "La valeur du stock ne correspond pas à la comptabilité")}</AlertTitle>
           <AlertDescription>
-            {t("Items", "Articles")}: {usd(data.totalValue)} · {t("Inventory account", "Compte Stock")}: {usd(data.ledgerInventory)} · {t("Difference", "Écart")}: {usd(d(data.totalValue).minus(d(data.ledgerInventory)).toFixed(2))}
+            {t("Items: ", "Articles\u00a0: ")}{usd(data.totalValue)} · {t("Inventory account: ", "Compte Stock\u00a0: ")}{usd(data.ledgerInventory)} · {t("Difference: ", "Écart\u00a0: ")}{usd(d(data.totalValue).minus(d(data.ledgerInventory)).toFixed(2))}
           </AlertDescription>
         </Alert>
       )}
@@ -209,7 +210,7 @@ function Valuation() {
                   <TableCell className="whitespace-nowrap font-mono text-xs">{i.sku}</TableCell>
                   <TableCell className="text-muted-foreground">{i.categoryName ?? "—"}</TableCell>
                   <TableCell className="whitespace-nowrap text-right">
-                    <Num className={d(i.qty).lte(0) ? "text-destructive" : undefined}>{qty(i.qty)}</Num>
+                    <Num className={d(i.qty).lte(0) ? "text-destructive" : undefined}>{qty(i.qty)}{i.unit ? ` ${i.unit}` : ""}</Num>
                     {i.low && <Badge variant="destructive" className="ml-2">{t("Low", "Bas")}</Badge>}
                   </TableCell>
                   <TableCell className="text-right"><Num>{unitCost(i.avgCost)}</Num></TableCell>
@@ -218,8 +219,8 @@ function Valuation() {
                 </TableRow>
               ))}
               <TableRow className="bg-muted/40 font-medium">
-                <TableCell colSpan={3}>{t(`Total (${rows.length} lines)`, `Total (${rows.length} lignes)`)}</TableCell>
-                <TableCell className="text-right"><Num>{qty(shown.qty.toString())}</Num></TableCell>
+                <TableCell colSpan={3}>{t("Total", "Total")} ({count(t, rows.length, ["line", "lines"], ["ligne", "lignes"])})</TableCell>
+                <TableCell className="text-right"><Num>{shown.qty}</Num></TableCell>
                 <TableCell />
                 <TableCell className="text-right"><Num>{usd(shown.value.toFixed(2))}</Num></TableCell>
                 <TableCell className="text-right"><Num>{usd(shown.retail.toFixed(2))}</Num></TableCell>
@@ -251,7 +252,37 @@ interface AdjLine {
 
 let lineKey = 1;
 
-function AdjustForm({ onDone }: { onDone: () => void }) {
+/** Body of POST /api/stock/adjustments without the date (the shape an optional voucher stores). */
+export interface AdjustmentPayload {
+  locationId?: number | null;
+  kind?: Kind;
+  reason?: string;
+  lines?: { variantId: number; qtyChange: string; unitCost?: string; unitIds?: number[]; serials?: { chassisNo: string; engineNo?: string | null; color?: string | null }[] }[];
+}
+
+export interface AdjustmentDraft {
+  date: string;
+  memo: string | null;
+  payload: AdjustmentPayload;
+}
+
+/**
+ * Stock adjustment form. On the Stock page it only posts; the Vouchers page also passes
+ * `initial` (an optional voucher to prefill) and `onSaveDraft` (save as optional voucher).
+ */
+export function AdjustForm({
+  onDone,
+  initial,
+  onSaveDraft,
+  savingDraft,
+  readOnly,
+}: {
+  onDone: (result: { id: number; number: string; journalId: number | null }) => void;
+  initial?: { date?: string; payload: AdjustmentPayload } | null;
+  onSaveDraft?: (draft: AdjustmentDraft) => void;
+  savingDraft?: boolean;
+  readOnly?: boolean;
+}) {
   const t = useT();
   const [dateValue, setDateValue] = useState(todayLocal());
   const [locationId, setLocationId] = useState<number | null>(null);
@@ -263,19 +294,86 @@ function AdjustForm({ onDone }: { onDone: () => void }) {
   const onlyAdd = kind === "opening";
   const signed = !onlyRemove && !onlyAdd;
 
-  const m = useApiMutation<unknown, { number: string }>("POST", "/api/stock/adjustments", {
+  const m = useApiMutation<unknown, { id: number; number: string; journalId: number | null }>("POST", "/api/stock/adjustments", {
     success: t("Stock adjusted", "Stock ajusté"),
-    onSuccess: () => {
+    onSuccess: (result) => {
       setLines([]);
       setReason("");
-      onDone();
+      onDone(result);
     },
   });
 
-  // Changing location invalidates picked motorcycles.
+  // Changing location invalidates picked motorcycles (but not while loading an optional voucher).
+  const prevLocation = useRef<number | null>(null);
+  const hydrating = useRef(false);
   useEffect(() => {
-    setLines((ls) => ls.map((l) => ({ ...l, unitIds: [] })));
+    if (prevLocation.current !== null && prevLocation.current !== locationId && !hydrating.current) {
+      setLines((ls) => ls.map((l) => ({ ...l, unitIds: [] })));
+    }
+    hydrating.current = false;
+    prevLocation.current = locationId;
   }, [locationId]);
+
+  // Prefill from an optional voucher.
+  useEffect(() => {
+    if (!initial) return;
+    let cancelled = false;
+    const p = initial.payload ?? {};
+    const k = p.kind && KINDS.includes(p.kind) ? p.kind : "count";
+    const draftLines = Array.isArray(p.lines) ? p.lines : [];
+    (async () => {
+      const ids = draftLines.map((l) => l.variantId).filter(Boolean);
+      const variants = ids.length
+        ? await api<VariantRow[]>("GET", withQuery("/api/variants", { ids: ids.join(","), locationId: p.locationId ?? undefined, limit: 500 })).catch(() => [] as VariantRow[])
+        : [];
+      if (cancelled) return;
+      if (initial.date) setDateValue(initial.date);
+      setKind(k);
+      setReason(p.reason ?? "");
+      if (p.locationId && p.locationId !== prevLocation.current) {
+        hydrating.current = true;
+        setLocationId(p.locationId);
+      }
+      const rows: AdjLine[] = [];
+      for (const l of draftLines) {
+        const v = variants.find((x) => x.id === l.variantId);
+        if (!v) continue;
+        const q = d(l.qtyChange);
+        rows.push({
+          key: lineKey++,
+          variant: v,
+          qty: k === "damage" || k === "loss" ? q.abs().toString() : q.toString(),
+          unitCost: l.unitCost ?? "",
+          serials: (l.serials ?? []).map((s) => ({ chassisNo: s.chassisNo ?? "", engineNo: s.engineNo ?? "", color: s.color ?? "" })),
+          unitIds: l.unitIds ?? [],
+        });
+      }
+      setLines(rows);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [initial]);
+
+  function draftPayload(): AdjustmentPayload {
+    return {
+      locationId,
+      kind,
+      reason: reason.trim(),
+      lines: lines.map((l) => {
+        const c = change(l);
+        return {
+          variantId: l.variant.id,
+          qtyChange: c.toString(),
+          ...(c.gt(0) && l.unitCost.trim() ? { unitCost: d(l.unitCost).toString() } : {}),
+          ...(c.gt(0) && l.variant.tracksSerials
+            ? { serials: l.serials.map((s) => ({ chassisNo: s.chassisNo.trim().toUpperCase(), engineNo: s.engineNo.trim().toUpperCase() || null, color: s.color.trim() || null })) }
+            : {}),
+          ...(c.lt(0) && l.variant.tracksSerials ? { unitIds: l.unitIds } : {}),
+        };
+      }),
+    };
+  }
 
   function change(l: AdjLine) {
     if (!isQty(l.qty)) return d(0);
@@ -365,8 +463,8 @@ function AdjustForm({ onDone }: { onDone: () => void }) {
                 "Le stock d'ouverture est le stock déjà présent au magasin quand vous commencez à utiliser le système. Sa valeur est passée en « Soldes d'ouverture » (capital), pas en profit ni en perte.",
               )
             : t(
-                "Other adjustments count as stock losses or gains at average cost. They reduce or increase the gross profit shared by both partners at month close.",
-                "Les autres ajustements comptent comme pertes ou gains de stock au coût moyen. Ils diminuent ou augmentent la marge brute partagée par les deux associés à la clôture du mois.",
+                "Counts, damage, losses and found items are booked as stock losses or gains at average cost. They reduce or increase the gross profit shared by both partners at month close.",
+                "Les comptages, casses, pertes et articles retrouvés sont passés en pertes ou gains de stock au coût moyen. Ils diminuent ou augmentent la marge brute partagée par les deux associés à la clôture du mois.",
               )}
         </AlertDescription>
       </Alert>
@@ -425,7 +523,7 @@ function AdjustForm({ onDone }: { onDone: () => void }) {
                   {c.gt(0) && (
                     <Field
                       label={t("Cost per unit (USD)", "Coût unitaire (USD)")}
-                      hint={needsCost ? t("Required: no stock yet", "Obligatoire : pas encore de stock") : t("Blank = current average cost", "Vide = coût moyen actuel")}
+                      hint={needsCost ? t("Required: no stock yet", "Obligatoire\u00a0: pas encore de stock") : t("Blank = current average cost", "Vide = coût moyen actuel")}
                     >
                       <Input inputMode="decimal" value={l.unitCost} onChange={(e) => update(l.key, { unitCost: e.target.value })} className={cn(needsCost && !l.unitCost.trim() && "border-destructive")} />
                     </Field>
@@ -441,7 +539,7 @@ function AdjustForm({ onDone }: { onDone: () => void }) {
                 {l.variant.tracksSerials && c.gt(0) && l.serials.length > 0 && (
                   <div className="mt-3 space-y-2">
                     <p className="text-xs text-muted-foreground">
-                      {t("Chassis numbers (can be entered later in Motorcycles; a bike cannot be sold without one).", "Numéros de châssis (peuvent être saisis plus tard dans Motos ; une moto ne peut pas être vendue sans).")}
+                      {t("Chassis numbers (can be entered later in Motorcycles; a bike cannot be sold without one).", "Numéros de châssis (peuvent être saisis plus tard dans Motos\u00a0; une moto ne peut pas être vendue sans).")}
                     </p>
                     {l.serials.map((s, i) => (
                       <div key={i} className="grid grid-cols-[24px_1fr] gap-2 sm:grid-cols-[24px_1fr_1fr_140px]">
@@ -468,9 +566,16 @@ function AdjustForm({ onDone }: { onDone: () => void }) {
       </Card>
 
       {error && <ErrorText error={error} />}
-      <div className="flex justify-end">
-        <Button onClick={submit} disabled={m.isPending || lines.length === 0}>{t("Save adjustment", "Enregistrer l'ajustement")}</Button>
-      </div>
+      {!readOnly && (
+        <div className="flex flex-wrap justify-end gap-2">
+          {onSaveDraft && (
+            <Button variant="outline" disabled={savingDraft || lines.length === 0} onClick={() => onSaveDraft({ date: dateValue, memo: reason.trim() || null, payload: draftPayload() })}>
+              {t("Save as optional", "Enregistrer comme facultative")}
+            </Button>
+          )}
+          <Button onClick={submit} disabled={m.isPending || lines.length === 0}>{t("Save adjustment", "Enregistrer l'ajustement")}</Button>
+        </div>
+      )}
     </div>
   );
 }
@@ -482,7 +587,7 @@ function UnitPicker({ variantId, locationId, needed, value, onChange }: { varian
   return (
     <div className="mt-3 space-y-2">
       <p className={cn("text-xs", value.length === needed ? "text-muted-foreground" : "text-destructive")}>
-        {t(`Pick the motorcycles: ${value.length} of ${needed} selected.`, `Choisissez les motos : ${value.length} sur ${needed} sélectionnée(s).`)}
+        {t(`Pick the motorcycles: ${value.length} of ${needed} selected.`, `Choisissez les motos\u00a0: ${value.length} sur ${needed} sélectionnée(s).`)}
       </p>
       {q.isLoading ? (
         <Loading />
@@ -676,7 +781,7 @@ function TransferForm({ onDone }: { onDone: () => void }) {
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="flex items-center gap-2 text-base"><ArrowRightLeft className="h-4 w-4" /> {t("Items to move", "Articles à déplacer")}</CardTitle>
-          <p className="text-xs text-muted-foreground">{t("A transfer moves quantity only; the stock value does not change.", "Un transfert déplace seulement la quantité ; la valeur du stock ne change pas.")}</p>
+          <p className="text-xs text-muted-foreground">{t("A transfer moves quantity only; the stock value does not change.", "Un transfert déplace seulement la quantité\u00a0; la valeur du stock ne change pas.")}</p>
         </CardHeader>
         <CardContent className="space-y-3">
           <VariantSearch

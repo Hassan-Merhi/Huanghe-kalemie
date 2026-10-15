@@ -57,7 +57,7 @@ function ReturnDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }
       <DialogContent className="max-h-[92vh] max-w-2xl grid-cols-[minmax(0,1fr)] overflow-y-auto">
         <DialogHeader>
           <DialogTitle>{t("Return items", "Retour d'articles")} · {sale.number}</DialogTitle>
-          <DialogDescription>{t("Items come back into stock at the cost they left with; the refund is the price they were sold for.", "Les articles reviennent en stock au coût de leur sortie ; le remboursement est le prix de vente.")}</DialogDescription>
+          <DialogDescription>{t("Items come back into stock at the cost they left with; the refund is the price they were sold for.", "Les articles reviennent en stock au coût de leur sortie\u00a0; le remboursement est le prix de vente.")}</DialogDescription>
         </DialogHeader>
         <div className="space-y-4">
           <div className="overflow-x-auto">
@@ -332,7 +332,7 @@ export default function SaleDetail() {
           <CardHeader className="p-4 pb-2"><CardTitle className="text-base">{t("Payments", "Paiements")}</CardTitle></CardHeader>
           <CardContent className="p-4 pt-0">
             {sale.payments.length === 0 ? (
-              <EmptyState title={t("No payment: fully on credit", "Aucun paiement : tout à crédit")} />
+              <EmptyState title={t("No payment: fully on credit", "Aucun paiement\u00a0: tout à crédit")} />
             ) : (
               <div className="divide-y text-sm">
                 {sale.payments.map((p) => (

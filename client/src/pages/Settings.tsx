@@ -425,7 +425,7 @@ function AccountDialog({ account, onClose }: { account: Account | null; onClose:
           {account && (
             <DialogDescription>
               {isSystem
-                ? t("The app posts to this account automatically: it can be renamed but not switched off.", "L'application utilise ce compte automatiquement : il peut être renommé mais pas désactivé.")
+                ? t("The app posts to this account automatically: it can be renamed but not switched off.", "L'application utilise ce compte automatiquement\u00a0: il peut être renommé mais pas désactivé.")
                 : t("Code, type and currency cannot change once the account exists.", "Le code, le type et la devise ne changent plus une fois le compte créé.")}
             </DialogDescription>
           )}

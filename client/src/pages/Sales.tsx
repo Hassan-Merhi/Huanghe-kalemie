@@ -170,7 +170,7 @@ export default function Sales() {
               </TableFooter>
             </Table>
           </div>
-          {rows.length >= 500 && <p className="p-3 text-xs text-muted-foreground">{t("Showing the latest 500 sales; narrow the dates to see more.", "Affichage des 500 dernières ventes ; réduisez la période pour voir plus.")}</p>}
+          {rows.length >= 500 && <p className="p-3 text-xs text-muted-foreground">{t("Showing the latest 500 sales; narrow the dates to see more.", "Affichage des 500 dernières ventes\u00a0; réduisez la période pour voir plus.")}</p>}
         </Card>
       )}
     </div>

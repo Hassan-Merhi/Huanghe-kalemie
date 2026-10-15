@@ -232,13 +232,13 @@ function TransferDialog({ onClose }: { onClose: () => void }) {
           <Field label={t("From account", "Du compte")}>
             <MoneyAccountSelect value={from?.id ?? null} onChange={(_, a) => setFrom(a)} />
           </Field>
-          <Field label={t(`Amount out (${from?.currency ?? "—"})`, `Montant sorti (${from?.currency ?? "—"})`)}>
+          <Field label={t(`Amount out${from ? ` (${from.currency})` : ""}`, `Montant sorti${from ? ` (${from.currency})` : ""}`)}>
             <Input inputMode="decimal" value={fromAmount} onChange={(e) => setFromAmount(e.target.value)} placeholder="0" />
           </Field>
           <Field label={t("To account", "Vers le compte")} error={from && to && from.id === to.id ? t("Pick two different accounts", "Choisissez deux comptes différents") : null}>
             <MoneyAccountSelect value={to?.id ?? null} onChange={(_, a) => setTo(a)} />
           </Field>
-          <Field label={t(`Amount in (${to?.currency ?? "—"})`, `Montant reçu (${to?.currency ?? "—"})`)}>
+          <Field label={t(`Amount in${to ? ` (${to.currency})` : ""}`, `Montant reçu${to ? ` (${to.currency})` : ""}`)}>
             <Input inputMode="decimal" value={toAmount} onChange={(e) => { setToAmount(e.target.value); setToTouched(true); }} placeholder="0" />
           </Field>
           {anyCdf && (
@@ -246,7 +246,7 @@ function TransferDialog({ onClose }: { onClose: () => void }) {
               label={t("Book rate (CDF per 1 USD)", "Taux comptable (CDF pour 1 USD)")}
               hint={
                 followsImplied
-                  ? t("Same as the rate of this exchange: no exchange difference.", "Identique au taux de ce change : aucune différence de change.")
+                  ? t("Same as the rate of this exchange: no exchange difference.", "Identique au taux de ce change\u00a0: aucune différence de change.")
                   : t("Used to value the franc side in dollars.", "Sert à valoriser le côté francs en dollars.")
               }
             >
@@ -658,7 +658,7 @@ function RatesCard() {
           {current && !isToday && (
             <p className="text-xs text-amber-700 dark:text-amber-400">
               {current.source === "default"
-                ? t("No rate set yet: using the default rate.", "Aucun taux saisi : taux par défaut utilisé.")
+                ? t("No rate set yet: using the default rate.", "Aucun taux saisi\u00a0: taux par défaut utilisé.")
                 : t(`Not set today: using the rate of ${date(current.source)}.`, `Pas saisi aujourd'hui : taux du ${date(current.source)} utilisé.`)}
             </p>
           )}

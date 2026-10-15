@@ -47,3 +47,11 @@ export function useI18n(): I18n {
 export function useT() {
   return useI18n().t;
 }
+
+/**
+ * "1 account" / "2 accounts", "1 compte" / "2 comptes". French uses the singular for 0 and 1.
+ * count(t, n, ["account", "accounts"], ["compte", "comptes"])
+ */
+export function count(t: I18n["t"], n: number, en: [string, string], fr: [string, string]): string {
+  return t(`${n} ${n === 1 ? en[0] : en[1]}`, `${n} ${n < 2 ? fr[0] : fr[1]}`);
+}

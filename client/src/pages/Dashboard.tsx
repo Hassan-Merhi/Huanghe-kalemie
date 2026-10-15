@@ -1,6 +1,6 @@
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { AlertTriangle, ArrowRight, Container, Receipt, ShoppingCart } from "lucide-react";
+import { AlertTriangle, ArrowRight, BarChart3, BookOpen, ClipboardList, Container, FilePlus2, Receipt, ShoppingCart } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -22,6 +22,7 @@ interface DashboardData {
   openContainers: { id: number; number: string; status: string; arrivalDate: string | null }[];
   recentSales: { id: number; number: string; date: string; total: string; status: string; customerName: string | null }[];
   partners: { id: number; name: string; sharePct: string; bearsOperatingExpenses: boolean; currentBalance: string; capitalBalance: string }[];
+  position?: { money: string; stock: string; transit: string; receivables: string; payables: string; net: string };
 }
 
 const STATUS_LABEL: Record<string, [string, string]> = {
@@ -62,6 +63,12 @@ export default function Dashboard() {
         <ErrorText error={q.error} />
       ) : (
         <div className="space-y-4">
+          <div className="flex flex-wrap gap-2">
+            {can("manager") && <Button asChild size="sm" variant="secondary"><Link href="/vouchers"><FilePlus2 className="mr-1 h-4 w-4" /> {t("New voucher", "Nouvelle pièce")}</Link></Button>}
+            <Button asChild size="sm" variant="secondary"><Link href="/daybook"><BookOpen className="mr-1 h-4 w-4" /> {t("Day book", "Journal du jour")}</Link></Button>
+            <Button asChild size="sm" variant="secondary"><Link href="/inventory"><ClipboardList className="mr-1 h-4 w-4" /> {t("Inventory", "Inventaire")}</Link></Button>
+            <Button asChild size="sm" variant="secondary"><Link href="/analytics"><BarChart3 className="mr-1 h-4 w-4" /> {t("Analytics", "Analyses")}</Link></Button>
+          </div>
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             <StatCard label={t("Today's sales", "Ventes du jour")} value={usd(data.todaySales.total)} sub={`${data.todaySales.count} ${t("sale(s)", "vente(s)")}`} />
             <StatCard
@@ -83,6 +90,7 @@ export default function Dashboard() {
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
+            {data.position && <PositionCard p={data.position} />}
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
                 <CardTitle className="text-base">{t("Money", "Trésorerie")}</CardTitle>
@@ -203,5 +211,38 @@ export default function Dashboard() {
         </div>
       )}
     </div>
+  );
+}
+
+function PositionCard({ p }: { p: NonNullable<DashboardData["position"]> }) {
+  const t = useT();
+  const rows: [string, string, boolean][] = [
+    [t("Money", "Trésorerie"), p.money, false],
+    [t("Stock (at cost)", "Stock (au coût)"), p.stock, false],
+    [t("On the way", "En route"), p.transit, false],
+    [t("Customers owe us", "Clients nous doivent"), p.receivables, false],
+    [t("We owe", "Nous devons"), p.payables, true],
+  ];
+  return (
+    <Card>
+      <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
+        <CardTitle className="text-base">{t("Net position", "Situation nette")}</CardTitle>
+        <Link href="/analytics" className="text-sm text-muted-foreground hover:text-foreground">{t("Details", "Détails")}</Link>
+      </CardHeader>
+      <CardContent className="p-4 pt-0">
+        <div className="divide-y text-sm">
+          {rows.map(([label, v, owed]) => (
+            <div key={label} className="flex items-center justify-between gap-2 py-2">
+              <span>{label}</span>
+              <Num className={owed && d(v).gt(0) ? "text-destructive" : undefined}>{owed ? usd(d(v).negated().toFixed(2)) : usd(v)}</Num>
+            </div>
+          ))}
+          <div className="flex justify-between py-2 font-semibold">
+            <span>{t("Net", "Net")}</span>
+            <Num className={d(p.net).lt(0) ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"}>{usd(p.net)}</Num>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   );
 }

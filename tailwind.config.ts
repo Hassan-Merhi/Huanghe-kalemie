@@ -5,6 +5,13 @@ export default {
   content: ["./client/index.html", "./client/src/**/*.{js,jsx,ts,tsx}"],
   theme: {
     extend: {
+      // Text uses its own red so it stays readable on the dark background; buttons and badges keep --destructive.
+      textColor: {
+        destructive: {
+          DEFAULT: "hsl(var(--destructive-text) / <alpha-value>)",
+          foreground: "hsl(var(--destructive-foreground) / <alpha-value>)",
+        },
+      },
       borderRadius: {
         lg: ".5rem",
         md: ".375rem",

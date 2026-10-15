@@ -200,6 +200,12 @@ export async function reverseJournal(
   const [original] = await tx.select().from(journals).where(eq(journals.id, journalId)).for("update");
   if (!original) throw badRequest("Journal not found", "Écriture introuvable");
   if (original.reversedByJournalId) throw badRequest(`Journal ${original.number} is already reversed`, `L'écriture ${original.number} est déjà contre-passée`);
+  if (opts.date < original.date) {
+    throw badRequest(
+      `The cancellation date cannot be before ${original.number} (${original.date})`,
+      `La date d'annulation ne peut pas être antérieure à ${original.number} (${original.date})`,
+    );
+  }
   const lines = await tx.select().from(journalLines).where(eq(journalLines.journalId, journalId));
 
   const reversalId = await postJournal(tx, {

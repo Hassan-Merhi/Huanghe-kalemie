@@ -52,6 +52,9 @@ export function journalTypeLabel(type: string, t: (en: string, fr: string) => st
     partner_contribution: ["Capital put in", "Apport en capital"],
     partner_withdrawal: ["Withdrawal", "Retrait"],
     stock_adjustment: ["Stock adjustment", "Ajustement de stock"],
+    payment: ["Payment voucher", "Pièce de paiement"],
+    receipt: ["Receipt voucher", "Pièce de recette"],
+    payroll: ["Salaries", "Salaires"],
     period_close: ["Month close", "Clôture du mois"],
     reversal: ["Reversal", "Annulation"],
   };
@@ -201,7 +204,7 @@ function PaymentDialog({ party, balance, onClose }: { party: Statement["party"];
     onSuccess: onClose,
   });
   const b = d(balance);
-  const outstanding = isCustomer ? (b.isPositive() ? b : null) : b.isNegative() ? b.abs() : null;
+  const outstanding = isCustomer ? (b.gt(0) ? b : null) : b.isNegative() ? b.abs() : null;
   const valid = !!account && d(amount).gt(0) && (!isCdf || d(rate).gt(0));
 
   function save() {

@@ -153,7 +153,7 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
       )}
       {sale.note && <p className="mt-1">{sale.note}</p>}
       {dash}
-      <p className="whitespace-pre-line text-center">{settings?.receiptFooter || t("Thank you for your purchase!", "Merci pour votre achat !")}</p>
+      <p className="whitespace-pre-line text-center">{settings?.receiptFooter || t("Thank you for your purchase!", "Merci pour votre achat\u00a0!")}</p>
     </div>
   );
 }
@@ -624,7 +624,7 @@ export default function POS() {
               <details className="rounded-md border p-2 text-sm">
                 <summary className="cursor-pointer select-none font-medium">{t("Change calculator", "Calcul de la monnaie")}</summary>
                 <div className="mt-2 space-y-2">
-                  <p className="text-xs text-muted-foreground">{t("Only a helper: record the money kept above, not what the customer handed over.", "Seulement une aide : enregistrer ci-dessus l'argent gardé, pas ce que le client a donné.")}</p>
+                  <p className="text-xs text-muted-foreground">{t("Only a helper: record the money kept above, not what the customer handed over.", "Seulement une aide\u00a0: enregistrer ci-dessus l'argent gardé, pas ce que le client a donné.")}</p>
                   <div className="flex gap-2">
                     <Input inputMode="decimal" placeholder={t("Cash handed over", "Montant reçu")} value={handed} onChange={(e) => setHanded(e.target.value)} />
                     <Select value={handedCur} onValueChange={(v) => setHandedCur(v as "USD" | "CDF")}>

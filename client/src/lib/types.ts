@@ -103,6 +103,9 @@ export interface Party {
   name: string;
   phone: string | null;
   notes: string | null;
+  position?: string | null;
+  monthlySalary?: string | null;
+  startDate?: string | null;
   active: boolean;
   /** Debit-positive: customers owe us when positive; we owe suppliers when negative. */
   balance: string;
