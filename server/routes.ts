@@ -32,7 +32,7 @@ import { ALLOCATION_METHODS } from "@shared/landedCost";
 import { validatePartnerShares } from "@shared/partnerSplit";
 import { dec } from "@shared/money";
 import { db } from "./db";
-import { badRequest, conflict, notFound } from "./errors";
+import { badRequest, conflict, forbidden, notFound } from "./errors";
 import { hashPassword, requireAuth, requireRole } from "./auth";
 import {
   asyncHandler,
@@ -64,10 +64,23 @@ const READERS = ["manager", "partner"] as const;
 const SELLERS = ["manager", "cashier"] as const;
 
 /** A sale as cashiers see it: no cost of goods sold. */
-function withoutCost<S extends { cogs?: unknown; lines: { cogs?: unknown }[] }>(sale: S) {
-  return { ...sale, cogs: undefined, lines: sale.lines.map(({ cogs, ...l }) => l) };
+/** What a cashier may see of a sale: never what the goods cost, returns included. */
+function withoutCost<S extends { cogs?: unknown; lines: { cogs?: unknown }[]; returns: { cogs?: unknown }[] }>(sale: S) {
+  return {
+    ...sale,
+    cogs: undefined,
+    lines: sale.lines.map(({ cogs: _c, ...l }) => l),
+    returns: sale.returns.map(({ cogs: _c, ...r }) => r),
+  };
 }
 const EVERYONE = ["manager", "cashier", "partner"] as const;
+
+/** A partner reads their own partner accounts only. */
+async function assertAccountVisible(req: Request, accountId: number) {
+  if (req.user!.role !== "partner") return;
+  const [a] = await db.select({ partnerId: accounts.partnerId }).from(accounts).where(eq(accounts.id, accountId));
+  if (a?.partnerId && a.partnerId !== req.user!.partnerId) throw notFound("Account", "Compte introuvable");
+}
 
 const uid = (req: Request) => req.user!.id;
 
@@ -122,6 +135,9 @@ export function registerRoutes(app: Express) {
         defaultCdfRate: positiveDecimal.optional(),
         receiptFooter: z.string().max(300).optional(),
         rateTolerancePct: z.string().regex(/^\d{1,2}(\.\d{1,2})?$/, "Tolerance must be a percentage like 3").optional(),
+        cashierDiscountPct: z.string().regex(/^\d{1,3}(\.\d{1,2})?$/, "Give a percentage like 10").refine((v) => Number(v) <= 100, "At most 100%").optional(),
+        managerDiscountPct: z.string().regex(/^\d{1,3}(\.\d{1,2})?$/, "Give a percentage like 20").refine((v) => Number(v) <= 100, "At most 100%").optional(),
+        managerBelowCost: z.boolean().optional(),
       })
       .parse(req.body);
     for (const [key, value] of Object.entries(body)) {
@@ -339,6 +355,9 @@ export function registerRoutes(app: Express) {
   });
   app.post("/api/stock/adjustments", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = adjustmentSchema.parse(req.body);
+    if (body.kind === "opening" && req.user!.role !== "owner") {
+      throw forbidden("Only the owner can enter opening stock", "Seul le propriétaire peut saisir le stock d'ouverture");
+    }
     const result = await db.transaction((tx) => ops.adjustStock(tx, body, uid(req)));
     await audit(req, "create", "stock_adjustment", result.id, body);
     res.status(201).json(result);
@@ -458,7 +477,11 @@ export function registerRoutes(app: Express) {
   app.get("/api/accounts", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
     const rows = await reports.accountBalances(db);
     // Cashiers only need the money accounts they take payments into.
-    res.json(req.user!.role === "cashier" ? rows.filter((r) => r.isMoney && r.active).map(({ debit, credit, balance, nativeBalance, ...r }) => r) : rows);
+    if (req.user!.role === "cashier") {
+      res.json(rows.filter((r) => r.isMoney && r.active).map(({ debit, credit, balance, nativeBalance, ...r }) => r));
+      return;
+    }
+    res.json(req.user!.role === "partner" ? reports.maskOtherPartners(rows, req.user!.partnerId) : rows);
   }));
   app.post("/api/accounts", requireRole(), asyncHandler(async (req, res) => {
     const body = z
@@ -479,6 +502,7 @@ export function registerRoutes(app: Express) {
   }));
   app.get("/api/accounts/:id/ledger", requireRole(...READERS), asyncHandler(async (req, res) => {
     const q = z.object({ from: isoDate, to: isoDate }).parse(req.query);
+    await assertAccountVisible(req, paramId(req));
     res.json(await reports.accountLedger(db, paramId(req), q.from, q.to));
   }));
 
@@ -742,7 +766,7 @@ export function registerRoutes(app: Express) {
     const date = req.user!.role === "cashier" || !body.date ? todayIso() : body.date;
     // Cashiers take francs at the day's rate.
     if (req.user!.role === "cashier") body.payments = body.payments.map((p) => ({ ...p, rate: null }));
-    const sale = await db.transaction((tx) => salesSvc.createSale(tx, { ...body, date }, uid(req)));
+    const sale = await db.transaction((tx) => salesSvc.createSale(tx, { ...body, date }, uid(req), { role: req.user!.role }));
     res.status(201).json(req.user!.role === "cashier" ? withoutCost(sale) : sale);
   }));
   app.post("/api/sales/:id/void", requireRole(...STAFF), asyncHandler(async (req, res) => {
@@ -819,7 +843,7 @@ export function registerRoutes(app: Express) {
   }));
   app.get("/api/reports/trial-balance", requireRole(...READERS), asyncHandler(async (req, res) => {
     const q = z.object({ asOf: isoDate.optional() }).parse(req.query);
-    res.json(await reports.trialBalance(db, q.asOf));
+    res.json(await reports.trialBalance(db, q.asOf, req.user!.role === "partner" ? req.user!.partnerId : undefined));
   }));
   app.get("/api/reports/sales-by-product", requireRole(...READERS), asyncHandler(async (req, res) => {
     const q = z.object({ from: isoDate, to: isoDate }).parse(req.query);
@@ -896,5 +920,5 @@ export function registerRoutes(app: Express) {
     res.json(rows.map((r) => ({ ...r.log, username: r.username })));
   }));
 
-  registerErpRoutes(app, { adjustmentSchema, journalSchema, transferSchema, audit });
+  registerErpRoutes(app, { adjustmentSchema, journalSchema, transferSchema, audit, assertAccountVisible });
 }

@@ -385,9 +385,14 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
         if (serials.length > change.toNumber()) throw badRequest("More chassis numbers than motorcycles added", "Plus de numéros de châssis que de motos ajoutées");
         const chassis = serials.map((s) => s.chassisNo?.trim().toUpperCase()).filter((c): c is string => !!c);
         if (new Set(chassis).size !== chassis.length) throw badRequest("The same chassis number is entered twice", "Le même numéro de châssis est saisi deux fois");
+        // A motorcycle removed earlier and now found again gets its old record back, history included.
+        const back = new Map<string, number>();
         if (chassis.length) {
-          const taken = await tx.select({ chassisNo: motorcycleUnits.chassisNo }).from(motorcycleUnits).where(inArray(motorcycleUnits.chassisNo, chassis));
-          if (taken.length) throw conflict(`Chassis number ${taken[0].chassisNo} is already registered`, `Le numéro de châssis ${taken[0].chassisNo} est déjà enregistré`);
+          const taken = await tx.select().from(motorcycleUnits).where(inArray(motorcycleUnits.chassisNo, chassis)).for("update");
+          for (const u of taken) {
+            if (u.status === "removed" && u.variantId === v.variant.id) back.set(u.chassisNo!, u.id);
+            else throw conflict(`Chassis number ${u.chassisNo} is already registered`, `Le numéro de châssis ${u.chassisNo} est déjà enregistré`);
+          }
         }
         const rows = Array.from({ length: change.toNumber() }, (_, i) => ({
           variantId: v.variant.id,
@@ -397,7 +402,17 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
           color: serials[i]?.color || variantColour(v.variant.attributes),
           status: "in_stock",
         }));
-        await tx.insert(motorcycleUnits).values(rows);
+        const fresh = [];
+        for (const r of rows) {
+          const old = r.chassisNo ? back.get(r.chassisNo) : undefined;
+          if (old) {
+            await tx
+              .update(motorcycleUnits)
+              .set({ status: "in_stock", locationId: r.locationId, saleId: null, ...(r.engineNo ? { engineNo: r.engineNo } : {}) })
+              .where(eq(motorcycleUnits.id, old));
+          } else fresh.push(r);
+        }
+        if (fresh.length) await tx.insert(motorcycleUnits).values(fresh);
       }
     } else {
       if (input.kind === "opening") throw badRequest("Opening stock can only add stock", "Le stock d'ouverture ne peut qu'ajouter du stock");
@@ -409,7 +424,8 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
         if (units.length !== ids.length || units.some((u) => u.variantId !== v.variant.id || u.status !== "in_stock" || u.locationId !== input.locationId)) {
           throw badRequest("One of the motorcycles picked is not in stock here", "Une des motos choisies n'est pas en stock ici");
         }
-        await tx.delete(motorcycleUnits).where(inArray(motorcycleUnits.id, ids));
+        // The record and its chassis number are kept, marked removed.
+        await tx.update(motorcycleUnits).set({ status: "removed" }).where(inArray(motorcycleUnits.id, ids));
       }
       const value = await issueStock(tx, {
         date: input.date,

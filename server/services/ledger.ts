@@ -22,6 +22,7 @@ export const SYSTEM_ACCOUNTS = {
   inventory: "inventory",
   goodsInTransit: "goods_in_transit",
   payables: "payables",
+  payrollWithheld: "payroll_withheld",
   openingEquity: "opening_equity",
   sales: "sales",
   otherIncome: "other_income",

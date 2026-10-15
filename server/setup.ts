@@ -24,6 +24,7 @@ const CHART: SeedAccount[] = [
   { code: "1200", name: "Stock de marchandises", type: "asset", systemKey: "inventory" },
   { code: "1300", name: "Marchandises en transit (frais de conteneur)", type: "asset", systemKey: "goods_in_transit" },
   { code: "2000", name: "Fournisseurs, agents et employés (dettes)", type: "liability", systemKey: "payables" },
+  { code: "2100", name: "Retenues sur salaires à reverser", type: "liability", systemKey: "payroll_withheld" },
   { code: "3000", name: "Soldes d'ouverture", type: "equity", systemKey: "opening_equity" },
   { code: "4000", name: "Ventes", type: "income", systemKey: "sales" },
   { code: "4100", name: "Autres produits", type: "income", systemKey: "other_income" },

@@ -178,7 +178,7 @@ function Chart({ onOpen }: { onOpen: (id: number) => void }) {
                   <button
                     key={a.id}
                     type="button"
-                    onClick={() => onOpen(a.id)}
+                    onClick={() => a.id > 0 && onOpen(a.id)}
                     className={cn("flex w-full items-center gap-3 px-4 py-2.5 text-left hover:bg-muted/50", !a.active && "opacity-60")}
                   >
                     <span className="w-14 shrink-0 font-mono text-xs text-muted-foreground">{a.code}</span>

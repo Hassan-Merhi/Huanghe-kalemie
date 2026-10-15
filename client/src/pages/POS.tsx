@@ -272,7 +272,11 @@ function ChassisPicker({ line, locationId, takenUnitIds, onChange }: { line: Car
 
 export default function POS() {
   const t = useT();
-  const { can } = useAuth();
+  const { can, user } = useAuth();
+  const shop = useQuery<Settings>({ queryKey: ["/api/settings"] }).data;
+  // Same limit the server applies: the owner has none.
+  const maxDiscountPct =
+    !user || user.role === "owner" ? null : d(user.role === "manager" ? shop?.managerDiscountPct ?? "20" : shop?.cashierDiscountPct ?? "10");
   const today = todayLocal();
   // Managers can enter a past sale (from the paper book after a power cut); cashiers sell today.
   const [saleDate, setSaleDate] = useState(today);
@@ -358,6 +362,22 @@ export default function POS() {
     if (d(l.qty).lte(0)) problems.push(t(`Quantity of ${l.variant.productName} must be more than zero`, `La quantité de ${l.variant.productName} doit être supérieure à zéro`));
     if (lineAmount(l).lt(0)) problems.push(t(`The discount on ${l.variant.productName} is bigger than the line`, `La remise sur ${l.variant.productName} dépasse la ligne`));
     if (l.variant.tracksSerials && !l.unitId) problems.push(t(`Choose the chassis number for ${l.variant.productName}`, `Choisir le numéro de châssis pour ${l.variant.productName}`));
+  }
+  if (maxDiscountPct && subtotal.gt(0)) {
+    for (const l of lines) {
+      const list = c2(d(l.qty).times(d(l.variant.sellPrice)));
+      if (list.lte(0)) continue;
+      // The sale discount is shared over the lines by their amount, as the server does.
+      const sold = lineAmount(l).minus(saleDiscount.times(lineAmount(l)).dividedBy(subtotal));
+      if (list.minus(sold).times(100).gt(list.times(maxDiscountPct).plus("0.5"))) {
+        problems.push(
+          t(
+            `${l.variant.productName}: the discount is more than the ${maxDiscountPct}% you may give`,
+            `${l.variant.productName} : la remise dépasse les ${maxDiscountPct} % autorisés`,
+          ),
+        );
+      }
+    }
   }
   if (saleDiscount.lt(0) || saleDiscount.gt(subtotal)) problems.push(t("The sale discount is bigger than the sale", "La remise dépasse le montant de la vente"));
   for (const p of pays) {

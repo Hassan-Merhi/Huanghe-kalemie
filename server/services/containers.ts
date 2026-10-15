@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, inArray, lt, sql } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, isNull, lt, sql } from "drizzle-orm";
 import {
   containerExpenses,
   containerLines,
@@ -349,7 +349,9 @@ export async function finalizeContainer(tx: Tx, containerId: number, offloadDate
     }
   }
 
-  await tx.delete(motorcycleUnits).where(and(eq(motorcycleUnits.containerId, containerId), eq(motorcycleUnits.status, "reversed")));
+  // Motorcycles no longer on the container: blank records go, records with a chassis number are kept.
+  await tx.delete(motorcycleUnits).where(and(eq(motorcycleUnits.containerId, containerId), eq(motorcycleUnits.status, "reversed"), isNull(motorcycleUnits.chassisNo)));
+  await tx.update(motorcycleUnits).set({ status: "removed" }).where(and(eq(motorcycleUnits.containerId, containerId), eq(motorcycleUnits.status, "reversed")));
 
   await tx
     .update(containers)
