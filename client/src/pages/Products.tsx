@@ -17,25 +17,11 @@ import { CategorySelect } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { d, qty, usd } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
-import { useT } from "@/lib/i18n";
+import { count, useT } from "@/lib/i18n";
 import type { Category, Product } from "@/lib/types";
 
-export const UNITS = ["pcs", "set", "pair", "litre", "metre", "kg", "box", "roll"] as const;
-
-export function unitLabel(t: (en: string, fr: string) => string, u: string) {
-  const map: Record<string, [string, string]> = {
-    pcs: ["pieces", "pièces"],
-    set: ["set", "jeu"],
-    pair: ["pair", "paire"],
-    litre: ["litre", "litre"],
-    metre: ["metre", "mètre"],
-    kg: ["kg", "kg"],
-    box: ["box", "carton"],
-    roll: ["roll", "rouleau"],
-  };
-  const m = map[u];
-  return m ? t(m[0], m[1]) : u;
-}
+import { UNITS, unitLabel } from "@/lib/units";
+export { UNITS, unitLabel };
 
 /** Debounce a value (search boxes). */
 function useDebounced<T>(value: T, ms = 250) {
@@ -139,7 +125,7 @@ export default function Products() {
               ))}
               {showValue && (
                 <TableRow className="bg-muted/40 font-medium">
-                  <TableCell colSpan={5}>{t(`Total (${rows.length} items)`, `Total (${rows.length} articles)`)}</TableCell>
+                  <TableCell colSpan={5}>{t("Total", "Total")} ({count(t, rows.length, ["item", "items"], ["article", "articles"])})</TableCell>
                   <TableCell className="text-right"><Num>{usd(totalValue.toFixed(2))}</Num></TableCell>
                 </TableRow>
               )}
@@ -450,7 +436,7 @@ function NewProductDialog({ onClose, onCreated }: { onClose: () => void; onCreat
                 >
                   <Plus className="mr-1 h-4 w-4" /> {t("Add row", "Ajouter une ligne")}
                 </Button>
-                <span className="text-xs text-muted-foreground">{t(`${rows.length} variant(s)`, `${rows.length} variante(s)`)}</span>
+                <span className="text-xs text-muted-foreground">{count(t, rows.length, ["variant", "variants"], ["variante", "variantes"])}</span>
               </div>
             </>
           )}

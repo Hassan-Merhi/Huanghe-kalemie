@@ -15,7 +15,7 @@ interface SeedAccount {
 
 const CHART: SeedAccount[] = [
   { code: "1000", name: "Caisse USD", type: "asset", systemKey: "cash_usd", isMoney: true, currency: "USD" },
-  { code: "1010", name: "Caisse CDF", type: "asset", systemKey: "cash_cdf", isMoney: true, currency: "CDF" },
+  { code: "1010", name: "Caisse FC", type: "asset", systemKey: "cash_cdf", isMoney: true, currency: "CDF" },
   { code: "1020", name: "M-Pesa", type: "asset", isMoney: true, currency: "USD" },
   { code: "1021", name: "Orange Money", type: "asset", isMoney: true, currency: "USD" },
   { code: "1022", name: "Airtel Money", type: "asset", isMoney: true, currency: "USD" },

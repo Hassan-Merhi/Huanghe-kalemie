@@ -24,7 +24,7 @@ import { MonthSelect } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useI18n, useT } from "@/lib/i18n";
-import { d, date as fmtDate, previousMonth, todayLocal, usd } from "@/lib/format";
+import { d, pct, date as fmtDate, previousMonth, todayLocal, usd } from "@/lib/format";
 import type { Partner } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { WIDE_PRINT_CSS, journalTypeLabel } from "@/pages/ContactDetail";
@@ -143,7 +143,7 @@ function PartnerCards({ partners }: { partners: Partner[] }) {
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <CardTitle className="text-lg">{p.name}</CardTitle>
                 <div className="flex flex-wrap gap-2">
-                  <Badge variant="outline" className="text-base">{d(p.sharePct).toString()}%</Badge>
+                  <Badge variant="outline" className="text-base">{pct(p.sharePct)}</Badge>
                   {p.bearsOperatingExpenses && <Badge>{t("Pays the shop running costs", "Paie les frais de fonctionnement")}</Badge>}
                 </div>
               </div>
@@ -268,7 +268,7 @@ function MonthSection() {
                     {p.split.partners.map((s) => (
                       <TableRow key={s.partnerId}>
                         <TableCell className="font-medium">{s.name}</TableCell>
-                        <TableCell className="text-right"><Num>{d(s.sharePct).toString()}%</Num></TableCell>
+                        <TableCell className="text-right"><Num>{pct(s.sharePct)}</Num></TableCell>
                         <TableCell className="text-right"><Signed value={s.shareOfGrossProfit} /></TableCell>
                         <TableCell className="text-right">
                           <Num className={d(s.operatingExpensesCharged).isZero() ? "text-muted-foreground" : ""}>

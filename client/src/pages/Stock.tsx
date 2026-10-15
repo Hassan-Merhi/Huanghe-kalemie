@@ -18,6 +18,7 @@ import { LocationSelect, useLocations, VariantSearch } from "@/components/picker
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api, withQuery } from "@/lib/api";
 import { d, date, monthStart, qty, qtyTotal, todayLocal, unitCost, usd, variantText } from "@/lib/format";
+import { qtyWithUnit } from "@/lib/units";
 import { useAuth } from "@/lib/auth";
 import { useT, count } from "@/lib/i18n";
 import type { MotorcycleUnit, VariantRow } from "@/lib/types";
@@ -210,7 +211,7 @@ function Valuation() {
                   <TableCell className="whitespace-nowrap font-mono text-xs">{i.sku}</TableCell>
                   <TableCell className="text-muted-foreground">{i.categoryName ?? "—"}</TableCell>
                   <TableCell className="whitespace-nowrap text-right">
-                    <Num className={d(i.qty).lte(0) ? "text-destructive" : undefined}>{qty(i.qty)}{i.unit ? ` ${i.unit}` : ""}</Num>
+                    <Num className={d(i.qty).lte(0) ? "text-destructive" : undefined}>{qtyWithUnit(t, i.qty, i.unit)}</Num>
                     {i.low && <Badge variant="destructive" className="ml-2">{t("Low", "Bas")}</Badge>}
                   </TableCell>
                   <TableCell className="text-right"><Num>{unitCost(i.avgCost)}</Num></TableCell>
@@ -437,7 +438,7 @@ export function AdjustForm({
         }
       } else if (l.variant.tracksSerials) {
         if (l.unitIds.length !== c.abs().toNumber()) {
-          return setError(t(`Pick exactly ${c.abs().toString()} motorcycle(s) of ${name} to remove.`, `Choisissez exactement ${c.abs().toString()} moto(s) de ${name} à retirer.`));
+          return setError(t(`Pick exactly ${count(t, c.abs().toNumber(), ["motorcycle", "motorcycles"], ["", ""])} of ${name} to remove.`, `Choisissez exactement ${count(t, c.abs().toNumber(), ["", ""], ["moto", "motos"])} de ${name} à retirer.`));
         }
         line.unitIds = l.unitIds;
       }
@@ -587,7 +588,7 @@ function UnitPicker({ variantId, locationId, needed, value, onChange }: { varian
   return (
     <div className="mt-3 space-y-2">
       <p className={cn("text-xs", value.length === needed ? "text-muted-foreground" : "text-destructive")}>
-        {t(`Pick the motorcycles: ${value.length} of ${needed} selected.`, `Choisissez les motos\u00a0: ${value.length} sur ${needed} sélectionnée(s).`)}
+        {t(`Pick the motorcycles: ${value.length} of ${needed} selected.`, `Choisissez les motos\u00a0: ${value.length} sur ${needed} ${value.length < 2 ? "sélectionnée" : "sélectionnées"}.`)}
       </p>
       {q.isLoading ? (
         <Loading />
@@ -749,7 +750,7 @@ function TransferForm({ onDone }: { onDone: () => void }) {
       if (d(l.qty).gt(d(l.variant.locationQty))) return setError(t(`Not enough ${l.variant.productName} at the source location.`, `Pas assez de ${l.variant.productName} à l'emplacement de départ.`));
       if (l.variant.tracksSerials) {
         if (!d(l.qty).isInteger()) return setError(t("Motorcycles must be whole units.", "Les motos doivent être en unités entières."));
-        if (l.unitIds.length !== d(l.qty).toNumber()) return setError(t(`Pick exactly ${l.qty} motorcycle(s) of ${l.variant.productName} to move.`, `Choisissez exactement ${l.qty} moto(s) de ${l.variant.productName} à déplacer.`));
+        if (l.unitIds.length !== d(l.qty).toNumber()) return setError(t(`Pick exactly ${count(t, Number(l.qty), ["motorcycle", "motorcycles"], ["", ""])} of ${l.variant.productName} to move.`, `Choisissez exactement ${count(t, Number(l.qty), ["", ""], ["moto", "motos"])} de ${l.variant.productName} à déplacer.`));
       }
     }
     m.mutate({

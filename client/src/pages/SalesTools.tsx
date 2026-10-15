@@ -15,7 +15,7 @@ import { useToast } from "@/hooks/use-toast";
 import { api, invalidateAll } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { d, date as fmtDate, qty as fmtQty, todayLocal, unitCost, usd, variantText } from "@/lib/format";
-import { useT } from "@/lib/i18n";
+import { count, useT } from "@/lib/i18n";
 import { downloadCsv, downloadXlsx } from "@/lib/sheets";
 import type { VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -302,7 +302,7 @@ function BulkPriceDialog({ rows, onClose }: { rows: Row[]; onClose: () => void }
         <DialogHeader>
           <DialogTitle>{t("Change prices by a percentage", "Modifier les prix en pourcentage")}</DialogTitle>
           <DialogDescription>
-            {t(`Applies to the ${rows.length} items currently shown (search and category filter).`, `S'applique aux ${rows.length} articles affichés (recherche et filtre de catégorie).`)}
+            {t(`Applies to the ${count(t, rows.length, ["item", "items"], ["article", "articles"])} currently shown (search and category filter).`, `S'applique aux ${count(t, rows.length, ["item", "items"], ["article affiché", "articles affichés"])} (recherche et filtre de catégorie).`)}
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
@@ -361,7 +361,7 @@ function BulkPriceDialog({ rows, onClose }: { rows: Row[]; onClose: () => void }
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onClose} disabled={running}>{t("Cancel", "Annuler")}</Button>
           <Button onClick={apply} disabled={!valid || !changes.length || running}>
-            {t(`Apply to ${changes.length} items`, `Appliquer à ${changes.length} articles`)}
+            {t("Apply to", "Appliquer à")} {count(t, changes.length, ["item", "items"], ["article", "articles"])}
           </Button>
         </DialogFooter>
       </DialogContent>

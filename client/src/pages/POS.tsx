@@ -261,8 +261,8 @@ function ChassisPicker({ line, locationId, takenUnitIds, onChange }: { line: Car
       {missingChassis > 0 && (
         <p className="text-xs text-muted-foreground">
           {t(
-            `${missingChassis} unit(s) have no chassis number: a manager must enter it on the Motorcycles page before they can be sold.`,
-            `${missingChassis} moto(s) sans numéro de châssis : un gérant doit le saisir dans la page Motos avant de pouvoir les vendre.`,
+            `${missingChassis === 1 ? "1 unit has" : `${missingChassis} units have`} no chassis number: a manager must enter it on the Motorcycles page before they can be sold.`,
+            `${missingChassis === 1 ? "1 moto" : `${missingChassis} motos`} sans numéro de châssis : un gérant doit le saisir dans la page Motos avant de pouvoir les vendre.`,
           )}
         </p>
       )}
@@ -385,7 +385,7 @@ export default function POS() {
     if (!acc && d(p.amount).gt(0)) problems.push(t("Choose the account for each payment", "Choisir le compte pour chaque paiement"));
     // An empty payment row is simply ignored when the sale is saved.
     if (acc && d(p.amount).lt(0)) problems.push(t("A payment cannot be negative", "Un paiement ne peut pas être négatif"));
-    if (acc?.currency === "CDF" && d(p.amount).gt(0) && d(p.rate ?? dayRate).lte(0)) problems.push(t("Enter the exchange rate for CDF payments", "Saisir le taux pour les paiements en CDF"));
+    if (acc?.currency === "CDF" && d(p.amount).gt(0) && d(p.rate ?? dayRate).lte(0)) problems.push(t("Enter the exchange rate for CDF payments", "Saisir le taux pour les paiements en francs"));
   }
   if (overpaid) problems.push(t("Payments are more than the total. Enter only the money kept, not the change.", "Les paiements dépassent le total. Saisir seulement l'argent gardé, pas la monnaie rendue."));
   if (credit.gt(0) && !customerId) problems.push(t("Choose a customer to sell the rest on credit", "Choisir un client pour vendre le reste à crédit"));
@@ -630,7 +630,7 @@ export default function POS() {
                   <Banknote className="mr-1 h-4 w-4" /> {t("All in USD cash", "Tout en cash USD")}
                 </Button>
                 <Button variant="secondary" size="sm" onClick={() => payAllIn("CDF")} disabled={total.lte(0) || !findCash("CDF") || rateNum.lte(0)}>
-                  <Banknote className="mr-1 h-4 w-4" /> {t("All in CDF cash", "Tout en cash CDF")}
+                  <Banknote className="mr-1 h-4 w-4" /> {t("All in CDF cash", "Tout en espèces FC")}
                 </Button>
               </div>
 

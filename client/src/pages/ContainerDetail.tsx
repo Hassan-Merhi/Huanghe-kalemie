@@ -14,7 +14,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Textarea } from "@/components/ui/textarea";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
-import { d, date, money, qty, todayLocal, unitCost, usd, variantText } from "@/lib/format";
+import { d, date, money, pct, qty, todayLocal, unitCost, usd, variantText } from "@/lib/format";
 import { useT, count } from "@/lib/i18n";
 import type { Account, Party, VariantRow } from "@/lib/types";
 import { ContainerStatusBadge, useStatusLabel, type ContainerRow, type ContainerStatus } from "./Containers";
@@ -92,9 +92,7 @@ interface DraftLine {
 // ---------------------------------------------------------------- Helpers
 
 function fmtCur(value: unknown, currency: string) {
-  if (currency === "USD" || currency === "CDF") return money(value, currency);
-  const n = Number(value ?? 0);
-  return `${new Intl.NumberFormat("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(Number.isFinite(n) ? n : 0)} ${currency}`;
+  return money(value, currency);
 }
 
 function itemLabel(l: { productName: string; attributes: Record<string, string> }) {
@@ -136,7 +134,7 @@ function MarginCell({ sell, cost }: { sell: string | undefined; cost: string | n
   const m = marginPct(sell, cost);
   if (!m) return <span className="text-muted-foreground">—</span>;
   const cls = m.isNegative() ? "text-destructive font-medium" : m.lt(10) ? "text-amber-600 dark:text-amber-400" : "text-green-700 dark:text-green-400";
-  return <Num className={cls}>{m.toFixed(1)} %</Num>;
+  return <Num className={cls}>{pct(m.toNumber())}</Num>;
 }
 
 // ---------------------------------------------------------------- Page
@@ -686,7 +684,7 @@ function ExpensesSection({ c, editable }: { c: ContainerFull; editable: boolean 
                     </TableCell>
                     <TableCell className="text-right">
                       <Num>{money(e.amountNative, e.currency)}</Num>
-                      {e.currency === "CDF" && e.rate && <div className="text-xs text-muted-foreground">{t("rate", "taux")} {d(e.rate).toString()}</div>}
+                      {e.currency === "CDF" && e.rate && <div className="text-xs text-muted-foreground">{t("rate", "taux")} {qty(e.rate)}</div>}
                     </TableCell>
                     <TableCell className="text-right"><Num className="font-medium">{usd(e.amountUsd)}</Num></TableCell>
                     <TableCell className="min-w-[190px]">
@@ -934,7 +932,7 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
           </Field>
           {isCdf && (
             <Field
-              label={t("Rate (CDF per 1 USD)", "Taux (CDF pour 1 USD)")}
+              label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 $)")}
               hint={usdValue ? `= ${usd(usdValue.toFixed(2))}` : undefined}
             >
               <Input inputMode="decimal" value={rate} onChange={(e) => { setRate(e.target.value); setRateTouched(true); }} />
@@ -1024,7 +1022,7 @@ function PreviewSection({ c, priceOf }: { c: ContainerFull; priceOf: Map<number,
           <>
             <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
               <StatCard label={t("Purchase value", "Valeur d'achat")} value={usd(p.fobTotalUsd)} />
-              <StatCard label={t("Container costs", "Frais du conteneur")} value={usd(p.expensesTotalUsd)} sub={d(p.fobTotalUsd).gt(0) ? `+${d(p.expensesTotalUsd).dividedBy(d(p.fobTotalUsd)).times(100).toFixed(1)} %` : undefined} />
+              <StatCard label={t("Container costs", "Frais du conteneur")} value={usd(p.expensesTotalUsd)} sub={d(p.fobTotalUsd).gt(0) ? `+${pct(d(p.expensesTotalUsd).dividedBy(d(p.fobTotalUsd)).times(100).toNumber())}` : undefined} />
               <StatCard label={t("Landed total", "Coût de revient total")} value={usd(p.landedTotalUsd)} />
             </div>
             <p className="text-xs text-muted-foreground hidden sm:block md:hidden">{t("Swipe the table sideways to see every column →", "Faites glisser le tableau sur le côté pour voir toutes les colonnes →")}</p>
@@ -1155,7 +1153,9 @@ function OffloadButton({ c, disabledReason }: { c: ContainerFull; disabledReason
                 {t(`${c.supplierName ?? "The supplier"} is recorded as owed the purchase value`, `${c.supplierName ?? "Le fournisseur"} est enregistré comme créancier de la valeur d'achat`)} ({p ? usd(p.fobTotalUsd) : "—"}).
               </li>
               {motos.gt(0) && (
-                <li>{t(`${motos.toString()} motorcycle records are created; add their chassis numbers before selling.`, `${motos.toString()} fiches moto sont créées ; ajoutez les numéros de châssis avant de vendre.`)}</li>
+                <li>{motos.equals(1)
+                    ? t("1 motorcycle record is created; add its chassis number before selling.", "1 fiche moto est créée ; ajoutez le numéro de châssis avant de vendre.")
+                    : t(`${motos.toString()} motorcycle records are created; add their chassis numbers before selling.`, `${motos.toString()} fiches moto sont créées ; ajoutez les numéros de châssis avant de vendre.`)}</li>
               )}
               <li>{t("The container is locked: lines and costs can no longer change.", "Le conteneur est verrouillé\u00a0: lignes et frais ne peuvent plus changer.")}</li>
             </ul>
