@@ -173,17 +173,16 @@ export async function updateVariant(tx: Tx, id: number, input: VariantInput) {
   }
   if (input.active === false && existing.active && (!dec(existing.stockQty).isZero() || !dec(existing.stockValue).isZero())) throw conflictStock();
   if (input.sellPrice != null && dec(input.sellPrice).isNegative()) throw badRequest("Price cannot be negative", "Le prix ne peut pas être négatif");
-  await tx
-    .update(variants)
-    .set({
+  const changes = {
       ...(sku && { sku }),
       ...(barcode !== undefined && { barcode }),
       ...(input.attributes !== undefined && { attributes: cleanAttributes(input.attributes) }),
       ...(input.sellPrice != null && { sellPrice: dec(input.sellPrice).toFixed(2) }),
       ...(input.reorderLevel != null && { reorderLevel: dec(input.reorderLevel).toFixed(3) }),
       ...(input.active !== undefined && { active: input.active }),
-    })
-    .where(eq(variants.id, id));
+  };
+  if (Object.keys(changes).length === 0) throw badRequest("Nothing to change", "Rien à modifier");
+  await tx.update(variants).set(changes).where(eq(variants.id, id));
   return getProduct(tx, existing.productId);
 }
 

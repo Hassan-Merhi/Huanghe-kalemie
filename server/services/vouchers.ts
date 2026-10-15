@@ -112,10 +112,17 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
           .from(journalLines)
           .where(and(eq(journalLines.accountId, receivables), eq(journalLines.partyId, p.id)));
         const credit = Decimal.max(dec(bal?.v ?? 0).negated(), 0);
-        if (dec(usd).gt(credit)) {
+        // Francs paid ahead go back as those francs, or in dollars at today's rate (as for liabilities).
+        const francs = await foreignBalance(tx, receivables, p.id, "CDF", input.date);
+        const francsHeld = Decimal.max(francs.native.negated(), 0);
+        const dayRate = francsHeld.gt(0) ? (await rateFor(tx, input.date)).rate : null;
+        const dollarPart = francsHeld.gt(0) ? Decimal.max(credit.minus(Decimal.max(francs.usd.negated(), 0)), 0) : credit;
+        const dollarCap = dayRate ? dollarPart.plus(cents(francsHeld.dividedBy(dayRate))) : credit;
+        const tooMuch = money.currency === "CDF" && dayRate ? amount.gt(francsHeld.plus(dollarPart.times(dayRate).toDecimalPlaces(0, Decimal.ROUND_FLOOR))) : dec(usd).gt(dollarCap);
+        if (tooMuch) {
           throw forbidden(
-            `Line ${n}: ${p.name} has only ${credit.toFixed(2)} $ to get back. Only the owner can pay a customer more.`,
-            `Ligne ${n} : ${p.name} n'a que ${frMoney(credit)} à récupérer. Seul le propriétaire peut verser davantage à un client.`,
+            `Line ${n}: ${p.name} has only ${dollarCap.toFixed(2)} $ to get back. Only the owner can pay a customer more.`,
+            `Ligne ${n} : ${p.name} n'a que ${frMoney(dollarCap)} à récupérer. Seul le propriétaire peut verser davantage à un client.`,
           );
         }
       }

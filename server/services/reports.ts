@@ -178,7 +178,7 @@ export async function otherPartnerAccountIds(tx: Tx, viewer: number | null | und
 
 const PARTNER_MONEY_TYPES = new Set(["partner_contribution", "partner_withdrawal"]);
 /** Journals whose memo is typed by hand, so it may name what another partner did. */
-export const PARTNER_MEMO_TYPES = new Set([...PARTNER_MONEY_TYPES, "manual", "opening", "payment", "receipt", "transfer"]);
+export const PARTNER_MEMO_TYPES = new Set([...PARTNER_MONEY_TYPES, "manual", "opening", "payment", "receipt", "transfer", "reversal"]);
 
 /**
  * A journal as a partner sees it: the other partners' lines are added up into one "Autres associés"

@@ -4,7 +4,7 @@ import { cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, francDecimalsError, notFound } from "../errors";
 import { deMonth, monthText } from "@shared/french";
-import { postJournal, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
+import { postJournal, resolveRate, reverseJournal, shopToday, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
 import { applyAdvances, reverseAdvances } from "./operations";
 import { monthRange } from "./periods";
 import { partyBalances } from "./reports";
@@ -64,7 +64,8 @@ export async function runPayroll(tx: Tx, input: PayrollRunInput, userId: number)
   const [account] = await tx.select().from(accounts).where(eq(accounts.id, input.accountId));
   if (!account || account.type !== "expense") throw badRequest("Pick an expense account for salaries", "Choisissez un compte de charges pour les salaires");
   const { from, to } = monthRange(input.month);
-  const date = input.date ?? to;
+  // Without a date, the month's last day, or today while the month is still running.
+  const date = input.date ?? (to > shopToday() ? shopToday() : to);
   if (date < from || date > to) throw badRequest(`The date must be in ${input.month}`, `La date doit être en ${monthText(input.month)}`);
   const currency = input.currency ?? "USD";
   const rate = currency === "CDF" ? await resolveRate(tx, date, input.rate) : null;
@@ -133,7 +134,7 @@ export async function runPayroll(tx: Tx, input: PayrollRunInput, userId: number)
   if (journalId) await tx.update(journals).set({ sourceId: run.id }).where(eq(journals.id, journalId));
   // Salary advances paid in dollars come off salaries owed in francs.
   if (currency === "CDF") {
-    for (const l of lines) await applyAdvances(tx, l.partyId, date, `Avance déduite du salaire ${monthText(input.month)}`, userId, { type: "payroll", id: run.id });
+    for (const l of lines) await applyAdvances(tx, l.partyId, date, `Avance déduite du salaire ${monthText(input.month)}`, userId, { type: "payroll", id: run.id }, "CDF");
   }
   return run;
 }
