@@ -63,6 +63,8 @@ export const exchangeRates = pgTable("exchange_rates", {
   /** Yuan per 1 USD, when known: used to restate what suppliers are owed in yuan at month end. */
   cnyPerUsd: numeric("cny_per_usd", { precision: 14, scale: 4 }),
   createdBy: integer("created_by"),
+  /** The yuan rate the owner set for this day, kept when a manager saves the row: a manager's yuan rate is checked against it. */
+  ownerCnyPerUsd: numeric("owner_cny_per_usd", { precision: 14, scale: 4 }),
   createdAt: timestamp("created_at").notNull().defaultNow(),
 });
 

@@ -7,6 +7,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -15,7 +25,7 @@ import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, Submi
 import { useToast } from "@/hooks/use-toast";
 import { api, invalidateAll } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { d, date as fmtDate, qty as fmtQty, todayLocal, usd, variantText } from "@/lib/format";
+import { d, date as fmtDate, MINUS, pct as fmtPct, qty as fmtQty, todayLocal, usd, variantText } from "@/lib/format";
 import { count, useT } from "@/lib/i18n";
 import { downloadCsv, downloadXlsx } from "@/lib/sheets";
 import type { VariantRow } from "@/lib/types";
@@ -150,7 +160,7 @@ function PriceList() {
         <div className="flex flex-wrap gap-2">
           {canEdit && (
             <Button variant="outline" onClick={() => setBulkOpen(true)} disabled={!filtered.length}>
-              <Percent className="mr-1 h-4 w-4" /> {t("Change by %", "Modifier en %")}
+              <Percent className="mr-1 h-4 w-4" /> {t("Change by %", "Modifier en\u00a0%")}
             </Button>
           )}
           <Button variant="outline" onClick={() => window.print()} disabled={!filtered.length}><Printer className="mr-1 h-4 w-4" /> {t("Print", "Imprimer")}</Button>
@@ -223,12 +233,24 @@ function PriceCell({ row }: { row: Row }) {
   useEffect(() => setValue(d(row.sellPrice).toFixed(2)), [row.sellPrice]);
   const valid = /^\d+(\.\d{1,2})?$/.test(value.trim());
   const changed = valid && !d(value).eq(d(row.sellPrice));
+  // "220" for 22 or "145" for 1 450: a price ten times off saves like any other, so a big jump, or a price
+  // below what the item cost, is asked about first. The server's own price rules stay as they are.
+  const old = d(row.sellPrice);
+  const gap = changed && old.gt(0) ? d(value).minus(old).dividedBy(old).times(100) : null;
+  const farOff = !!gap && gap.abs().gt(50);
+  const belowCost = changed && !!row.avgCost && d(row.avgCost).gt(0) && d(value).lt(d(row.avgCost));
+  const [confirming, setConfirming] = useState(false);
 
-  async function save() {
+  async function save(confirmed = false) {
     if (!changed) {
       if (!valid) setValue(d(row.sellPrice).toFixed(2));
       return;
     }
+    if (!confirmed && (farOff || belowCost)) {
+      setConfirming(true);
+      return;
+    }
+    setConfirming(false);
     setSaving(true);
     try {
       await api("PATCH", `/api/variants/${row.variantId}`, { sellPrice: d(value).toFixed(2) });
@@ -253,13 +275,17 @@ function PriceCell({ row }: { row: Row }) {
           aria-label={t("Sell price", "Prix de vente")}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
-            if (e.key === "Enter") save();
+            if (e.key === "Enter") {
+              // Else the same key press lands on the question's first button, which opens with the focus.
+              e.preventDefault();
+              void save();
+            }
             if (e.key === "Escape") setValue(d(row.sellPrice).toFixed(2));
           }}
         />
         {(changed || !valid) && (
           <>
-            <Button size="icon" className="h-8 w-8" disabled={!changed || saving} onClick={save} aria-label={t("Save price", "Enregistrer le prix")} title={t("Save", "Enregistrer")}>
+            <Button size="icon" className="h-8 w-8" disabled={!changed || saving} onClick={() => void save()} aria-label={t("Save price", "Enregistrer le prix")} title={t("Save", "Enregistrer")}>
               <Check className="h-4 w-4" />
             </Button>
             <Button size="icon" variant="ghost" className="h-8 w-8" disabled={saving} onClick={() => setValue(d(row.sellPrice).toFixed(2))} aria-label={t("Undo", "Annuler")} title={t("Undo", "Annuler")}>
@@ -269,6 +295,42 @@ function PriceCell({ row }: { row: Row }) {
         )}
       </div>
       <Num className="hidden font-medium print:inline">{usd(row.sellPrice)}</Num>
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("Save this price?", "Enregistrer ce prix\u00a0?")}</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-left">
+                <p>
+                  {row.productName}
+                  {variantText(row.attributes) ? ` · ${variantText(row.attributes)}` : ""} ({row.sku})
+                </p>
+                {farOff && gap && (
+                  <p className="font-medium text-amber-800 dark:text-amber-400">
+                    {t(
+                      `The price goes from ${usd(old.toFixed(2))} to ${usd(d(value).toFixed(2))} (${gap.gt(0) ? "+" : MINUS}${fmtPct(gap.abs().toDecimalPlaces(0).toString(), 0)}).`,
+                      `Le prix passe de ${usd(old.toFixed(2))} à ${usd(d(value).toFixed(2))} (${gap.gt(0) ? "+" : MINUS}${fmtPct(gap.abs().toDecimalPlaces(0).toString(), 0)}).`,
+                    )}
+                  </p>
+                )}
+                {belowCost && (
+                  <p className="font-medium text-destructive">
+                    {t(
+                      `${usd(d(value).toFixed(2))} is below what it cost on average (${usd(d(row.avgCost).toFixed(2))}): each sale would lose money.`,
+                      `${usd(d(value).toFixed(2))} est sous son coût moyen (${usd(d(row.avgCost).toFixed(2))})\u00a0: chaque vente perdrait de l'argent.`,
+                    )}
+                  </p>
+                )}
+                <p>{t("Check for a missing or extra zero before saving.", "Vérifiez qu'il ne manque pas un zéro, ou qu'il n'y en a pas un de trop.")}</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void save(true)}>{t("Save anyway", "Enregistrer quand même")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   );
 }

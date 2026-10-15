@@ -192,9 +192,9 @@ export function qty(value: unknown): string {
   return nf(0, 3).format(num(value));
 }
 
-/** A percentage: 42,8 % in French, 42.8% in English. */
-export function pct(value: unknown, decimals = 1): string {
-  const body = nf(0, decimals).format(num(value));
+/** A percentage: 42,8 % in French, 42.8% in English. Margins pass `minDecimals` so 43,0 % sits beside 38,6 %. */
+export function pct(value: unknown, decimals = 1, minDecimals = 0): string {
+  const body = nf(Math.min(minDecimals, decimals), decimals).format(num(value));
   return lang === "fr" ? `${body}${NB}%` : `${body}%`;
 }
 
@@ -229,8 +229,18 @@ export function unitCost(value: unknown): string {
 
 export function date(value: string | null | undefined): string {
   if (!value) return "";
-  const [y, m, d] = value.slice(0, 10).split("-");
+  const [y, m, d] = shopDay(value).split("-");
   return `${d}/${m}/${y}`;
+}
+
+/**
+ * The shop's day (Kalemie, UTC+2) of a date or a timestamp: "2026-10-14T22:29:00Z" is the 15th there, though
+ * its first ten characters say the 14th. A plain date ("2026-10-14") is that day.
+ */
+export function shopDay(value: string): string {
+  if (!/T\d{2}:\d{2}.*(Z|[+-]\d{2}:?\d{2})$/.test(value)) return value.slice(0, 10);
+  const t = Date.parse(value);
+  return Number.isFinite(t) ? new Date(t + 2 * 60 * 60 * 1000).toISOString().slice(0, 10) : value.slice(0, 10);
 }
 
 /** Date and time in the shop's time zone: 15/10/2026 14:05. */

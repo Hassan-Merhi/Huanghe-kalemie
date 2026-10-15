@@ -15,9 +15,9 @@ import { AccountSelect, MoneyAccountSelect, PartySelect, RateInput, useAccounts,
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api, invalidateAll } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { curLabel, d, money, qty as fmtQty, todayLocal, usd } from "@/lib/format";
+import { curLabel, d, money, number, pct, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import { useT } from "@/lib/i18n";
-import type { Account, Party } from "@/lib/types";
+import type { Account, Party, Settings } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { AdjustForm, type AdjustmentDraft, type AdjustmentPayload } from "@/pages/Stock";
 
@@ -691,6 +691,18 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
     const r = d(dayRate.data?.cdfPerUsd);
     return r.gt(0) ? x.dividedBy(r) : null;
   };
+  // The server refuses an exchange whose two amounts are far from the day's rate ("28.080" FC for 100 $):
+  // said here, in red, before the click.
+  const tolerance = d(useQuery<Settings>({ queryKey: ["/api/settings"] }).data?.rateTolerancePct ?? "3");
+  const dayCdf = d(dayRate.data?.cdfPerUsd);
+  const rateGap = implied && dayCdf.gt(0) ? implied.minus(dayCdf).abs().dividedBy(dayCdf).times(100) : null;
+  const rateFar = !!rateGap && rateGap.gt(tolerance);
+  const rateFarText = rateFar
+    ? t(
+        `These amounts mean 1 $ = ${number(implied!.toDecimalPlaces(2).toString())} FC, more than ${pct(tolerance.toString(), 2)} away from today's rate (${number(dayCdf.toString())} FC). Check both amounts.`,
+        `Ces montants donnent 1\u00a0$ = ${number(implied!.toDecimalPlaces(2).toString())}\u00a0FC, soit plus de ${pct(tolerance.toString(), 2)} d'écart avec le taux du jour (${number(dayCdf.toString())}\u00a0FC). Vérifiez les deux montants.`,
+      )
+    : null;
   const value = from ? costOf(from, fa) : null;
   const received = to?.currency === "USD" ? ta : value;
   const diff = value && received ? value.toDecimalPlaces(2).minus(received.toDecimalPlaces(2)) : null;
@@ -719,7 +731,9 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
           ? t("Pick two different accounts", "Choisissez deux comptes différents")
           : !ta.gt(0)
             ? t("Enter the amount in", "Saisissez le montant reçu")
-            : null;
+            : rateFar
+              ? t("Check the two amounts: their rate is far from today's", "Vérifiez les deux montants\u00a0: leur taux est loin de celui du jour")
+              : null;
 
   function payload(): Record<string, unknown> {
     return {
@@ -772,9 +786,10 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
               {implied && (
                 <div className="flex flex-wrap justify-between gap-2">
                   <span>{t("Rate of this exchange", "Taux de ce change")}</span>
-                  <Num className="font-medium">{fmtQty(implied.toDecimalPlaces(2).toString())} FC / $</Num>
+                  <Num className={cn("font-medium", rateFar && "text-destructive")}>{fmtQty(implied.toDecimalPlaces(2).toString())}{"\u00a0"}FC / $</Num>
                 </div>
               )}
+              {rateFarText && <p role="alert" className="font-medium text-destructive">{rateFarText}</p>}
               {diff && !diff.isZero() && (
                 <div className="flex flex-wrap justify-between gap-2">
                   <span>{t("Exchange difference against what the francs cost", "Différence de change par rapport au coût des francs")}</span>

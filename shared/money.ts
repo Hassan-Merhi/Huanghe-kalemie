@@ -110,17 +110,38 @@ export function allocateCents(total: DecimalInput, weights: DecimalInput[]): Dec
 /**
  * A number typed in a spreadsheet, in French or English style: "1 415,51", "1,415.51", "12,5 $", "2.800 FC".
  * The last "," or "." followed by one or two digits is the decimal mark; any other "," "." or space groups thousands.
+ * With `measured` (litres, metres, kilos, and always weights and volumes), a single "," or "." before three
+ * digits is the decimal mark too, as a form field reads it: "2,250" L is 2,25 L and "12,375" kg is 12,375 kg.
+ * Only "1.000" stays in doubt there (see ambiguousTypedMeasure); this reads it as 1.
  * Returns the plain number text ("1415.51"), or null for an empty cell.
  */
-export function parseTypedNumber(value: unknown): string | null {
+export function parseTypedNumber(value: unknown, opts: { measured?: boolean } = {}): string | null {
   if (value === null || value === undefined) return null;
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : null;
-  let s = String(value).replace(/[\s  ]/g, "").replace(/\$|FC|CDF|USD/gi, "");
+  let s = String(value).replace(/[\s\u00a0\u202f]/g, "").replace(/\$|FC|CDF|USD/gi, "");
   if (s === "") return null;
   const neg = /^[-\u2212]/.test(s);
   if (/^[-+\u2212]/.test(s)) s = s.slice(1);
-  const m = s.match(/^(.*?)[.,](\d{1,2})$/);
+  // Measured: one mark only, or both kinds (the last is the decimal mark), takes any number of decimals;
+  // the same mark repeated ("1.234.567") still groups thousands.
+  const single = opts.measured && (s.match(/[.,]/g) ?? []).length === 1;
+  const mixed = opts.measured && /,/.test(s) && /\./.test(s);
+  const m = s.match(single || mixed ? /^(.*?)[.,](\d+)$/ : /^(.*?)[.,](\d{1,2})$/);
   const whole = (m ? m[1] : s).replace(/[.,]/g, "");
-  const out = m ? `${whole || "0"}.${m[2]}` : whole;
+  // Trailing zeros go, so the plain text never looks like "1.000" again when the server reads it.
+  const fraction = m ? (opts.measured ? m[2].replace(/0+$/, "") : m[2]) : "";
+  const out = m && fraction ? `${whole || "0"}.${fraction}` : whole || (m ? "0" : "");
   return `${neg ? "-" : ""}${out}`;
+}
+
+/**
+ * In a measured quantity, weight or volume, "1.000" may be 1 000 (a French thousands dot) or 1 written
+ * with three decimals. Returns both readings (["1000", "1"]) when a cell is that ambiguous, else null.
+ */
+export function ambiguousTypedMeasure(value: unknown): [string, string] | null {
+  if (typeof value !== "string") return null;
+  const m = /^([-+\u2212]?)([1-9]\d{0,2})\.000$/.exec(value.replace(/[\s\u00a0\u202f]/g, ""));
+  if (!m) return null;
+  const sign = m[1] && m[1] !== "+" ? "-" : "";
+  return [`${sign}${m[2]}000`, `${sign}${m[2]}`];
 }

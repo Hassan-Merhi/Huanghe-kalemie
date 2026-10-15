@@ -479,12 +479,18 @@ export async function setExchangeRate(
     // A rate the owner set today (or for this day) is also a fair starting point.
     const ownerRows = (
       await tx
-        .select({ cdf: exchangeRates.cdfPerUsd, cny: exchangeRates.cnyPerUsd })
+        .select({ cdf: exchangeRates.cdfPerUsd })
         .from(exchangeRates)
         .innerJoin(users, eq(users.id, exchangeRates.createdBy))
         .where(and(inArray(exchangeRates.date, [today, input.date]), eq(users.role, "owner")))
     );
-    const prevs = [prevRow ? dec(prevRow.cdfPerUsd) : (await rateFor(tx, "0000-01-01")).rate, ...ownerRows.map((r) => dec(r.cdf))];
+    // The owner's yuan rate of the day is kept apart, so a manager's save of the row does not take it away.
+    const ownerCnyRows = await tx
+      .select({ cny: exchangeRates.ownerCnyPerUsd })
+      .from(exchangeRates)
+      .where(and(inArray(exchangeRates.date, [today, input.date]), sql`${exchangeRates.ownerCnyPerUsd} is not null`));
+    // No rate before today: the default rate (Postgres has no year 0, so "0000-01-01" failed the save).
+    const prevs = [prevRow ? dec(prevRow.cdfPerUsd) : (await rateFor(tx, "0001-01-01")).rate, ...ownerRows.map((r) => dec(r.cdf))];
     const next = dec(input.cdfPerUsd);
     const near = (ref: Decimal, value: Decimal) => value.minus(ref).abs().dividedBy(ref).times(100).lte(limit);
     const prev = prevs.reduce((best, r) => (r.minus(next).abs().lt(best.minus(next).abs()) ? r : best));
@@ -504,7 +510,7 @@ export async function setExchangeRate(
         .where(and(lt(exchangeRates.date, today), sql`${exchangeRates.cnyPerUsd} is not null`))
         .orderBy(desc(exchangeRates.date))
         .limit(1);
-      const cnyRefs = [...(cnyRow?.rate ? [dec(cnyRow.rate)] : []), ...ownerRows.filter((r) => r.cny).map((r) => dec(r.cny!))];
+      const cnyRefs = [...(cnyRow?.rate ? [dec(cnyRow.rate)] : []), ...ownerCnyRows.map((r) => dec(r.cny!))];
       if (!cnyRefs.length) {
         throw new AppError(403, "Only the owner can set the first yuan rate", "FORBIDDEN", "Seul le propriétaire peut saisir le premier taux du yuan");
       }
@@ -526,7 +532,8 @@ export async function setExchangeRate(
   if (current && dec(current.cdfPerUsd).equals(dec(input.cdfPerUsd)) && (!input.cnyPerUsd || (current.cnyPerUsd != null && dec(current.cnyPerUsd).equals(dec(input.cnyPerUsd))))) {
     return current;
   }
-  const cny = input.cnyPerUsd ? { cnyPerUsd: input.cnyPerUsd } : {};
+  // The owner's yuan rate is also kept apart, as the reference for a manager's later change.
+  const cny = input.cnyPerUsd ? { cnyPerUsd: input.cnyPerUsd, ...(opts.owner ? { ownerCnyPerUsd: input.cnyPerUsd } : {}) } : {};
   const [row] = await tx
     .insert(exchangeRates)
     .values({ date: input.date, cdfPerUsd: input.cdfPerUsd, createdBy: userId, ...cny })

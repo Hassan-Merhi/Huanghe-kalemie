@@ -25,14 +25,16 @@ type InputProps = React.ComponentProps<"input"> & {
   inlineAlert?: boolean;
   /** Extra classes for that question, e.g. to run it under the buttons beside a narrow field. */
   alertClassName?: string;
+  /** The page asks the question itself (under the item, say): the field only turns red, so it is asked once. */
+  noAlert?: boolean;
 };
 
 const Input = React.forwardRef<HTMLInputElement, InputProps>(
-  ({ className, type, thousands, usd, currency, whole, measured, inlineAlert, alertClassName, ...props }, ref) => {
+  ({ className, type, thousands, usd, currency, whole, measured, inlineAlert, alertClassName, noAlert, ...props }, ref) => {
     // Dates are always shown dd/mm/yyyy, whatever language the phone or browser is set to.
     if (type === "date") return <DateInput className={className} {...props} ref={ref} />;
     // Amounts and quantities accept "4,50" as well as "4.50" and read French-style.
-    if ((props.inputMode === "decimal" || props.inputMode === "numeric") && (!type || type === "text")) return <DecimalInput className={className} thousands={thousands} usd={usd} currency={currency} whole={whole} measured={measured} inlineAlert={inlineAlert} alertClassName={alertClassName} {...props} ref={ref} />;
+    if ((props.inputMode === "decimal" || props.inputMode === "numeric") && (!type || type === "text")) return <DecimalInput className={className} thousands={thousands} usd={usd} currency={currency} whole={whole} measured={measured} inlineAlert={inlineAlert} alertClassName={alertClassName} noAlert={noAlert} {...props} ref={ref} />;
     // h-9 to match icon buttons and default buttons.
     return <input type={type} className={cn(BASE, className)} ref={ref} {...props} />;
   },
@@ -127,7 +129,7 @@ const LAYOUT = /^(?:[a-z0-9[\]-]+:)*!?(?:-?m[trblxy]?-|w-|min-w-|max-w-|flex-|ba
  * Text that is not a number is passed on as typed so the page can say what is wrong; in a dollar field an
  * ambiguous "1.200" is passed on as "1.200?" (see unusableText) so that no page saves it as 1,20 $.
  */
-const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className, value, onChange, onBlur, onFocus, thousands: thousandsProp, usd: usdProp, currency, whole, measured: measuredProp, inlineAlert, alertClassName, ...props }, ref) => {
+const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className, value, onChange, onBlur, onFocus, thousands: thousandsProp, usd: usdProp, currency, whole, measured: measuredProp, inlineAlert, alertClassName, noAlert, ...props }, ref) => {
   const thousands = thousandsProp || currency === "CDF";
   const usd = usdProp || (!!currency && currency !== "CDF");
   const cur = usdProp || !currency || currency === "CDF" ? "USD" : currency;
@@ -169,7 +171,7 @@ const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className
         className={cn(BASE, inner)}
         value={text}
         aria-invalid={unreadable || props["aria-invalid"] || undefined}
-        aria-describedby={unreadable ? cn(hintId, props["aria-describedby"]) : props["aria-describedby"]}
+        aria-describedby={unreadable && !noAlert ? cn(hintId, props["aria-describedby"]) : props["aria-describedby"]}
         onChange={(e) => {
           const typed = e.target.value;
           setText(typed);
@@ -190,7 +192,7 @@ const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className
           onBlur?.(e);
         }}
       />
-      {unreadable && (
+      {unreadable && !noAlert && (
         <span
           id={hintId}
           role="alert"

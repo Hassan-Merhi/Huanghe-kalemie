@@ -33,6 +33,8 @@ export interface RowResult {
   variantId: number | null;
   sku: string | null;
   status: "existing" | "new_variant" | "new_item" | "error";
+  /** The unit of the item matched (preview only), so the browser knows a "2,250" there is litres or pieces. */
+  unit?: string | null;
   error?: string;
   errorFr?: string;
 }
@@ -52,15 +54,15 @@ function attributeKeys(existing: Record<string, string>[]) {
 }
 
 interface Caches {
-  products: Map<string, { id: number; tracksSerials: boolean }>;
+  products: Map<string, { id: number; tracksSerials: boolean; unit?: string | null }>;
   categories: Map<string, number>;
 }
 
 async function loadCaches(tx: Tx): Promise<Caches> {
-  const ps = await tx.select({ id: products.id, name: products.name, tracksSerials: products.tracksSerials }).from(products);
+  const ps = await tx.select({ id: products.id, name: products.name, tracksSerials: products.tracksSerials, unit: products.unit }).from(products);
   const cs = await tx.select({ id: categories.id, name: categories.name }).from(categories);
   return {
-    products: new Map(ps.map((p) => [norm(p.name), { id: p.id, tracksSerials: p.tracksSerials }])),
+    products: new Map(ps.map((p) => [norm(p.name), { id: p.id, tracksSerials: p.tracksSerials, unit: p.unit }])),
     categories: new Map(cs.map((c) => [norm(c.name), c.id])),
   };
 }
@@ -202,11 +204,12 @@ export async function previewItems(tx: Tx, rows: ImportItemRow[]) {
     const n = i + 2;
     const sku = r.sku?.trim().toUpperCase() || null;
     const barcode = r.barcode?.trim() || null;
-    let found: { id: number; sku: string } | undefined;
-    if (sku) [found] = await tx.select({ id: variants.id, sku: variants.sku }).from(variants).where(eq(variants.sku, sku));
-    if (!found && barcode) [found] = await tx.select({ id: variants.id, sku: variants.sku }).from(variants).where(eq(variants.barcode, barcode));
+    let found: { id: number; sku: string; unit: string | null } | undefined;
+    const pick = { id: variants.id, sku: variants.sku, unit: products.unit };
+    if (sku) [found] = await tx.select(pick).from(variants).innerJoin(products, eq(products.id, variants.productId)).where(eq(variants.sku, sku));
+    if (!found && barcode) [found] = await tx.select(pick).from(variants).innerJoin(products, eq(products.id, variants.productId)).where(eq(variants.barcode, barcode));
     if (found) {
-      out.push({ row: n, variantId: found.id, sku: found.sku, status: "existing" });
+      out.push({ row: n, variantId: found.id, sku: found.sku, status: "existing", unit: found.unit });
       continue;
     }
     if (!r.name?.trim()) {
@@ -223,7 +226,7 @@ export async function previewItems(tx: Tx, rows: ImportItemRow[]) {
     const vs = await tx.select({ id: variants.id, sku: variants.sku, attributes: variants.attributes }).from(variants).where(eq(variants.productId, product.id));
     const want = wantedValues(r).join("|");
     const match = vs.find((v) => Object.values(v.attributes ?? {}).map(norm).filter(Boolean).sort().join("|") === want);
-    out.push(match ? { row: n, variantId: match.id, sku: match.sku, status: "existing" } : { row: n, variantId: null, sku, status: "new_variant" });
+    out.push(match ? { row: n, variantId: match.id, sku: match.sku, status: "existing", unit: product.unit } : { row: n, variantId: null, sku, status: "new_variant", unit: product.unit });
   }
   return out;
 }

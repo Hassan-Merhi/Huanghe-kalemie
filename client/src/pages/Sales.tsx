@@ -280,7 +280,7 @@ export default function Sales() {
               label={t("Profit", "Marge")}
               value={usd(profit.toFixed(2))}
               tone={profit.gt(0) ? "good" : profit.lt(0) ? "bad" : "neutral"}
-              sub={totals.total.gt(0) ? `${pct(profit.dividedBy(totals.total).times(100).toNumber())} ${t("of sales", "des ventes")}` : undefined}
+              sub={totals.total.gt(0) ? `${pct(profit.dividedBy(totals.total).times(100).toNumber(), 1, 1)} ${t("of sales", "des ventes")}` : undefined}
             />
           )}
         </div>

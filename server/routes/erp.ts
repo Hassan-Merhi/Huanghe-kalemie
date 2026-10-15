@@ -2,7 +2,8 @@ import type { Express, Request } from "express";
 import { and, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { accounts, DRAFT_KINDS, journalLines, journals, parties, partners, saleReturns, users, type DraftKind } from "@shared/schema";
-import { cents, dec, Decimal, parseTypedNumber } from "@shared/money";
+import { ambiguousTypedMeasure, cents, dec, Decimal, MoneyError, parseTypedNumber } from "@shared/money";
+import { frNumber } from "@shared/french";
 import { COST_FX_MEMO } from "../services/ledger";
 import { db } from "../db";
 import { forbidden, notFound } from "../errors";
@@ -347,6 +348,19 @@ export function registerErpRoutes(
   const cell = z.union([z.string().max(200), z.number(), z.null()]).optional().transform((v) => (v === undefined || v === null ? null : String(v).trim()));
   // "12,50" from a French spreadsheet is twelve and a half, not 1250.
   const num = z.union([z.string().max(40), z.number(), z.null()]).optional().transform((v) => parseTypedNumber(v));
+  // Quantities, weights and volumes come from the browser as plain numbers ("12.375" kg): read the way a
+  // form field reads a measure, so three decimals stay decimals. Pieces cannot come out split (each import
+  // checks whole units), and "1.000" (1 000 or 1?) is refused rather than guessed.
+  const measure = z.union([z.string().max(40), z.number(), z.null()]).optional().transform((v) => {
+    const unsure = ambiguousTypedMeasure(v);
+    if (unsure) {
+      throw new MoneyError(
+        `"${String(v).trim()}" could be ${unsure[0]} or ${unsure[1]}: write it without the dot`,
+        `«\u00a0${String(v).trim()}\u00a0» : ${frNumber(unsure[0])} ou ${unsure[1]} ? Écrivez-le sans le point.`,
+      );
+    }
+    return parseTypedNumber(v, { measured: true });
+  });
   const itemRow = z.object({
     name: cell.transform((v) => v ?? ""),
     category: cell,
@@ -360,8 +374,8 @@ export function registerErpRoutes(
     reorderLevel: num,
     motorcycle: z.union([z.boolean(), z.string(), z.number(), z.null()]).optional().transform((v) => v === true || v === 1 || (typeof v === "string" && /^(yes|oui|y|o|1|true|vrai|moto)$/i.test(v.trim()))),
   });
-  const stockRow = itemRow.extend({ qty: num, unitCost: num });
-  const containerRow = itemRow.extend({ quantity: num.transform((v) => v ?? ""), unitPrice: num.transform((v) => v ?? ""), weightKg: num, volumeCbm: num });
+  const stockRow = itemRow.extend({ qty: measure, unitCost: num });
+  const containerRow = itemRow.extend({ quantity: measure.transform((v) => v ?? ""), unitPrice: num.transform((v) => v ?? ""), weightKg: measure, volumeCbm: measure });
 
   app.post("/api/import/items/preview", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = z.object({ rows: z.array(itemRow).max(5000) }).parse(req.body);

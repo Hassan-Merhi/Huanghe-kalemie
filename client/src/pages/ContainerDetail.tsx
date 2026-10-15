@@ -153,7 +153,7 @@ function MarginCell({ sell, cost }: { sell: string | undefined; cost: string | n
   const m = marginPct(sell, cost);
   if (!m) return <span className="text-muted-foreground">—</span>;
   const cls = m.isNegative() ? "text-destructive font-medium" : m.lt(10) || m.gt(SUSPECT_MARGIN) ? "text-amber-800 dark:text-amber-400 font-medium" : "text-green-800 dark:text-green-400";
-  return <Num className={cls}>{pct(m.toNumber())}</Num>;
+  return <Num className={cls}>{pct(m.toNumber(), 1, 1)}</Num>;
 }
 
 // ---------------------------------------------------------------- Page
@@ -538,7 +538,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                   {editable ? (
                     <div className="mt-2 grid grid-cols-2 items-end gap-2">
                       <Field label={t("Quantity", "Quantité")}>
-                        <Input className="text-right" inputMode={wholeUnit(r.unit) ? "numeric" : "decimal"} whole={wholeUnit(r.unit)} measured={!wholeUnit(r.unit)} inlineAlert aria-label={t(`Quantity of ${itemLabel(r)}`, `Quantité ${de(itemLabel(r))}`)} value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
+                        <Input className="text-right" inputMode={wholeUnit(r.unit) ? "numeric" : "decimal"} whole={wholeUnit(r.unit)} measured={!wholeUnit(r.unit)} noAlert aria-label={t(`Quantity of ${itemLabel(r)}`, `Quantité ${de(itemLabel(r))}`)} value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
                       </Field>
                       <Field label={t(`Price each (${curLabel(c.currency)})`, `Prix/unité (${curLabel(c.currency)})`)}>
                         <Input className="text-right" inputMode="decimal" currency={c.currency} aria-label={t(`Price each of ${itemLabel(r)}`, `Prix unitaire ${de(itemLabel(r))}`)} value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
@@ -602,7 +602,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                       {editable ? (
                         <>
                           <TableCell className="text-right">
-                            <Input className="ml-auto w-20 text-right" inputMode={wholeUnit(r.unit) ? "numeric" : "decimal"} whole={wholeUnit(r.unit)} measured={!wholeUnit(r.unit)} inlineAlert aria-label={t(`Quantity of ${itemLabel(r)}`, `Quantité ${de(itemLabel(r))}`)} value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
+                            <Input className="ml-auto w-20 text-right" inputMode={wholeUnit(r.unit) ? "numeric" : "decimal"} whole={wholeUnit(r.unit)} measured={!wholeUnit(r.unit)} noAlert aria-label={t(`Quantity of ${itemLabel(r)}`, `Quantité ${de(itemLabel(r))}`)} value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
                           </TableCell>
                           <TableCell className="text-right">
                             <Input className="ml-auto w-28 text-right" inputMode="decimal" currency={c.currency} inlineAlert aria-label={t(`Unit price of ${itemLabel(r)}`, `Prix unitaire ${de(itemLabel(r))}`)} value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
@@ -1355,7 +1355,7 @@ function ReverseButton({ c }: { c: ContainerFull }) {
             <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
           </Field>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>{t("Cancel", "Annuler")}</Button>
+            <Button variant="outline" onClick={() => setOpen(false)}>{t("Back", "Retour")}</Button>
             <SubmitButton variant="destructive" onClick={() => reverse.mutate({ date: day })} blocked={!day && t("Choose the reversal date", "Choisissez la date d'annulation")} pending={reverse.isPending}>
               {t("Reverse", "Annuler le déchargement")}
             </SubmitButton>

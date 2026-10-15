@@ -319,7 +319,7 @@ function SalesByItem() {
                       <TableCell className="text-right"><Num>{usd(r.revenue)}</Num></TableCell>
                       <TableCell className="text-right"><Num>{usd(r.cogs)}</Num></TableCell>
                       <TableCell className="text-right"><Num className={cn("font-medium", d(r.profit).isNegative() && "text-destructive")}>{usd(r.profit)}</Num></TableCell>
-                      <TableCell className="text-right"><Num>{margin(r) != null ? pct(margin(r)) : "—"}</Num></TableCell>
+                      <TableCell className="text-right"><Num>{margin(r) != null ? pct(margin(r), 1, 1) : "—"}</Num></TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -329,7 +329,7 @@ function SalesByItem() {
                     <TableCell className="text-right"><Num>{usd(tot.revenue.toFixed(2))}</Num></TableCell>
                     <TableCell className="text-right"><Num>{usd(tot.cogs.toFixed(2))}</Num></TableCell>
                     <TableCell className="text-right"><Num>{usd(tot.profit.toFixed(2))}</Num></TableCell>
-                    <TableCell className="text-right"><Num>{totMargin != null ? pct(totMargin) : "—"}</Num></TableCell>
+                    <TableCell className="text-right"><Num>{totMargin != null ? pct(totMargin, 1, 1) : "—"}</Num></TableCell>
                   </TableRow>
                 </TableFooter>
               </Table>
@@ -1006,7 +1006,7 @@ function ReverseDialog({ journal, onClose }: { journal: Journal; onClose: () => 
           <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
         </Field>
         <DialogFooter>
-          <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
+          <Button variant="outline" onClick={onClose}>{t("Back", "Retour")}</Button>
           <SubmitButton variant="destructive" blocked={!validDate(day) && t("Choose a valid date", "Choisissez une date valide")} pending={m.isPending} onClick={() => m.mutate({ date: day })}>{t("Reverse", "Annuler l'écriture")}</SubmitButton>
         </DialogFooter>
       </DialogContent>
