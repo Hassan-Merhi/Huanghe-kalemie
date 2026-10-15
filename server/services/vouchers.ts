@@ -209,16 +209,21 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
     kind === "payment"
       ? { accountId: money.accountId, credit: total, nativeAmount: money.nativeAmount, rate: money.rate }
       : { accountId: money.accountId, debit: total, nativeAmount: money.nativeAmount, rate: money.rate };
-  return { money, lines, moneyLine, total };
+  // With no description, the daybook reads the first line: its note, else its account or contact ("Loyer + 1 autre").
+  const first = input.lines[0];
+  const firstName = first.memo || (first.partyId ? partyRows.find((x) => x.id === first.partyId)?.name : accountRows.find((x) => x.id === first.accountId)?.name) || null;
+  const others = input.lines.length - 1;
+  const defaultMemo = firstName ? `${firstName}${others > 0 ? ` + ${others} ${others > 1 ? "autres" : "autre"}` : ""}` : null;
+  return { money, lines, moneyLine, total, defaultMemo };
 }
 
 export async function postVoucher(tx: Tx, kind: "payment" | "receipt", input: VoucherInput, userId: number, rights: PostingRights) {
-  const { money, lines, moneyLine, total } = await voucherLines(tx, kind, input, rights);
+  const { money, lines, moneyLine, total, defaultMemo } = await voucherLines(tx, kind, input, rights);
   const [acc] = await tx.select({ name: accounts.name }).from(accounts).where(eq(accounts.id, money.accountId));
   const journalId = await postJournal(tx, {
     date: input.date,
     type: kind,
-    memo: input.memo || (kind === "payment" ? `Paiement depuis ${acc.name}` : `Reçu dans ${acc.name}`),
+    memo: input.memo || defaultMemo || (kind === "payment" ? `Paiement depuis ${acc.name}` : `Reçu dans ${acc.name}`),
     sourceType: "voucher",
     userId,
     lines: [...lines.map(({ usd: _u, expense: _e, ...l }) => l), moneyLine],

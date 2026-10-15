@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { de } from "@shared/french";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import { AlertTriangle, ArrowLeft, Bike, Info, Lock, PackageCheck, Pencil, Plus, Save, Trash2, Undo2, X } from "lucide-react";
-import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
+import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, StatCard, SubmitButton, unclearAmount } from "@/components/common";
 import { ContainerRateField, MoneyAccountSelect, PartySelect, perUsdText, useRate, VariantSearch } from "@/components/pickers";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -16,7 +16,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Textarea } from "@/components/ui/textarea";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
-import { curLabel, cdf, d, date, money, number, pct, qty, todayLocal, typedNumberOk, unitCost, usd, variantText } from "@/lib/format";
+import { curLabel, d, date, money, pct, qty, todayLocal, typedNumberOk, unitCost, usd, variantText } from "@/lib/format";
 import { unitLabel, wholeUnit } from "@/lib/units";
 import { useT, count } from "@/lib/i18n";
 import type { Account, Party, VariantRow } from "@/lib/types";
@@ -136,10 +136,23 @@ function marginPct(sell: string | undefined, cost: string | null | undefined) {
   return s.minus(d(cost)).dividedBy(s).times(100);
 }
 
+/** A margin above this is more likely an invoice price typed a thousand times too small ("6.500" ¥ read as 6,50). */
+const SUSPECT_MARGIN = 90;
+
+/** Lines whose landed cost is under a tenth of the selling price. */
+function cheapLines(c: ContainerFull, priceOf: Map<number, string>, costs: { key: number | string; landedUnitCost: string | null }[]) {
+  return c.lines.flatMap((l) => {
+    const r = costs.find((x) => Number(x.key) === l.id);
+    const price = priceOf.get(l.variantId);
+    const m = r ? marginPct(price, r.landedUnitCost) : null;
+    return m && m.gt(SUSPECT_MARGIN) ? [{ l, cost: r!.landedUnitCost, price: price! }] : [];
+  });
+}
+
 function MarginCell({ sell, cost }: { sell: string | undefined; cost: string | null | undefined }) {
   const m = marginPct(sell, cost);
   if (!m) return <span className="text-muted-foreground">—</span>;
-  const cls = m.isNegative() ? "text-destructive font-medium" : m.lt(10) ? "text-amber-800 dark:text-amber-400" : "text-green-800 dark:text-green-400";
+  const cls = m.isNegative() ? "text-destructive font-medium" : m.lt(10) || m.gt(SUSPECT_MARGIN) ? "text-amber-800 dark:text-amber-400 font-medium" : "text-green-800 dark:text-green-400";
   return <Num className={cls}>{pct(m.toNumber())}</Num>;
 }
 
@@ -447,7 +460,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
     if (!q.isInteger() && wholeUnit(r.unit)) return t(`Counted by the ${unitLabel(t, r.unit, 1)}: enter a whole number`, `Se compte à l'unité (${unitLabel(t, r.unit, 1)})\u00a0: saisissez un nombre entier`);
     // A line just added has no price yet: only say so once the field was left or saving was tried.
     if (!r.unitPrice.trim()) return touched.has(r.key) ? t("Enter the unit price", "Entrez le prix unitaire") : PENDING;
-    if (!typedNumberOk(r.unitPrice)) return t("Correct the unit price", "Corrigez le prix unitaire");
+    if (!typedNumberOk(r.unitPrice)) return unclearAmount(t, r.unitPrice, c.currency) ?? t("Correct the unit price", "Corrigez le prix unitaire");
     if (d(r.unitPrice).isNegative()) return t("Price cannot be negative", "Le prix ne peut pas être négatif");
     return null;
   });
@@ -524,7 +537,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                         <Input className="text-right" inputMode="decimal" value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
                       </Field>
                       <Field label={t(`Price each (${curLabel(c.currency)})`, `Prix/unité (${curLabel(c.currency)})`)}>
-                        <Input className="text-right" inputMode="decimal" usd={c.currency === "USD"} value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
+                        <Input className="text-right" inputMode="decimal" currency={c.currency} value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
                       </Field>
                       <Field label={t("Total weight (kg)", "Poids total (kg)")}>
                         <Input className="text-right" inputMode="decimal" placeholder={t("total kg", "kg total")} value={r.weightKg} onChange={(e) => update(r.key, { weightKg: e.target.value })} />
@@ -588,7 +601,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                             <Input className="ml-auto w-20 text-right" inputMode="decimal" aria-label={t(`Quantity of ${itemLabel(r)}`, `Quantité ${de(itemLabel(r))}`)} value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
                           </TableCell>
                           <TableCell className="text-right">
-                            <Input className="ml-auto w-28 text-right" inputMode="decimal" usd={c.currency === "USD"} aria-label={t(`Unit price of ${itemLabel(r)}`, `Prix unitaire ${de(itemLabel(r))}`)} value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
+                            <Input className="ml-auto w-28 text-right" inputMode="decimal" currency={c.currency} aria-label={t(`Unit price of ${itemLabel(r)}`, `Prix unitaire ${de(itemLabel(r))}`)} value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
                           </TableCell>
                           <TableCell className="text-right">
                             <Input className="ml-auto w-24 text-right" inputMode="decimal" aria-label={t("Total weight for the line (kg)", "Poids total de la ligne (kg)")} placeholder={t("total kg", "kg total")} value={r.weightKg} onChange={(e) => update(r.key, { weightKg: e.target.value })} />
@@ -886,13 +899,14 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
       ? t("Choose the account it was paid from", "Choisissez le compte de paiement")
       : mode === "owed" && !partyId
         ? t("Choose who it is owed to", "Choisissez à qui c'est dû")
-        : !amt.gt(0)
+        : unclearAmount(t, amount, currency)
+          ?? (!amt.gt(0)
           ? t("Enter an amount above zero", "Saisissez un montant supérieur à zéro")
           : isCdf && !d(rate).gt(0)
             ? t("Enter the exchange rate", "Saisissez le taux de change")
             : method === "line" && !targetLineId
               ? t("Choose the line", "Choisissez la ligne")
-              : null;
+              : null);
 
   function save() {
     create.mutate({
@@ -1033,6 +1047,7 @@ function PreviewSection({ c, priceOf }: { c: ContainerFull; priceOf: Map<number,
   const L = useLabels();
   const p = c.preview;
   if (c.lines.length === 0) return null;
+  const cheap = p ? cheapLines(c, priceOf, p.lines) : [];
   return (
     <Card>
       <CardHeader className="pb-3">
@@ -1064,6 +1079,7 @@ function PreviewSection({ c, priceOf }: { c: ContainerFull; priceOf: Map<number,
               <StatCard label={t("Container costs", "Frais du conteneur")} value={usd(p.expensesTotalUsd)} sub={d(p.fobTotalUsd).gt(0) ? `+${pct(d(p.expensesTotalUsd).dividedBy(d(p.fobTotalUsd)).times(100).toNumber())}` : undefined} />
               <StatCard label={t("Landed total", "Coût de revient total")} value={usd(p.landedTotalUsd)} />
             </div>
+            {cheap.length > 0 && <CheapAlert cheap={cheap} />}
             <p className="text-xs text-muted-foreground hidden sm:block md:hidden">{t("Swipe the table sideways to see every column →", "Faites glisser le tableau sur le côté pour voir toutes les colonnes →")}</p>
             <div className="max-w-full overflow-x-auto rounded-md border">
               <Table>
@@ -1140,6 +1156,33 @@ function PreviewSection({ c, priceOf }: { c: ContainerFull; priceOf: Map<number,
   );
 }
 
+/** Costs so far under the selling price that an invoice price was probably mistyped. */
+function CheapAlert({ cheap, children }: { cheap: ReturnType<typeof cheapLines>; children?: ReactNode }) {
+  const t = useT();
+  return (
+    <Alert className="border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+      <AlertTriangle className="h-4 w-4" />
+      <AlertTitle>{t("Cost far below the selling price", "Coût très inférieur au prix de vente")}</AlertTitle>
+      <AlertDescription className="space-y-2">
+        <ul className="space-y-0.5">
+          {cheap.map(({ l, cost, price }) => (
+            <li key={l.id}>
+              {itemLabel(l)}{t(": ", "\u00a0: ")}{t("cost", "coût")} {unitCost(cost)} · {t("sold at", "vendu")} {usd(price)}
+            </li>
+          ))}
+        </ul>
+        <p>
+          {t(
+            `A margin above ${pct(SUSPECT_MARGIN, 0)} usually means an invoice price was typed too small (6.500 read as 6.50 instead of 6,500). Check the unit prices of these lines.`,
+            `Une marge de plus de ${pct(SUSPECT_MARGIN, 0)} vient souvent d'un prix de facture saisi trop petit (6.500 lu 6,50 au lieu de 6\u00a0500). Vérifiez les prix unitaires de ces lignes.`,
+          )}
+        </p>
+        {children}
+      </AlertDescription>
+    </Alert>
+  );
+}
+
 // ---------------------------------------------------------------- Offload
 
 function OffloadButton({ c, disabledReason, priceOf }: { c: ContainerFull; disabledReason: string | null; priceOf: Map<number, string> }) {
@@ -1164,7 +1207,7 @@ function OffloadButton({ c, disabledReason, priceOf }: { c: ContainerFull; disab
   const motos = c.lines.filter((l) => l.tracksSerials).reduce((s, l) => s.plus(d(l.quantity)), d(0));
   /** What the supplier is owed, in the invoice currency: the books keep a yuan or franc debt in that currency. */
   const owedNative = c.lines.reduce((s, l) => s.plus(d(l.quantity).times(d(l.unitPrice))), d(0)).toDecimalPlaces(2);
-  const owedIn = c.currency === "CDF" ? cdf(owedNative.toString()) : `${number(owedNative.toString(), 2)}\u00a0${c.currency === "CNY" ? "¥" : c.currency}`;
+  const owedIn = fmtCur(owedNative.toFixed(2), c.currency);
   const owedText = c.currency === "USD" ? (p ? usd(p.fobTotalUsd) : usd(owedNative.toFixed(2))) : `${owedIn}${p ? ` (${usd(p.fobTotalUsd)})` : ""}`;
   /** Items that would cost more than they sell for once the container's costs are added. */
   const losing = p
@@ -1176,6 +1219,8 @@ function OffloadButton({ c, disabledReason, priceOf }: { c: ContainerFull; disab
     : [];
   const noCosts = !!p && d(p.expensesTotalUsd).isZero();
   const [noCostsOk, setNoCostsOk] = useState(false);
+  const cheap = p ? cheapLines(c, priceOf, p.lines) : [];
+  const [cheapOk, setCheapOk] = useState(false);
   return (
     <>
       {/* The main button only once the container has arrived; before that, offloading is the exception. */}
@@ -1218,6 +1263,14 @@ function OffloadButton({ c, disabledReason, priceOf }: { c: ContainerFull; disab
               </AlertDescription>
             </Alert>
           )}
+          {cheap.length > 0 && (
+            <CheapAlert cheap={cheap}>
+              <label className="flex items-start gap-2">
+                <Checkbox checked={cheapOk} onCheckedChange={(v) => setCheapOk(v === true)} className="mt-0.5" />
+                <span>{t("I checked: these prices are right", "J'ai vérifié\u00a0: ces prix sont justes")}</span>
+              </label>
+            </CheapAlert>
+          )}
           {noCosts && (
             <Alert className="border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
               <AlertTriangle className="h-4 w-4" />
@@ -1253,7 +1306,7 @@ function OffloadButton({ c, disabledReason, priceOf }: { c: ContainerFull; disab
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>{t("Cancel", "Annuler")}</Button>
-            <SubmitButton onClick={() => finalize.mutate({ offloadDate })} blocked={!offloadDate ? t("Choose the offload date", "Choisissez la date de déchargement") : noCosts && !noCostsOk ? t("Confirm there are no costs, or add them first", "Confirmez l'absence de frais, ou ajoutez-les d'abord") : null} pending={finalize.isPending}>
+            <SubmitButton onClick={() => finalize.mutate({ offloadDate })} blocked={!offloadDate ? t("Choose the offload date", "Choisissez la date de déchargement") : noCosts && !noCostsOk ? t("Confirm there are no costs, or add them first", "Confirmez l'absence de frais, ou ajoutez-les d'abord") : cheap.length > 0 && !cheapOk ? t("Confirm the prices of the lines with a very high margin", "Confirmez les prix des lignes à marge très élevée") : null} pending={finalize.isPending}>
               <Lock className="mr-1 h-4 w-4" /> {t("Confirm offload", "Confirmer le déchargement")}
             </SubmitButton>
           </DialogFooter>

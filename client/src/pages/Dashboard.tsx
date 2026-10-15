@@ -23,7 +23,7 @@ interface DashboardData {
   stockValue: string;
   lowStockCount: number;
   openContainers: { id: number; number: string; status: string; arrivalDate: string | null; purchaseUsd: string }[];
-  recentSales: { id: number; number: string; date: string; total: string; status: string; customerName: string | null }[];
+  recentSales: { id: number; number: string; date: string; total: string; status: string; customerName: string | null; returnedTotal?: string }[];
   partners: { id: number; name: string; sharePct: string; bearsOperatingExpenses: boolean; currentBalance: string; capitalBalance: string }[];
   position?: { money: string; stock: string; transit: string; receivables: string; payables: string; otherAssets?: string; otherLiabilities?: string; net: string };
 }
@@ -211,18 +211,27 @@ export default function Dashboard() {
                   <EmptyState title={t("No sales yet", "Pas encore de ventes")} />
                 ) : (
                   <div className="divide-y text-sm">
-                    {data.recentSales.map((s) => (
-                      <Link key={s.id} href={`/sales/${s.id}`} className="flex items-center justify-between gap-2 py-2 hover:bg-muted/50">
-                        <span className="min-w-0">
-                          <span className="font-medium">{s.number}</span>
-                          <span className="text-muted-foreground"> · {fmtDate(s.date)} · {s.customerName ?? t("walk-in", "de passage")}</span>
-                        </span>
-                        <span className="flex shrink-0 items-center gap-2">
-                          {s.status === "voided" && <Badge variant="destructive">{t("Cancelled", "Annulée")}</Badge>}
-                          <Num className={s.status === "voided" ? "text-muted-foreground line-through" : "font-medium"}>{usd(s.total)}</Num>
-                        </span>
-                      </Link>
-                    ))}
+                    {data.recentSales.map((s) => {
+                      const voided = s.status === "voided";
+                      const returned = d(s.returnedTotal);
+                      // Net of what came back, as on the Sales list; a cancelled sale keeps its struck-through total.
+                      const shown = voided ? d(s.total) : d(s.total).minus(returned);
+                      return (
+                        <Link key={s.id} href={`/sales/${s.id}`} className="flex items-center justify-between gap-2 py-2 hover:bg-muted/50">
+                          <span className="min-w-0">
+                            <span className="font-medium">{s.number}</span>
+                            <span className="text-muted-foreground"> · {fmtDate(s.date)} · {s.customerName ?? t("walk-in", "de passage")}</span>
+                          </span>
+                          <span className="flex shrink-0 items-center gap-2">
+                            {voided && <Badge variant="destructive">{t("Cancelled", "Annulée")}</Badge>}
+                            <span className="text-right">
+                              <Num className={voided ? "text-muted-foreground line-through" : "font-medium"}>{usd(shown.toFixed(2))}</Num>
+                              {!voided && returned.gt(0) && <span className="block whitespace-nowrap text-xs text-muted-foreground">{t("returns", "retours")} −{usd(returned.toFixed(2))}</span>}
+                            </span>
+                          </span>
+                        </Link>
+                      );
+                    })}
                   </div>
                 )}
               </CardContent>

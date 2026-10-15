@@ -5,6 +5,7 @@ import { useT } from "@/lib/i18n";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
+import { ambiguousReadings, money } from "@/lib/format";
 
 export function PageHeader({ title, description, actions }: { title: string; description?: ReactNode; actions?: ReactNode }) {
   // Each page gets its own browser tab title: "Caisse · Huanghe Kalemie".
@@ -101,7 +102,8 @@ export function StatCard({ label, value, sub, tone }: { label: string; value: Re
     <Card>
       <CardContent className="p-3 sm:p-4">
         <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:text-xs">{label}</p>
-        <p className={cn("mt-1 break-words text-lg font-semibold tabular sm:text-2xl", tone === "good" && "text-green-800 dark:text-green-400", tone === "bad" && "text-destructive", tone === "warn" && "text-amber-800 dark:text-amber-400")}>{value}</p>
+        {/* A size step down between 1024 and 1280 px, where four cards sit beside the menu: "13 680,10 $" stays on one line. */}
+        <p className={cn("mt-1 break-words text-lg font-semibold tabular sm:text-2xl lg:text-xl xl:text-2xl", tone === "good" && "text-green-800 dark:text-green-400", tone === "bad" && "text-destructive", tone === "warn" && "text-amber-800 dark:text-amber-400")}>{value}</p>
         {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
       </CardContent>
     </Card>
@@ -141,4 +143,15 @@ export function francDecimalsError(t: (en: string, fr: string) => string, curren
   if (currency !== "CDF" || !value.trim()) return null;
   const n = Number(value);
   return Number.isFinite(n) && !Number.isInteger(n) ? t("Franc amounts are whole numbers (no centimes)", "Les montants en FC sont des nombres entiers (sans centimes)") : null;
+}
+
+/**
+ * What to say when a dollar or yuan field holds an amount it refused as ambiguous ("1.200"), instead of
+ * "enter an amount above zero": "Précisez le montant : 1 200,00 $ ou 1,20 $".
+ */
+export function unclearAmount(t: (en: string, fr: string) => string, value: string | null | undefined, currency: string = "USD"): string | null {
+  const r = ambiguousReadings(value);
+  if (!r) return null;
+  const [big, small] = r.map((x) => money(x, currency));
+  return t(`Say which amount: ${big} or ${small}`, `Précisez le montant : ${big} ou ${small}`);
 }

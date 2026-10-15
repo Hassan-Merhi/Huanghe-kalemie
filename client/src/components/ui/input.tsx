@@ -2,7 +2,7 @@ import * as React from "react";
 import { CalendarDays } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { ambiguousDollars, formatLang, inputText, parseNumberInput, unusableText, usd as fmtUsd } from "@/lib/format";
+import { ambiguousDollars, formatLang, inputText, money, parseNumberInput, unusableText } from "@/lib/format";
 
 const BASE =
   "flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 aria-[invalid=true]:border-destructive aria-[invalid=true]:ring-destructive/20 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none md:text-sm";
@@ -12,14 +12,19 @@ type InputProps = React.ComponentProps<"input"> & {
   thousands?: boolean;
   /** Dollar amounts: "1.200" is refused as ambiguous, and the amount read is shown while typing. */
   usd?: boolean;
+  /**
+   * The currency of the amount, for fields whose currency varies (a supplier invoice in $, ¥ or FC): dollars
+   * and yuan get the `usd` treatment, written with their own sign; francs the `thousands` one.
+   */
+  currency?: string | null;
 };
 
 const Input = React.forwardRef<HTMLInputElement, InputProps>(
-  ({ className, type, thousands, usd, ...props }, ref) => {
+  ({ className, type, thousands, usd, currency, ...props }, ref) => {
     // Dates are always shown dd/mm/yyyy, whatever language the phone or browser is set to.
     if (type === "date") return <DateInput className={className} {...props} ref={ref} />;
     // Amounts and quantities accept "4,50" as well as "4.50" and read French-style.
-    if ((props.inputMode === "decimal" || props.inputMode === "numeric") && (!type || type === "text")) return <DecimalInput className={className} thousands={thousands} usd={usd} {...props} ref={ref} />;
+    if ((props.inputMode === "decimal" || props.inputMode === "numeric") && (!type || type === "text")) return <DecimalInput className={className} thousands={thousands} usd={usd} currency={currency} {...props} ref={ref} />;
     // h-9 to match icon buttons and default buttons.
     return <input type={type} className={cn(BASE, className)} ref={ref} {...props} />;
   },
@@ -114,13 +119,19 @@ const LAYOUT = /^(?:[a-z0-9[\]-]+:)*!?(?:-?m[trblxy]?-|w-|min-w-|max-w-|flex-|ba
  * Text that is not a number is passed on as typed so the page can say what is wrong; in a dollar field an
  * ambiguous "1.200" is passed on as "1.200?" (see unusableText) so that no page saves it as 1,20 $.
  */
-const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className, value, onChange, onBlur, onFocus, thousands, usd, ...props }, ref) => {
+const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className, value, onChange, onBlur, onFocus, thousands: thousandsProp, usd: usdProp, currency, ...props }, ref) => {
+  const thousands = thousandsProp || currency === "CDF";
+  const usd = usdProp || (!!currency && currency !== "CDF");
+  const cur = usdProp || !currency || currency === "CDF" ? "USD" : currency;
+  const fmtUsd = (v: unknown) => money(v, cur);
   const plain = value === undefined || value === null ? "" : String(value);
-  const [text, setText] = React.useState(() => inputText(plain));
+  // An ambiguous amount comes back as "1.200?" (see unusableText): show it as typed, so the question is asked again.
+  const shown = (v: string) => inputText(/^[^?]*\d\?$/.test(v) ? v.slice(0, -1) : v);
+  const [text, setText] = React.useState(() => shown(plain));
   // The value this field last sent up: when it comes back unchanged, keep what the person typed ("4," stays "4,").
   const sent = React.useRef<string | null>(null);
   React.useEffect(() => {
-    if (plain !== sent.current) setText(inputText(plain));
+    if (plain !== sent.current) setText(shown(plain));
     sent.current = null;
   }, [plain]);
   const [focused, setFocused] = React.useState(false);
@@ -162,7 +173,7 @@ const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className
         onBlur={(e) => {
           setFocused(false);
           // Text that cannot be used stays as typed, so the person sees what to correct.
-          if (!unreadable) setText(inputText(plain));
+          if (!unreadable) setText(shown(plain));
           onBlur?.(e);
         }}
       />

@@ -8,13 +8,13 @@ import Decimal from "decimal.js";
  * A leading "+", "-" or "−" (U+2212) gives the sign.
  * With `thousands` (franc amounts and franc rates, which have no decimals worth typing), a single "." or ","
  * before exactly three digits groups thousands: "50.000" FC is 50 000 FC and a rate of "2.850" is 2 850.
- * With `usd` (dollar amounts), "1.200" or "1,200" is refused (null): see ambiguousDollars.
+ * With `usd` (dollar or yuan amounts), "1.200" or "1,200" is refused (null): see ambiguousDollars.
  * Returns the plain number text ("4.5"), "" for an empty field, or null when it is not a number.
  */
 export function parseNumberInput(value: unknown, opts: { thousands?: boolean; usd?: boolean } = {}): string | null {
   if (value === null || value === undefined) return "";
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : null;
-  let s = String(value).replace(/[\s\u00a0\u202f]/g, "").replace(/\$|FC|CDF|USD|%/gi, "");
+  let s = String(value).replace(/[\s\u00a0\u202f]/g, "").replace(/\$|FC|CDF|USD|CNY|RMB|¥|%/gi, "");
   if (s === "") return "";
   if (opts.usd && ambiguousDollars(s) !== null) return null;
   // A sign typed with the phone keyboard: "+12", "-12" or the true minus "−12" (U+2212).
@@ -47,11 +47,12 @@ export function parseNumberInput(value: unknown, opts: { thousands?: boolean; us
 
 /**
  * In a dollar field "1.200" or "1,200" may be 1 200 $ or 1,20 $ (a price of 1,40 $ typed "1.400" is a
- * thousand times too small or too big). Returns the thousands reading ("1200", "-1200") when the text is that
- * ambiguous, else null. "0.500" and "12.50" are not ambiguous, nor is "1,200" in English (thousands).
+ * thousand times too small or too big); the same holds for yuan. Returns the thousands reading ("1200",
+ * "-1200") when the text is that ambiguous, else null. "0.500" and "12.50" are not ambiguous, nor is "1,200"
+ * in English (thousands).
  */
 export function ambiguousDollars(value: string): string | null {
-  const s = value.replace(/[\s\u00a0\u202f]/g, "").replace(/\$|USD/gi, "");
+  const s = value.replace(/[\s\u00a0\u202f]/g, "").replace(/\$|USD|CNY|RMB|¥/gi, "");
   const m = /^([-+\u2212]?)([1-9]\d{0,2})([.,])(\d{3})$/.exec(s);
   if (!m || (m[3] === "," && lang === "en")) return null;
   return `${m[1] && m[1] !== "+" ? "-" : ""}${m[2]}${m[4]}`;
@@ -63,7 +64,18 @@ export function ambiguousDollars(value: string): string | null {
  * one either ("1.200?"); d() and num() read both as 0.
  */
 export function unusableText(typed: string): string {
-  return /^-?\d+(\.\d+)?$/.test(typed.trim()) ? `${typed}?` : typed;
+  // "1,200" too: d() would otherwise read it as 1,2.
+  return /^-?\d+(\.\d+)?$/.test(typed.trim()) || ambiguousDollars(typed) !== null ? `${typed.trim()}?` : typed;
+}
+
+/**
+ * The two readings of an amount a field refused as ambiguous ("1.200?" → ["1200", "1.2"]), so a page can ask
+ * "1 200,00 $ ou 1,20 $ ?" instead of saying the amount is missing; null for anything else.
+ */
+export function ambiguousReadings(value: string | null | undefined): [string, string] | null {
+  const m = /^(.*)\?$/.exec((value ?? "").trim());
+  const big = m ? ambiguousDollars(m[1]) : null;
+  return big === null ? null : [big, new Decimal(big).dividedBy(1000).toString()];
 }
 
 /** False for what a number field passed up because it could not be used (see unusableText); "" is fine. */

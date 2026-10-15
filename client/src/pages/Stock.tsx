@@ -8,6 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DecimalInput, Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
@@ -468,15 +469,22 @@ export function AdjustForm({
       }
       payload.push(line);
     }
-    m.mutate({ date: dateValue, locationId, kind, reason: reason.trim(), lines: payload });
+    const body = { date: dateValue, locationId, kind, reason: reason.trim(), lines: payload };
+    // A gain or loss of 100 $ or more is asked about first: one tap should not book a 4 000 $ loss.
+    if (kind !== "opening" && found.minus(lost).abs().gte(CONFIRM_ABOVE_USD)) return setConfirming(body);
+    m.mutate(body);
   }
 
-  const totalChange = lines.reduce((s, l) => {
+  /** Value of the stock found and of the stock lost, at the cost each line goes in or out at. */
+  const valueOf = (l: AdjLine) => {
     const c = change(l);
-    if (c.isZero()) return s;
     const cost = c.gt(0) ? (l.unitCost.trim() ? d(l.unitCost) : d(l.variant.avgCost)) : d(l.variant.avgCost);
-    return s.plus(c.times(cost));
-  }, d(0));
+    return c.times(cost);
+  };
+  const found = lines.reduce((s, l) => (valueOf(l).gt(0) ? s.plus(valueOf(l)) : s), d(0));
+  const lost = lines.reduce((s, l) => (valueOf(l).lt(0) ? s.plus(valueOf(l).abs()) : s), d(0));
+  const totalChange = found.minus(lost);
+  const [confirming, setConfirming] = useState<Record<string, unknown> | null>(null);
 
   return (
     <div className="space-y-4">
@@ -651,9 +659,39 @@ export function AdjustForm({
           <SubmitButton onClick={submit} blocked={lines.length === 0 && t("Add at least one item", "Ajoutez au moins un article")} pending={m.isPending}>{t("Save adjustment", "Enregistrer l'ajustement")}</SubmitButton>
         </div>
       )}
+      {confirming && (
+        <Dialog open onOpenChange={(o) => !o && setConfirming(null)}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{totalChange.isNegative() ? t(`Book a stock loss of ${usd(lost.minus(found).toFixed(2))}?`, `Passer une perte de stock de ${usd(lost.minus(found).toFixed(2))}\u00a0?`) : t(`Book a stock gain of ${usd(totalChange.toFixed(2))}?`, `Passer un gain de stock de ${usd(totalChange.toFixed(2))}\u00a0?`)}</DialogTitle>
+              <DialogDescription>
+                {t("It changes the gross profit both partners share at month close. Check the quantities before saving.", "Cela modifie la marge brute partagée par les deux associés à la clôture du mois. Vérifiez les quantités avant d'enregistrer.")}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="space-y-1 rounded-md border p-3 text-sm">
+              <div className="flex justify-between"><span>{t("Stock found", "Stock retrouvé")}</span><Num className="text-green-800 dark:text-green-400">+{usd(found.toFixed(2))}</Num></div>
+              <div className="flex justify-between"><span>{t("Stock lost", "Stock perdu")}</span><Num className="text-destructive">−{usd(lost.toFixed(2))}</Num></div>
+              <div className="flex justify-between border-t pt-1 font-semibold"><span>{t("Net", "Net")}</span><Num className={totalChange.isNegative() ? "text-destructive" : "text-green-800 dark:text-green-400"}>{usd(totalChange.toFixed(2))}</Num></div>
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={() => setConfirming(null)}>{t("Back to the count", "Revenir au comptage")}</Button>
+              <SubmitButton
+                variant={totalChange.isNegative() ? "destructive" : "default"}
+                pending={m.isPending}
+                onClick={() => m.mutate(confirming, { onSettled: () => setConfirming(null) })}
+              >
+                {t("Save adjustment", "Enregistrer l'ajustement")}
+              </SubmitButton>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }
+
+/** A stock count, loss or find worth this much (net, in dollars) asks for confirmation before it is saved. */
+const CONFIRM_ABOVE_USD = 100;
 
 function UnitPicker({ variantId, locationId, needed, value, onChange }: { variantId: number; locationId: number; needed: number; value: number[]; onChange: (ids: number[]) => void }) {
   const t = useT();

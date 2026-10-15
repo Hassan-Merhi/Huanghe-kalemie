@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
+import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton, unclearAmount } from "@/components/common";
 import { MoneyAccountSelect, PARTY_LABELS, RateInput, useRate, useRateField } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
@@ -259,13 +259,13 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
   const looksLikeYuan = !!cnyOwedUsd && d(amount).gt(cnyOwedUsd.times(2)) && (!impliedGap || impliedGap.gt(20));
   const blocked = !account
     ? t("Choose an account", "Choisissez un compte")
-    : !d(amount).gt(0)
+    : unclearAmount(t, amount, account.currency) ?? (cnyOwed ? unclearAmount(t, settleCny, "CNY") : null) ?? (!d(amount).gt(0)
       ? t("Enter an amount above zero", "Saisissez un montant supérieur à zéro")
       : isCdf && !d(rate).gt(0)
         ? t("Enter the exchange rate", "Saisissez le taux de change")
         : cnyOwed && settleCny && !d(settleCny).lte(cnyOwed)
           ? t("The yuan settled are more than what is owed", "Les yuans réglés dépassent ce qui est dû")
-          : null;
+          : null);
 
   function save() {
     if (!account) return;
@@ -355,7 +355,7 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
               className="sm:col-span-2"
             >
               <div className="flex gap-2">
-                <Input inputMode="decimal" aria-label={t("Yuan settled (¥)", "Yuans réglés (¥)")} value={settleCny} onChange={(e) => setSettleCny(e.target.value)} placeholder="0" />
+                <Input inputMode="decimal" currency="CNY" aria-label={t("Yuan settled (¥)", "Yuans réglés (¥)")} value={settleCny} onChange={(e) => setSettleCny(e.target.value)} placeholder="0" />
                 <Button type="button" variant="outline" size="sm" className="h-10" onClick={() => setSettleCny(cnyOwed.toFixed(2))}>{t("All", "Tout")}</Button>
               </div>
             </Field>

@@ -872,6 +872,9 @@ export function registerRoutes(app: Express) {
         // Amount and cost of what came back, so the list shows the sale net of its returns.
         returnedTotal: sql<string>`(select coalesce(sum(sr.total), 0)::text from sale_returns sr where sr.sale_id = ${sales.id})`,
         returnedCogs: sql<string>`(select coalesce(sum(sr.cogs), 0)::text from sale_returns sr where sr.sale_id = ${sales.id})`,
+        // Cash handed back on those returns (the refund drawer's line), so "Payé" reads net of refunds.
+        // Francs count at the refund's rate, not at the drawer's average cost (the gap is an exchange difference).
+        refundedUsd: sql<string>`(select coalesce(sum(case when jl.native_amount is not null and jl.rate > 0 then round(abs(jl.native_amount) / jl.rate, 2) else jl.credit end), 0)::text from sale_returns sr join journal_lines jl on jl.journal_id = sr.journal_id and jl.account_id = sr.refund_account_id where sr.sale_id = ${sales.id})`,
         lineCount: sql<number>`(select count(*)::int from sale_lines sl where sl.sale_id = ${sales.id})`,
         firstItem: sql<string | null>`(select p.name from sale_lines sl join variants v on v.id = sl.variant_id join products p on p.id = v.product_id where sl.sale_id = ${sales.id} order by sl.id limit 1)`,
       })
@@ -882,7 +885,7 @@ export function registerRoutes(app: Express) {
       .orderBy(desc(sales.date), desc(sales.id))
       .limit(500);
     const showCost = req.user!.role !== "cashier";
-    res.json(rows.map((r) => ({ ...r.sale, cogs: showCost ? r.sale.cogs : undefined, customerName: r.customerName, cashier: r.cashier, zeroPrice: !!r.zeroPrice, qty: r.qty, returnedQty: r.returnedQty, returnedTotal: r.returnedTotal, returnedCogs: showCost ? r.returnedCogs : undefined, lineCount: r.lineCount, firstItem: r.firstItem })));
+    res.json(rows.map((r) => ({ ...r.sale, cogs: showCost ? r.sale.cogs : undefined, customerName: r.customerName, cashier: r.cashier, zeroPrice: !!r.zeroPrice, qty: r.qty, returnedQty: r.returnedQty, returnedTotal: r.returnedTotal, returnedCogs: showCost ? r.returnedCogs : undefined, refundedUsd: r.refundedUsd, lineCount: r.lineCount, firstItem: r.firstItem })));
   }));
   app.get("/api/sales/:id", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
     const sale = await salesSvc.getSale(db, paramId(req));

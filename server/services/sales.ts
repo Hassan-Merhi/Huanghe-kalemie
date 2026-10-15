@@ -318,7 +318,7 @@ export async function getSale(tx: Tx, id: number) {
   // The money actually handed back on each return, in the drawer's own currency (francs for Caisse FC).
   const refundRows = returnRows.some((r) => r.journalId && r.refundAccountId)
     ? await tx
-        .select({ journalId: journalLines.journalId, accountId: journalLines.accountId, credit: journalLines.credit, nativeAmount: journalLines.nativeAmount, currency: accounts.currency })
+        .select({ journalId: journalLines.journalId, accountId: journalLines.accountId, credit: journalLines.credit, nativeAmount: journalLines.nativeAmount, rate: journalLines.rate, currency: accounts.currency })
         .from(journalLines)
         .innerJoin(accounts, eq(accounts.id, journalLines.accountId))
         .where(and(inArray(journalLines.journalId, returnRows.map((r) => r.journalId).filter((x): x is number => !!x)), eq(accounts.isMoney, true)))
@@ -332,7 +332,9 @@ export async function getSale(tx: Tx, id: number) {
     : [];
   const returns = returnRows.map((r) => {
     const refund = refundRows.filter((x) => x.journalId === r.journalId && x.accountId === r.refundAccountId);
-    const refundUsd = sum(refund.map((x) => x.credit));
+    // Francs handed back are worth what they were at the refund's rate; the drawer's line carries them at
+    // their average cost, the difference being an exchange gain or loss, not money given to the customer.
+    const refundUsd = sum(refund.map((x) => (x.currency === "CDF" && x.nativeAmount && x.rate && dec(x.rate).gt(0) ? cents(dec(x.nativeAmount).abs().dividedBy(x.rate)) : dec(x.credit))));
     const refundCurrency = refund[0]?.currency ?? null;
     const refundNative = refundCurrency === "CDF" ? sum(refund.map((x) => dec(x.nativeAmount ?? 0).abs())) : refundUsd;
     return {

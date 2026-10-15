@@ -523,7 +523,16 @@ export async function dashboard(tx: Tx, today: string) {
     .where(ne(containers.status, "finalized"))
     .orderBy(asc(containers.arrivalDate));
   const recentSales = await tx
-    .select({ id: sales.id, number: sales.number, date: sales.date, total: sales.total, status: sales.status, customerName: parties.name })
+    .select({
+      id: sales.id,
+      number: sales.number,
+      date: sales.date,
+      total: sales.total,
+      status: sales.status,
+      customerName: parties.name,
+      // What came back, so the card shows each sale net of its returns like the Sales list.
+      returnedTotal: sql<string>`(select coalesce(sum(sr.total), 0)::text from sale_returns sr where sr.sale_id = ${sales.id})`,
+    })
     .from(sales)
     .leftJoin(parties, eq(parties.id, sales.customerId))
     .orderBy(desc(sales.id))
