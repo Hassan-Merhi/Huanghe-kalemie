@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { capitalize, deMonth, monthText } from "@shared/french";
 import { useQuery } from "@tanstack/react-query";
 import { Lock, LockOpen, Pencil, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -86,10 +87,7 @@ function Signed({ value, className }: { value: string; className?: string }) {
 function useMonthName() {
   const { lang } = useI18n();
   return (m: string) => {
-    const [y, mo] = m.split("-").map(Number);
-    if (!y || !mo) return m;
-    const s = new Intl.DateTimeFormat(lang === "fr" ? "fr-FR" : "en-US", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(y, mo - 1, 1)));
-    return s.charAt(0).toUpperCase() + s.slice(1);
+    return monthText(m, lang);
   };
 }
 
@@ -186,6 +184,8 @@ function MonthSection() {
   const previewQ = useQuery<PeriodPreview>({ queryKey: [`/api/periods/${month}`], enabled: valid });
   const periodsQ = useQuery<PeriodRow[]>({ queryKey: ["/api/periods"] });
   const periods = periodsQ.data ?? [];
+  // Only months that have started and that come after the first entry in the books.
+  const firstMonth = useQuery<{ date: string | null }>({ queryKey: ["/api/books/first-date"] }).data?.date?.slice(0, 7) ?? null;
   const latestClosed = periods.filter((p) => p.status === "closed").map((p) => p.month).sort().pop();
   const ended = month < todayLocal().slice(0, 7);
   const p = previewQ.data;
@@ -205,7 +205,7 @@ function MonthSection() {
               <CardDescription>{t("Choose a month to see how its profit is shared.", "Choisissez un mois pour voir le partage de son bénéfice.")}</CardDescription>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <MonthSelect className="w-48" value={month} onChange={setMonth} />
+              <MonthSelect className="w-48" value={month} onChange={setMonth} max={todayLocal().slice(0, 7)} min={firstMonth} aria-label={t("Month", "Mois")} />
               {p && (
                 <Badge variant={p.status === "closed" ? "default" : "secondary"}>
                   {p.status === "closed" ? t("Closed", "Clôturé") : t("Open", "Ouvert")}
@@ -230,12 +230,20 @@ function MonthSection() {
           {p && (
             <>
               <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-                <Step label={t("Income (sales)", "Recettes (ventes)")} value={p.totals.income} />
+                <Step label={t("Income (sales after returns, exchange differences)", "Recettes (ventes après retours, écarts de change)")} value={p.totals.income} />
                 <Step label={t("Cost of goods sold and stock losses", "Coût des articles vendus et pertes de stock")} value={p.totals.costOfSales} minus />
                 <Step label={t("Gross profit", "Marge brute")} value={p.totals.grossProfit} strong />
                 <Step label={t("Running costs", "Frais de fonctionnement")} value={p.totals.operatingExpenses} minus />
                 <Step label={t("Net profit", "Bénéfice net")} value={p.totals.netProfit} strong />
               </div>
+              {p.status === "open" && (
+                <p className="text-xs text-muted-foreground">
+                  {t(
+                    "Already includes the month-end restatement of franc and yuan balances, booked when the month is closed (Analytics shows it only once booked).",
+                    "Comprend déjà la réévaluation des soldes en FC et en yuans de fin de mois, passée à la clôture (Analyses ne la montre qu'une fois passée).",
+                  )}
+                </p>
+              )}
 
               <div className="rounded-lg border border-primary/30 bg-primary/5 p-4 text-sm">
                 <p className="font-medium">{t("How the split works", "Comment se fait le partage")}</p>
@@ -282,7 +290,7 @@ function MonthSection() {
                   <TableFooter>
                     <TableRow>
                       <TableCell>{t("Total", "Total")}</TableCell>
-                      <TableCell className="text-right">100%</TableCell>
+                      <TableCell className="text-right">{pct(100, 0)}</TableCell>
                       <TableCell className="text-right"><Signed value={p.split.grossProfit} /></TableCell>
                       <TableCell className="text-right"><Num>{d(p.split.operatingExpenses).isZero() ? "" : "− "}{usd(p.split.operatingExpenses)}</Num></TableCell>
                       <TableCell className="text-right"><Signed value={p.split.netProfit} /></TableCell>
@@ -350,7 +358,7 @@ function MonthSection() {
                 <TableBody>
                   {periods.map((row) => (
                     <TableRow key={row.id} className="cursor-pointer" onClick={() => setMonth(row.month)}>
-                      <TableCell className="whitespace-nowrap font-medium">{monthName(row.month)}</TableCell>
+                      <TableCell className="whitespace-nowrap font-medium">{capitalize(monthName(row.month))}</TableCell>
                       <TableCell>
                         <Badge variant={row.status === "closed" ? "default" : "secondary"}>
                           {row.status === "closed" ? t("Closed", "Clôturé") : t("Open", "Ouvert")}
@@ -362,7 +370,7 @@ function MonthSection() {
                         {row.result?.split?.partners?.length
                           ? row.result.split.partners.map((s) => (
                               <span key={s.partnerId} className="mr-3 whitespace-nowrap">
-                                {s.name}: <Signed value={s.net} />
+                                {s.name}{t(":", "\u00a0:")} <Signed value={s.net} />
                               </span>
                             ))
                           : "—"}
@@ -386,7 +394,7 @@ function MonthSection() {
                 <p>{t("Each partner's result is posted to their profit account:", "Le résultat de chaque associé est passé à son compte de bénéfices\u00a0:")}</p>
                 <ul className="list-disc pl-5">
                   {p?.split.partners.map((s) => (
-                    <li key={s.partnerId}>{s.name}: <Signed value={s.net} /></li>
+                    <li key={s.partnerId}>{s.name}{t(":", "\u00a0:")} <Signed value={s.net} /></li>
                   ))}
                 </ul>
                 <p>{t("Months are closed in order, and only months that have ended.", "Les mois se clôturent dans l'ordre, et seulement une fois terminés.")}</p>
@@ -502,7 +510,7 @@ function StatementSection({ partners }: { partners: Partner[] }) {
                         <Badge variant="outline">{r.account === "capital" ? t("Capital", "Capital") : t("Profit", "Bénéfices")}</Badge>
                       </TableCell>
                       <TableCell className="text-right">
-                        <Num className={a.isNegative() ? "text-destructive" : "text-green-700 dark:text-green-400"}>
+                        <Num className={a.isNegative() ? "text-destructive" : "text-green-800 dark:text-green-400"}>
                           {a.isNegative() ? "− " : "+ "}
                           {usd(a.abs().toFixed(2))}
                         </Num>

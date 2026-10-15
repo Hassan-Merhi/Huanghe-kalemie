@@ -18,7 +18,8 @@ import {
 } from "@shared/schema";
 import { allocateCents, cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
-import { badRequest, conflict, forbidden, notFound } from "../errors";
+import { badRequest, conflict, forbidden, notFound, wholeUnitError } from "../errors";
+import { wholeUnit } from "@shared/units";
 import { moneyLeg, nextNumber, postJournal, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
 import { issueStock, linkMovementsToJournal, receiveStock, stockQty } from "./stock";
 
@@ -72,7 +73,7 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
 
   const variantIds = Array.from(new Set(input.lines.map((l) => l.variantId)));
   const variantRows = await tx
-    .select({ id: variants.id, sku: variants.sku, name: products.name, tracksSerials: products.tracksSerials, active: variants.active, sellPrice: variants.sellPrice })
+    .select({ id: variants.id, sku: variants.sku, name: products.name, tracksSerials: products.tracksSerials, unit: products.unit, active: variants.active, sellPrice: variants.sellPrice })
     .from(variants)
     .innerJoin(products, eq(products.id, variants.productId))
     .where(inArray(variants.id, variantIds));
@@ -91,6 +92,7 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
     if (!v.active) throw badRequest(`${v.name} (${v.sku}) is inactive`, `${v.name} (${v.sku}) est inactif`);
     const q = stockQty(l.qty);
     if (q.lte(0)) throw badRequest("Quantities must be greater than zero", "Les quantités doivent être supérieures à zéro");
+    if (!q.isInteger() && wholeUnit(v.unit)) throw wholeUnitError(`${v.name} (${v.sku})`);
     const price = cents(l.unitPrice);
     if (price.isNegative()) throw badRequest("Prices cannot be negative", "Les prix ne peuvent pas être négatifs");
     // 0 $ is almost always a price typed wrong ("4,50" read as nothing); a gift is a 100 % line discount instead.
@@ -312,7 +314,36 @@ export async function getSale(tx: Tx, id: number) {
         .where(inArray(saleReturnLines.returnId, returnRows.map((r) => r.id)))
         .orderBy(asc(saleReturnLines.id))
     : [];
-  const returns = returnRows.map((r) => ({ ...r, lines: returnLines.filter((l) => l.returnId === r.id).map(({ returnId: _r, ...l }) => l) }));
+  // The money actually handed back on each return, in the drawer's own currency (francs for Caisse FC).
+  const refundRows = returnRows.some((r) => r.journalId && r.refundAccountId)
+    ? await tx
+        .select({ journalId: journalLines.journalId, accountId: journalLines.accountId, credit: journalLines.credit, nativeAmount: journalLines.nativeAmount, currency: accounts.currency })
+        .from(journalLines)
+        .innerJoin(accounts, eq(accounts.id, journalLines.accountId))
+        .where(and(inArray(journalLines.journalId, returnRows.map((r) => r.journalId).filter((x): x is number => !!x)), eq(accounts.isMoney, true)))
+    : [];
+  const receivables = await systemAccountId(tx, SYSTEM_ACCOUNTS.receivables);
+  const toBalanceRows = returnRows.some((r) => r.journalId)
+    ? await tx
+        .select({ journalId: journalLines.journalId, credit: journalLines.credit })
+        .from(journalLines)
+        .where(and(inArray(journalLines.journalId, returnRows.map((r) => r.journalId).filter((x): x is number => !!x)), eq(journalLines.accountId, receivables)))
+    : [];
+  const returns = returnRows.map((r) => {
+    const refund = refundRows.filter((x) => x.journalId === r.journalId && x.accountId === r.refundAccountId);
+    const refundUsd = sum(refund.map((x) => x.credit));
+    const refundCurrency = refund[0]?.currency ?? null;
+    const refundNative = refundCurrency === "CDF" ? sum(refund.map((x) => dec(x.nativeAmount ?? 0).abs())) : refundUsd;
+    return {
+      ...r,
+      lines: returnLines.filter((l) => l.returnId === r.id).map(({ returnId: _r, ...l }) => l),
+      refundUsd: refund.length ? refundUsd.toFixed(2) : null,
+      refundNative: refund.length ? refundNative.toFixed(2) : null,
+      refundCurrency,
+      /** The part taken off what the customer owes instead of paid out. */
+      refundToBalanceUsd: sum(toBalanceRows.filter((x) => x.journalId === r.journalId).map((x) => x.credit)).toFixed(2),
+    };
+  });
   const [customer] = sale.customerId ? await tx.select().from(parties).where(eq(parties.id, sale.customerId)) : [];
   const [cashier] = sale.createdBy ? await tx.select({ fullName: users.fullName, username: users.username }).from(users).where(eq(users.id, sale.createdBy)) : [];
   return {
@@ -342,7 +373,7 @@ export async function voidSale(tx: Tx, id: number, date: string, reason: string,
   const lines = await tx.select().from(saleLines).where(eq(saleLines.saleId, id));
 
   const voidJournalId = sale.journalId
-    ? await reverseJournal(tx, sale.journalId, { date, type: "sale_void", memo: `Vente ${sale.number} annulée : ${reason}`, userId })
+    ? await reverseJournal(tx, sale.journalId, { date, type: "sale_void", memo: `Vente ${sale.number} annulée\u00a0: ${reason}`, userId })
     : null;
   for (const line of lines) {
     await receiveStock(tx, {
@@ -413,6 +444,10 @@ export async function returnSale(tx: Tx, saleId: number, input: ReturnInput, use
     const q = stockQty(req.qty);
     const remaining = dec(line.qty).minus(line.returnedQty);
     if (q.lte(0) || q.gt(remaining)) throw badRequest(`You can return at most ${remaining.toString()} of that item`, `Vous pouvez retourner au maximum ${remaining.toString()} de cet article`);
+    if (!q.isInteger()) {
+      const [p] = await tx.select({ unit: products.unit, name: products.name, sku: variants.sku }).from(variants).innerJoin(products, eq(products.id, variants.productId)).where(eq(variants.id, line.variantId));
+      if (p && wholeUnit(p.unit)) throw wholeUnitError(`${p.name} (${p.sku})`);
+    }
     const isLast = q.equals(remaining);
     // Amount and cost already returned on this line, so the last return takes exactly what is left.
     const prior = await tx.select().from(saleReturnLines).where(eq(saleReturnLines.saleLineId, line.id));
@@ -477,7 +512,7 @@ export async function returnSale(tx: Tx, saleId: number, input: ReturnInput, use
   const journalId = await postJournal(tx, {
     date: input.date,
     type: "sale_return",
-    memo: `Retour ${number} sur la vente ${sale.number} : ${input.reason}`,
+    memo: `Retour ${number} sur la vente ${sale.number}\u00a0: ${input.reason}`,
     sourceType: "sale_return",
     sourceId: ret.id,
     userId,

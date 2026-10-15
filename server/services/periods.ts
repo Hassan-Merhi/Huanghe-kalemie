@@ -4,6 +4,7 @@ import { splitProfit, type PartnerSplitResult } from "@shared/partnerSplit";
 import { dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict } from "../errors";
+import { deMonth } from "@shared/french";
 import { cents } from "@shared/money";
 import { postJournal, rateFor, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
 import { todayIso } from "../http";
@@ -263,7 +264,7 @@ export async function closePeriod(tx: Tx, month: string, userId: number) {
   const journalId = await postJournal(tx, {
     date: preview.to,
     type: "period_close",
-    memo: `Clôture ${month} : partage du bénéfice entre associés`,
+    memo: `Clôture ${deMonth(month)}\u00a0: partage du bénéfice entre associés`,
     sourceType: "period",
     sourceId: period.id,
     userId,
@@ -303,7 +304,7 @@ export async function reopenPeriod(tx: Tx, month: string, userId: number) {
     await reverseJournal(tx, period.closingJournalId, {
       date: monthRange(month).to,
       type: "period_close",
-      memo: `Réouverture ${month}`,
+      memo: `Réouverture ${deMonth(month)}`,
       userId,
       skipPeriodCheck: true,
     });
@@ -312,7 +313,7 @@ export async function reopenPeriod(tx: Tx, month: string, userId: number) {
     await reverseJournal(tx, period.revaluationJournalId, {
       date: monthRange(month).to,
       type: "revaluation",
-      memo: `Réouverture ${month} : annulation de la réévaluation`,
+      memo: `Réouverture ${deMonth(month)}\u00a0: annulation de la réévaluation`,
       userId,
       skipPeriodCheck: true,
     });

@@ -2,7 +2,8 @@ import { and, eq, inArray, sql } from "drizzle-orm";
 import { locations, motorcycleUnits, products, stockLevels, stockMovements, variants, type MovementType } from "@shared/schema";
 import { Decimal, cents, dec, type DecimalInput } from "@shared/money";
 import type { Tx } from "../db";
-import { badRequest, conflict } from "../errors";
+import { badRequest, conflict, wholeUnitError } from "../errors";
+import { wholeUnit } from "@shared/units";
 
 /*
  * Stock is valued at weighted average cost per variant. Each variant keeps its total quantity
@@ -187,7 +188,8 @@ export async function transferStock(
   const variant = await lockVariant(tx, input.variantId);
   const available = await availableOn(tx, variant.id, input.fromLocationId, input.date, await locationQty(tx, variant.id, input.fromLocationId));
   if (available.lt(q)) throw conflict(`Not enough stock of ${variant.sku} to transfer`, `Stock insuffisant de ${variant.sku} pour le transfert`);
-  const [product] = await tx.select({ tracksSerials: products.tracksSerials }).from(products).where(eq(products.id, variant.productId));
+  const [product] = await tx.select({ tracksSerials: products.tracksSerials, unit: products.unit, name: products.name }).from(products).where(eq(products.id, variant.productId));
+  if (!q.isInteger() && wholeUnit(product?.unit)) throw wholeUnitError(`${product?.name ?? ""} (${variant.sku})`.trim());
   if (product?.tracksSerials) {
     // Motorcycles move with their own records.
     const ids = input.unitIds ?? [];

@@ -14,7 +14,8 @@ import {
 import { computeLandedCost, type AllocationMethod, type LandedCostResult } from "@shared/landedCost";
 import { cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
-import { badRequest, conflict, notFound } from "../errors";
+import { badRequest, conflict, notFound, wholeUnitError, francDecimalsError } from "../errors";
+import { wholeUnit } from "@shared/units";
 import { moneyLeg, postJournal, rateFor, rateTolerancePct, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type ForeignCurrency } from "./ledger";
 import { advanceToYuanLines, assertSameCurrency } from "./operations";
 import { issueStock, linkMovementsToJournal, receiveStock, stockQty } from "./stock";
@@ -30,6 +31,7 @@ export async function getContainer(tx: Tx, id: number) {
       attributes: variants.attributes,
       productName: products.name,
       tracksSerials: products.tracksSerials,
+      unit: products.unit,
     })
     .from(containerLines)
     .innerJoin(variants, eq(variants.id, containerLines.variantId))
@@ -43,7 +45,7 @@ export async function getContainer(tx: Tx, id: number) {
     .orderBy(asc(containerExpenses.id));
   return {
     ...container,
-    lines: lines.map((l) => ({ ...l.line, sku: l.sku, attributes: l.attributes, productName: l.productName, tracksSerials: l.tracksSerials })),
+    lines: lines.map((l) => ({ ...l.line, sku: l.sku, attributes: l.attributes, productName: l.productName, tracksSerials: l.tracksSerials, unit: l.unit })),
     expenses: expenseRows,
   };
 }
@@ -71,7 +73,7 @@ export async function replaceLines(tx: Tx, containerId: number, lines: Container
   const variantIds = Array.from(new Set(lines.map((l) => l.variantId)));
   if (variantIds.length) {
     const found = await tx
-      .select({ id: variants.id, tracksSerials: products.tracksSerials })
+      .select({ id: variants.id, tracksSerials: products.tracksSerials, unit: products.unit, name: products.name, sku: variants.sku })
       .from(variants)
       .innerJoin(products, eq(products.id, variants.productId))
       .where(inArray(variants.id, variantIds));
@@ -82,6 +84,8 @@ export async function replaceLines(tx: Tx, containerId: number, lines: Container
       if (serial.has(l.variantId) && !dec(l.quantity).isInteger()) {
         throw badRequest("Motorcycles must be whole units", "Les motos se comptent en unités entières");
       }
+      const f = found.find((x) => x.id === l.variantId)!;
+      if (!dec(l.quantity).isInteger() && wholeUnit(f.unit)) throw wholeUnitError(`${f.name} (${f.sku})`);
     }
   }
   for (const l of lines) {
@@ -174,6 +178,7 @@ export async function addExpense(tx: Tx, containerId: number, input: ContainerEx
     rate = leg.rate;
     creditLine = { accountId: leg.accountId, credit: leg.usd, nativeAmount: leg.nativeAmount, rate: leg.rate };
   } else {
+    if (currency === "CDF" && !amount.isInteger()) throw francDecimalsError(amount);
     rate = currency === "CDF" ? await resolveRate(tx, input.date, input.rate) : null;
     amountUsd = toUsd(currency, amount, rate);
     // A bill in francs stays owed in francs on the contact.
@@ -207,7 +212,7 @@ export async function addExpense(tx: Tx, containerId: number, input: ContainerEx
   const journalId = await postJournal(tx, {
     date: input.date,
     type: "container_expense",
-    memo: `${container.number} : ${EXPENSE_TYPE_FR[input.type] ?? input.type}${input.description ? ` (${input.description})` : ""}`,
+    memo: `${container.number}\u00a0: ${EXPENSE_TYPE_FR[input.type] ?? input.type}${input.description ? ` (${input.description})` : ""}`,
     sourceType: "container_expense",
     sourceId: expense.id,
     userId,

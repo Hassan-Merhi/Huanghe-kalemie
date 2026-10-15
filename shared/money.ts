@@ -117,8 +117,8 @@ export function parseTypedNumber(value: unknown): string | null {
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : null;
   let s = String(value).replace(/[\s  ]/g, "").replace(/\$|FC|CDF|USD/gi, "");
   if (s === "") return null;
-  const neg = s.startsWith("-");
-  if (neg) s = s.slice(1);
+  const neg = /^[-\u2212]/.test(s);
+  if (/^[-+\u2212]/.test(s)) s = s.slice(1);
   const m = s.match(/^(.*?)[.,](\d{1,2})$/);
   const whole = (m ? m[1] : s).replace(/[.,]/g, "");
   const out = m ? `${whole || "0"}.${m[2]}` : whole;

@@ -194,7 +194,7 @@ export default function ProductDetail() {
                     <TableRow key={u.id} className={!u.chassisNo ? "bg-amber-50 dark:bg-amber-950/30" : undefined}>
                       <TableCell>{u.label}</TableCell>
                       <TableCell className="whitespace-nowrap font-mono text-xs">
-                        {u.chassisNo ?? <Link href="/motorcycles" className="font-sans text-amber-700 underline underline-offset-2 hover:text-amber-900 dark:text-amber-400">{t("Missing — register in Motorcycles", "Manquant — à saisir dans Motos")}</Link>}
+                        {u.chassisNo ?? <Link href="/motorcycles" className="font-sans text-amber-800 underline underline-offset-2 hover:text-amber-900 dark:text-amber-400">{t("Missing — register in Motorcycles", "Manquant — à saisir dans Motos")}</Link>}
                       </TableCell>
                       <TableCell className="whitespace-nowrap font-mono text-xs">{u.engineNo ?? "—"}</TableCell>
                       <TableCell>{u.color ?? "—"}</TableCell>
@@ -343,7 +343,7 @@ function VariantDialog({ product, variant, onClose }: { product: Product; varian
           <div className="grid grid-cols-2 gap-3">
             <Field label={variant ? t("SKU", "Code") : t("SKU (blank = auto)", "Code (vide = auto)")}><Input value={sku} onChange={(e) => setSku(e.target.value)} /></Field>
             <Field label={t("Barcode", "Code-barres")}><Input value={barcode} onChange={(e) => setBarcode(e.target.value)} /></Field>
-            <Field label={t("Sell price (USD)", "Prix de vente (USD)")} error={priceError}><Input inputMode="decimal" value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} /></Field>
+            <Field label={t("Sell price ($)", "Prix de vente ($)")} error={priceError}><Input inputMode="decimal" value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} /></Field>
             <Field label={t("Reorder level", "Seuil de réappro.")} error={reorderError}><Input inputMode="decimal" value={reorderLevel} onChange={(e) => setReorderLevel(e.target.value)} /></Field>
           </div>
           <label className="flex items-center gap-3 text-sm"><Switch checked={active} onCheckedChange={setActive} /> {t("Active", "Actif")}</label>
@@ -405,7 +405,7 @@ function MovementsDialog({ variant, productName, onClose }: { variant: ProductVa
                         {m.note && <div className="text-xs text-muted-foreground">{m.note}</div>}
                       </TableCell>
                       <TableCell>{m.locationName}</TableCell>
-                      <TableCell className="text-right"><Num className="text-green-700 dark:text-green-400">{n.gt(0) ? qty(m.qty) : ""}</Num></TableCell>
+                      <TableCell className="text-right"><Num className="text-green-800 dark:text-green-400">{n.gt(0) ? qty(m.qty) : ""}</Num></TableCell>
                       <TableCell className="text-right"><Num className="text-destructive">{n.lt(0) ? qty(n.abs().toString()) : ""}</Num></TableCell>
                       <TableCell className="text-right"><Num>{d(m.value).isZero() ? "—" : usd(m.value)}</Num></TableCell>
                     </TableRow>

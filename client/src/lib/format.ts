@@ -5,6 +5,7 @@ import Decimal from "decimal.js";
  * Spaces group thousands. With both "," and "." the last one is the decimal mark. With only one kind:
  * one mark is the decimal mark ("2,5" = 2.5, "1.234" = 1.234 as the server writes quantities), several
  * group thousands ("1.234.567"); in English a single "," before exactly three digits groups thousands.
+ * A leading "+", "-" or "−" (U+2212) gives the sign.
  * Returns the plain number text ("4.5"), "" for an empty field, or null when it is not a number.
  */
 export function parseNumberInput(value: unknown): string | null {
@@ -12,9 +13,10 @@ export function parseNumberInput(value: unknown): string | null {
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : null;
   let s = String(value).replace(/[\s\u00a0\u202f]/g, "").replace(/\$|FC|CDF|USD|%/gi, "");
   if (s === "") return "";
+  // A sign typed with the phone keyboard: "+12", "-12" or the true minus "−12" (U+2212).
   let neg = false;
-  if (s.startsWith("-")) {
-    neg = true;
+  if (/^[-+\u2212]/.test(s)) {
+    neg = s[0] !== "+";
     s = s.slice(1);
   }
   const commas = (s.match(/,/g) ?? []).length;

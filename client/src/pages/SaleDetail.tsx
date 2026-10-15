@@ -131,7 +131,7 @@ function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () =
                   <MoneyAccountSelect value={accountId} onChange={(id) => setAccountId(id)} />
                 </Field>
                 {isCdf && (
-                  <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 $)")} hint={`${t("Pay out:", "À rendre\u00a0:")} ${cdf(refund.times(d(effRate)).toDecimalPlaces(0).toString())}`} required>
+                  <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} hint={`${t("Pay out:", "À rendre\u00a0:")} ${cdf(refund.times(d(effRate)).toDecimalPlaces(0).toString())}`} required>
                     <Input inputMode="decimal" value={effRate} onChange={(e) => setRate(e.target.value)} />
                   </Field>
                 )}
@@ -183,7 +183,20 @@ function ReturnSlip({ sale, ret, accName }: { sale: SaleFull; ret: SaleFull["ret
       })}
       {dash}
       <div className="flex justify-between gap-2 font-bold"><span>{t("REFUND", "REMBOURSÉ")}</span><span className="tabular">{usd(ret.total)}</span></div>
-      <p>{ret.refundAccountId ? `${t("Paid back from", "Rendu depuis")} ${accName(ret.refundAccountId)}` : t("Taken off the customer's balance", "Déduit du solde du client")}</p>
+      {ret.refundAccountId && ret.refundNative ? (
+        <>
+          <div className="flex justify-between gap-2 font-bold">
+            <span>{t("Handed back", "Rendu au client")}</span>
+            <span className="tabular">{ret.refundCurrency === "CDF" ? cdf(ret.refundNative) : usd(ret.refundNative)}</span>
+          </div>
+          <p>{t("From", "Depuis")} {accName(ret.refundAccountId)}</p>
+          {d(ret.refundToBalanceUsd).gt(0) && (
+            <div className="flex justify-between gap-2"><span>{t("Taken off the customer's balance", "Déduit du solde du client")}</span><span className="tabular">{usd(ret.refundToBalanceUsd)}</span></div>
+          )}
+        </>
+      ) : (
+        <p>{ret.refundAccountId ? `${t("Paid back from", "Rendu depuis")} ${accName(ret.refundAccountId)}` : t("Taken off the customer's balance", "Déduit du solde du client")}</p>
+      )}
       {ret.reason && <p>{t("Reason", "Motif")}{"\u00a0"}: {ret.reason}</p>}
       {dash}
       <p className="mt-6">{t("Customer signature", "Signature du client")}{"\u00a0"}: ____________</p>
@@ -225,7 +238,7 @@ function VoidDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }) 
           <DialogDescription>
             {t(
               "The whole sale is undone: items go back into stock at the cost they left with, motorcycles become available again, and the money and any credit are reversed in the books.",
-              "Toute la vente est annulée\u00a0: les articles reviennent en stock au coût de leur sortie, les motos redeviennent disponibles, et l'argent et le crédit sont contre-passés dans la comptabilité.",
+              "Toute la vente est annulée\u00a0: les articles reviennent en stock au coût de leur sortie, les motos redeviennent disponibles, et l'argent reçu comme le crédit sont annulés dans les comptes.",
             )}
           </DialogDescription>
         </DialogHeader>
@@ -253,7 +266,7 @@ function CreditRows({ credit, creditedReturns, creditLeft }: { credit: Decimal; 
   const t = useT();
   if (creditedReturns.isZero()) {
     return (
-      <div className="flex justify-between gap-2 py-2 text-amber-700 dark:text-amber-400">
+      <div className="flex justify-between gap-2 py-2 text-amber-800 dark:text-amber-400">
         <span>{t("On credit", "À crédit")}</span>
         <Num className="font-medium">{usd(credit.toFixed(2))}</Num>
       </div>
@@ -269,7 +282,7 @@ function CreditRows({ credit, creditedReturns, creditLeft }: { credit: Decimal; 
         <span>{t("Returns taken off the customer's balance", "Retours déduits du solde du client")}</span>
         <Num>−{usd(creditedReturns.toFixed(2))}</Num>
       </div>
-      <div className={cn("flex justify-between gap-2 py-2", creditLeft.gt(0) && "text-amber-700 dark:text-amber-400")}>
+      <div className={cn("flex justify-between gap-2 py-2", creditLeft.gt(0) && "text-amber-800 dark:text-amber-400")}>
         <span>
           {t("Still on credit", "Reste à crédit")}
           <span className="block text-xs text-muted-foreground">{t("Later payments show on the customer's statement.", "Les paiements ultérieurs figurent sur le relevé du client.")}</span>
@@ -397,7 +410,7 @@ export default function SaleDetail() {
                     <TableCell className="font-mono text-xs">{l.sku}</TableCell>
                     <TableCell className="text-xs">{l.chassisNo ?? ""}{l.engineNo ? <span className="block text-muted-foreground">{l.engineNo}</span> : null}</TableCell>
                     <TableCell className="text-right"><Num>{fmtQty(l.qty)}</Num></TableCell>
-                    <TableCell className="text-right"><Num className={cn(d(l.returnedQty).gt(0) ? "text-amber-700 dark:text-amber-400" : "text-muted-foreground")}>{fmtQty(l.returnedQty)}</Num></TableCell>
+                    <TableCell className="text-right"><Num className={cn(d(l.returnedQty).gt(0) ? "text-amber-800 dark:text-amber-400" : "text-muted-foreground")}>{fmtQty(l.returnedQty)}</Num></TableCell>
                     <TableCell className="text-right"><Num>{usd(l.unitPrice)}</Num></TableCell>
                     <TableCell className="text-right"><Num>{d(l.lineDiscount).gt(0) ? usd(l.lineDiscount) : ""}</Num></TableCell>
                     <TableCell className="text-right"><Num className="font-medium">{usd(l.lineTotal)}</Num></TableCell>
@@ -458,7 +471,9 @@ export default function SaleDetail() {
                       </span>
                     </div>
                     <p className="text-xs text-muted-foreground">
-                      {r.refundAccountId ? `${t("Refunded from", "Remboursé depuis")} ${accName(r.refundAccountId)}` : t("Taken off the customer's balance", "Déduit du solde du client")}
+                      {r.refundAccountId
+                        ? `${t("Refunded from", "Remboursé depuis")} ${accName(r.refundAccountId)}${r.refundCurrency === "CDF" && r.refundNative ? ` · ${cdf(r.refundNative)}` : ""}`
+                        : t("Taken off the customer's balance", "Déduit du solde du client")}
                       {r.reason ? ` · ${r.reason}` : ""}
                     </p>
                   </div>

@@ -10,12 +10,14 @@ import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { EmptyState, Field, Num, PageHeader, SubmitButton } from "@/components/common";
 import { LocationSelect, MoneyAccountSelect, PartySelect, RateInput, VariantSearch, useMoneyAccounts, useRate } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
-import { cdf, d, date as fmtDate, frenchPunctuation, money, qty as fmtQty, todayLocal, usd, variantText } from "@/lib/format";
+import { cdf, curLabel, d, date as fmtDate, frenchPunctuation, money, qty as fmtQty, todayLocal, usd, variantText } from "@/lib/format";
+import { unitLabel, wholeUnit } from "@/lib/units";
 import type { Account, MotorcycleUnit, Party, Settings, VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -60,6 +62,11 @@ export interface SaleReturnRow {
   reason: string | null;
   createdAt: string;
   lines?: { saleLineId: number; qty: string; amount: string }[];
+  /** Money actually handed back: in the drawer's currency (francs for a franc drawer) and in dollars. */
+  refundNative?: string | null;
+  refundUsd?: string | null;
+  refundCurrency?: "USD" | "CDF" | null;
+  refundToBalanceUsd?: string;
 }
 
 export interface SaleFull {
@@ -115,7 +122,8 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
   const cdfRate = sale.payments.find((p) => p.currency === "CDF")?.rate ?? saleRate ?? null;
   const gross = sale.lines.reduce((s, l) => s.plus(c2(d(l.qty).times(l.unitPrice))), d(0));
   const discount = gross.minus(sale.total);
-  const time = sale.createdAt ? new Date(sale.createdAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit" }) : "";
+  // The shop's clock (Kalemie), whatever time zone the phone or computer is set to.
+  const time = sale.createdAt ? new Date(sale.createdAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", timeZone: "Africa/Lubumbashi" }) : "";
   const dash = <div className="my-1.5 border-t border-dashed border-black" />;
   return (
     <div className="mx-auto w-full max-w-[80mm] bg-white p-2 font-mono text-[11px] leading-snug text-black">
@@ -353,18 +361,42 @@ export default function POS() {
   };
   const received = pays.reduce((s, p) => s.plus(payUsd(p)), d(0));
   const rateNum = d(dayRate);
+  /** What was handed over, in dollars, before rounding each payment to the cent. */
+  const receivedExact = pays.reduce((s, p) => {
+    const acc = accById(p.accountId);
+    if (!acc || d(p.amount).lte(0)) return s;
+    if (acc.currency !== "CDF") return s.plus(c2(d(p.amount)));
+    const r = d(p.rate ?? dayRate);
+    return r.gt(0) ? s.plus(c2(d(p.amount)).dividedBy(r)) : s;
+  }, d(0));
+  const paidRows = pays.filter((p) => accById(p.accountId) && d(p.amount).gt(0));
+  const payCurrencies = new Set(paidRows.map((p) => accById(p.accountId)!.currency));
+  /** Change comes by default from a drawer in the currency the customer paid in (the last payment typed). */
+  const payCurrency: "USD" | "CDF" = paidRows.length ? (accById(paidRows[paidRows.length - 1].accountId)!.currency as "USD" | "CDF") : "USD";
   // Francs cannot be counted to the cent of a dollar: up to 100 FC over or under is rounding (as on the server).
   const francs = pays.some((p) => accById(p.accountId)?.currency === "CDF" && d(p.amount).gt(0));
   const tolerance = francs && rateNum.gt(0) ? d(100).dividedBy(rateNum).toDecimalPlaces(2, Decimal.ROUND_UP) : d(0);
   const excess = received.minus(total);
-  const changeAcc = accById(changeAccId) ?? (excess.gt(tolerance) ? findCash("USD") : undefined);
+  const changeAcc = accById(changeAccId) ?? (excess.gt(tolerance) ? findCash(payCurrency) ?? findCash("USD") : undefined);
+  // Francs go back in 100 FC steps (no smaller notes); the few francs over or under are the sale's rounding,
+  // which the server accepts up to 100 FC. Dollars go back to the cent.
+  const exactExcess = receivedExact.minus(total);
   const autoChange = changeAcc
     ? changeAcc.currency === "CDF"
-      ? excess.times(rateNum).toDecimalPlaces(0, Decimal.ROUND_DOWN)
-      : c2(excess)
+      ? Decimal.max(exactExcess.times(rateNum).dividedBy(100).toDecimalPlaces(0, ROUND).times(100), 0)
+      : Decimal.max(c2(exactExcess), 0)
     : d(0);
   const showChange = excess.gt(tolerance) || !!changeAmt;
-  const changeNative = showChange && changeAcc ? (changeAmt ? c2(d(changeAmt)) : Decimal.max(autoChange, 0)) : d(0);
+  const changeNative = showChange && changeAcc ? (changeAmt ? c2(d(changeAmt)) : autoChange) : d(0);
+  /** Change from a drawer in another currency than the customer paid in: asked again before saving. */
+  const crossChange = !!changeAcc && changeNative.gt(0) && payCurrencies.size > 0 && !payCurrencies.has(changeAcc.currency);
+  const changeText = changeAcc ? money(changeNative.toFixed(2), changeAcc.currency) : "";
+  /** Dollar change with cents: the francs drawer can give it all back in 100 FC steps instead. */
+  const cdfCash = findCash("CDF");
+  const changeInFrancs =
+    changeAcc?.currency === "USD" && changeNative.gt(0) && !changeNative.isInteger() && cdfCash && rateNum.gt(0)
+      ? changeNative.times(rateNum).dividedBy(100).toDecimalPlaces(0, ROUND).times(100)
+      : null;
   const changeUsd = changeAcc?.currency === "CDF" ? (rateNum.gt(0) ? c2(changeNative.dividedBy(rateNum)) : d(0)) : changeNative;
   const paid = received.minus(changeUsd);
   const remaining = total.minus(paid);
@@ -382,6 +414,9 @@ export default function POS() {
   for (const l of lines) {
     if (!l.unitPrice.trim() || d(l.unitPrice).lte(0)) problems.push(t(`Enter the price of ${l.variant.productName} (it is 0 $)`, `Saisissez le prix de ${l.variant.productName} (il est à 0\u00a0$)`));
     if (d(l.qty).lte(0)) problems.push(t(`Quantity of ${l.variant.productName} must be more than zero`, `La quantité de ${l.variant.productName} doit être supérieure à zéro`));
+    else if (!d(l.qty).isInteger() && wholeUnit(l.variant.unit)) {
+      problems.push(t(`${l.variant.productName} is sold by the ${unitLabel(t, l.variant.unit, 1)}: enter a whole number`, `${l.variant.productName} se vend à l'unité (${unitLabel(t, l.variant.unit, 1)}) : saisissez un nombre entier`));
+    }
     if (lineAmount(l).lt(0)) problems.push(t(`The discount on ${l.variant.productName} is bigger than the line`, `La remise sur ${l.variant.productName} dépasse la ligne`));
     if (l.variant.tracksSerials && !l.unitId) problems.push(t(`Choose the chassis number for ${l.variant.productName}`, `Choisissez le numéro de châssis pour ${l.variant.productName}`));
   }
@@ -408,8 +443,10 @@ export default function POS() {
     // An empty payment row is simply ignored when the sale is saved.
     if (acc && d(p.amount).lt(0)) problems.push(t("A payment cannot be negative", "Un paiement ne peut pas être négatif"));
     if (acc?.currency === "CDF" && d(p.amount).gt(0) && d(p.rate ?? dayRate).lte(0)) problems.push(t("Enter the exchange rate for CDF payments", "Saisissez le taux pour les paiements en francs"));
+    if (acc?.currency === "CDF" && !d(p.amount).isInteger()) problems.push(t("Franc amounts are whole numbers", "Les montants en FC sont des nombres entiers"));
   }
   if (overpaid) problems.push(t("Payments are more than the total, even after the change given back.", "Les paiements dépassent le total, même après la monnaie rendue."));
+  if (changeAcc?.currency === "CDF" && !changeNative.isInteger()) problems.push(t("Franc amounts are whole numbers", "Les montants en FC sont des nombres entiers"));
   if (changeUsd.gt(0) && changeUsd.gte(received)) problems.push(t("The change is more than the money received", "La monnaie rendue dépasse l'argent reçu"));
   if (credit.gt(0) && !customerId && lines.length > 0) {
     todo.push(
@@ -473,8 +510,11 @@ export default function POS() {
       reset();
     },
   });
-  function submit() {
+  const [confirmCross, setConfirmCross] = useState(false);
+  function submit(confirmed = false) {
     if (!valid || mutation.isPending || !locationId) return;
+    if (crossChange && !confirmed) return setConfirmCross(true);
+    setConfirmCross(false);
     mutation.mutate({
       date: backDated ? saleDate : undefined,
       locationId,
@@ -504,7 +544,7 @@ export default function POS() {
   const receiptOpen = !!receipt;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (receiptOpen) return;
+      if (receiptOpen || document.querySelector("[role=alertdialog]")) return;
       if (e.key === "F9" || (e.key === "Enter" && (e.ctrlKey || e.metaKey))) {
         e.preventDefault();
         submitRef.current();
@@ -542,7 +582,7 @@ export default function POS() {
             {can("manager") && (
               <Input
                 type="date"
-                className={cn("w-40", backDated && "border-amber-500 text-amber-700 dark:text-amber-400")}
+                className={cn("w-40", backDated && "border-amber-500 text-amber-800 dark:text-amber-400")}
                 value={saleDate}
                 max={today}
                 onChange={(e) => setSaleDate(e.target.value || today)}
@@ -604,22 +644,22 @@ export default function POS() {
                           <div>
                             <p className="mb-1 text-xs text-muted-foreground">{t("Qty", "Qté")}</p>
                             {l.variant.tracksSerials ? (
-                              <Input value="1" disabled className="h-9" />
+                              <Input value="1" disabled className="h-9" aria-label={t(`Quantity of ${l.variant.productName}`, `Quantité de ${l.variant.productName}`)} />
                             ) : (
                               <div className="flex items-center gap-1">
-                                <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => updateLine(l.key, { qty: Decimal.max(d(l.qty).minus(1), 1).toString() })}><Minus className="h-3 w-3" /></Button>
-                                <Input className="h-9 min-w-0 text-center" inputMode="decimal" value={l.qty} onChange={(e) => updateLine(l.key, { qty: e.target.value })} />
-                                <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" onClick={() => updateLine(l.key, { qty: d(l.qty).plus(1).toString() })}><Plus className="h-3 w-3" /></Button>
+                                <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" aria-label={t(`Lower the quantity of ${l.variant.productName}`, `Diminuer la quantité de ${l.variant.productName}`)} onClick={() => updateLine(l.key, { qty: Decimal.max(d(l.qty).minus(1), 1).toString() })}><Minus className="h-3 w-3" /></Button>
+                                <Input className="h-9 min-w-0 text-center" inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} aria-label={t(`Quantity of ${l.variant.productName}`, `Quantité de ${l.variant.productName}`)} aria-invalid={(!d(l.qty).isInteger() && wholeUnit(l.variant.unit)) || undefined} value={l.qty} onChange={(e) => updateLine(l.key, { qty: e.target.value })} />
+                                <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" aria-label={t(`Raise the quantity of ${l.variant.productName}`, `Augmenter la quantité de ${l.variant.productName}`)} onClick={() => updateLine(l.key, { qty: d(l.qty).plus(1).toString() })}><Plus className="h-3 w-3" /></Button>
                               </div>
                             )}
                           </div>
                           <div>
                             <p className="mb-1 text-xs text-muted-foreground">{t("Unit price $", "Prix unitaire $")}</p>
-                            <Input className="h-9" inputMode="decimal" value={l.unitPrice} onChange={(e) => updateLine(l.key, { unitPrice: e.target.value })} />
+                            <Input className="h-9" inputMode="decimal" aria-label={t(`Unit price of ${l.variant.productName} ($)`, `Prix unitaire de ${l.variant.productName} ($)`)} value={l.unitPrice} onChange={(e) => updateLine(l.key, { unitPrice: e.target.value })} />
                           </div>
                           <div>
                             <p className="mb-1 text-xs text-muted-foreground">{t("Discount $", "Remise $")}</p>
-                            <Input className="h-9" inputMode="decimal" placeholder="0" value={l.lineDiscount} onChange={(e) => updateLine(l.key, { lineDiscount: e.target.value })} />
+                            <Input className="h-9" inputMode="decimal" placeholder="0" aria-label={t(`Discount on ${l.variant.productName} ($)`, `Remise sur ${l.variant.productName} ($)`)} value={l.lineDiscount} onChange={(e) => updateLine(l.key, { lineDiscount: e.target.value })} />
                           </div>
                           <div className="text-right">
                             <p className="mb-1 text-xs text-muted-foreground">{t("Line total", "Total ligne")}</p>
@@ -632,7 +672,7 @@ export default function POS() {
                           </p>
                         )}
                         {belowCost(l) && (
-                          <p className="flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400">
+                          <p className="flex items-center gap-1 text-xs font-medium text-amber-800 dark:text-amber-400">
                             <AlertTriangle className="h-3 w-3 shrink-0" />
                             {t(`Sold below cost (cost ${usd(d(l.variant.avgCost).toFixed(2))} each)`, `Vente à perte (coût ${usd(d(l.variant.avgCost).toFixed(2))} l'unité)`)}
                           </p>
@@ -650,7 +690,7 @@ export default function POS() {
               <Field label={t("Customer (optional, required for credit)", "Client (facultatif, obligatoire pour le crédit)")}>
                 <PartySelect types={["customer"]} value={customerId} onChange={(id, p) => { setCustomerId(id); setCustomer(p ?? null); }} placeholder={t("Walk-in customer", "Client de passage")} />
                 {customer && d(customer.balance).gt(0) && (
-                  <p className="text-xs text-amber-700 dark:text-amber-400">{t("Already owes", "Doit déjà")} {usd(customer.balance)}</p>
+                  <p className="text-xs text-amber-800 dark:text-amber-400">{t("Already owes", "Doit déjà")} {usd(customer.balance)}</p>
                 )}
               </Field>
               <Field label={t("Sale discount $", "Remise sur la vente $")}>
@@ -693,7 +733,7 @@ export default function POS() {
                   <div key={p.key} className="space-y-2 rounded-md border p-2">
                     <div className="flex gap-2">
                       <div className="min-w-0 flex-1">
-                        <MoneyAccountSelect value={p.accountId} onChange={(_id, account) => changePayAccount(p, account)} />
+                        <MoneyAccountSelect value={p.accountId} onChange={(_id, account) => changePayAccount(p, account)} aria-label={t("Payment account", "Compte du paiement")} />
                       </div>
                       <Button variant="ghost" size="icon" onClick={() => setPays((ps) => ps.filter((x) => x.key !== p.key))} aria-label={t("Remove", "Retirer")}><Trash2 className="h-4 w-4" /></Button>
                     </div>
@@ -725,15 +765,22 @@ export default function POS() {
 
               {showChange && (
                 <div className="space-y-2 rounded-md border border-dashed p-2">
-                  <p className="text-sm font-medium">{t("Change given back", "Monnaie rendue")}</p>
+                  <div className="flex items-baseline justify-between gap-2">
+                    <p className="text-sm font-medium">{t("Change given back", "Monnaie rendue")}</p>
+                    {changeAcc && changeNative.gt(0) && (
+                      <p className="text-right text-lg font-bold tabular" data-testid="change-due">
+                        {t("Give back", "Rendre")}{t(":", "\u00a0:")} {changeText}
+                      </p>
+                    )}
+                  </div>
                   <div className="grid grid-cols-2 gap-2">
-                    <MoneyAccountSelect value={changeAcc?.id ?? null} onChange={(id) => { setChangeAccId(id); setChangeAmt(""); }} />
+                    <MoneyAccountSelect value={changeAcc?.id ?? null} onChange={(id) => { setChangeAccId(id); setChangeAmt(""); }} aria-label={t("Drawer the change comes from", "Caisse d'où sort la monnaie")} />
                     <div className="relative">
                       <Input
-                        inputMode="decimal"
+                        inputMode={changeAcc?.currency === "CDF" ? "numeric" : "decimal"}
                         className="pr-10"
-                        aria-label={t("Change given back", "Monnaie rendue")}
-                        placeholder={autoChange.gt(0) ? autoChange.toFixed(changeAcc?.currency === "CDF" ? 0 : 2).replace(".", ",") : t("Amount", "Montant")}
+                        aria-label={changeAcc?.currency === "CDF" ? t("Change given back in FC", "Monnaie rendue en FC") : t("Change given back in $", "Monnaie rendue en $")}
+                        placeholder={t("Other", "Autre")}
                         value={changeAmt}
                         onChange={(e) => setChangeAmt(e.target.value)}
                       />
@@ -741,8 +788,32 @@ export default function POS() {
                     </div>
                   </div>
                   <p className="text-xs text-muted-foreground">
-                    {t("Taken from this drawer and handed to the customer.", "Pris dans cette caisse et rendu au client.")} {changeAcc?.currency === "CDF" ? `= ${usd(changeUsd.toFixed(2))}` : ""}
+                    {changeAmt
+                      ? t("Amount typed by hand.", "Montant saisi à la main.")
+                      : changeAcc?.currency === "CDF"
+                        ? t("Worked out and rounded to 100 FC.", "Calculée et arrondie à 100 FC.")
+                        : t("Worked out to the cent.", "Calculée au cent près.")}{" "}
+                    {changeAcc?.currency === "CDF" && changeNative.gt(0) ? `= ${usd(changeUsd.toFixed(2))}` : ""}
+                    {changeAmt && (
+                      <button type="button" className="ml-1 font-medium text-primary underline-offset-2 hover:underline" onClick={() => setChangeAmt("")}>
+                        {t("Use the worked-out amount", "Reprendre le montant calculé")}
+                      </button>
+                    )}
                   </p>
+                  {changeInFrancs && cdfCash && changeInFrancs.gt(0) && (
+                    <Button variant="outline" size="sm" className="h-auto min-h-8 w-full whitespace-normal py-1" onClick={() => { setChangeAccId(cdfCash.id); setChangeAmt(""); }}>
+                      {t(`No cents? Give it all back in francs: ${cdf(changeInFrancs.toString())}`, `Pas de cents\u00a0? Tout rendre en francs\u00a0: ${cdf(changeInFrancs.toString())}`)}
+                    </Button>
+                  )}
+                  {crossChange && changeAcc && (
+                    <p className="flex items-start gap-1 text-xs font-medium text-amber-800 dark:text-amber-400">
+                      <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
+                      {t(
+                        `The customer paid in ${[...payCurrencies].map(curLabel).join(" and ")} but the change comes out of ${changeAcc.name}: you will be asked to confirm.`,
+                        `Le client a payé en ${[...payCurrencies].map(curLabel).join(" et ")} mais la monnaie sort de ${changeAcc.name}\u00a0: une confirmation sera demandée.`,
+                      )}
+                    </p>
+                  )}
                 </div>
               )}
 
@@ -753,7 +824,7 @@ export default function POS() {
                 <div className="flex justify-between"><span>{t("Paid ($)", "Payé ($)")}</span><Num className="font-medium">{usd(paid.toFixed(2))}</Num></div>
                 <div className="flex justify-between">
                   <span>{credit.gt(0) && customerId ? t("Remaining → on credit", "Reste → à crédit") : t("Left to pay", "Reste à payer")}</span>
-                  <Num className={cn("font-semibold", credit.gt(0) && customerId && "text-amber-700 dark:text-amber-400", overpaid && "text-destructive")}>{usd(remaining.toFixed(2))}</Num>
+                  <Num className={cn("font-semibold", credit.gt(0) && customerId && "text-amber-800 dark:text-amber-400", overpaid && "text-destructive")}>{usd(remaining.toFixed(2))}</Num>
                 </div>
               </div>
 
@@ -762,9 +833,9 @@ export default function POS() {
                 <div className="mt-2 space-y-2">
                   <p className="text-xs text-muted-foreground">{t("Only a helper: record the money kept above, not what the customer handed over.", "Seulement une aide\u00a0: enregistrer ci-dessus l'argent gardé, pas ce que le client a donné.")}</p>
                   <div className="flex gap-2">
-                    <Input inputMode="decimal" placeholder={t("Cash handed over", "Montant reçu")} value={handed} onChange={(e) => setHanded(e.target.value)} />
+                    <Input inputMode="decimal" aria-label={t("Cash handed over", "Montant reçu")} placeholder={t("Cash handed over", "Montant reçu")} value={handed} onChange={(e) => setHanded(e.target.value)} />
                     <Select value={handedCur} onValueChange={(v) => setHandedCur(v as "USD" | "CDF")}>
-                      <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
+                      <SelectTrigger className="w-24" aria-label={t("Currency handed over", "Devise reçue")}><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="USD">$</SelectItem>
                         <SelectItem value="CDF">FC</SelectItem>
@@ -792,9 +863,11 @@ export default function POS() {
                 className="hidden lg:flex lg:flex-col lg:items-stretch [&>button]:h-12 [&>button]:w-full [&>button]:text-base [&>p]:text-center"
                 blocked={blockedReason}
                 pending={mutation.isPending}
-                onClick={submit}
+                onClick={() => submit()}
               >
-                {t(`Finish sale ${usd(total.toFixed(2))}`, `Valider la vente ${usd(total.toFixed(2))}`)}
+                {credit.gt(0) && customerId
+                  ? t(`Finish · ${usd(credit.toFixed(2))} on credit`, `Valider · ${usd(credit.toFixed(2))} à crédit`)
+                  : t(`Finish sale ${usd(total.toFixed(2))}`, `Valider la vente ${usd(total.toFixed(2))}`)}
               </SubmitButton>
               {blockedReason && (lines.length > 0 || tried) && <p className="text-center text-xs text-muted-foreground lg:hidden" role="status">{blockedReason}</p>}
               <p className="hidden text-center text-xs text-muted-foreground lg:block [@media(pointer:coarse)]:hidden">F9 / Ctrl+Entrée</p>
@@ -809,7 +882,13 @@ export default function POS() {
           <div className="min-w-0 flex-1">
             <p className="text-xs text-muted-foreground">{t("Total", "Total")} · {lines.length} {lines.length > 1 ? t("items", "articles") : t("item", "article")}</p>
             <p className="truncate text-xl font-bold tabular">{usd(total.toFixed(2))}</p>
-            {rateNum.gt(0) && total.gt(0) && <p className="truncate text-xs text-muted-foreground">≈ {cdf(total.times(rateNum).toDecimalPlaces(0, ROUND).toString())}</p>}
+            {changeAcc && changeNative.gt(0) ? (
+              <p className="truncate text-sm font-bold" data-testid="change-due-bar">{t("Give back", "Rendre")}{t(":", "\u00a0:")} {changeText}</p>
+            ) : credit.gt(0) && customerId ? (
+              <p className="truncate text-xs font-semibold text-amber-800 dark:text-amber-400">{t(`${usd(credit.toFixed(2))} on credit`, `dont ${usd(credit.toFixed(2))} à crédit`)}</p>
+            ) : (
+              rateNum.gt(0) && total.gt(0) && <p className="truncate text-xs text-muted-foreground">≈ {cdf(total.times(rateNum).toDecimalPlaces(0, ROUND).toString())}</p>
+            )}
           </div>
           <SubmitButton
             className="shrink-0 items-end [&>button]:h-12 [&>button]:px-6 [&>button]:text-base"
@@ -817,10 +896,29 @@ export default function POS() {
             pending={mutation.isPending}
             onClick={mobilePay}
           >
-            {valid ? t("Finish", "Valider") : t("Pay", "Payer")}
+            {valid ? (credit.gt(0) && customerId ? t("Finish on credit", "Valider à crédit") : t("Finish", "Valider")) : t("Pay", "Payer")}
           </SubmitButton>
         </div>
       )}
+
+      <AlertDialog open={confirmCross} onOpenChange={setConfirmCross}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("Change from another currency?", "Monnaie dans une autre devise\u00a0?")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {changeAcc &&
+                t(
+                  `The customer paid in ${[...payCurrencies].map(curLabel).join(" and ")}. You are giving back ${changeText} from ${changeAcc.name}.`,
+                  `Le client a payé en ${[...payCurrencies].map(curLabel).join(" et ")}. Vous rendez ${changeText} depuis ${changeAcc.name}.`,
+                )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("Go back", "Revenir")}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => submit(true)}>{t(`Give back ${changeText}`, `Rendre ${changeText}`)}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       {receipt && (
         <ReceiptDialog

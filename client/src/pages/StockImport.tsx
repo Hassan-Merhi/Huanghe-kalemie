@@ -18,7 +18,7 @@ import { LocationSelect } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { d, qty as fmtQty, todayLocal, usd } from "@/lib/format";
+import { curLabel, d, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import { useI18n, useT, count } from "@/lib/i18n";
 import { downloadXlsx, readSheet } from "@/lib/sheets";
 import type { Product } from "@/lib/types";
@@ -656,8 +656,8 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
           <DialogTitle>{t("Import the packing list", "Importer la liste de colisage")}</DialogTitle>
           <DialogDescription>
             {t(
-              `One row per item and size. Unit prices are in the invoice currency (${currency}); weight and volume are totals for the line. Missing items are created.`,
-              `Une ligne par article et taille. Les prix unitaires sont dans la devise de la facture (${currency})\u00a0; le poids et le volume sont des totaux pour la ligne. Les articles manquants sont créés.`,
+              `One row per item and size. Unit prices are in the invoice currency (${curLabel(currency)}); weight and volume are totals for the line. Missing items are created.`,
+              `Une ligne par article et taille. Les prix unitaires sont dans la devise de la facture (${curLabel(currency)})\u00a0; le poids et le volume sont des totaux pour la ligne. Les articles manquants sont créés.`,
             )}
           </DialogDescription>
         </DialogHeader>
@@ -688,7 +688,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
                       <TableHead className="w-10">#</TableHead>
                       <TableHead>{t("Item", "Article")}</TableHead>
                       <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
-                      <TableHead className="text-right">{t(`Price (${currency})`, `Prix (${currency})`)}</TableHead>
+                      <TableHead className="text-right">{t(`Price (${curLabel(currency)})`, `Prix (${curLabel(currency)})`)}</TableHead>
                       <TableHead>{t("Status", "Statut")}</TableHead>
                     </TableRow>
                   </TableHeader>

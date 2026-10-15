@@ -14,3 +14,19 @@ describe("numbers typed in a spreadsheet", () => {
     expect(parseTypedNumber(12.5)).toBe("12.5");
   });
 });
+
+describe("numbers typed in a form field", async () => {
+  const { parseNumberInput } = await import("../../client/src/lib/format");
+  it("takes a sign typed with a plus, a hyphen or the true minus", () => {
+    expect(parseNumberInput("+12")).toBe("12");
+    expect(parseNumberInput("-12,5")).toBe("-12.5");
+    expect(parseNumberInput("−12,5")).toBe("-12.5");
+    expect(parseNumberInput("− 3")).toBe("-3");
+    expect(parseNumberInput("+")).toBeNull();
+    expect(parseNumberInput("12a")).toBeNull();
+  });
+  it("reads spreadsheet signs the same way", () => {
+    expect(parseTypedNumber("−3,75")).toBe("-3.75");
+    expect(parseTypedNumber("+3,75")).toBe("3.75");
+  });
+});

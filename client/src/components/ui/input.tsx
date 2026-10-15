@@ -12,7 +12,7 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
     // Dates are always shown dd/mm/yyyy, whatever language the phone or browser is set to.
     if (type === "date") return <DateInput className={className} {...props} ref={ref} />;
     // Amounts and quantities accept "4,50" as well as "4.50" and read French-style.
-    if (props.inputMode === "decimal" && (!type || type === "text")) return <DecimalInput className={className} {...props} ref={ref} />;
+    if ((props.inputMode === "decimal" || props.inputMode === "numeric") && (!type || type === "text")) return <DecimalInput className={className} {...props} ref={ref} />;
     // h-9 to match icon buttons and default buttons.
     return <input type={type} className={cn(BASE, className)} ref={ref} {...props} />;
   },
@@ -97,6 +97,9 @@ const DateInput = React.forwardRef<HTMLInputElement, React.ComponentProps<"input
 });
 DateInput.displayName = "DateInput";
 
+/** Classes that size or place a field among its neighbours (kept on the wrapper of a number field). */
+const LAYOUT = /^(?:[a-z0-9[\]-]+:)*!?(?:-?m[trblxy]?-|w-|min-w-|max-w-|flex-|basis-|grow|shrink|col-|row-|self-|justify-self-|order-|hidden$|block$|inline|absolute$|relative$|sticky$|top-|bottom-|left-|right-|inset-|z-)/;
+
 /**
  * A number field that reads the way people write: "4,50", "4.50" or "1 234,5" all mean the same.
  * Its value and onChange carry the plain number text ("4.5", or "" when empty), so pages keep
@@ -112,28 +115,48 @@ const DecimalInput = React.forwardRef<HTMLInputElement, React.ComponentProps<"in
     if (plain !== sent.current) setText(inputText(plain));
     sent.current = null;
   }, [plain]);
+  const unreadable = text.trim() !== "" && parseNumberInput(text) === null;
+  const fr = formatLang() === "fr";
+  const hintId = React.useId();
+  // Size and placement classes go on the wrapper, so the field sits where it did; the rest styles the field.
+  const classes = (className ?? "").split(/\s+/).filter(Boolean);
+  const outer = classes.filter((c) => LAYOUT.test(c));
+  const inner = classes.filter((c) => !LAYOUT.test(c));
   return (
-    <input
-      {...props}
-      ref={ref}
-      type="text"
-      autoComplete="off"
-      className={cn(BASE, className)}
-      value={text}
-      onChange={(e) => {
-        const typed = e.target.value;
-        setText(typed);
-        const parsed = parseNumberInput(typed);
-        const out = parsed === null ? typed : parsed;
-        sent.current = out;
-        if (out === plain) sent.current = null;
-        onChange?.({ ...e, target: { value: out, name: e.target.name }, currentTarget: { value: out, name: e.target.name } } as unknown as React.ChangeEvent<HTMLInputElement>);
-      }}
-      onBlur={(e) => {
-        setText(inputText(plain));
-        onBlur?.(e);
-      }}
-    />
+    <span className={cn("relative block w-full", outer)}>
+      <input
+        {...props}
+        ref={ref}
+        type="text"
+        autoComplete="off"
+        className={cn(BASE, inner)}
+        value={text}
+        aria-invalid={unreadable || props["aria-invalid"] || undefined}
+        aria-describedby={unreadable ? cn(hintId, props["aria-describedby"]) : props["aria-describedby"]}
+        onChange={(e) => {
+          const typed = e.target.value;
+          setText(typed);
+          const parsed = parseNumberInput(typed);
+          const out = parsed === null ? typed : parsed;
+          sent.current = out;
+          if (out === plain) sent.current = null;
+          onChange?.({ ...e, target: { value: out, name: e.target.name }, currentTarget: { value: out, name: e.target.name } } as unknown as React.ChangeEvent<HTMLInputElement>);
+        }}
+        onBlur={(e) => {
+          setText(inputText(plain));
+          onBlur?.(e);
+        }}
+      />
+      {unreadable && (
+        <span
+          id={hintId}
+          role="alert"
+          className="pointer-events-none absolute left-0 top-full z-20 mt-1 whitespace-nowrap rounded border border-destructive bg-popover px-2 py-0.5 text-xs font-medium text-destructive shadow-sm"
+        >
+          {fr ? "Nombre non reconnu" : "Not a number"}
+        </span>
+      )}
+    </span>
   );
 });
 DecimalInput.displayName = "DecimalInput";

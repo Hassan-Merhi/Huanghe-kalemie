@@ -10,12 +10,12 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ErrorText, Field, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
+import { ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
 import { AccountSelect, MoneyAccountSelect, PartySelect, RateInput, useMoneyAccounts, useRate, useRateField } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api, invalidateAll } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { d, money, qty as fmtQty, todayLocal, usd } from "@/lib/format";
+import { curLabel, d, money, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import type { Account, Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -239,16 +239,7 @@ function useBalances() {
 /** Account picker for voucher lines: only the account types the voucher allows, without blocked accounts. */
 function LineAccountSelect({ value, onChange, types }: { value: number | null; onChange: (id: number) => void; types: Account["type"][] }) {
   const t = useT();
-  const q = useQuery<Account[]>({ queryKey: ["/api/accounts"] });
-  const rows = (q.data ?? []).filter((a) => a.active && types.includes(a.type) && !a.isMoney && !(a.systemKey && BLOCKED_KEYS.includes(a.systemKey)));
-  return (
-    <Select value={value ? String(value) : ""} onValueChange={(v) => onChange(Number(v))}>
-      <SelectTrigger><SelectValue placeholder={t("Choose account", "Choisir le compte")} /></SelectTrigger>
-      <SelectContent>
-        {rows.map((a) => <SelectItem key={a.id} value={String(a.id)}>{a.code} · {a.name}</SelectItem>)}
-      </SelectContent>
-    </Select>
-  );
+  return <AccountSelect hideCode aria-label={t("Account", "Compte")} value={value} onChange={onChange} types={types} filter={(a) => !a.isMoney && !(a.systemKey && BLOCKED_KEYS.includes(a.systemKey))} />;
 }
 
 let rowKey = 1;
@@ -366,7 +357,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted 
             <MoneyAccountSelect value={accountId} onChange={(id) => setAccountId(id)} />
           </Field>
           {isCdf && (
-            <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 $)")} hint={totalUsd ? `= ${usd(totalUsd.toFixed(2))}` : undefined} required>
+            <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} hint={totalUsd ? `= ${usd(totalUsd.toFixed(2))}` : undefined} required>
               <RateInput day={day} value={rateField.rate} onChange={rateField.setRate} />
             </Field>
           )}
@@ -395,7 +386,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted 
           <div className="hidden gap-2 px-1 text-xs font-medium text-muted-foreground md:grid md:grid-cols-[9.5rem_minmax(0,1.4fr)_8rem_minmax(0,1fr)_2.5rem]">
             <span>{t("Type", "Type")}</span>
             <span>{t("Contact or account", "Contact ou compte")}</span>
-            <span className="text-right">{t(`Amount (${currency})`, `Montant (${currency})`)}</span>
+            <span className="text-right">{t(`Amount (${curLabel(currency)})`, `Montant (${curLabel(currency)})`)}</span>
             <span>{t("Line note", "Note de ligne")}</span>
             <span />
           </div>
@@ -423,7 +414,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted 
                   <LineAccountSelect types={ACCOUNT_TYPES[kind]} value={l.accountId} onChange={(id) => set(l.key, { accountId: id })} />
                 )}
               </div>
-              <Input inputMode="decimal" className="text-right tabular" placeholder={t(`Amount (${currency})`, `Montant (${currency})`)} value={l.amount} onChange={(e) => set(l.key, { amount: e.target.value })} />
+              <Input inputMode="decimal" className="text-right tabular" placeholder={t(`Amount (${curLabel(currency)})`, `Montant (${curLabel(currency)})`)} value={l.amount} onChange={(e) => set(l.key, { amount: e.target.value })} />
               <Input placeholder={t("Note (optional)", "Note (facultatif)")} value={l.memo} onChange={(e) => set(l.key, { memo: e.target.value })} />
               <Button variant="ghost" size="icon" className="justify-self-end" disabled={lines.length <= 1} onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} aria-label={t("Remove line", "Retirer la ligne")}>
                 <Trash2 className="h-4 w-4" />
@@ -574,7 +565,7 @@ function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: For
           {empty ? (
             <Badge variant="outline" className="font-normal text-muted-foreground">{t("Enter amounts", "Saisissez des montants")}</Badge>
           ) : (
-            <Badge variant={balanced ? "secondary" : "destructive"} className={cn(balanced && "text-emerald-700 dark:text-emerald-400")}>
+            <Badge variant={balanced ? "secondary" : "destructive"} className={cn(balanced && "text-emerald-800 dark:text-emerald-400")}>
               {balanced ? t("Balanced", "Équilibrée") : t("Unbalanced", "Déséquilibrée")}
             </Badge>
           )}
@@ -582,8 +573,8 @@ function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: For
         <CardContent className="space-y-3">
           <div className="hidden gap-2 px-1 text-xs font-medium text-muted-foreground md:grid md:grid-cols-[minmax(0,1.5fr)_7rem_7rem_minmax(0,1fr)_2.5rem]">
             <span>{t("Account", "Compte")}</span>
-            <span className="text-right">{t("Debit USD", "Débit USD")}</span>
-            <span className="text-right">{t("Credit USD", "Crédit USD")}</span>
+            <span className="text-right">{t("Debit ($)", "Débit ($)")}</span>
+            <span className="text-right">{t("Credit ($)", "Crédit ($)")}</span>
             <span>{t("Line note", "Note de ligne")}</span>
             <span />
           </div>
@@ -595,7 +586,7 @@ function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: For
                 <div className="grid grid-cols-2 gap-2 md:grid-cols-[minmax(0,1.5fr)_7rem_7rem_minmax(0,1fr)_2.5rem] md:items-center">
                   <div className="col-span-2 min-w-0 md:col-span-1">
                     <span className="mb-1 block text-xs text-muted-foreground md:hidden">{t("Account", "Compte")} {i + 1}</span>
-                    <AccountSelect value={l.accountId} onChange={(id) => chooseAccount(l, id)} />
+                    <AccountSelect aria-label={t("Account", "Compte")} value={l.accountId} onChange={(id) => chooseAccount(l, id)} />
                   </div>
                   <Input inputMode="decimal" className="text-right tabular" placeholder={t("Debit", "Débit")} value={l.debit} onChange={(e) => set(l.key, { debit: e.target.value, credit: e.target.value ? "" : l.credit })} />
                   <Input inputMode="decimal" className="text-right tabular" placeholder={t("Credit", "Crédit")} value={l.credit} onChange={(e) => set(l.key, { credit: e.target.value, debit: e.target.value ? "" : l.debit })} />
@@ -616,7 +607,7 @@ function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: For
                     <Field label={t("Amount in CDF", "Montant en FC")} required>
                       <Input inputMode="decimal" value={l.native} onChange={(e) => setNative(l, e.target.value, l.rate)} />
                     </Field>
-                    <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 USD)")} required>
+                    <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} required>
                       <Input inputMode="decimal" value={l.rate} onChange={(e) => setNative(l, l.native, e.target.value)} />
                     </Field>
                   </div>
@@ -631,7 +622,7 @@ function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: For
             <div className="flex flex-wrap justify-end gap-4 text-sm">
               <span>{t("Debits:", "Débits\u00a0:")} <Num className="font-medium">{usd(totalDebit.toFixed(2))}</Num></span>
               <span>{t("Credits:", "Crédits\u00a0:")} <Num className="font-medium">{usd(totalCredit.toFixed(2))}</Num></span>
-              <span className={cn("font-semibold", empty ? "text-muted-foreground" : diff.isZero() ? "text-emerald-600 dark:text-emerald-400" : "text-destructive")}>
+              <span className={cn("font-semibold", empty ? "text-muted-foreground" : diff.isZero() ? "text-emerald-800 dark:text-emerald-400" : "text-destructive")}>
                 {t("Difference:", "Écart\u00a0:")} <Num>{usd(diff.toFixed(2))}</Num>
               </span>
             </div>
@@ -751,7 +742,7 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
           <Field label={t("From account", "Du compte")} required hint={balOf(from) ? `${t("Balance", "Solde")} ${balOf(from)}` : undefined}>
             <MoneyAccountSelect value={fromId} onChange={(id) => setFromId(id)} />
           </Field>
-          <Field label={t(`Amount out${from ? ` (${from.currency})` : ""}`, `Montant sorti${from ? ` (${from.currency})` : ""}`)} required>
+          <Field label={t(`Amount out${from ? ` (${curLabel(from.currency)})` : ""}`, `Montant sorti${from ? ` (${curLabel(from.currency)})` : ""}`)} error={francDecimalsError(t, from?.currency, fromAmount)} required>
             <Input inputMode="decimal" value={fromAmount} onChange={(e) => setFromAmount(e.target.value)} placeholder="0" />
           </Field>
           <Field
@@ -762,7 +753,7 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
           >
             <MoneyAccountSelect value={toId} onChange={(id) => setToId(id)} />
           </Field>
-          <Field label={t(`Amount in${to ? ` (${to.currency})` : ""}`, `Montant reçu${to ? ` (${to.currency})` : ""}`)} required>
+          <Field label={t(`Amount in${to ? ` (${curLabel(to.currency)})` : ""}`, `Montant reçu${to ? ` (${curLabel(to.currency)})` : ""}`)} error={francDecimalsError(t, to?.currency, toAmount)} required>
             <Input inputMode="decimal" value={toAmount} onChange={(e) => { setToAmount(e.target.value); setToTouched(true); }} placeholder="0" />
           </Field>
           <Field label={t("Note (optional)", "Note (facultatif)")} className="sm:col-span-2">
@@ -779,7 +770,7 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
               {diff && !diff.isZero() && (
                 <div className="flex flex-wrap justify-between gap-2">
                   <span>{t("Exchange difference against what the francs cost", "Différence de change par rapport au coût des francs")}</span>
-                  <Num className={diff.isPositive() ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"}>
+                  <Num className={diff.isPositive() ? "text-destructive" : "text-emerald-800 dark:text-emerald-400"}>
                     {diff.isPositive() ? t("loss", "perte") : t("gain", "gain")} {usd(diff.abs().toFixed(2))}
                   </Num>
                 </div>

@@ -17,10 +17,13 @@ import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { downloadCsv } from "@/lib/sheets";
 import { count, useT } from "@/lib/i18n";
-import { cdf, d, pct, date as fmtDate, money, monthStart, previousMonth, qty, todayLocal, usd, variantText } from "@/lib/format";
+import { cdf, curLabel, d, pct, date as fmtDate, money, monthStart, previousMonth, qty, todayLocal, usd, variantText } from "@/lib/format";
 import type { Account } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { WIDE_PRINT_CSS, journalTypeLabel } from "@/pages/ContactDetail";
+
+/** A balanced report reads as good news: green, not the orange of buttons. */
+const BALANCED = "border-green-700/40 bg-green-50 text-green-800 dark:border-green-400/40 dark:bg-green-950/40 dark:text-green-300";
 
 type T = (en: string, fr: string) => string;
 
@@ -164,7 +167,7 @@ function ProfitLoss() {
 
   function exportCsv() {
     if (!p) return;
-    const rows: unknown[][] = [[t("Group", "Groupe"), t("Code", "Code"), t("Account", "Compte"), t("Amount USD", "Montant USD")]];
+    const rows: unknown[][] = [[t("Group", "Groupe"), t("Code", "Code"), t("Account", "Compte"), t("Amount ($)", "Montant ($)")]];
     for (const [type, label, key] of groups) {
       for (const a of p.accounts.filter((x) => x.type === type)) rows.push([label, a.code, a.name, a.amount]);
       rows.push([label, "", t("Total", "Total"), p.totals[key]]);
@@ -338,7 +341,7 @@ function SalesByItem() {
 // ---------------------------------------------------------------- (3) Daily cash
 
 interface DrawerRow { accountId: number; name: string; currency: string; opening: string; totalIn: string; totalOut: string; closing: string; byType: { type: string; in: string; out: string }[] }
-interface Daily { date: string; count: number; total: string; credit: string; voidsCount: number; voidsTotal: string; returnsCount: number; returnsTotal: string; byAccount: { account_id: number; name: string; currency: string; usd: string; native: string }[]; drawer?: DrawerRow[] }
+interface Daily { date: string; count: number; total: string; credit: string; voidsCount: number; voidsTotal: string; returnsCount: number; returnsTotal: string; byAccount: { account_id: number; name: string; currency: string; usd: string; native: string; received_native?: string; change_native?: string }[]; drawer?: DrawerRow[] }
 
 function DailyCash() {
   const t = useT();
@@ -352,14 +355,14 @@ function DailyCash() {
     const rows: unknown[][] = [
       [t("Daily cash report", "Rapport de caisse du jour"), r.date],
       [t("Sales", "Ventes"), r.count],
-      [t("Total sold USD", "Total vendu USD"), r.total],
+      [t("Total sold ($)", "Total vendu ($)"), r.total],
       [t("Cancellations", "Annulations"), r.voidsCount, r.voidsTotal],
       [t("Returns", "Retours"), r.returnsCount, r.returnsTotal],
-      [t("Sold on credit USD", "Vendu à crédit USD"), r.credit],
+      [t("Sold on credit ($)", "Vendu à crédit ($)"), r.credit],
       [],
-      [t("Received into", "Reçu dans"), t("Currency", "Devise"), t("Amount (account currency)", "Montant (devise du compte)"), t("USD value", "Valeur USD")],
-      ...r.byAccount.map((a) => [a.name, a.currency, a.native, a.usd]),
-      [t("Total received", "Total reçu"), "USD", "", paidUsd.toFixed(2)],
+      [t("Received into", "Reçu dans"), t("Currency", "Devise"), t("Handed over", "Reçu"), t("Change given", "Monnaie rendue"), t("Kept", "Gardé"), t("Value in $", "Valeur en $")],
+      ...r.byAccount.map((a) => [a.name, curLabel(a.currency), a.received_native ?? a.native, a.change_native ?? "0", a.native, a.usd]),
+      [t("Total kept", "Total gardé"), "$", "", "", "", paidUsd.toFixed(2)],
     ];
     if (r.drawer) {
       rows.push([]);
@@ -409,25 +412,29 @@ function DailyCash() {
                 <TableHeader>
                   <TableRow>
                     <TableHead>{t("Received into", "Reçu dans")}</TableHead>
-                    <TableHead className="text-right">{t("Amount (account currency)", "Montant (devise du compte)")}</TableHead>
-                    <TableHead className="text-right">{t("USD value", "Valeur USD")}</TableHead>
+                    <TableHead className="text-right">{t("Handed over", "Reçu")}</TableHead>
+                    <TableHead className="text-right">{t("Change given", "Monnaie rendue")}</TableHead>
+                    <TableHead className="text-right">{t("Kept", "Gardé")}</TableHead>
+                    <TableHead className="text-right">{t("Value in $", "Valeur en $")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {r.byAccount.length === 0 && (
-                    <TableRow><TableCell colSpan={3} className="text-center text-muted-foreground">{t("No payments", "Aucun paiement")}</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground">{t("No payments", "Aucun paiement")}</TableCell></TableRow>
                   )}
                   {r.byAccount.map((a) => (
                     <TableRow key={a.account_id}>
                       <TableCell className="font-medium">{a.name}</TableCell>
-                      <TableCell className="text-right"><Num>{money(a.native, a.currency)}</Num></TableCell>
+                      <TableCell className="text-right"><Num>{money(a.received_native ?? a.native, a.currency)}</Num></TableCell>
+                      <TableCell className="text-right"><Num>{d(a.change_native).isZero() ? "—" : `−${money(a.change_native, a.currency)}`}</Num></TableCell>
+                      <TableCell className="text-right"><Num className="font-medium">{money(a.native, a.currency)}</Num></TableCell>
                       <TableCell className="text-right"><Num>{usd(a.usd)}</Num></TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
                 <TableFooter>
                   <TableRow>
-                    <TableCell colSpan={2}>{t("Total received", "Total reçu")}</TableCell>
+                    <TableCell colSpan={4}>{t("Total kept", "Total gardé")}</TableCell>
                     <TableCell className="text-right"><Num>{usd(paidUsd.toFixed(2))}</Num></TableCell>
                   </TableRow>
                 </TableFooter>
@@ -463,7 +470,7 @@ function DailyCash() {
                             <span className="font-medium">{a.name}</span>
                             {a.byType.length > 0 && (
                               <span className="block text-xs text-muted-foreground">
-                                {a.byType.map((b) => `${journalTypeLabel(b.type, t)}: ${d(b.in).gt(0) ? `+${money(b.in, a.currency)}` : ""}${d(b.in).gt(0) && d(b.out).gt(0) ? " " : ""}${d(b.out).gt(0) ? `−${money(b.out, a.currency)}` : ""}`).join(" · ")}
+                                {a.byType.map((b) => `${journalTypeLabel(b.type, t)}${t(":", "\u00a0:")} ${d(b.in).gt(0) ? `+${money(b.in, a.currency)}` : ""}${d(b.in).gt(0) && d(b.out).gt(0) ? " " : ""}${d(b.out).gt(0) ? `−${money(b.out, a.currency)}` : ""}`).join(" · ")}
                               </span>
                             )}
                           </TableCell>
@@ -612,7 +619,7 @@ function SelfCheck() {
           return (
             <Card key={c.key} className={cn(!c.ok && (c.warning ? "border-amber-500/60" : "border-destructive/50"))}>
               <CardContent className="space-y-1 p-4">
-                <p className={cn("font-medium", c.ok ? "text-green-700 dark:text-green-400" : c.warning ? "text-amber-700 dark:text-amber-400" : "text-destructive")}>
+                <p className={cn("font-medium", c.ok ? "text-green-800 dark:text-green-400" : c.warning ? "text-amber-800 dark:text-amber-400" : "text-destructive")}>
                   {c.ok ? "✓" : c.warning ? "!" : "✗"}{" "}
                   {text && c.warning && !c.ok ? `${t(text.actual[0], text.actual[1])}${t(":", "\u00a0:")} ${c.actual}` : text ? t(text.title[0], text.title[1]) : c.key}
                 </p>
@@ -672,7 +679,7 @@ function BalanceSheet() {
     if (!bs) return;
     const rows = (title: string, xs: BsLine[]) => [[title, "", ""], ...xs.map((x) => [x.code, x.name, x.amount])];
     downloadCsv(`bilan_${asOf}.csv`, [
-      [t("Code", "Code"), t("Account", "Compte"), t("Amount (USD)", "Montant (USD)")],
+      [t("Code", "Code"), t("Account", "Compte"), t("Amount ($)", "Montant ($)")],
       ...rows(t("Assets", "Actif"), bs.assets),
       ["", t("Total assets", "Total actif"), bs.totalAssets],
       ...rows(t("Liabilities", "Dettes"), bs.liabilities),
@@ -720,7 +727,7 @@ function BalanceSheet() {
         </Field>
         <div className="flex items-center gap-2">
           {bs && (
-            <Badge variant={bs.balanced ? "default" : "destructive"}>
+            <Badge variant={bs.balanced ? "outline" : "destructive"} className={cn(bs.balanced && BALANCED)}>
               {bs.balanced ? t("Balanced ✓", "Équilibré ✓") : t("Not balanced", "Non équilibré")}
             </Badge>
           )}
@@ -768,7 +775,7 @@ function TrialBalance() {
         </Field>
         <div className="flex items-center gap-2">
           {tb && (
-            <Badge variant={tb.balanced ? "default" : "destructive"}>
+            <Badge variant={tb.balanced ? "outline" : "destructive"} className={cn(tb.balanced && BALANCED)}>
               {tb.balanced ? t("Balanced ✓", "Équilibrée ✓") : t("Not balanced", "Non équilibrée")}
             </Badge>
           )}
@@ -844,7 +851,7 @@ function Journals() {
     const out: unknown[][] = [[
       t("Date", "Date"), t("No.", "N°"), t("Type", "Type"), t("Memo", "Libellé"),
       t("Code", "Code"), t("Account", "Compte"), t("Party", "Tiers"),
-      t("Debit USD", "Débit USD"), t("Credit USD", "Crédit USD"), t("Currency", "Devise"), t("Native amount", "Montant en devise"), t("Rate", "Taux"), t("Line memo", "Libellé de ligne"),
+      t("Debit ($)", "Débit ($)"), t("Credit ($)", "Crédit ($)"), t("Currency", "Devise"), t("Native amount", "Montant en devise"), t("Rate", "Taux"), t("Line memo", "Libellé de ligne"),
     ]];
     for (const j of rows) {
       for (const l of j.lines) {
@@ -1081,10 +1088,10 @@ function ManualJournalDialog({ onClose }: { onClose: () => void }) {
                   <Field label={`${t("Account", "Compte")} ${i + 1}`} required>
                     <AccountSelect value={l.accountId} onChange={(id) => set(l.key, { accountId: id, partyId: null, native: "", rate: "" })} />
                   </Field>
-                  <Field label={t("Debit USD", "Débit USD")}>
+                  <Field label={t("Debit ($)", "Débit ($)")}>
                     <Input inputMode="decimal" value={l.debit} onChange={(e) => set(l.key, { debit: e.target.value, credit: e.target.value ? "" : l.credit })} />
                   </Field>
-                  <Field label={t("Credit USD", "Crédit USD")}>
+                  <Field label={t("Credit ($)", "Crédit ($)")}>
                     <Input inputMode="decimal" value={l.credit} onChange={(e) => set(l.key, { credit: e.target.value, debit: e.target.value ? "" : l.debit })} />
                   </Field>
                   <div className="flex items-end">
@@ -1105,7 +1112,7 @@ function ManualJournalDialog({ onClose }: { onClose: () => void }) {
                     <Field label={t("Amount in CDF", "Montant en FC")} required>
                       <Input inputMode="decimal" value={l.native} onChange={(e) => setNative(l, e.target.value, l.rate)} />
                     </Field>
-                    <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 USD)")} required>
+                    <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} required>
                       <Input inputMode="decimal" value={l.rate} onChange={(e) => setNative(l, l.native, e.target.value)} />
                     </Field>
                   </div>
@@ -1120,7 +1127,7 @@ function ManualJournalDialog({ onClose }: { onClose: () => void }) {
         <div className="flex flex-wrap justify-end gap-4 rounded-lg bg-muted p-3 text-sm">
           <span>{t("Debits:", "Débits\u00a0:")} <Num className="font-medium">{usd(totalDebit.toFixed(2))}</Num></span>
           <span>{t("Credits:", "Crédits\u00a0:")} <Num className="font-medium">{usd(totalCredit.toFixed(2))}</Num></span>
-          <span className={cn("font-semibold", diff.isZero() ? "text-green-700 dark:text-green-400" : "text-destructive")}>
+          <span className={cn("font-semibold", diff.isZero() ? "text-green-800 dark:text-green-400" : "text-destructive")}>
             {t("Difference:", "Écart\u00a0:")} <Num>{usd(diff.toFixed(2))}</Num>
           </span>
         </div>
@@ -1156,7 +1163,7 @@ function Ledger() {
 
   function exportCsv() {
     if (!L) return;
-    const head = [t("Date", "Date"), t("No.", "N°"), t("Type", "Type"), t("Details", "Détails"), t("Party", "Tiers"), t("Debit USD", "Débit USD"), t("Credit USD", "Crédit USD"), t("Balance USD", "Solde USD")];
+    const head = [t("Date", "Date"), t("No.", "N°"), t("Type", "Type"), t("Details", "Détails"), t("Party", "Tiers"), t("Debit ($)", "Débit ($)"), t("Credit ($)", "Crédit ($)"), t("Balance USD", "Solde USD")];
     if (cdfAcc) head.push("CDF", t("CDF balance", "Solde en FC"));
     const rows: unknown[][] = [
       [`${L.account.code} · ${L.account.name}`],

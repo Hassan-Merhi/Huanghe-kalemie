@@ -40,7 +40,7 @@ export function BalanceWords({ balance, className }: { balance: string; classNam
   const b = d(balance);
   if (b.isZero()) return <span className={cn("text-muted-foreground", className)}>{t("Settled", "Soldé")}</span>;
   if (b.isPositive()) {
-    return <span className={cn("font-medium text-amber-700 dark:text-amber-400", className)}>{t(`owes us ${usd(b.toFixed(2))}`, `nous doit ${usd(b.toFixed(2))}`)}</span>;
+    return <span className={cn("font-medium text-amber-800 dark:text-amber-400", className)}>{t(`owes us ${usd(b.toFixed(2))}`, `nous doit ${usd(b.toFixed(2))}`)}</span>;
   }
   return <span className={cn("font-medium text-blue-700 dark:text-blue-400", className)}>{t(`we owe ${usd(b.abs().toFixed(2))}`, `nous devons ${usd(b.abs().toFixed(2))}`)}</span>;
 }
@@ -224,7 +224,7 @@ export function PartyDialog({ type, party, onClose }: { type: PartyType; party: 
                 <Input value={position} onChange={(e) => setPosition(e.target.value)} placeholder={t("e.g. Mechanic, Seller", "ex. Mécanicien, Vendeur")} />
               </Field>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <Field label={t("Monthly salary (USD)", "Salaire mensuel (USD)")}>
+                <Field label={t("Monthly salary ($)", "Salaire mensuel ($)")}>
                   <Input inputMode="decimal" value={monthlySalary} onChange={(e) => setMonthlySalary(e.target.value)} placeholder="0" />
                 </Field>
                 <Field label={t("Start date", "Date d'embauche")}>

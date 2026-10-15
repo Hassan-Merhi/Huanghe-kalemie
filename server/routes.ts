@@ -57,7 +57,7 @@ import * as reports from "./services/reports";
 import * as checks from "./services/checks";
 import * as backup from "./services/backup";
 import { getSetting } from "./setup";
-import { reverseJournal, setExchangeRate } from "./services/ledger";
+import { cnyRateFor, reverseJournal, setExchangeRate } from "./services/ledger";
 import { transferStock } from "./services/stock";
 import * as vouchers from "./services/vouchers";
 import { registerErpRoutes } from "./routes/erp";
@@ -160,7 +160,9 @@ export function registerRoutes(app: Express) {
     const date = isoDate.parse(req.params.date);
     const [row] = await db.select().from(exchangeRates).where(lte(exchangeRates.date, date)).orderBy(desc(exchangeRates.date)).limit(1);
     const fallback = await getSetting(db, "defaultCdfRate", "2800");
-    res.json({ date, cdfPerUsd: row?.cdfPerUsd ?? String(fallback), source: row ? row.date : "default" });
+    // The yuan rate is not entered every day: the latest one on file, if any.
+    const cny = await cnyRateFor(db, date);
+    res.json({ date, cdfPerUsd: row?.cdfPerUsd ?? String(fallback), source: row ? row.date : "default", cnyPerUsd: cny ? cny.toString() : null });
   }));
 
   app.post("/api/exchange-rates", requireRole(...STAFF), asyncHandler(async (req, res) => {
@@ -962,6 +964,11 @@ export function registerRoutes(app: Express) {
       ...(Array.isArray(v.shares) ? { shares: (v.shares as { id: number; name: string }[]).map(rename) } : {}),
     } as T;
   };
+  /** The first day anything was booked, so month pickers do not offer months before the shop's books start. */
+  app.get("/api/books/first-date", requireRole(...READERS), asyncHandler(async (_req, res) => {
+    const [row] = await db.select({ date: sql<string | null>`min(${journals.date})::text` }).from(journals);
+    res.json({ date: row?.date ?? null });
+  }));
   app.get("/api/periods", requireRole(...READERS), asyncHandler(async (req, res) => {
     const rows = await db.select().from(periods).orderBy(desc(periods.month));
     res.json(rows.map((r) => maskSplit(req, r)));
@@ -1017,13 +1024,20 @@ export function registerRoutes(app: Express) {
     const date = req.user!.role === "cashier" ? todayIso() : q.date ?? todayIso();
     // A sale counts on its own day even if it was cancelled later; a cancellation counts on the day
     // it was made. The drawer below books them the same way, so the two always agree.
-    const result = await db.execute<{ account_id: number; name: string; currency: string; usd: string; native: string }>(sql`
-      select x.account_id, a.name, a.currency, sum(x.usd) as usd, sum(x.native) as native from (
-        select p.account_id, p.amount_usd as usd, p.amount_native as native
+    // Per account: the net kept, and apart what was handed over and what went back as change (a
+    // negative payment); a sale cancelled that day takes its own amounts back out.
+    const result = await db.execute<{ account_id: number; name: string; currency: string; usd: string; native: string; received_usd: string; received_native: string; change_usd: string; change_native: string }>(sql`
+      select x.account_id, a.name, a.currency, sum(x.usd) as usd, sum(x.native) as native,
+        coalesce(sum(x.usd) filter (where not x.change), 0) as received_usd,
+        coalesce(sum(x.native) filter (where not x.change), 0) as received_native,
+        coalesce(-sum(x.usd) filter (where x.change), 0) as change_usd,
+        coalesce(-sum(x.native) filter (where x.change), 0) as change_native
+      from (
+        select p.account_id, p.amount_usd as usd, p.amount_native as native, p.amount_usd < 0 as change
           from sale_payments p join sales s on s.id = p.sale_id
           where s.date = ${date}
         union all
-        select p.account_id, -p.amount_usd, -p.amount_native
+        select p.account_id, -p.amount_usd, -p.amount_native, p.amount_usd < 0
           from sale_payments p join sales s on s.id = p.sale_id join journals vj on vj.id = s.void_journal_id
           where vj.date = ${date}
       ) x join accounts a on a.id = x.account_id

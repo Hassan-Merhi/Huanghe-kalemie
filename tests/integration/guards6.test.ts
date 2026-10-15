@@ -50,7 +50,7 @@ describe.skipIf(!hasDb)("Guards found by the sixth audit", async () => {
     await db.transaction((tx) => containersSvc.finalizeContainer(tx, c.id, date, ownerId));
     return c.id;
   }
-  const product = async (name: string, sellPrice: string) => (await db.transaction((tx) => catalog.createProduct(tx, { name, variants: [{ attributes: {}, sellPrice }] }))).variants[0].id;
+  const product = async (name: string, sellPrice: string, unit = "pcs") => (await db.transaction((tx) => catalog.createProduct(tx, { name, unit, variants: [{ attributes: {}, sellPrice }] }))).variants[0].id;
 
   it("never lets staff value found stock above its selling price", async () => {
     const y = await product("Bouchon", "3");
@@ -62,7 +62,7 @@ describe.skipIf(!hasDb)("Guards found by the sixth audit", async () => {
   });
 
   it("leaves reversed containers out of an item's purchase cost, and does not average a fraction of a unit", async () => {
-    const w = await product("Phare", "30");
+    const w = await product("Graisse", "30", "kg");
     const typo = await offload("C-2", supplierId, "USD", "1", [{ variantId: w, quantity: "100", unitPrice: "1420" }], "2026-08-02");
     await db.transaction((tx) => containersSvc.reverseContainer(tx, typo, "2026-08-02", ownerId));
     await offload("C-3", supplierId, "USD", "1", [{ variantId: w, quantity: "100", unitPrice: "14.20" }], "2026-08-02");

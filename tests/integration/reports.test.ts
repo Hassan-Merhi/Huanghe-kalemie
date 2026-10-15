@@ -96,7 +96,7 @@ describe.skipIf(!hasDb)("Reports that always agree", async () => {
     // The customer owes 20 from 10 July; pays 5, then buys 15 more on 1 October.
     await db.transaction((tx) => ops.receiveFromCustomer(tx, { date: "2026-09-01", partyId: customerId, accountId: cashUsd, amount: "5" }, userId));
     await db.transaction((tx) =>
-      salesSvc.createSale(tx, { date: "2026-10-01", locationId, customerId, lines: [{ variantId: padsId, qty: "1.5", unitPrice: "10" }], payments: [] }, userId),
+      salesSvc.createSale(tx, { date: "2026-10-01", locationId, customerId, lines: [{ variantId: padsId, qty: "1", unitPrice: "15" }], payments: [] }, userId),
     );
     const a = await checks.customerAgeing(db, "2026-10-15");
     expect(a.rows).toHaveLength(1);

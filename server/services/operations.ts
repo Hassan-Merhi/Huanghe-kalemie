@@ -14,7 +14,8 @@ import {
 } from "@shared/schema";
 import { cents, dec, sum, Decimal, type DecimalInput } from "@shared/money";
 import type { Tx } from "../db";
-import { badRequest, conflict, forbidden, notFound } from "../errors";
+import { badRequest, conflict, forbidden, notFound, wholeUnitError, francDecimalsError } from "../errors";
+import { wholeUnit } from "@shared/units";
 import {
   cnyRateFor,
   contactLines,
@@ -34,6 +35,7 @@ import {
 } from "./ledger";
 import { issueStock, linkMovementsToJournal, receiveStock } from "./stock";
 import { variantColour } from "./catalog";
+import { de } from "@shared/french";
 
 async function requireParty(tx: Tx, id: number | null | undefined, types: string[]) {
   if (!id) throw badRequest("Choose who this is for", "Choisissez le bénéficiaire");
@@ -108,6 +110,7 @@ export async function createExpense(tx: Tx, input: ExpenseInput, userId: number)
     creditLine = { accountId: leg.accountId, credit: usd, nativeAmount: leg.nativeAmount, rate: leg.rate };
   } else {
     await requireParty(tx, input.payablePartyId, ["supplier", "agent", "employee"]);
+    if (currency === "CDF" && !amount.isInteger()) throw francDecimalsError(amount);
     rate = currency === "CDF" ? await resolveRate(tx, input.date, input.rate) : null;
     usd = toUsd(currency, amount, rate);
     // A bill in francs stays owed in francs on the contact.
@@ -137,7 +140,7 @@ export async function createExpense(tx: Tx, input: ExpenseInput, userId: number)
   const journalId = await postJournal(tx, {
     date: input.date,
     type: "expense",
-    memo: `${account.name}: ${input.description}`,
+    memo: `${account.name}\u00a0: ${input.description}`,
     sourceType: "expense",
     sourceId: expense.id,
     userId,
@@ -155,7 +158,7 @@ export async function voidExpense(tx: Tx, id: number, date: string, userId: numb
   if (j?.type === "payment") {
     throw conflict(`This expense is part of payment voucher ${j.number}. Cancel the voucher from the daybook.`, `Cette dépense fait partie de la pièce de paiement ${j.number}. Annulez la pièce depuis le journal du jour.`);
   }
-  const voidJournalId = await reverseJournal(tx, expense.journalId!, { date, userId, memo: `Dépense annulée : ${expense.description}` });
+  const voidJournalId = await reverseJournal(tx, expense.journalId!, { date, userId, memo: `Dépense annulée\u00a0: ${expense.description}` });
   await tx.update(expenses).set({ voidedAt: new Date(), voidJournalId }).where(eq(expenses.id, id));
 }
 
@@ -400,7 +403,7 @@ export async function partnerContribution(tx: Tx, input: PartnerMoneyInput, user
   return postJournal(tx, {
     date: input.date,
     type: "partner_contribution",
-    memo: input.memo ?? `Apport en capital de ${partner.name}`,
+    memo: input.memo ?? `Apport en capital ${de(partner.name)}`,
     userId,
     lines: [
       { accountId: leg.accountId, debit: leg.usd, nativeAmount: leg.nativeAmount, rate: leg.rate },
@@ -416,7 +419,7 @@ export async function partnerWithdrawal(tx: Tx, input: PartnerMoneyInput, userId
   return postJournal(tx, {
     date: input.date,
     type: "partner_withdrawal",
-    memo: input.memo ?? `Retrait de ${partner.name}`,
+    memo: input.memo ?? `Retrait ${de(partner.name)}`,
     userId,
     lines: [
       { accountId: partner.currentAccountId, debit: leg.usd },
@@ -559,12 +562,13 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
     const change = dec(line.qtyChange, "quantity");
     if (change.isZero()) continue;
     const [v] = await tx
-      .select({ variant: variants, tracksSerials: products.tracksSerials, name: products.name })
+      .select({ variant: variants, tracksSerials: products.tracksSerials, name: products.name, unit: products.unit })
       .from(variants)
       .innerJoin(products, eq(products.id, variants.productId))
       .where(eq(variants.id, line.variantId));
     if (!v) throw badRequest("One of the items does not exist", "Un des articles n'existe pas");
     if (v.tracksSerials && !change.isInteger()) throw badRequest("Motorcycles must be whole units", "Les motos se comptent en unités entières");
+    if (!change.isInteger() && wholeUnit(v.unit)) throw wholeUnitError(`${v.name} (${v.variant.sku})`);
 
     if (change.isPositive()) {
       if (input.kind !== "opening" && input.kind !== "found" && input.kind !== "count" && input.kind !== "other") {
@@ -661,7 +665,7 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
   const journalId = await postJournal(tx, {
     date: input.date,
     type: input.kind === "opening" ? "opening" : "stock_adjustment",
-    memo: `${number}: ${input.reason}`,
+    memo: `${number}\u00a0: ${input.reason}`,
     sourceType: "adjustment",
     sourceId: adj.id,
     userId,

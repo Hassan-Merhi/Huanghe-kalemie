@@ -89,7 +89,8 @@ const DialogTitle = React.forwardRef<
   <DialogPrimitive.Title
     ref={ref}
     className={cn(
-      "text-lg font-semibold leading-none tracking-tight",
+      // Clear of the close button in the corner, also when a long title wraps on a phone.
+      "px-6 text-lg font-semibold leading-snug tracking-tight sm:pl-0 sm:pr-6",
       className
     )}
     {...props}

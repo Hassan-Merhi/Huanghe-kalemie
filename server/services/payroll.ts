@@ -2,7 +2,8 @@ import { and, asc, eq } from "drizzle-orm";
 import { accounts, journals, parties, payrollRuns, type PayrollLine } from "@shared/schema";
 import { cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
-import { badRequest, conflict, notFound } from "../errors";
+import { badRequest, conflict, francDecimalsError, notFound } from "../errors";
+import { deMonth, monthText } from "@shared/french";
 import { postJournal, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
 import { monthRange } from "./periods";
 import { partyBalances } from "./reports";
@@ -58,12 +59,12 @@ export interface PayrollRunInput {
 export async function runPayroll(tx: Tx, input: PayrollRunInput, userId: number) {
   if (!/^\d{4}-\d{2}$/.test(input.month)) throw badRequest("Pick a month", "Choisissez un mois");
   const [existing] = await tx.select({ id: payrollRuns.id }).from(payrollRuns).where(and(eq(payrollRuns.month, input.month), eq(payrollRuns.status, "posted")));
-  if (existing) throw conflict(`Salaries for ${input.month} are already booked. Cancel that run first to redo it.`, `Les salaires de ${input.month} sont déjà comptabilisés. Annulez d'abord ce passage pour le refaire.`);
+  if (existing) throw conflict(`Salaries for ${input.month} are already booked. Cancel that run first to redo it.`, `Les salaires ${deMonth(input.month)} sont déjà comptabilisés. Annulez d'abord ce passage pour le refaire.`);
   const [account] = await tx.select().from(accounts).where(eq(accounts.id, input.accountId));
   if (!account || account.type !== "expense") throw badRequest("Pick an expense account for salaries", "Choisissez un compte de charges pour les salaires");
   const { from, to } = monthRange(input.month);
   const date = input.date ?? to;
-  if (date < from || date > to) throw badRequest(`The date must be in ${input.month}`, `La date doit être dans ${input.month}`);
+  if (date < from || date > to) throw badRequest(`The date must be in ${input.month}`, `La date doit être en ${monthText(input.month)}`);
   const currency = input.currency ?? "USD";
   const rate = currency === "CDF" ? await resolveRate(tx, date, input.rate) : null;
   const usdOf = (native: Decimal) => (rate ? cents(native.dividedBy(rate)) : native);
@@ -82,6 +83,8 @@ export async function runPayroll(tx: Tx, input: PayrollRunInput, userId: number)
     // Older screens send one "deduction": it always lowered the cost, so it is a penalty.
     const penalty = cents(l.penalty || (l.withheld == null ? l.deduction : null) || 0);
     if ([salary, bonus, withheld, penalty].some((x) => x.isNegative())) throw badRequest("Amounts cannot be negative", "Les montants ne peuvent pas être négatifs");
+    const fractional = rate ? [salary, bonus, withheld, penalty].find((x) => !x.isInteger()) : undefined;
+    if (fractional) throw francDecimalsError(fractional);
     const net = salary.plus(bonus).minus(withheld).minus(penalty);
     if (net.isNegative()) throw badRequest(`${p.name}: deductions are more than the salary`, `${p.name} : les retenues dépassent le salaire`);
     if (net.isZero() && withheld.isZero()) continue;
@@ -102,13 +105,13 @@ export async function runPayroll(tx: Tx, input: PayrollRunInput, userId: number)
   const native = (amount: string) => (rate ? { currency: "CDF" as const, nativeAmount: amount, rate } : {});
   const owed: PostLine[] = lines
     .filter((l) => !dec(l.net).isZero())
-    .map((l) => ({ accountId: payables, credit: l.netUsd!, partyId: l.partyId, memo: `Salaire ${input.month}`, ...native(l.net) }));
+    .map((l) => ({ accountId: payables, credit: l.netUsd!, partyId: l.partyId, memo: `Salaire ${monthText(input.month)}`, ...native(l.net) }));
   const withheldNative = sum(lines.map((l) => l.withheld ?? 0));
   if (!withheldNative.isZero()) {
     owed.push({
       accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.payrollWithheld),
       credit: usdOf(withheldNative),
-      memo: `Retenues sur salaires ${input.month}`,
+      memo: `Retenues sur salaires ${monthText(input.month)}`,
       ...native(withheldNative.toFixed(2)),
     });
   }
@@ -117,10 +120,10 @@ export async function runPayroll(tx: Tx, input: PayrollRunInput, userId: number)
   const journalId = await postJournal(tx, {
     date,
     type: "payroll",
-    memo: `Salaires ${input.month}`,
+    memo: `Salaires ${monthText(input.month)}`,
     sourceType: "payroll",
     userId,
-    lines: [{ accountId: account.id, debit: total, memo: `Salaires ${input.month}` }, ...owed],
+    lines: [{ accountId: account.id, debit: total, memo: `Salaires ${monthText(input.month)}` }, ...owed],
   });
   const [run] = await tx
     .insert(payrollRuns)
@@ -138,7 +141,7 @@ export async function cancelRun(tx: Tx, month: string, date: string | null | und
   const [run] = await tx.select().from(payrollRuns).where(and(eq(payrollRuns.month, month), eq(payrollRuns.status, "posted"))).for("update");
   if (!run) throw notFound("Payroll run", "Passage de paie introuvable");
   const cancelJournalId = run.journalId
-    ? await reverseJournal(tx, run.journalId, { date: date || run.date, userId, memo: `Annulation des salaires ${month}` })
+    ? await reverseJournal(tx, run.journalId, { date: date || run.date, userId, memo: `Annulation des salaires ${monthText(month)}` })
     : null;
   await tx.update(payrollRuns).set({ status: "cancelled", cancelledAt: new Date(), cancelledBy: userId, cancelJournalId }).where(eq(payrollRuns.id, run.id));
 }
