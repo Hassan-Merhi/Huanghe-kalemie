@@ -506,13 +506,17 @@ export async function returnSale(tx: Tx, saleId: number, input: ReturnInput, use
     const [acc] = await tx.select().from(accounts).where(eq(accounts.id, input.refundAccountId!));
     if (!acc) throw badRequest("Refund account not found", "Compte de remboursement introuvable");
     // Refund the USD value; for a CDF box, pay it out at the given rate.
-    // Francs go back in 100 FC steps, like the till's change: the few francs over or under are the
-    // return's rounding, posted to the same "Arrondi FC" line as a sale's.
+    // Francs go back in 100 FC steps, rounded down so a refund never pays out more than was
+    // returned: the few francs kept are the return's rounding, posted to the same "Arrondi FC" line
+    // as a sale's. Under 100 FC nothing is handed back.
     const rate = acc.currency === "CDF" ? await resolveRate(tx, input.date, input.rate) : null;
-    const native = rate ? Decimal.max(toCash.times(rate).dividedBy(FRANC_ROUNDING).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).times(FRANC_ROUNDING), FRANC_ROUNDING) : toCash;
-    const leg = await moneyLeg(tx, { accountId: input.refundAccountId!, amount: native, rate, date: input.date });
-    const paidOut = rate ? dec(leg.usd) : toCash;
-    refundLines.push({ accountId: leg.accountId, credit: paidOut, nativeAmount: leg.nativeAmount, rate: leg.rate });
+    const native = rate ? toCash.times(rate).dividedBy(FRANC_ROUNDING).toDecimalPlaces(0, Decimal.ROUND_FLOOR).times(FRANC_ROUNDING) : toCash;
+    let paidOut = new Decimal(0);
+    if (native.gt(0)) {
+      const leg = await moneyLeg(tx, { accountId: input.refundAccountId!, amount: native, rate, date: input.date });
+      paidOut = rate ? Decimal.min(dec(leg.usd), toCash) : toCash;
+      refundLines.push({ accountId: leg.accountId, credit: paidOut, nativeAmount: leg.nativeAmount, rate: leg.rate });
+    }
     // Positive: the customer got a few cents less than the refund (a gain); negative: a few cents more (a loss).
     const rounding = toCash.minus(paidOut);
     if (!rounding.isZero()) {
