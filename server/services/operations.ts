@@ -149,7 +149,7 @@ export async function createExpense(tx: Tx, input: ExpenseInput, userId: number)
   });
   const [updated] = await tx.update(expenses).set({ journalId }).where(eq(expenses.id, expense.id)).returning();
   // A bill owed in francs is settled by any dollar advance already paid to that contact.
-  if (input.payablePartyId && currency === "CDF") await applyAdvances(tx, input.payablePartyId, input.date, `Avance imputée sur la dépense ${input.description}`, userId, { type: "expense", id: expense.id });
+  if (input.payablePartyId && currency === "CDF") await applyAdvances(tx, input.payablePartyId, input.date, `Avance imputée sur la dépense ${input.description}`, userId, { type: "expense", id: expense.id }, "CDF");
   return updated;
 }
 
@@ -320,13 +320,11 @@ export async function applyAdvances(
   memo: string,
   userId: number,
   source: { type: AdvanceSource; id: number },
+  currency: "CNY" | "CDF",
 ): Promise<number | null> {
   const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
-  const linesOn = async (on: string) => {
-    const lines = await advanceToYuanLines(tx, payables, partyId, on);
-    if (!lines.length) lines.push(...(await advanceToFrancLines(tx, payables, partyId, on)));
-    return lines;
-  };
+  // Only the bill's own currency, so undoing the bill gives back exactly what it took.
+  const linesOn = (on: string) => (currency === "CNY" ? advanceToYuanLines(tx, payables, partyId, on) : advanceToFrancLines(tx, payables, partyId, on));
   let on = date;
   let lines = await linesOn(on);
   // A bill dated before a deposit paid since: the deposit settles it from today.
