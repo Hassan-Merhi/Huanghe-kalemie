@@ -8,6 +8,7 @@ import {
   journals,
   periods,
   settings,
+  users,
   type Currency,
   type LineCurrency,
   type JournalType,
@@ -471,10 +472,20 @@ export async function setExchangeRate(
     const today = shopToday();
     const [existing] = await tx.select().from(exchangeRates).where(eq(exchangeRates.date, input.date));
     const [prevRow] = await tx.select().from(exchangeRates).where(lt(exchangeRates.date, today)).orderBy(desc(exchangeRates.date)).limit(1);
-    const prev = prevRow ? dec(prevRow.cdfPerUsd) : (await rateFor(tx, "0000-01-01")).rate;
+    // A rate the owner set today (or for this day) is also a fair starting point.
+    const ownerRows = (
+      await tx
+        .select({ cdf: exchangeRates.cdfPerUsd, cny: exchangeRates.cnyPerUsd })
+        .from(exchangeRates)
+        .innerJoin(users, eq(users.id, exchangeRates.createdBy))
+        .where(and(inArray(exchangeRates.date, [today, input.date]), eq(users.role, "owner")))
+    );
+    const prevs = [prevRow ? dec(prevRow.cdfPerUsd) : (await rateFor(tx, "0000-01-01")).rate, ...ownerRows.map((r) => dec(r.cdf))];
     const next = dec(input.cdfPerUsd);
+    const near = (ref: Decimal, value: Decimal) => value.minus(ref).abs().dividedBy(ref).times(100).lte(limit);
+    const prev = prevs.reduce((best, r) => (r.minus(next).abs().lt(best.minus(next).abs()) ? r : best));
     const unchanged = (stored: string | null | undefined, given: string) => stored != null && dec(stored).equals(dec(given));
-    if (!unchanged(existing?.cdfPerUsd, input.cdfPerUsd) && next.minus(prev).abs().dividedBy(prev).times(100).gt(limit)) {
+    if (!unchanged(existing?.cdfPerUsd, input.cdfPerUsd) && !near(prev, next) && next.minus(prev).abs().dividedBy(prev).times(100).gt(limit)) {
       throw new AppError(
         403,
         `${next.toString()} is more than ${limit.toString()}% away from the last rate (${prev.toString()}). Only the owner can make that change.`,
@@ -489,10 +500,11 @@ export async function setExchangeRate(
         .where(and(lt(exchangeRates.date, today), sql`${exchangeRates.cnyPerUsd} is not null`))
         .orderBy(desc(exchangeRates.date))
         .limit(1);
-      if (!cnyRow?.rate) {
+      const cnyRefs = [...(cnyRow?.rate ? [dec(cnyRow.rate)] : []), ...ownerRows.filter((r) => r.cny).map((r) => dec(r.cny!))];
+      if (!cnyRefs.length) {
         throw new AppError(403, "Only the owner can set the first yuan rate", "FORBIDDEN", "Seul le propriétaire peut saisir le premier taux du yuan");
       }
-      if (dec(input.cnyPerUsd).minus(cnyRow.rate).abs().dividedBy(cnyRow.rate).times(100).gt(limit)) {
+      if (!cnyRefs.some((r) => near(r, dec(input.cnyPerUsd!)))) {
         throw new AppError(403, "Only the owner can move the yuan rate that far", "FORBIDDEN", "Seul le propriétaire peut modifier autant le taux du yuan");
       }
     }

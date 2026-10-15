@@ -1,6 +1,6 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
-import { accounts, expenses, journals, parties, voucherDrafts, type DraftKind } from "@shared/schema";
-import { cents, dec, sum } from "@shared/money";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { accounts, expenses, journalLines, journals, parties, voucherDrafts, type DraftKind } from "@shared/schema";
+import { cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, forbidden, notFound } from "../errors";
 import { contactLines, moneyLeg, postJournal, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type PostLine } from "./ledger";
@@ -99,6 +99,21 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
     if (l.partyId) {
       const p = partyRows.find((x) => x.id === l.partyId);
       if (!p) throw badRequest(`Line ${n}: that contact does not exist`, `Ligne ${n} : ce contact n'existe pas`);
+      if (kind === "payment" && p.type === "customer" && !rights.owner) {
+        // Money paid to a customer refunds what they have paid ahead; beyond that it would be a
+        // loan nobody approved.
+        const [bal] = await tx
+          .select({ v: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)` })
+          .from(journalLines)
+          .where(and(eq(journalLines.accountId, receivables), eq(journalLines.partyId, p.id)));
+        const credit = Decimal.max(dec(bal?.v ?? 0).negated(), 0);
+        if (dec(usd).gt(credit.plus("0.01"))) {
+          throw forbidden(
+            `Line ${n}: ${p.name} has only ${credit.toFixed(2)} $ to get back. Only the owner can pay a customer more.`,
+            `Ligne ${n} : ${p.name} n'a que ${credit.toFixed(2)} $ à récupérer. Seul le propriétaire peut verser davantage à un client.`,
+          );
+        }
+      }
       const lineMoney = { currency: money.currency, nativeAmount: money.currency === "CDF" ? amount.toFixed(2) : null, rate: money.rate };
       const split =
         kind === "payment" && p.type !== "customer"
