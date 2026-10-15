@@ -1,4 +1,5 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { createContext, Fragment, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { setFormatLang } from "./format";
 
 export type Lang = "fr" | "en";
 
@@ -23,6 +24,8 @@ function initialLang(): Lang {
 
 export function I18nProvider({ children }: { children: ReactNode }) {
   const [lang, setLangState] = useState<Lang>(initialLang);
+  // Number formatting reads the language too; set it before the children render.
+  setFormatLang(lang);
   useEffect(() => {
     document.documentElement.lang = lang;
   }, [lang]);
@@ -35,7 +38,12 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     }
   }, []);
   const t = useCallback((en: string, fr: string) => (lang === "fr" ? fr : en), [lang]);
-  return <Ctx.Provider value={{ lang, setLang, t }}>{children}</Ctx.Provider>;
+  // Keyed by language so every number on screen is redrawn when it changes.
+  return (
+    <Ctx.Provider value={{ lang, setLang, t }}>
+      <Fragment key={lang}>{children}</Fragment>
+    </Ctx.Provider>
+  );
 }
 
 export function useI18n(): I18n {

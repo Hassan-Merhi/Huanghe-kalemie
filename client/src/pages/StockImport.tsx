@@ -145,7 +145,7 @@ export default function StockImport() {
   return (
     <div>
       <PageHeader
-        title={t("Import from Excel", "Importer depuis Excel")}
+        title={t("Stock import", "Import de stock")}
         description={t("Load items, opening stock and prices from a spreadsheet, or export the list to edit it.", "Charger les articles, le stock d'ouverture et les prix depuis un tableur, ou exporter la liste pour la modifier.")}
       />
       <Tabs value={tab} onValueChange={setTab}>
@@ -285,8 +285,8 @@ function ItemsImport() {
           <AlertDescription className="space-y-1">
             <p className="font-medium">
               {t(
-                `${result.created} new items, ${result.newVariants} new variants, ${result.existing} existing, ${result.stockLines} opening stock lines.`,
-                `${result.created} nouveaux articles, ${result.newVariants} nouvelles variantes, ${result.existing} existants, ${result.stockLines} lignes de stock d'ouverture.`,
+                `${count(t, result.created, ["new item", "new items"], ["", ""])}, ${count(t, result.newVariants, ["new variant", "new variants"], ["", ""])}, ${result.existing} existing, ${count(t, result.stockLines, ["opening stock line", "opening stock lines"], ["", ""])}.`,
+                `${count(t, result.created, ["", ""], ["nouvel article", "nouveaux articles"])}, ${count(t, result.newVariants, ["", ""], ["nouvelle variante", "nouvelles variantes"])}, ${count(t, result.existing, ["", ""], ["existant", "existants"])}, ${count(t, result.stockLines, ["", ""], ["ligne de stock d'ouverture", "lignes de stock d'ouverture"])}.`,
               )}
             </p>
             <p className="flex flex-wrap gap-3 text-sm">

@@ -6,8 +6,8 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Loading, Num, PageHeader, StatCard } from "@/components/common";
-import { d, num, qty as fmtQty, usd, variantText } from "@/lib/format";
-import { useT } from "@/lib/i18n";
+import { compactUsd, d, num, pct, qty as fmtQty, usd, variantText } from "@/lib/format";
+import { count, useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { RangePicker, useRange } from "@/pages/Reports";
 
@@ -40,12 +40,8 @@ const TOOLTIP = {
   cursor: { fill: "hsl(var(--muted) / 0.4)" },
 };
 
-/** Short $ axis labels: $950, $1.2k, $15k. */
-function axisUsd(v: number) {
-  const a = Math.abs(v);
-  const s = a >= 1_000_000 ? `${(a / 1_000_000).toFixed(1)}M` : a >= 10_000 ? `${Math.round(a / 1000)}k` : a >= 1000 ? `${(a / 1000).toFixed(1)}k` : `${Math.round(a)}`;
-  return `${v < 0 ? "-" : ""}$${s}`;
-}
+/** Short $ axis labels: 950 $, 1,2 k$, 15 k$. */
+const axisUsd = (v: number) => compactUsd(v);
 const tipUsd = (v: unknown) => usd(v);
 
 function monthLabel(m: string) {
@@ -110,7 +106,7 @@ function Body({ a }: { a: Analytics }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <StatCard label={t("Sales", "Ventes")} value={usd(a.sales.total)} sub={`${a.sales.count} ${t("sale(s)", "vente(s)")}`} />
+        <StatCard label={t("Sales", "Ventes")} value={usd(a.sales.total)} sub={count(t, a.sales.count, ["sale", "sales"], ["vente", "ventes"])} />
         <StatCard label={t("Gross profit", "Marge brute")} value={usd(a.totals.grossProfit)} tone={d(a.totals.grossProfit).lt(0) ? "bad" : "good"} sub={marginPct ? `${marginPct} % ${t("of income", "des recettes")}` : undefined} />
         <StatCard label={t("Running costs", "Charges")} value={usd(a.totals.operatingExpenses)} />
         <StatCard label={t("Net profit", "Bénéfice net")} value={usd(a.totals.netProfit)} tone={d(a.totals.netProfit).lt(0) ? "bad" : "good"} />
@@ -216,7 +212,7 @@ function Body({ a }: { a: Analytics }) {
                         <TableCell className="text-right"><Num>{usd(i.revenue)}</Num></TableCell>
                         <TableCell className="text-right">
                           <Num className={cn(d(i.profit).lt(0) ? "text-destructive" : "text-emerald-600 dark:text-emerald-400")}>{usd(i.profit)}</Num>
-                          {d(i.revenue).gt(0) && <div className="text-xs text-muted-foreground tabular">{d(i.profit).div(d(i.revenue)).times(100).toFixed(0)} %</div>}
+                          {d(i.revenue).gt(0) && <div className="text-xs text-muted-foreground tabular">{pct(d(i.profit).div(d(i.revenue)).times(100).toNumber(), 0)}</div>}
                         </TableCell>
                       </TableRow>
                     ))}

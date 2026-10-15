@@ -298,7 +298,7 @@ function AddExpenseDialog({ onClose }: { onClose: () => void }) {
             <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
           </Field>
           {isCdf && (
-            <Field label={t("Rate (CDF per 1 USD)", "Taux (CDF pour 1 USD)")} hint={usdValue ? `= ${usd(usdValue.toFixed(2))}` : undefined}>
+            <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 $)")} hint={usdValue ? `= ${usd(usdValue.toFixed(2))}` : undefined}>
               <Input inputMode="decimal" value={rate} onChange={(e) => { setRate(e.target.value); setRateTouched(true); }} />
             </Field>
           )}

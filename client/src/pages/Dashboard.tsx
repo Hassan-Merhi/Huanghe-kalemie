@@ -6,8 +6,8 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { EmptyState, ErrorText, Loading, Num, PageHeader, StatCard } from "@/components/common";
 import { useAuth } from "@/lib/auth";
-import { useT } from "@/lib/i18n";
-import { cdf, d, date as fmtDate, usd } from "@/lib/format";
+import { count, useT } from "@/lib/i18n";
+import { cdf, d, pct, date as fmtDate, usd } from "@/lib/format";
 
 interface DashboardData {
   today: string;
@@ -70,7 +70,7 @@ export default function Dashboard() {
             <Button asChild size="sm" variant="secondary"><Link href="/analytics"><BarChart3 className="mr-1 h-4 w-4" /> {t("Analytics", "Analyses")}</Link></Button>
           </div>
           <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
-            <StatCard label={t("Today's sales", "Ventes du jour")} value={usd(data.todaySales.total)} sub={`${data.todaySales.count} ${t("sale(s)", "vente(s)")}`} />
+            <StatCard label={t("Today's sales", "Ventes du jour")} value={usd(data.todaySales.total)} sub={count(t, data.todaySales.count, ["sale", "sales"], ["vente", "ventes"])} />
             <StatCard
               label={t("Gross profit this month", "Marge brute du mois")}
               value={usd(data.monthPnl.grossProfit)}
@@ -141,7 +141,7 @@ export default function Dashboard() {
                   {data.partners.map((p) => (
                     <div key={p.id} className="flex items-center justify-between gap-2 py-2">
                       <span>
-                        <span className="font-medium">{p.name}</span> <Badge variant="outline" className="ml-1">{Number(p.sharePct)} %</Badge>
+                        <span className="font-medium">{p.name}</span> <Badge variant="outline" className="ml-1">{pct(p.sharePct)}</Badge>
                         {p.bearsOperatingExpenses && <span className="block text-xs text-muted-foreground">{t("bears running costs", "supporte les charges")}</span>}
                       </span>
                       <span className="text-right">

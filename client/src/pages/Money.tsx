@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
-import { cdf, d, date, money, monthStart, qty as fmtQty, todayLocal, usd } from "@/lib/format";
+import { cdf, d, pct, date, money, monthStart, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import type { Account, Partner, Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -154,7 +154,7 @@ function AmountFields({
         <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
       </Field>
       {isCdf && (
-        <Field label={t("Rate (CDF per 1 USD)", "Taux (CDF pour 1 USD)")} hint={usdValue ? `= ${usd(usdValue.toFixed(2))}` : undefined}>
+        <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 $)")} hint={usdValue ? `= ${usd(usdValue.toFixed(2))}` : undefined}>
           <RateInput day={day} value={rate} onChange={setRate} />
         </Field>
       )}
@@ -415,7 +415,7 @@ function PartnerMoneyDialog({ kind, onClose }: { kind: "contribution" | "withdra
               <SelectTrigger><SelectValue placeholder={t("Choose partner", "Choisir l'associé")} /></SelectTrigger>
               <SelectContent>
                 {(partnersQ.data ?? []).map((p) => (
-                  <SelectItem key={p.id} value={String(p.id)}>{p.name} ({d(p.sharePct).toString()} %)</SelectItem>
+                  <SelectItem key={p.id} value={String(p.id)}>{p.name} ({pct(p.sharePct)})</SelectItem>
                 ))}
               </SelectContent>
             </Select>
@@ -630,7 +630,7 @@ function RatesCard() {
         <CardTitle className="flex items-center gap-2 text-lg">
           <Landmark className="h-4 w-4" /> {t("Exchange rate", "Taux de change")}
         </CardTitle>
-        <CardDescription>{t("Francs (CDF) for 1 US dollar.", "Francs (CDF) pour 1 dollar US.")}</CardDescription>
+        <CardDescription>{t("Francs (CDF) for 1 US dollar.", "Francs (FC) pour 1 dollar US.")}</CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
         <div>
@@ -649,7 +649,7 @@ function RatesCard() {
             <Field label={t("Date", "Date")}>
               <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
             </Field>
-            <Field label={t("CDF per USD", "CDF pour 1 USD")}>
+            <Field label={t("CDF per USD", "FC pour 1 $")}>
               <Input inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} placeholder={current ? d(current.cdfPerUsd).toString() : "2800"} />
             </Field>
             <Button className="col-span-2" disabled={!day || !d(value).gt(0) || m.isPending} onClick={() => m.mutate({ date: day, cdfPerUsd: d(value).toString() })}>
@@ -666,7 +666,7 @@ function RatesCard() {
               {(listQ.data ?? []).slice(0, 15).map((r) => (
                 <div key={r.date} className="flex justify-between py-1">
                   <span>{date(r.date)}</span>
-                  <Num>{d(r.cdfPerUsd).toString()}</Num>
+                  <Num>{cdf(r.cdfPerUsd)}</Num>
                 </div>
               ))}
             </div>

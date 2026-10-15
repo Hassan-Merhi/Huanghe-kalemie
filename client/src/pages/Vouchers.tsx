@@ -140,7 +140,7 @@ export default function Vouchers() {
   return (
     <div>
       <PageHeader
-        title={t("Vouchers", "Pièces comptables")}
+        title={t("Vouchers", "Pièces")}
         description={t(
           "Record payments, receipts, entries, transfers and stock adjustments. Each one appears in the day book.",
           "Enregistrez paiements, recettes, écritures, transferts et ajustements de stock. Chacun apparaît dans le journal du jour.",
@@ -342,7 +342,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted 
   function save() {
     setError(null);
     if (!account) return setError(t("Choose the money account.", "Choisissez le compte de trésorerie."));
-    if (isCdf && !rate.gt(0)) return setError(t("Enter the rate (CDF per 1 USD).", "Saisissez le taux (CDF pour 1 USD)."));
+    if (isCdf && !rate.gt(0)) return setError(t("Enter the rate (CDF per 1 USD).", "Saisissez le taux (FC pour 1 $)."));
     const used = lines.filter((l) => l.partyId || l.accountId || l.amount.trim());
     if (!used.length) return setError(t("Add at least one line.", "Ajoutez au moins une ligne."));
     for (const [i, l] of used.entries()) {
@@ -370,7 +370,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted 
             <MoneyAccountSelect value={accountId} onChange={(id) => setAccountId(id)} />
           </Field>
           {isCdf && (
-            <Field label={t("Rate (CDF per 1 USD)", "Taux (CDF pour 1 USD)")} hint={totalUsd ? `= ${usd(totalUsd.toFixed(2))}` : undefined}>
+            <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 $)")} hint={totalUsd ? `= ${usd(totalUsd.toFixed(2))}` : undefined}>
               <RateInput day={day} value={rateField.rate} onChange={rateField.setRate} />
             </Field>
           )}
@@ -520,7 +520,7 @@ function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: For
   if (lines.some((l) => !l.accountId)) problems.push(t("Choose an account on every line", "Choisissez un compte sur chaque ligne"));
   if (lines.some((l) => d(l.debit).gt(0) && d(l.credit).gt(0))) problems.push(t("A line is either debit or credit", "Une ligne est soit au débit soit au crédit"));
   if (lines.some((l) => partyTypes(acc(l.accountId)) && !l.partyId)) problems.push(t("Pick the contact on receivable/payable lines", "Choisissez le contact sur les lignes créances/dettes"));
-  if (lines.some((l) => isCdf(acc(l.accountId)) && (!d(l.native).gt(0) || !d(l.rate).gt(0)))) problems.push(t("CDF accounts need the CDF amount and the rate", "Les comptes en CDF ont besoin du montant en FC et du taux"));
+  if (lines.some((l) => isCdf(acc(l.accountId)) && (!d(l.native).gt(0) || !d(l.rate).gt(0)))) problems.push(t("CDF accounts need the CDF amount and the rate", "Les comptes en francs ont besoin du montant en FC et du taux"));
   if (totalDebit.isZero()) problems.push(t("Enter some amounts", "Saisissez des montants"));
   if (!diff.isZero()) problems.push(t("Debits and credits must be equal", "Les débits et crédits doivent être égaux"));
 

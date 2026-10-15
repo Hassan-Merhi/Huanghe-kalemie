@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader } from "@/components/common";
 import { useAuth } from "@/lib/auth";
-import { useT } from "@/lib/i18n";
+import { count, useT } from "@/lib/i18n";
 import { cdf, d, date as fmtDate, monthStart, todayLocal, usd } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
@@ -44,7 +44,7 @@ function DailySummary() {
       <CardContent className="p-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("Today", "Aujourd'hui")} · {fmtDate(data?.date ?? today)}</p>
-          {data && <p className="text-sm text-muted-foreground">{data.count} {t("sale(s)", "vente(s)")}</p>}
+          {data && <p className="text-sm text-muted-foreground">{count(t, data.count, ["sale", "sales"], ["vente", "ventes"])}</p>}
         </div>
         {q.error ? (
           <ErrorText error={q.error} />
@@ -159,7 +159,7 @@ export default function Sales() {
               </TableBody>
               <TableFooter>
                 <TableRow>
-                  <TableCell colSpan={3}>{t(`${live.length} sale(s), not counting cancelled ones`, `${live.length} vente(s), hors annulées`)}</TableCell>
+                  <TableCell colSpan={3}>{count(t, live.length, ["sale", "sales"], ["vente", "ventes"])}{t(", not counting cancelled ones", ", hors annulées")}</TableCell>
                   <TableCell className="text-right"><Num>{usd(totals.total.toFixed(2))}</Num></TableCell>
                   <TableCell className="text-right"><Num>{usd(totals.paid.toFixed(2))}</Num></TableCell>
                   <TableCell className="text-right"><Num>{usd(totals.credit.toFixed(2))}</Num></TableCell>

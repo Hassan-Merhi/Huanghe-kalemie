@@ -14,7 +14,7 @@ import { EmptyState, ErrorText, Field, Loading, PageHeader } from "@/components/
 import { useLocations } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
-import { useT } from "@/lib/i18n";
+import { count, useT } from "@/lib/i18n";
 import type { MotorcycleUnit } from "@/lib/types";
 
 type Unit = MotorcycleUnit & { attributes?: Record<string, string> };
@@ -159,7 +159,7 @@ export default function Motorcycles() {
             <div className="space-y-3">
               <Alert className="border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
                 <AlertTriangle className="h-4 w-4" />
-                <AlertTitle>{t(`${missing.length} motorcycle(s) without a chassis number`, `${missing.length} moto(s) sans numéro de châssis`)}</AlertTitle>
+                <AlertTitle>{count(t, missing.length, ["motorcycle", "motorcycles"], ["moto", "motos"])} {t("without a chassis number", "sans numéro de châssis")}</AlertTitle>
                 <AlertDescription>
                   {isManager
                     ? t("Register the chassis number (from the frame) so these motorcycles can be sold.", "Saisissez le numéro de châssis (sur le cadre) pour pouvoir vendre ces motos.")

@@ -15,6 +15,7 @@ import { VariantSearch } from "@/components/pickers";
 import { useAuth } from "@/lib/auth";
 import { useI18n, useT, count } from "@/lib/i18n";
 import { d, date as fmtDate, money, qty, qtyTotal, todayLocal, unitCost, usd, variantText } from "@/lib/format";
+import { qtyWithUnit } from "@/lib/units";
 import { downloadCsv } from "@/lib/sheets";
 import type { VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -288,7 +289,7 @@ function ByLocationTab() {
                       {showLocation && <TableCell className="hidden md:table-cell">{r.locationName}</TableCell>}
                       <TableCell className="hidden sm:table-cell">{variantText(r.attributes) || "—"}</TableCell>
                       <TableCell className="hidden font-mono text-xs lg:table-cell">{r.sku}</TableCell>
-                      <TableCell className="text-right"><Num className={cn(d(r.qty).isNegative() && "text-destructive")}>{qty(r.qty)}{r.unit ? ` ${r.unit}` : ""}</Num></TableCell>
+                      <TableCell className="text-right"><Num className={cn(d(r.qty).isNegative() && "text-destructive")}>{qtyWithUnit(t, r.qty, r.unit)}</Num></TableCell>
                       <TableCell className="hidden text-right md:table-cell"><Num>{unitCost(r.avgCost)}</Num></TableCell>
                       <TableCell className="text-right"><Num>{usd(r.value)}</Num></TableCell>
                       <TableCell className="hidden text-right sm:table-cell"><Num>{usd(r.retailValue)}</Num></TableCell>
@@ -482,7 +483,7 @@ function AsOfTab() {
         <span className="block font-mono text-xs text-muted-foreground sm:hidden">{r.sku}</span>
       </TableCell>
       <TableCell className="hidden font-mono text-xs sm:table-cell">{r.sku}</TableCell>
-      <TableCell className="text-right"><Num>{qty(r.qty)}{r.unit ? ` ${r.unit}` : ""}</Num></TableCell>
+      <TableCell className="text-right"><Num>{qtyWithUnit(t, r.qty, r.unit)}</Num></TableCell>
       <TableCell className="text-right"><Num>{usd(r.value)}</Num></TableCell>
     </TableRow>
   );

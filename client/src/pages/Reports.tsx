@@ -15,8 +15,8 @@ import { AccountSelect, PartySelect } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { downloadCsv } from "@/lib/sheets";
-import { useT } from "@/lib/i18n";
-import { cdf, d, date as fmtDate, money, monthStart, previousMonth, qty, todayLocal, usd, variantText } from "@/lib/format";
+import { count, useT } from "@/lib/i18n";
+import { cdf, d, pct, date as fmtDate, money, monthStart, previousMonth, qty, todayLocal, usd, variantText } from "@/lib/format";
 import type { Account } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { WIDE_PRINT_CSS, journalTypeLabel } from "@/pages/ContactDetail";
@@ -98,6 +98,11 @@ const validDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
 // ---------------------------------------------------------------- Page
 
+/** One line under a report tab saying what the report answers. */
+function TabNote({ children }: { children: string }) {
+  return <p className="mb-3 text-sm text-muted-foreground">{children}</p>;
+}
+
 export default function Reports() {
   const t = useT();
   const [tab, setTab] = useState("pnl");
@@ -116,12 +121,12 @@ export default function Reports() {
             <TabsTrigger value="ledger">{t("Account ledger", "Grand livre")}</TabsTrigger>
           </TabsList>
         </div>
-        <TabsContent value="pnl"><ProfitLoss /></TabsContent>
-        <TabsContent value="items"><SalesByItem /></TabsContent>
-        <TabsContent value="daily"><DailyCash /></TabsContent>
-        <TabsContent value="tb"><TrialBalance /></TabsContent>
-        <TabsContent value="journal"><Journals /></TabsContent>
-        <TabsContent value="ledger"><Ledger /></TabsContent>
+        <TabsContent value="pnl"><TabNote>{t("What the shop earned in the period: sales minus the cost of the goods sold and the running costs.", "Ce que la boutique a gagné sur la période : les ventes moins le coût des articles vendus et les frais de fonctionnement.")}</TabNote><ProfitLoss /></TabsContent>
+        <TabsContent value="items"><TabNote>{t("Which items sold, how many, and what each one earned after its cost.", "Quels articles se sont vendus, combien, et ce que chacun a rapporté après son coût.")}</TabNote><SalesByItem /></TabsContent>
+        <TabsContent value="daily"><TabNote>{t("One day at the till: sales by payment type, then what each cash box and account should hold at closing.", "Une journée de caisse : les ventes par moyen de paiement, puis ce que chaque caisse et compte doit contenir à la fermeture.")}</TabNote><DailyCash /></TabsContent>
+        <TabsContent value="tb"><TabNote>{t("Every account's balance on a date. Both columns must be equal: that proves nothing is missing from the books.", "Le solde de chaque compte à une date. Les deux colonnes doivent être égales : cela prouve que rien ne manque dans les comptes.")}</TabNote><TrialBalance /></TabsContent>
+        <TabsContent value="journal"><TabNote>{t("Every entry in date order, with the accounts each one moved.", "Toutes les écritures par date, avec les comptes que chacune a touchés.")}</TabNote><Journals /></TabsContent>
+        <TabsContent value="ledger"><TabNote>{t("Everything that went through one account, line by line, with the running balance.", "Tout ce qui est passé par un compte, ligne par ligne, avec le solde au fur et à mesure.")}</TabNote><Ledger /></TabsContent>
       </Tabs>
     </div>
   );
@@ -300,7 +305,7 @@ function SalesByItem() {
                       <TableCell className="text-right"><Num>{usd(r.revenue)}</Num></TableCell>
                       <TableCell className="text-right"><Num>{usd(r.cogs)}</Num></TableCell>
                       <TableCell className="text-right"><Num className={cn("font-medium", d(r.profit).isNegative() && "text-destructive")}>{usd(r.profit)}</Num></TableCell>
-                      <TableCell className="text-right"><Num>{margin(r) != null ? `${margin(r)}%` : "—"}</Num></TableCell>
+                      <TableCell className="text-right"><Num>{margin(r) != null ? pct(margin(r)) : "—"}</Num></TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -310,7 +315,7 @@ function SalesByItem() {
                     <TableCell className="text-right"><Num>{usd(tot.revenue.toFixed(2))}</Num></TableCell>
                     <TableCell className="text-right"><Num>{usd(tot.cogs.toFixed(2))}</Num></TableCell>
                     <TableCell className="text-right"><Num>{usd(tot.profit.toFixed(2))}</Num></TableCell>
-                    <TableCell className="text-right"><Num>{totMargin != null ? `${totMargin}%` : "—"}</Num></TableCell>
+                    <TableCell className="text-right"><Num>{totMargin != null ? pct(totMargin) : "—"}</Num></TableCell>
                   </TableRow>
                 </TableFooter>
               </Table>
@@ -383,7 +388,7 @@ function DailyCash() {
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <StatCard label={t("Sales", "Ventes")} value={r.count} />
               <StatCard label={t("Total sold", "Total vendu")} value={usd(r.total)} />
-              <StatCard label={t("Returns", "Retours")} value={`− ${usd(r.returnsTotal)}`} sub={t(`${r.returnsCount} return(s)`, `${r.returnsCount} retour(s)`)} />
+              <StatCard label={t("Returns", "Retours")} value={`− ${usd(r.returnsTotal)}`} sub={count(t, r.returnsCount, ["return", "returns"], ["retour", "retours"])} />
               <StatCard label={t("Sold on credit", "Vendu à crédit")} value={usd(r.credit)} />
             </div>
             <div className="overflow-x-auto">
@@ -678,7 +683,7 @@ function Journals() {
                                       <TableCell className="text-right"><Num>{d(l.debit).isZero() ? "" : usd(l.debit)}</Num></TableCell>
                                       <TableCell className="text-right"><Num>{d(l.credit).isZero() ? "" : usd(l.credit)}</Num></TableCell>
                                       <TableCell className="text-right text-xs text-muted-foreground">
-                                        <Num>{l.nativeAmount != null ? `${cdf(l.nativeAmount)}${l.rate ? ` @ ${d(l.rate).toString()}` : ""}` : ""}</Num>
+                                        <Num>{l.nativeAmount != null ? `${cdf(l.nativeAmount)}${l.rate ? ` @ ${qty(l.rate)}` : ""}` : ""}</Num>
                                       </TableCell>
                                     </TableRow>
                                   ))}
@@ -756,7 +761,7 @@ function ManualJournalDialog({ onClose }: { onClose: () => void }) {
   if (lines.some((l) => !l.accountId)) problems.push(t("Choose an account on every line", "Choisissez un compte sur chaque ligne"));
   if (lines.some((l) => d(l.debit).gt(0) && d(l.credit).gt(0))) problems.push(t("A line is either debit or credit", "Une ligne est soit au débit soit au crédit"));
   if (lines.some((l) => partyTypes(acc(l.accountId)) && !l.partyId)) problems.push(t("Pick the customer or supplier on receivable/payable lines", "Choisissez le client ou fournisseur sur les lignes créances/dettes"));
-  if (lines.some((l) => isCdf(acc(l.accountId)) && (!d(l.native).gt(0) || !d(l.rate).gt(0)))) problems.push(t("CDF accounts need the CDF amount and the rate", "Les comptes en CDF ont besoin du montant en FC et du taux"));
+  if (lines.some((l) => isCdf(acc(l.accountId)) && (!d(l.native).gt(0) || !d(l.rate).gt(0)))) problems.push(t("CDF accounts need the CDF amount and the rate", "Les comptes en francs ont besoin du montant en FC et du taux"));
   if (totalDebit.isZero()) problems.push(t("Enter some amounts", "Saisissez des montants"));
   if (!diff.isZero()) problems.push(t("Debits and credits must be equal", "Les débits et crédits doivent être égaux"));
 
@@ -888,7 +893,7 @@ function Ledger() {
   function exportCsv() {
     if (!L) return;
     const head = [t("Date", "Date"), t("No.", "N°"), t("Type", "Type"), t("Details", "Détails"), t("Party", "Tiers"), t("Debit USD", "Débit USD"), t("Credit USD", "Crédit USD"), t("Balance USD", "Solde USD")];
-    if (cdfAcc) head.push("CDF", t("CDF balance", "Solde CDF"));
+    if (cdfAcc) head.push("CDF", t("CDF balance", "Solde en FC"));
     const rows: unknown[][] = [
       [`${L.account.code} · ${L.account.name}`],
       head,

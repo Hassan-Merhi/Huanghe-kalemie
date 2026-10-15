@@ -16,7 +16,7 @@ import { EmptyState, ErrorText, Field, Loading, Num, PageHeader } from "@/compon
 import { useAuth } from "@/lib/auth";
 import { useI18n, useT, type Lang, count } from "@/lib/i18n";
 import { downloadCsv } from "@/lib/sheets";
-import { cdf, d, date as fmtDate, num, todayLocal, usd } from "@/lib/format";
+import { cdf, compactUsd, d, date as fmtDate, num, todayLocal, usd } from "@/lib/format";
 import type { Account } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { CsvButton, RangePicker, accountTypeLabel, useRange } from "@/pages/Reports";
@@ -50,22 +50,31 @@ function monthName(month: string, lang: Lang, style: "long" | "short" = "long") 
   return new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString(lang === "fr" ? "fr-FR" : "en-US", { month: style, timeZone: "UTC" });
 }
 
-/** A debit-positive balance shown as an amount plus its side. */
-function Side({ value, t, currency = "USD", className }: { value: unknown; t: T; currency?: string; className?: string }) {
-  const n = num(value);
-  if (Math.abs(n) < 0.005) return <Num className={cn("text-muted-foreground", className)}>—</Num>;
-  const amount = currency === "CDF" ? cdf(Math.abs(n)) : usd(Math.abs(n));
+const CREDIT_NORMAL = new Set(["liability", "equity", "income"]);
+
+/**
+ * A debit-positive balance shown the way a shopkeeper reads it: from the account's normal side
+ * (what we have, what we owe, what we earned or spent). A minus sign means the balance is the
+ * other way round, such as a supplier we paid too much.
+ */
+function Side({ value, t, type, currency = "USD", className }: { value: unknown; t: T; type?: string; currency?: string; className?: string }) {
+  const raw = num(value);
+  if (Math.abs(raw) < 0.005) return <Num className={cn("text-muted-foreground", className)}>—</Num>;
+  if (!type) {
+    const amount = currency === "CDF" ? cdf(Math.abs(raw)) : usd(Math.abs(raw));
+    return (
+      <Num className={className}>
+        {amount} <span className="text-xs font-medium text-muted-foreground">{raw > 0 ? t("debit", "débit") : t("credit", "crédit")}</span>
+      </Num>
+    );
+  }
+  const n = CREDIT_NORMAL.has(type) ? -raw : raw;
+  const amount = currency === "CDF" ? cdf(n) : usd(n);
   return (
-    <Num className={className}>
-      {amount} <span className={cn("text-xs font-medium", n > 0 ? "text-sky-700 dark:text-sky-400" : "text-orange-700 dark:text-orange-400")}>{n > 0 ? t("Dr", "D") : t("Cr", "C")}</span>
+    <Num className={cn(n < 0 && "text-amber-700 dark:text-amber-400", className)}>
+      <span title={n < 0 ? t("The balance is the other way round from usual for this account", "Le solde est à l'inverse de l'habitude pour ce compte") : undefined}>{amount}</span>
     </Num>
   );
-}
-
-function sideText(value: unknown, t: T) {
-  const n = num(value);
-  if (Math.abs(n) < 0.005) return "0.00";
-  return `${Math.abs(n).toFixed(2)} ${n > 0 ? t("Dr", "D") : t("Cr", "C")}`;
 }
 
 export default function Accounts() {
@@ -170,7 +179,7 @@ function Chart({ onOpen }: { onOpen: (id: number) => void }) {
           <Card key={g.type}>
             <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
               <CardTitle className="text-base">{accountTypeLabel(g.type, t, true)}</CardTitle>
-              <span className="text-sm font-semibold"><Side value={g.total} t={t} /></span>
+              <span className="text-sm font-semibold"><Side value={g.total} t={t} type={g.type} /></span>
             </CardHeader>
             <CardContent className="p-0">
               <div className="divide-y border-t">
@@ -190,7 +199,7 @@ function Chart({ onOpen }: { onOpen: (id: number) => void }) {
                       </span>
                     </span>
                     <span className="shrink-0 text-right text-sm">
-                      <Side value={a.balance} t={t} />
+                      <Side value={a.balance} t={t} type={a.type} />
                       {a.currency === "CDF" && a.isMoney && a.nativeBalance != null && (
                         <span className="block text-xs text-muted-foreground"><Num>{cdf(a.nativeBalance)}</Num></span>
                       )}
@@ -201,7 +210,7 @@ function Chart({ onOpen }: { onOpen: (id: number) => void }) {
               </div>
               <div className="flex items-center justify-between border-t bg-muted/40 px-4 py-2 text-sm font-medium">
                 <span>{t("Total", "Total")} · {count(t, g.accounts.length, ["account", "accounts"], ["compte", "comptes"])}</span>
-                <Side value={g.total} t={t} />
+                <Side value={g.total} t={t} type={g.type} />
               </div>
             </CardContent>
           </Card>
@@ -209,7 +218,10 @@ function Chart({ onOpen }: { onOpen: (id: number) => void }) {
       </div>
       {q.data && (
         <p className="mt-3 text-xs text-muted-foreground">
-          {t("Balances in USD, debit minus credit: D = debit balance, C = credit balance.", "Soldes en USD, débit moins crédit\u00a0: D = solde débiteur, C = solde créditeur.")}
+          {t(
+            "Balances in USD, each read the usual way: what the shop has (assets), what it owes (debts), what belongs to the partners, what it earned and what it spent. A minus sign means the balance is the other way round.",
+            "Soldes en USD, chacun lu dans son sens habituel\u00a0: ce que la boutique a (actifs), ce qu'elle doit (dettes), ce qui revient aux associés, ce qu'elle a gagné et ce qu'elle a dépensé. Un signe moins veut dire que le solde est à l'inverse.",
+          )}
         </p>
       )}
     </div>
@@ -245,7 +257,7 @@ function AccountView({ id, onBack }: { id: number; onBack: () => void }) {
           acc && (
             <div className="text-right">
               <p className="text-xs uppercase tracking-wide text-muted-foreground">{t("Balance today", "Solde aujourd'hui")}</p>
-              <p className="text-xl font-semibold"><Side value={acc.balance} t={t} /></p>
+              <p className="text-xl font-semibold"><Side value={acc.balance} t={t} type={acc?.type} /></p>
               {acc.isMoney && acc.currency === "CDF" && acc.nativeBalance != null && <p className="text-sm text-muted-foreground"><Num>{cdf(acc.nativeBalance)}</Num></p>}
             </div>
           )
@@ -259,17 +271,17 @@ function AccountView({ id, onBack }: { id: number; onBack: () => void }) {
           <TabsTrigger value="monthly">{t("By month", "Par mois")}</TabsTrigger>
         </TabsList>
         <TabsContent value="statement">
-          <Statement id={id} range={range} />
+          <Statement id={id} range={range} type={acc?.type} />
         </TabsContent>
         <TabsContent value="monthly">
-          <Monthly id={id} year={year} setYear={setYear} onMonth={openMonth} />
+          <Monthly id={id} type={acc?.type} year={year} setYear={setYear} onMonth={openMonth} />
         </TabsContent>
       </Tabs>
     </div>
   );
 }
 
-function Statement({ id, range }: { id: number; range: ReturnType<typeof useRange> }) {
+function Statement({ id, range, type }: { id: number; range: ReturnType<typeof useRange>; type?: string }) {
   const t = useT();
   const ok = validDate(range.from) && validDate(range.to);
   const q = useQuery<LedgerData>({ queryKey: [`/api/accounts/${id}/ledger`, { from: range.from, to: range.to }], enabled: ok });
@@ -286,7 +298,7 @@ function Statement({ id, range }: { id: number; range: ReturnType<typeof useRang
   function exportCsv() {
     if (!L) return;
     const head = [t("Date", "Date"), t("No.", "N°"), t("Type", "Type"), t("Details", "Libellé"), t("Contact", "Tiers"), t("Debit USD", "Débit USD"), t("Credit USD", "Crédit USD"), t("Balance USD", "Solde USD"), t("Side", "Sens")];
-    if (cdfAcc) head.push("CDF", t("CDF balance", "Solde CDF"));
+    if (cdfAcc) head.push("CDF", t("CDF balance", "Solde en FC"));
     const side = (v: string) => (num(v) > 0 ? t("Dr", "D") : num(v) < 0 ? t("Cr", "C") : "");
     downloadCsv(`releve_${L.account.code}_${range.from}_${range.to}.csv`, [
       [`${L.account.code} · ${L.account.name}`, `${range.from} → ${range.to}`],
@@ -336,7 +348,7 @@ function Statement({ id, range }: { id: number; range: ReturnType<typeof useRang
                   <TableRow className="bg-muted/40">
                     <TableCell className="whitespace-nowrap">{fmtDate(range.from)}</TableCell>
                     <TableCell colSpan={4} className="font-medium">{t("Opening balance", "Solde d'ouverture")}</TableCell>
-                    <TableCell className="text-right font-medium"><Side value={L.openingBalance} t={t} /></TableCell>
+                    <TableCell className="text-right font-medium"><Side value={L.openingBalance} t={t} type={type} /></TableCell>
                     {cdfAcc && <TableCell className="text-right"><Num>{cdf(L.openingNative)}</Num></TableCell>}
                   </TableRow>
                   {L.rows.map((r, i) => (
@@ -351,7 +363,7 @@ function Statement({ id, range }: { id: number; range: ReturnType<typeof useRang
                       </TableCell>
                       <TableCell className="text-right"><Num>{d(r.debit).isZero() ? "" : usd(r.debit)}</Num></TableCell>
                       <TableCell className="text-right"><Num>{d(r.credit).isZero() ? "" : usd(r.credit)}</Num></TableCell>
-                      <TableCell className="text-right"><Side value={r.balance} t={t} /></TableCell>
+                      <TableCell className="text-right"><Side value={r.balance} t={t} type={type} /></TableCell>
                       {cdfAcc && (
                         <TableCell className="text-right text-xs">
                           <Num>{r.nativeAmount != null ? cdf(r.nativeAmount) : ""}</Num>
@@ -372,7 +384,7 @@ function Statement({ id, range }: { id: number; range: ReturnType<typeof useRang
                   <TableRow>
                     <TableCell className="whitespace-nowrap">{fmtDate(range.to)}</TableCell>
                     <TableCell colSpan={4}>{t("Closing balance", "Solde de clôture")}</TableCell>
-                    <TableCell className="text-right"><Side value={L.closingBalance} t={t} /></TableCell>
+                    <TableCell className="text-right"><Side value={L.closingBalance} t={t} type={type} /></TableCell>
                     {cdfAcc && <TableCell className="text-right"><Num>{cdf(L.closingNative)}</Num></TableCell>}
                   </TableRow>
                 </TableFooter>
@@ -383,7 +395,7 @@ function Statement({ id, range }: { id: number; range: ReturnType<typeof useRang
             <div className="divide-y border-t md:hidden print:hidden">
               <div className="flex justify-between bg-muted/40 px-4 py-2 text-sm font-medium">
                 <span>{t("Opening balance", "Solde d'ouverture")}</span>
-                <span className="text-right"><Side value={L.openingBalance} t={t} />{cdfAcc && <span className="block text-xs text-muted-foreground">{cdf(L.openingNative)}</span>}</span>
+                <span className="text-right"><Side value={L.openingBalance} t={t} type={type} />{cdfAcc && <span className="block text-xs text-muted-foreground">{cdf(L.openingNative)}</span>}</span>
               </div>
               {L.rows.map((r, i) => (
                 <div key={`${r.journalId}-${i}`} className="flex items-start justify-between gap-2 px-4 py-2 text-sm">
@@ -397,7 +409,7 @@ function Statement({ id, range }: { id: number; range: ReturnType<typeof useRang
                   <div className="shrink-0 text-right">
                     {!d(r.debit).isZero() && <Num className="block text-sky-700 dark:text-sky-400">+{usd(r.debit)}</Num>}
                     {!d(r.credit).isZero() && <Num className="block text-orange-700 dark:text-orange-400">−{usd(r.credit)}</Num>}
-                    <span className="block text-xs text-muted-foreground"><Side value={r.balance} t={t} /></span>
+                    <span className="block text-xs text-muted-foreground"><Side value={r.balance} t={t} type={type} /></span>
                     {cdfAcc && r.nativeBalance != null && <span className="block text-xs text-muted-foreground">{cdf(r.nativeBalance)}</span>}
                   </div>
                 </div>
@@ -407,7 +419,7 @@ function Statement({ id, range }: { id: number; range: ReturnType<typeof useRang
                 <div className="flex justify-between"><span>{t("Credit", "Crédit")}</span><Num>{usd(totals.credit)}</Num></div>
                 <div className="flex justify-between">
                   <span>{t("Closing balance", "Solde de clôture")}</span>
-                  <span className="text-right"><Side value={L.closingBalance} t={t} />{cdfAcc && <span className="block text-xs text-muted-foreground">{cdf(L.closingNative)}</span>}</span>
+                  <span className="text-right"><Side value={L.closingBalance} t={t} type={type} />{cdfAcc && <span className="block text-xs text-muted-foreground">{cdf(L.closingNative)}</span>}</span>
                 </div>
               </div>
             </div>
@@ -418,7 +430,7 @@ function Statement({ id, range }: { id: number; range: ReturnType<typeof useRang
   );
 }
 
-function Monthly({ id, year, setYear, onMonth }: { id: number; year: number; setYear: (y: number) => void; onMonth: (month: string) => void }) {
+function Monthly({ id, year, setYear, onMonth, type }: { id: number; year: number; setYear: (y: number) => void; onMonth: (month: string) => void; type?: string }) {
   const t = useT();
   const { lang } = useI18n();
   const thisYear = Number(todayLocal().slice(0, 4));
@@ -472,7 +484,7 @@ function Monthly({ id, year, setYear, onMonth }: { id: number; year: number; set
                     <TableRow className="bg-muted/40">
                       <TableCell colSpan={3} className="font-medium">{t("Opening balance", "Solde d'ouverture")} · 01/01/{year}</TableCell>
                       <TableCell className="hidden sm:table-cell" />
-                      <TableCell className="text-right font-medium"><Side value={M.opening} t={t} /></TableCell>
+                      <TableCell className="text-right font-medium"><Side value={M.opening} t={t} type={type} /></TableCell>
                     </TableRow>
                     {M.months.map((m) => (
                       <TableRow key={m.month} className={cn("cursor-pointer", !m.count && "text-muted-foreground")} onClick={() => onMonth(m.month)}>
@@ -482,7 +494,7 @@ function Monthly({ id, year, setYear, onMonth }: { id: number; year: number; set
                         <TableCell className="text-right"><Num>{d(m.debit).isZero() ? "" : usd(m.debit)}</Num></TableCell>
                         <TableCell className="text-right"><Num>{d(m.credit).isZero() ? "" : usd(m.credit)}</Num></TableCell>
                         <TableCell className="hidden text-right sm:table-cell"><Num>{m.count || ""}</Num></TableCell>
-                        <TableCell className="text-right"><Side value={m.closing} t={t} /></TableCell>
+                        <TableCell className="text-right"><Side value={m.closing} t={t} type={type} /></TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -492,7 +504,7 @@ function Monthly({ id, year, setYear, onMonth }: { id: number; year: number; set
                       <TableCell className="text-right"><Num>{usd(M.totalDebit)}</Num></TableCell>
                       <TableCell className="text-right"><Num>{usd(M.totalCredit)}</Num></TableCell>
                       <TableCell className="hidden text-right sm:table-cell"><Num>{M.months.reduce((s, m) => s + m.count, 0)}</Num></TableCell>
-                      <TableCell className="text-right"><Side value={M.closing} t={t} /></TableCell>
+                      <TableCell className="text-right"><Side value={M.closing} t={t} type={type} /></TableCell>
                     </TableRow>
                   </TableFooter>
                 </Table>
@@ -509,7 +521,7 @@ function Monthly({ id, year, setYear, onMonth }: { id: number; year: number; set
                 <BarChart data={chart} margin={{ left: 8, right: 8 }}>
                   <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="hsl(var(--border))" />
                   <XAxis dataKey="name" tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickLine={false} axisLine={false} />
-                  <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickLine={false} axisLine={false} width={56} tickFormatter={(v: number) => (Math.abs(v) >= 1000 ? `${Math.round(v / 1000)}k` : String(v))} />
+                  <YAxis tick={{ fontSize: 11, fill: "hsl(var(--muted-foreground))" }} tickLine={false} axisLine={false} width={56} tickFormatter={(v: number) => compactUsd(v)} />
                   <Tooltip
                     formatter={(v: number) => usd(v)}
                     cursor={{ fill: "hsl(var(--muted))" }}

@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { roleLabel } from "@/lib/labels";
 import { Link, useLocation } from "wouter";
 import {
   BarChart3,
@@ -177,7 +178,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
         </SidebarContent>
         <SidebarFooter>
           <div className="px-2 pb-2 text-xs text-sidebar-foreground/70">
-            {user?.fullName} · {user?.role}
+            {user?.fullName} · {user ? roleLabel(user.role, t) : ""}
           </div>
         </SidebarFooter>
       </Sidebar>

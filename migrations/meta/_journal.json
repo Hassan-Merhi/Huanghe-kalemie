@@ -36,6 +36,13 @@
       "when": 1792065302127,
       "tag": "0004_a3_controls",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792066552195,
+      "tag": "0005_u3_franc_names",
+      "breakpoints": true
     }
   ]
 }

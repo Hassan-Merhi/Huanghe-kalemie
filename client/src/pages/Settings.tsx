@@ -16,25 +16,15 @@ import { useApiMutation } from "@/hooks/useApiMutation";
 import { useTheme, useThemeOptions, type ThemePreference } from "@/components/ThemeProvider";
 import { useAuth, type Role } from "@/lib/auth";
 import { useI18n, useT, type Lang } from "@/lib/i18n";
-import { cdf, d, money, usd } from "@/lib/format";
+import { cdf, d, date as fmtDate, money, usd } from "@/lib/format";
 import type { Account, Category, Location, Partner, Settings as ShopSettings } from "@/lib/types";
 import { accountTypeLabel } from "@/pages/Reports";
+import { roleLabel } from "@/lib/labels";
 
 type T = (en: string, fr: string) => string;
 
 interface UserRow { id: number; username: string; fullName: string; role: Role; partnerId: number | null; language: Lang; active: boolean }
 interface AuditRow { id: number; userId: number | null; username: string | null; action: string; entity: string; entityId: number | null; data: unknown; createdAt: string }
-
-function roleLabel(role: string, t: T) {
-  const map: Record<string, [string, string]> = {
-    owner: ["Owner", "Propriétaire"],
-    manager: ["Manager", "Gérant"],
-    cashier: ["Cashier", "Caissier"],
-    partner: ["Partner (read only)", "Associé (lecture seule)"],
-  };
-  const m = map[role];
-  return m ? t(m[0], m[1]) : role;
-}
 
 export default function Settings() {
   const t = useT();
@@ -101,8 +91,8 @@ function ShopTab() {
         <ErrorText error={q.error} />
         <Field label={t("Shop name", "Nom de la boutique")}><Input value={shopName} onChange={(e) => setShopName(e.target.value)} /></Field>
         <Field
-          label={t("Default CDF rate (CDF per 1 USD)", "Taux CDF par défaut (FC pour 1 USD)")}
-          hint={q.data?.latestRate ? t(`Latest daily rate: ${cdf(q.data.latestRate.cdfPerUsd)} on ${q.data.latestRate.date}. The default is used only for days before any daily rate.`, `Dernier taux du jour : ${cdf(q.data.latestRate.cdfPerUsd)} le ${q.data.latestRate.date}. Le taux par défaut sert seulement s'il n'y a aucun taux du jour.`) : undefined}
+          label={t("Default CDF rate (CDF per 1 USD)", "Taux par défaut (FC pour 1 $)")}
+          hint={q.data?.latestRate ? t(`Latest daily rate: ${cdf(q.data.latestRate.cdfPerUsd)} on ${fmtDate(q.data.latestRate.date)}. The default is used only for days before any daily rate.`, `Dernier taux du jour : ${cdf(q.data.latestRate.cdfPerUsd)} le ${fmtDate(q.data.latestRate.date)}. Le taux par défaut sert seulement s'il n'y a aucun taux du jour.`) : undefined}
         >
           <Input inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} />
         </Field>
