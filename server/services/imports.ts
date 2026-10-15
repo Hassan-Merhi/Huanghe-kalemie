@@ -46,8 +46,8 @@ function wantedValues(r: ImportItemRow) {
 function attributeKeys(existing: Record<string, string>[]) {
   const keys = existing.flatMap((a) => Object.keys(a));
   return {
-    size: keys.find((k) => /^(size|taille|dimension)$/i.test(k)) ?? "Size",
-    colour: keys.find((k) => /^(colou?r|couleur)$/i.test(k)) ?? "Colour",
+    size: keys.find((k) => /^(size|taille|dimension)$/i.test(k)) ?? "Taille",
+    colour: keys.find((k) => /^(colou?r|couleur)$/i.test(k)) ?? "Couleur",
   };
 }
 
@@ -112,8 +112,8 @@ async function resolveRow(tx: Tx, caches: Caches, r: ImportItemRow, n: number, c
   }
   if (!create) throw badRequest(`Row ${n}: no item called ${name}`, `Ligne ${n} : aucun article nommé ${name}`);
   const attributes: Record<string, string> = {};
-  if (r.size?.trim()) attributes.Size = r.size.trim();
-  if (r.colour?.trim()) attributes.Colour = r.colour.trim();
+  if (r.size?.trim()) attributes.Taille = r.size.trim();
+  if (r.colour?.trim()) attributes.Couleur = r.colour.trim();
   const created = await createProduct(tx, {
     name,
     categoryId: await categoryId(tx, caches, r.category),

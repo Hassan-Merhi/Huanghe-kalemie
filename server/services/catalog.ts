@@ -1,4 +1,4 @@
-import { and, asc, eq, ilike, inArray, ne, or, sql } from "drizzle-orm";
+import { and, asc, eq, ilike, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 import { categories, locations, motorcycleUnits, products, stockLevels, variants } from "@shared/schema";
 import { dec } from "@shared/money";
 import type { Tx } from "../db";
@@ -196,13 +196,11 @@ export async function listProducts(tx: Tx, opts: { search?: string; categoryId?:
   if (!opts.includeInactive) conds.push(eq(products.active, true));
   if (opts.categoryId) conds.push(eq(products.categoryId, opts.categoryId));
   if (term) {
-    const like = `%${term}%`;
-    conds.push(
-      or(
-        ilike(products.name, like),
-        sql`exists (select 1 from ${variants} v where v.product_id = "products"."id" and (v.sku ilike ${like} or v.barcode ilike ${like} or v.attributes::text ilike ${like}))`,
-      ),
+    const haystack = fold(
+      sql`${products.name} || ' ' || coalesce(${categories.name}, '') || ' ' || coalesce(${products.brand}, '') || ' ' || coalesce((select string_agg(v.sku || ' ' || coalesce(v.barcode, '') || ' ' || v.attributes::text, ' ') from ${variants} v where v.product_id = "products"."id"), '')`,
     );
+    const words = term.split(/\s+/).filter(Boolean).slice(0, 6);
+    conds.push(and(...words.map((w) => or(...searchAlternatives(w).map((alt) => sql`${haystack} like ${`%${alt}%`}`))!))!);
   }
   const rows = await tx
     .select({
@@ -222,20 +220,79 @@ export async function listProducts(tx: Tx, opts: { search?: string; categoryId?:
   return rows.map((r) => ({ ...r.product, categoryName: r.categoryName, variantCount: r.variantCount, stockQty: r.stockQty, stockValue: r.stockValue, minPrice: r.minPrice, maxPrice: r.maxPrice }));
 }
 
+const ACCENTS_FROM = "àâäáãåçéèêëíìîïñóòôöõúùûüýÿœæ";
+const ACCENTS_TO = "aaaaaaceeeeiiiinooooouuuuyyoa";
+
+/** Lower case without accents, in SQL. */
+function fold(expr: SQL) {
+  return sql`translate(lower(${expr}), ${ACCENTS_FROM}, ${ACCENTS_TO})`;
+}
+
+export function foldText(text: string) {
+  let out = text.toLowerCase();
+  for (let i = 0; i < ACCENTS_FROM.length; i++) out = out.split(ACCENTS_FROM[i]).join(ACCENTS_TO[i]);
+  return out;
+}
+
+/** Shop words in French, English and Swahili that mean the same part. */
+const SYNONYMS: string[][] = [
+  ["frein", "brake", "plaquette", "pad", "machoire", "breki"],
+  ["pneu", "tyre", "tire", "pneumatique", "tairi"],
+  ["chambre", "tube", "chambre a air"],
+  ["huile", "oil", "lubrifiant", "mafuta"],
+  ["bougie", "spark", "plug"],
+  ["chaine", "chain", "mnyororo"],
+  ["moto", "motorcycle", "motorbike", "bike", "pikipiki"],
+  ["batterie", "battery", "betri"],
+  ["filtre", "filter"],
+  ["casque", "helmet", "kofia"],
+  ["retroviseur", "mirror", "kioo"],
+  ["phare", "headlight", "lamp", "lampe", "ampoule", "bulb"],
+  ["embrayage", "clutch"],
+  ["cable", "wire"],
+  ["jante", "rim", "roue", "wheel"],
+  ["amortisseur", "shock", "suspension"],
+  ["guidon", "handlebar"],
+  ["siege", "selle", "seat"],
+  ["piston", "segment", "ring"],
+  ["carburateur", "carburetor", "carb"],
+  ["pignon", "sprocket", "couronne"],
+  ["roulement", "bearing"],
+  ["avant", "front"],
+  ["arriere", "rear", "back"],
+  ["rouge", "red"],
+  ["noir", "black"],
+  ["bleu", "blue"],
+  ["blanc", "white"],
+];
+
+export function searchAlternatives(word: string): string[] {
+  const w = foldText(word).replace(/[%_\\]/g, "");
+  if (!w) return [""];
+  const out = new Set([w]);
+  // Plurals: "freins", "pneus", "pads".
+  const stem = w.length > 3 && /[sx]$/.test(w) ? w.slice(0, -1) : w;
+  out.add(stem);
+  for (const group of stem.length >= 3 ? SYNONYMS : []) {
+    if (group.some((g) => g.startsWith(stem) || (stem.length >= 4 && stem.startsWith(g)))) group.forEach((g) => out.add(g));
+  }
+  return Array.from(out);
+}
+
 /** Search sellable variants for the POS and pickers: by name, SKU, barcode or size. */
 export async function searchVariants(tx: Tx, opts: { search?: string; locationId?: number; limit?: number; ids?: number[] }) {
   const term = opts.search?.trim();
   const conds = [eq(variants.active, true), eq(products.active, true)];
   if (opts.ids?.length) conds.push(inArray(variants.id, opts.ids));
   if (term) {
-    const like = `%${term}%`;
+    // Every word must match the name, category, brand, code, barcode or a size/colour, without
+    // caring about accents, and French and English shop words find each other (frein = brake).
+    const haystack = sql`${fold(sql`${products.name} || ' ' || coalesce(${categories.name}, '') || ' ' || coalesce(${products.brand}, '') || ' ' || ${variants.sku} || ' ' || coalesce(${variants.barcode}, '') || ' ' || ${variants.attributes}::text`)}`;
+    const words = term.split(/\s+/).filter(Boolean).slice(0, 6);
     conds.push(
       or(
-        ilike(products.name, like),
-        ilike(variants.sku, like),
         eq(variants.barcode, term),
-        ilike(variants.barcode, like),
-        sql`${variants.attributes}::text ilike ${like}`,
+        and(...words.map((w) => or(...searchAlternatives(w).map((alt) => sql`${haystack} like ${`%${alt}%`}`))!))!,
       )!,
     );
   }

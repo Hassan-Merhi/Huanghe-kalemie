@@ -9,6 +9,7 @@ import {
   saleReturnLines,
   saleReturns,
   sales,
+  users,
   variants,
 } from "@shared/schema";
 import { allocateCents, cents, dec, sum, Decimal } from "@shared/money";
@@ -216,9 +217,11 @@ export async function getSale(tx: Tx, id: number) {
   const payments = await tx.select().from(salePayments).where(eq(salePayments.saleId, id));
   const returns = await tx.select().from(saleReturns).where(eq(saleReturns.saleId, id));
   const [customer] = sale.customerId ? await tx.select().from(parties).where(eq(parties.id, sale.customerId)) : [];
+  const [cashier] = sale.createdBy ? await tx.select({ fullName: users.fullName, username: users.username }).from(users).where(eq(users.id, sale.createdBy)) : [];
   return {
     ...sale,
     customer: customer ?? null,
+    cashierName: cashier ? cashier.fullName || cashier.username : null,
     lines: lines.map((l) => ({
       ...l.line,
       sku: l.sku,
