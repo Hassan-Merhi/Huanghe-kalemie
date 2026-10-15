@@ -97,6 +97,13 @@ export async function createProduct(tx: Tx, input: ProductInput & { variants: Va
   return getProduct(tx, product.id);
 }
 
+function conflictStock() {
+  return conflict(
+    "This item still has stock. Sell it or write it off with a stock adjustment before deactivating it.",
+    "Cet article a encore du stock. Vendez-le ou sortez-le par un ajustement de stock avant de le désactiver.",
+  );
+}
+
 export async function updateProduct(tx: Tx, id: number, input: Partial<ProductInput>) {
   const [existing] = await tx.select().from(products).where(eq(products.id, id));
   if (!existing) throw notFound("Product", "Article introuvable");
@@ -106,6 +113,13 @@ export async function updateProduct(tx: Tx, id: number, input: Partial<ProductIn
       .from(variants)
       .where(eq(variants.productId, id));
     if (!dec(stock.qty).isZero()) throw conflict("Chassis tracking can only be changed while the item has no stock", "Le suivi par châssis ne peut être modifié que lorsque l'article n'a pas de stock");
+  }
+  if (input.active === false && existing.active) {
+    const [stock] = await tx
+      .select({ qty: sql<string>`coalesce(sum(abs(${variants.stockQty})), 0)`, value: sql<string>`coalesce(sum(abs(${variants.stockValue})), 0)` })
+      .from(variants)
+      .where(eq(variants.productId, id));
+    if (!dec(stock.qty).isZero() || !dec(stock.value).isZero()) throw conflictStock();
   }
   await tx
     .update(products)
@@ -142,6 +156,7 @@ export async function updateVariant(tx: Tx, id: number, input: VariantInput) {
     const [d] = await tx.select({ id: variants.id }).from(variants).where(eq(variants.barcode, barcode));
     if (d) throw conflict(`Barcode ${barcode} is already used`, `Le code-barres ${barcode} est déjà utilisé`);
   }
+  if (input.active === false && existing.active && (!dec(existing.stockQty).isZero() || !dec(existing.stockValue).isZero())) throw conflictStock();
   if (input.sellPrice != null && dec(input.sellPrice).isNegative()) throw badRequest("Price cannot be negative", "Le prix ne peut pas être négatif");
   await tx
     .update(variants)

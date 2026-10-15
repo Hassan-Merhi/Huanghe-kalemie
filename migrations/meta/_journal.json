@@ -15,6 +15,13 @@
       "when": 1792050013521,
       "tag": "0001_erp_pages",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792062453680,
+      "tag": "0002_a1_controls",
+      "breakpoints": true
     }
   ]
 }

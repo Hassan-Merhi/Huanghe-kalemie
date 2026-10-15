@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray } from "drizzle-orm";
+import { and, asc, eq, gt, inArray, lt, sql } from "drizzle-orm";
 import {
   containerExpenses,
   containerLines,
@@ -6,6 +6,7 @@ import {
   motorcycleUnits,
   products,
   stockLevels,
+  stockMovements,
   variants,
 } from "@shared/schema";
 import { computeLandedCost, type AllocationMethod, type LandedCostResult } from "@shared/landedCost";
@@ -13,7 +14,7 @@ import { cents, dec, sum } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, notFound } from "../errors";
 import { moneyLeg, postJournal, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd } from "./ledger";
-import { issueStock, linkMovementsToJournal, receiveStock } from "./stock";
+import { issueStock, linkMovementsToJournal, receiveStock, stockQty } from "./stock";
 import { variantColour } from "./catalog";
 
 export async function getContainer(tx: Tx, id: number) {
@@ -74,6 +75,7 @@ export async function replaceLines(tx: Tx, containerId: number, lines: Container
     if (found.length !== variantIds.length) throw badRequest("One of the items does not exist", "Un des articles n'existe pas");
     const serial = new Set(found.filter((f) => f.tracksSerials).map((f) => f.id));
     for (const l of lines) {
+      stockQty(l.quantity);
       if (serial.has(l.variantId) && !dec(l.quantity).isInteger()) {
         throw badRequest("Motorcycles must be whole units", "Les motos se comptent en unités entières");
       }
@@ -373,6 +375,27 @@ export async function reverseContainer(tx: Tx, containerId: number, date: string
   const units = await tx.select().from(motorcycleUnits).where(eq(motorcycleUnits.containerId, containerId));
   if (units.some((u) => u.status !== "in_stock")) {
     throw conflict("Some motorcycles from this container are already sold, so it cannot be reversed", "Des motos de ce conteneur sont déjà vendues, il ne peut donc pas être annulé");
+  }
+  // Only while nothing of these items has left stock since the offload: then the container's own
+  // goods are all still here and come out at exactly the cost they went in with.
+  const variantIds = Array.from(new Set(full.lines.map((l) => l.variantId)));
+  if (variantIds.length) {
+    const [offload] = await tx
+      .select({ id: sql<number>`max(${stockMovements.id})` })
+      .from(stockMovements)
+      .where(and(eq(stockMovements.sourceType, "container"), eq(stockMovements.sourceId, containerId), eq(stockMovements.type, "container_in")));
+    const [out] = await tx
+      .select({ id: stockMovements.id, variantId: stockMovements.variantId })
+      .from(stockMovements)
+      .where(and(inArray(stockMovements.variantId, variantIds), gt(stockMovements.id, offload?.id ?? 0), lt(stockMovements.qty, "0")))
+      .limit(1);
+    if (out) {
+      const line = full.lines.find((l) => l.variantId === out.variantId)!;
+      throw conflict(
+        `${line.productName} (${line.sku}) has been sold, moved or adjusted since this offload, so the offload can no longer be undone. Correct the costs with a stock adjustment instead.`,
+        `${line.productName} (${line.sku}) a été vendu, déplacé ou ajusté depuis ce déchargement : il ne peut plus être annulé. Corrigez plutôt avec un ajustement de stock.`,
+      );
+    }
   }
   for (const line of full.lines) {
     const [lvl] = await tx
