@@ -53,6 +53,7 @@ import * as salesSvc from "./services/sales";
 import * as ops from "./services/operations";
 import * as periodSvc from "./services/periods";
 import * as reports from "./services/reports";
+import * as checks from "./services/checks";
 import { getSetting } from "./setup";
 import { reverseJournal } from "./services/ledger";
 import { transferStock } from "./services/stock";
@@ -167,6 +168,7 @@ export function registerRoutes(app: Express) {
       .values({ date: body.date, cdfPerUsd: body.cdfPerUsd, createdBy: uid(req) })
       .onConflictDoUpdate({ target: exchangeRates.date, set: { cdfPerUsd: body.cdfPerUsd, createdBy: uid(req) } })
       .returning();
+    await audit(req, "set_rate", "exchange_rate", null, body);
     res.json(row);
   }));
 
@@ -245,11 +247,13 @@ export function registerRoutes(app: Express) {
   app.post("/api/locations", requireRole(), asyncHandler(async (req, res) => {
     const body = z.object({ name: z.string().min(1).max(80) }).parse(req.body);
     const [row] = await db.insert(locations).values(body).returning();
+    await audit(req, "create", "location", row.id, body);
     res.status(201).json(row);
   }));
   app.patch("/api/locations/:id", requireRole(), asyncHandler(async (req, res) => {
     const body = z.object({ name: z.string().min(1).max(80).optional(), active: z.boolean().optional() }).parse(req.body);
     const [row] = await db.update(locations).set(body).where(eq(locations.id, paramId(req))).returning();
+    await audit(req, "update", "location", paramId(req), body);
     res.json(row);
   }));
 
@@ -259,6 +263,7 @@ export function registerRoutes(app: Express) {
   app.post("/api/categories", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = z.object({ name: z.string().min(1).max(80), parentId: optionalId }).parse(req.body);
     const [row] = await db.insert(categories).values(body).returning();
+    await audit(req, "create", "category", row.id, body);
     res.status(201).json(row);
   }));
   app.patch("/api/categories/:id", requireRole(...STAFF), asyncHandler(async (req, res) => {
@@ -266,6 +271,7 @@ export function registerRoutes(app: Express) {
       .object({ name: z.string().min(1).max(80).optional(), parentId: z.union([id, z.null()]).optional(), active: z.boolean().optional() })
       .parse(req.body);
     const [row] = await db.update(categories).set(body).where(eq(categories.id, paramId(req))).returning();
+    await audit(req, "update", "category", paramId(req), body);
     res.json(row);
   }));
 
@@ -292,15 +298,21 @@ export function registerRoutes(app: Express) {
   }));
   app.patch("/api/products/:id", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = productSchema.partial().parse(req.body);
-    res.json(await db.transaction((tx) => catalog.updateProduct(tx, paramId(req), body)));
+    const product = await db.transaction((tx) => catalog.updateProduct(tx, paramId(req), body));
+    await audit(req, "update", "product", paramId(req), body);
+    res.json(product);
   }));
   app.post("/api/products/:id/variants", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = variantSchema.parse(req.body);
-    res.status(201).json(await db.transaction((tx) => catalog.addVariant(tx, paramId(req), body)));
+    const variant = await db.transaction((tx) => catalog.addVariant(tx, paramId(req), body));
+    await audit(req, "create", "variant", (variant as { id?: number }).id ?? null, body);
+    res.status(201).json(variant);
   }));
   app.patch("/api/variants/:id", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = variantSchema.parse(req.body);
-    res.json(await db.transaction((tx) => catalog.updateVariant(tx, paramId(req), body)));
+    const variant = await db.transaction((tx) => catalog.updateVariant(tx, paramId(req), body));
+    await audit(req, "update", "variant", paramId(req), body);
+    res.json(variant);
   }));
   app.get("/api/variants", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
     const q = z
@@ -327,7 +339,9 @@ export function registerRoutes(app: Express) {
   }));
   app.patch("/api/units/:id", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = z.object({ chassisNo: z.string().max(60).nullable().optional(), engineNo: z.string().max(60).nullable().optional(), color: z.string().max(40).nullable().optional() }).parse(req.body);
-    res.json(await db.transaction((tx) => catalog.updateUnit(tx, paramId(req), body)));
+    const unit = await db.transaction((tx) => catalog.updateUnit(tx, paramId(req), body));
+    await audit(req, "update", "motorcycle", paramId(req), body);
+    res.json(unit);
   }));
 
   // ---------------------------------------------------------------- Stock
@@ -428,6 +442,7 @@ export function registerRoutes(app: Express) {
         await transferStock(tx, { date: body.date, type: "transfer_out", variantId: l.variantId, fromLocationId: body.fromLocationId, toLocationId: body.toLocationId, qty: l.qty, unitIds: l.unitIds, note: body.note, userId: uid(req) });
       }
     });
+    await audit(req, "create", "stock_transfer", null, body);
     res.status(201).json({ ok: true });
   }));
 
@@ -458,12 +473,14 @@ export function registerRoutes(app: Express) {
     const body = partySchema.parse(req.body);
     if (req.user!.role === "cashier" && body.type !== "customer") throw badRequest("Cashiers can only add customers", "Les caissiers ne peuvent ajouter que des clients");
     const [row] = await db.insert(parties).values(body).returning();
+    await audit(req, "create", "contact", row.id, body);
     res.status(201).json(row);
   }));
   app.patch("/api/parties/:id", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = partySchema.omit({ type: true }).partial().parse(req.body);
     const [row] = await db.update(parties).set(body).where(eq(parties.id, paramId(req))).returning();
     if (!row) throw notFound("Contact", "Contact introuvable");
+    await audit(req, "update", "contact", row.id, body);
     res.json(row);
   }));
   app.get("/api/parties/:id/statement", requireRole(...READERS, "cashier"), asyncHandler(async (req, res) => {
@@ -498,6 +515,7 @@ export function registerRoutes(app: Express) {
     if (!existing) throw notFound("Account", "Compte introuvable");
     if ((existing.systemKey || existing.partnerId) && body.active === false) throw badRequest("This account is used by the app and cannot be switched off", "Ce compte est utilisé par l'application et ne peut pas être désactivé");
     const [row] = await db.update(accounts).set(body).where(eq(accounts.id, existing.id)).returning();
+    await audit(req, "update", "account", row.id, body);
     res.json(row);
   }));
   app.get("/api/accounts/:id/ledger", requireRole(...READERS), asyncHandler(async (req, res) => {
@@ -672,11 +690,13 @@ export function registerRoutes(app: Express) {
         .returning();
       return row;
     });
+    await audit(req, "update", "container", updated.id, body);
     res.json(updated);
   }));
   app.put("/api/containers/:id/lines", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = z.object({ lines: z.array(z.object({ variantId: id, quantity: positiveDecimal, unitPrice: nonNegativeDecimal, weightKg: optionalDecimal, volumeCbm: optionalDecimal })) }).parse(req.body);
     await db.transaction((tx) => containerSvc.replaceLines(tx, paramId(req), body.lines));
+    await audit(req, "update_lines", "container", paramId(req), { lines: body.lines.length });
     res.json(await containerSvc.getContainer(db, paramId(req)));
   }));
   app.post("/api/containers/:id/expenses", requireRole(...STAFF), asyncHandler(async (req, res) => {
@@ -695,16 +715,19 @@ export function registerRoutes(app: Express) {
       })
       .parse(req.body);
     const row = await db.transaction((tx) => containerSvc.addExpense(tx, paramId(req), body, uid(req)));
+    await audit(req, "add_cost", "container", paramId(req), body);
     res.status(201).json(row);
   }));
   app.patch("/api/containers/:id/expenses/:expenseId", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = z.object({ method: z.enum(ALLOCATION_METHODS), targetLineId: optionalId }).parse(req.body);
     await db.transaction((tx) => containerSvc.updateExpenseAllocation(tx, paramId(req), paramId(req, "expenseId"), body.method, body.targetLineId));
+    await audit(req, "update_cost", "container", paramId(req), { expenseId: paramId(req, "expenseId"), ...body });
     res.json({ ok: true });
   }));
   app.delete("/api/containers/:id/expenses/:expenseId", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const q = z.object({ date: isoDate.optional() }).parse(req.query);
     await db.transaction((tx) => containerSvc.removeExpense(tx, paramId(req), paramId(req, "expenseId"), q.date ?? todayIso(), uid(req)));
+    await audit(req, "remove_cost", "container", paramId(req), { expenseId: paramId(req, "expenseId") });
     res.json({ ok: true });
   }));
   app.post("/api/containers/:id/finalize", requireRole(...STAFF), asyncHandler(async (req, res) => {
@@ -841,6 +864,13 @@ export function registerRoutes(app: Express) {
     const q = z.object({ from: isoDate, to: isoDate }).parse(req.query);
     res.json(await reports.profitAndLoss(db, q.from, q.to));
   }));
+  app.get("/api/reports/self-check", requireRole(...READERS), asyncHandler(async (_req, res) => {
+    res.json(await checks.selfCheck(db));
+  }));
+  app.get("/api/reports/ageing", requireRole(...READERS), asyncHandler(async (req, res) => {
+    const q = z.object({ asOf: isoDate.optional() }).parse(req.query);
+    res.json(await checks.customerAgeing(db, q.asOf ?? todayIso()));
+  }));
   app.get("/api/reports/trial-balance", requireRole(...READERS), asyncHandler(async (req, res) => {
     const q = z.object({ asOf: isoDate.optional() }).parse(req.query);
     res.json(await reports.trialBalance(db, q.asOf, req.user!.role === "partner" ? req.user!.partnerId : undefined));
@@ -852,19 +882,30 @@ export function registerRoutes(app: Express) {
   app.get("/api/reports/daily", requireRole(...READERS, "cashier"), asyncHandler(async (req, res) => {
     const q = z.object({ date: isoDate.optional() }).parse(req.query);
     const date = req.user!.role === "cashier" ? todayIso() : q.date ?? todayIso();
+    // A sale counts on its own day even if it was cancelled later; a cancellation counts on the day
+    // it was made. The drawer below books them the same way, so the two always agree.
     const result = await db.execute<{ account_id: number; name: string; currency: string; usd: string; native: string }>(sql`
-      select p.account_id, a.name, p.currency, sum(p.amount_usd) as usd, sum(p.amount_native) as native
-      from sale_payments p
-      join sales s on s.id = p.sale_id
-      join accounts a on a.id = p.account_id
-      where s.date = ${date} and s.status = 'completed'
-      group by p.account_id, a.name, p.currency
+      select x.account_id, a.name, a.currency, sum(x.usd) as usd, sum(x.native) as native from (
+        select p.account_id, p.amount_usd as usd, p.amount_native as native
+          from sale_payments p join sales s on s.id = p.sale_id
+          where s.date = ${date}
+        union all
+        select p.account_id, -p.amount_usd, -p.amount_native
+          from sale_payments p join sales s on s.id = p.sale_id join journals vj on vj.id = s.void_journal_id
+          where vj.date = ${date}
+      ) x join accounts a on a.id = x.account_id
+      group by x.account_id, a.name, a.currency
       order by a.name
     `);
     const [totals] = await db
       .select({ count: sql<number>`count(*)::int`, total: sql<string>`coalesce(sum(${sales.total}), 0)`, credit: sql<string>`coalesce(sum(${sales.creditUsd}), 0)` })
       .from(sales)
-      .where(and(eq(sales.date, date), eq(sales.status, "completed")));
+      .where(eq(sales.date, date));
+    const voids = await db.execute<{ count: number; total: string; credit: string }>(sql`
+      select count(*)::int as count, coalesce(sum(s.total), 0) as total, coalesce(sum(s.credit_usd), 0) as credit
+      from sales s join journals vj on vj.id = s.void_journal_id
+      where vj.date = ${date}
+    `);
     const [returns] = await db
       .select({ count: sql<number>`count(*)::int`, total: sql<string>`coalesce(sum(${saleReturns.total}), 0)` })
       .from(saleReturns)
@@ -908,16 +949,45 @@ export function registerRoutes(app: Express) {
         };
       });
     }
-    res.json({ date, ...totals, returnsCount: returns.count, returnsTotal: dec(returns.total).toFixed(2), byAccount: result.rows, drawer });
+    const v = voids.rows[0];
+    res.json({
+      date,
+      count: totals.count,
+      total: dec(totals.total).toFixed(2),
+      credit: dec(totals.credit).minus(v.credit).toFixed(2),
+      voidsCount: v.count,
+      voidsTotal: dec(v.total).toFixed(2),
+      returnsCount: returns.count,
+      returnsTotal: dec(returns.total).toFixed(2),
+      byAccount: result.rows.filter((r) => !dec(r.usd).isZero() || !dec(r.native).isZero()),
+      drawer,
+    });
   }));
-  app.get("/api/audit", requireRole(), asyncHandler(async (_req, res) => {
+  app.get("/api/audit", requireRole(), asyncHandler(async (req, res) => {
+    const q = z
+      .object({ userId: optionalId, from: isoDate.optional(), to: isoDate.optional(), entity: z.string().max(40).optional(), q: z.string().max(100).optional(), before: optionalId })
+      .parse(req.query);
+    // Days are Kalemie days (UTC+2), like every other date in the app.
+    const localDay = sql`(${auditLog.createdAt} + interval '2 hours')::date`;
+    const conds = [];
+    if (q.userId) conds.push(eq(auditLog.userId, q.userId));
+    if (q.from) conds.push(sql`${localDay} >= ${q.from}`);
+    if (q.to) conds.push(sql`${localDay} <= ${q.to}`);
+    if (q.entity) conds.push(eq(auditLog.entity, q.entity));
+    if (q.before) conds.push(sql`${auditLog.id} < ${q.before}`);
+    if (q.q?.trim()) conds.push(sql`${auditLog.data}::text ilike ${`%${q.q.trim()}%`}`);
     const rows = await db
-      .select({ log: auditLog, username: users.username })
+      .select({ log: auditLog, username: users.username, fullName: users.fullName })
       .from(auditLog)
       .leftJoin(users, eq(users.id, auditLog.userId))
+      .where(conds.length ? and(...conds) : undefined)
       .orderBy(desc(auditLog.id))
-      .limit(300);
-    res.json(rows.map((r) => ({ ...r.log, username: r.username })));
+      .limit(500);
+    res.json(rows.map((r) => ({ ...r.log, username: r.username, fullName: r.fullName })));
+  }));
+  app.get("/api/audit/entities", requireRole(), asyncHandler(async (_req, res) => {
+    const rows = await db.selectDistinct({ entity: auditLog.entity }).from(auditLog).orderBy(asc(auditLog.entity));
+    res.json(rows.map((r) => r.entity));
   }));
 
   registerErpRoutes(app, { adjustmentSchema, journalSchema, transferSchema, audit, assertAccountVisible });

@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { Link } from "wouter";
 import { ChevronDown, ChevronRight, Download, Plus, Printer, RotateCcw, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -119,6 +120,8 @@ export default function Reports() {
             <TabsTrigger value="tb">{t("Trial balance", "Balance")}</TabsTrigger>
             <TabsTrigger value="journal">{t("Journal", "Journal")}</TabsTrigger>
             <TabsTrigger value="ledger">{t("Account ledger", "Grand livre")}</TabsTrigger>
+            <TabsTrigger value="ageing">{t("Who owes us", "Âge des créances")}</TabsTrigger>
+            <TabsTrigger value="checks">{t("Self-check", "Contrôles")}</TabsTrigger>
           </TabsList>
         </div>
         <TabsContent value="pnl"><TabNote>{t("What the shop earned in the period: sales minus the cost of the goods sold and the running costs.", "Ce que la boutique a gagné sur la période : les ventes moins le coût des articles vendus et les frais de fonctionnement.")}</TabNote><ProfitLoss /></TabsContent>
@@ -127,6 +130,8 @@ export default function Reports() {
         <TabsContent value="tb"><TabNote>{t("Every account's balance on a date. Both columns must be equal: that proves nothing is missing from the books.", "Le solde de chaque compte à une date. Les deux colonnes doivent être égales : cela prouve que rien ne manque dans les comptes.")}</TabNote><TrialBalance /></TabsContent>
         <TabsContent value="journal"><TabNote>{t("Every entry in date order, with the accounts each one moved.", "Toutes les écritures par date, avec les comptes que chacune a touchés.")}</TabNote><Journals /></TabsContent>
         <TabsContent value="ledger"><TabNote>{t("Everything that went through one account, line by line, with the running balance.", "Tout ce qui est passé par un compte, ligne par ligne, avec le solde au fur et à mesure.")}</TabNote><Ledger /></TabsContent>
+        <TabsContent value="ageing"><TabNote>{t("Each customer who owes money, split by how long it has been owed. Payments clear the oldest amounts first.", "Chaque client qui doit de l'argent, réparti selon depuis combien de temps. Les paiements soldent d'abord les montants les plus anciens.")}</TabNote><Ageing /></TabsContent>
+        <TabsContent value="checks"><TabNote>{t("The figures that must always agree, recomputed now. Anything in red needs a look.", "Les chiffres qui doivent toujours concorder, recalculés maintenant. Ce qui est en rouge est à vérifier.")}</TabNote><SelfCheck /></TabsContent>
       </Tabs>
     </div>
   );
@@ -330,7 +335,7 @@ function SalesByItem() {
 // ---------------------------------------------------------------- (3) Daily cash
 
 interface DrawerRow { accountId: number; name: string; currency: string; opening: string; totalIn: string; totalOut: string; closing: string; byType: { type: string; in: string; out: string }[] }
-interface Daily { date: string; count: number; total: string; credit: string; returnsCount: number; returnsTotal: string; byAccount: { account_id: number; name: string; currency: string; usd: string; native: string }[]; drawer?: DrawerRow[] }
+interface Daily { date: string; count: number; total: string; credit: string; voidsCount: number; voidsTotal: string; returnsCount: number; returnsTotal: string; byAccount: { account_id: number; name: string; currency: string; usd: string; native: string }[]; drawer?: DrawerRow[] }
 
 function DailyCash() {
   const t = useT();
@@ -345,6 +350,7 @@ function DailyCash() {
       [t("Daily cash report", "Rapport de caisse du jour"), r.date],
       [t("Sales", "Ventes"), r.count],
       [t("Total sold USD", "Total vendu USD"), r.total],
+      [t("Cancellations", "Annulations"), r.voidsCount, r.voidsTotal],
       [t("Returns", "Retours"), r.returnsCount, r.returnsTotal],
       [t("Sold on credit USD", "Vendu à crédit USD"), r.credit],
       [],
@@ -387,7 +393,11 @@ function DailyCash() {
           <CardContent className="space-y-4">
             <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
               <StatCard label={t("Sales", "Ventes")} value={r.count} />
-              <StatCard label={t("Total sold", "Total vendu")} value={usd(r.total)} />
+              <StatCard
+                label={t("Total sold", "Total vendu")}
+                value={usd(r.total)}
+                sub={r.voidsCount > 0 ? `${count(t, r.voidsCount, ["cancellation", "cancellations"], ["annulation", "annulations"])} −${usd(r.voidsTotal)}` : undefined}
+              />
               <StatCard label={t("Returns", "Retours")} value={`− ${usd(r.returnsTotal)}`} sub={count(t, r.returnsCount, ["return", "returns"], ["retour", "retours"])} />
               <StatCard label={t("Sold on credit", "Vendu à crédit")} value={usd(r.credit)} />
             </div>
@@ -476,6 +486,152 @@ function DailyCash() {
 
 interface TbRow extends Account { balance: string }
 interface Tb { asOf: string | null; rows: TbRow[]; totalDebit: string; totalCredit: string; balanced: boolean }
+
+// ---------------------------------------------------------------- Customer ageing
+
+interface AgeingData {
+  asOf: string;
+  rows: { partyId: number; name: string; phone: string | null; balance: string; current: string; d31_60: string; d61_90: string; over90: string; oldestDate: string | null }[];
+  totals: { balance: string; current: string; d31_60: string; d61_90: string; over90: string };
+}
+
+function Ageing() {
+  const t = useT();
+  const [asOf, setAsOf] = useState(todayLocal());
+  const q = useQuery<AgeingData>({ queryKey: ["/api/reports/ageing", { asOf }], enabled: validDate(asOf) });
+  const a = q.data;
+  const cell = (v: string, warn = false) => (d(v).isZero() ? <span className="text-muted-foreground">—</span> : <Num className={warn ? "font-medium text-destructive" : undefined}>{usd(v)}</Num>);
+  function exportCsv() {
+    if (!a) return;
+    downloadCsv(`ageing_${a.asOf}.csv`, [
+      [t("Customer", "Client"), t("Phone", "Téléphone"), t("Owes", "Doit"), t("0–30 days", "0–30 jours"), t("31–60 days", "31–60 jours"), t("61–90 days", "61–90 jours"), t("Over 90 days", "Plus de 90 jours"), t("Oldest", "Plus ancien")],
+      ...a.rows.map((r) => [r.name, r.phone ?? "", r.balance, r.current, r.d31_60, r.d61_90, r.over90, r.oldestDate ?? ""]),
+    ]);
+  }
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <Field label={t("On", "Au")}><Input type="date" className="w-44" value={asOf} onChange={(e) => setAsOf(e.target.value)} /></Field>
+        <CsvButton onClick={exportCsv} disabled={!a?.rows.length} />
+      </div>
+      <ErrorText error={q.error} />
+      {q.isLoading && <Loading />}
+      {a && (
+        <>
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-5">
+            <StatCard label={t("Owed to us", "On nous doit")} value={usd(a.totals.balance)} sub={count(t, a.rows.length, ["customer", "customers"], ["client", "clients"])} />
+            <StatCard label={t("0–30 days", "0–30 jours")} value={usd(a.totals.current)} />
+            <StatCard label={t("31–60 days", "31–60 jours")} value={usd(a.totals.d31_60)} />
+            <StatCard label={t("61–90 days", "61–90 jours")} value={usd(a.totals.d61_90)} />
+            <StatCard label={t("Over 90 days", "Plus de 90 jours")} value={usd(a.totals.over90)} tone={d(a.totals.over90).gt(0) ? "bad" : undefined} />
+          </div>
+          {a.rows.length === 0 ? (
+            <EmptyState title={t("No customer owes anything", "Aucun client ne doit rien")} />
+          ) : (
+            <Card>
+              <CardContent className="p-0">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>{t("Customer", "Client")}</TableHead>
+                      <TableHead className="text-right">{t("Owes", "Doit")}</TableHead>
+                      <TableHead className="text-right">{t("0–30 days", "0–30 jours")}</TableHead>
+                      <TableHead className="text-right">{t("31–60 days", "31–60 jours")}</TableHead>
+                      <TableHead className="text-right">{t("61–90 days", "61–90 jours")}</TableHead>
+                      <TableHead className="text-right">{t("Over 90 days", "Plus de 90 jours")}</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {a.rows.map((r) => (
+                      <TableRow key={r.partyId}>
+                        <TableCell>
+                          <Link href={`/contacts/${r.partyId}`} className="font-medium hover:underline">{r.name}</Link>
+                          <span className="block text-xs text-muted-foreground">
+                            {r.phone ? `${r.phone} · ` : ""}{r.oldestDate ? t(`since ${fmtDate(r.oldestDate)}`, `depuis le ${fmtDate(r.oldestDate)}`) : ""}
+                          </span>
+                        </TableCell>
+                        <TableCell className="text-right"><Num className="font-semibold">{usd(r.balance)}</Num></TableCell>
+                        <TableCell className="text-right">{cell(r.current)}</TableCell>
+                        <TableCell className="text-right">{cell(r.d31_60)}</TableCell>
+                        <TableCell className="text-right">{cell(r.d61_90, true)}</TableCell>
+                        <TableCell className="text-right">{cell(r.over90, true)}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </CardContent>
+            </Card>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------- Self-check
+
+interface CheckRow { key: string; ok: boolean; expected: string; actual: string; difference: string; details?: { label: string; value: string }[] }
+
+const CHECK_TEXT: Record<string, { title: [string, string]; what: [string, string]; money: boolean; expected: [string, string]; actual: [string, string] }> = {
+  books_balance: { title: ["The books balance", "Les comptes sont équilibrés"], what: ["Total debit balances equal total credit balances.", "Le total des soldes débiteurs égale le total des soldes créditeurs."], money: true, expected: ["Debits", "Débits"], actual: ["Credits", "Crédits"] },
+  stock_value: { title: ["Stock matches the books", "Le stock correspond aux comptes"], what: ["The value of every item in stock adds up to the Stock account.", "La valeur de chaque article en stock égale le compte Stock."], money: true, expected: ["Stock account", "Compte Stock"], actual: ["Items", "Articles"] },
+  stock_locations: { title: ["Quantities by location add up", "Les quantités par emplacement concordent"], what: ["Each item's quantity equals the sum over its locations.", "La quantité de chaque article égale la somme de ses emplacements."], money: false, expected: ["Expected", "Attendu"], actual: ["Items that differ", "Articles en écart"] },
+  motorcycles: { title: ["Every motorcycle has its record", "Chaque moto a sa fiche"], what: ["Motorcycles in stock equal the chassis records in stock.", "Les motos en stock égalent les fiches châssis en stock."], money: false, expected: ["Expected", "Attendu"], actual: ["Models that differ", "Modèles en écart"] },
+  receivables: { title: ["Customers add up", "Les clients concordent"], what: ["What each customer owes adds up to the receivables account.", "Ce que doit chaque client égale le compte Clients."], money: true, expected: ["Account", "Compte"], actual: ["Customers", "Clients"] },
+  payables: { title: ["Suppliers add up", "Les fournisseurs concordent"], what: ["What we owe each supplier, agent and employee adds up to the payables account.", "Ce que l'on doit à chaque fournisseur, agent et employé égale le compte Fournisseurs."], money: true, expected: ["Account", "Compte"], actual: ["Contacts", "Contacts"] },
+  goods_in_transit: { title: ["Container costs add up", "Les frais de conteneur concordent"], what: ["Costs of containers not yet offloaded equal Goods in transit.", "Les frais des conteneurs pas encore déchargés égalent Marchandises en transit."], money: true, expected: ["Account", "Compte"], actual: ["Containers", "Conteneurs"] },
+  money_not_negative: { title: ["No cash box below zero", "Aucune caisse sous zéro"], what: ["No cash box, bank or mobile money account holds less than nothing.", "Aucune caisse, banque ou mobile money n'a un solde négatif."], money: false, expected: ["Expected", "Attendu"], actual: ["Accounts below zero", "Comptes sous zéro"] },
+  franc_lines: { title: ["Francs are counted", "Les francs sont comptés"], what: ["Every movement of a franc account carries its amount in francs and its rate.", "Chaque mouvement d'un compte en francs porte son montant en FC et son taux."], money: false, expected: ["Expected", "Attendu"], actual: ["Lines without francs", "Lignes sans francs"] },
+};
+
+function SelfCheck() {
+  const t = useT();
+  const q = useQuery<{ ok: boolean; checks: CheckRow[] }>({ queryKey: ["/api/reports/self-check"] });
+  if (q.isLoading) return <Loading />;
+  if (q.error) return <ErrorText error={q.error} />;
+  const data = q.data!;
+  return (
+    <div className="space-y-3">
+      <div className={cn("rounded-md border p-3 text-sm font-medium", data.ok ? "border-green-600/30 bg-green-600/10 text-green-800 dark:text-green-300" : "border-destructive/40 bg-destructive/10 text-destructive")}>
+        {data.ok
+          ? t("Everything agrees.", "Tout concorde.")
+          : t(`${data.checks.filter((c) => !c.ok).length} check(s) need a look.`, count(t, data.checks.filter((c) => !c.ok).length, ["", ""], ["contrôle à vérifier", "contrôles à vérifier"]))}
+        <Button variant="ghost" size="sm" className="ml-2 h-7" onClick={() => q.refetch()}>
+          <RotateCcw className="mr-1 h-3.5 w-3.5" /> {t("Check again", "Recontrôler")}
+        </Button>
+      </div>
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        {data.checks.map((c) => {
+          const text = CHECK_TEXT[c.key];
+          const show = (v: string) => (text?.money ? usd(v) : v);
+          return (
+            <Card key={c.key} className={cn(!c.ok && "border-destructive/50")}>
+              <CardContent className="space-y-1 p-4">
+                <p className={cn("font-medium", c.ok ? "text-green-700 dark:text-green-400" : "text-destructive")}>
+                  {c.ok ? "✓" : "✗"} {text ? t(text.title[0], text.title[1]) : c.key}
+                </p>
+                {text && <p className="text-xs text-muted-foreground">{t(text.what[0], text.what[1])}</p>}
+                {text?.money ? (
+                  <p className="text-sm tabular">
+                    {t(text.expected[0], text.expected[1])} {show(c.expected)} · {t(text.actual[0], text.actual[1])} {show(c.actual)}
+                    {!c.ok && <span className="ml-1 font-medium text-destructive">({t("difference", "écart")} {show(c.difference)})</span>}
+                  </p>
+                ) : (
+                  !c.ok && text && <p className="text-sm text-destructive">{t(text.actual[0], text.actual[1])} : {c.actual}</p>
+                )}
+                {c.details?.length ? (
+                  <ul className="mt-1 space-y-0.5 text-xs">
+                    {c.details.map((x, i) => <li key={i} className="flex justify-between gap-2"><span>{x.label}</span><span className="tabular">{x.value}</span></li>)}
+                  </ul>
+                ) : null}
+              </CardContent>
+            </Card>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
 
 function TrialBalance() {
   const t = useT();
