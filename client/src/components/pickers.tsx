@@ -20,12 +20,12 @@ export function useMoneyAccounts() {
   return { ...q, data: (q.data ?? []).filter((a) => a.isMoney && a.active) };
 }
 
-export function MoneyAccountSelect({ value, onChange, placeholder }: { value: number | null; onChange: (id: number, account: Account) => void; placeholder?: string }) {
+export function MoneyAccountSelect({ value, onChange, placeholder, "aria-label": ariaLabel }: { value: number | null; onChange: (id: number, account: Account) => void; placeholder?: string; "aria-label"?: string }) {
   const t = useT();
   const { data } = useMoneyAccounts();
   return (
     <Select value={value ? String(value) : ""} onValueChange={(v) => { const a = data.find((x) => x.id === Number(v)); if (a) onChange(a.id, a); }}>
-      <SelectTrigger><SelectValue placeholder={placeholder ?? t("Choose account", "Choisir le compte")} /></SelectTrigger>
+      <SelectTrigger aria-label={ariaLabel}><SelectValue placeholder={placeholder ?? t("Choose account", "Choisir le compte")} /></SelectTrigger>
       <SelectContent>
         {data.map((a) => (
           <SelectItem key={a.id} value={String(a.id)}>{accountLabel(a.name, a.currency)}</SelectItem>
