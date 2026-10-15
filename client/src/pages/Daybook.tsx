@@ -59,6 +59,8 @@ interface DaybookRow {
   transfer?: { from: string; to: string };
   /** Exchange difference beside the document (francs or yuan at their average cost): + a loss, − a gain. */
   fxDiff?: string;
+  /** Franc rounding of the till or a refund ("Arrondi FC"), + a loss. */
+  fxRounding?: string;
   /** Stock counts: value of the stock found and of the stock lost (the amount is the net). */
   stockAdded?: string;
   stockRemoved?: string;
@@ -144,6 +146,10 @@ function cashDetail(r: DaybookRow, t: T): string | null {
   if (r.fxDiff && !d(r.fxDiff).isZero()) {
     const fx = d(r.fxDiff);
     parts.push(`${t("exchange", "écart de change")} ${usd(fx.abs().toFixed(2))} (${fx.gt(0) ? t("loss", "perte") : t("gain", "gain")})`);
+  }
+  if (r.fxRounding && !d(r.fxRounding).isZero()) {
+    const fx = d(r.fxRounding);
+    parts.push(`${t("FC rounding", "Arrondi FC")} ${usd(fx.abs().toFixed(2))} (${fx.gt(0) ? t("loss", "perte") : t("gain", "gain")})`);
   }
   return parts.length ? parts.join(" · ") : null;
 }

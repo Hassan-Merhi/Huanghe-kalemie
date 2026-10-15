@@ -16,7 +16,7 @@ import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, Submi
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT, count } from "@/lib/i18n";
-import { cdf, d, money, qty as fmtQty, usd } from "@/lib/format";
+import { cdf, d, money, qty as fmtQty, typedNumberOk, usd } from "@/lib/format";
 import type { Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -225,7 +225,7 @@ export function PartyDialog({ type, party, onClose }: { type: PartyType; party: 
               </Field>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                 <Field label={t("Monthly salary ($)", "Salaire mensuel ($)")}>
-                  <Input inputMode="decimal" value={monthlySalary} onChange={(e) => setMonthlySalary(e.target.value)} placeholder="0" />
+                  <Input inputMode="decimal" usd value={monthlySalary} onChange={(e) => setMonthlySalary(e.target.value)} placeholder="0" />
                 </Field>
                 <Field label={t("Start date", "Date d'embauche")}>
                   <Input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} />
@@ -242,7 +242,7 @@ export function PartyDialog({ type, party, onClose }: { type: PartyType; party: 
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <SubmitButton onClick={save} blocked={!name.trim() && t("Enter a name", "Saisissez un nom")} pending={busy}>{t("Save", "Enregistrer")}</SubmitButton>
+          <SubmitButton onClick={save} blocked={!name.trim() ? t("Enter a name", "Saisissez un nom") : !typedNumberOk(monthlySalary) && t("Correct the monthly salary", "Corrigez le salaire mensuel")} pending={busy}>{t("Save", "Enregistrer")}</SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

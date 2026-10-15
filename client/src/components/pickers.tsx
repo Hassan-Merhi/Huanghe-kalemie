@@ -197,7 +197,8 @@ export function useLocations() {
   return useQuery<Location[]>({ queryKey: ["/api/locations"] });
 }
 
-export function LocationSelect({ value, onChange }: { value: number | null; onChange: (id: number) => void }) {
+export function LocationSelect({ value, onChange, "aria-label": ariaLabel }: { value: number | null; onChange: (id: number) => void; "aria-label"?: string }) {
+  const t = useT();
   const { data = [] } = useLocations();
   useEffect(() => {
     const active = data.filter((l) => l.active);
@@ -205,7 +206,7 @@ export function LocationSelect({ value, onChange }: { value: number | null; onCh
   }, [data, value, onChange]);
   return (
     <Select value={value ? String(value) : ""} onValueChange={(v) => onChange(Number(v))}>
-      <SelectTrigger><SelectValue /></SelectTrigger>
+      <SelectTrigger aria-label={ariaLabel ?? t("Location", "Lieu")}><SelectValue /></SelectTrigger>
       <SelectContent>
         {data.filter((l) => l.active).map((l) => (
           <SelectItem key={l.id} value={String(l.id)}>{l.name}</SelectItem>
@@ -457,6 +458,7 @@ export function VariantSearch({
         autoFocus={autoFocus}
         className="pl-9"
         placeholder={placeholder ?? t("Scan or type an item", "Scanner ou taper un article")}
+        aria-label={placeholder ?? t("Scan or type an item", "Scanner ou taper un article")}
         value={term}
         onChange={(e) => { setTerm(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}

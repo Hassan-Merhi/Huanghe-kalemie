@@ -868,6 +868,9 @@ export function registerRoutes(app: Express) {
         // What was sold, so the list reads without opening each sale.
         qty: sql<string>`(select coalesce(sum(sl.qty), 0)::text from sale_lines sl where sl.sale_id = ${sales.id})`,
         returnedQty: sql<string>`(select coalesce(sum(sl.returned_qty), 0)::text from sale_lines sl where sl.sale_id = ${sales.id})`,
+        // Amount and cost of what came back, so the list shows the sale net of its returns.
+        returnedTotal: sql<string>`(select coalesce(sum(sr.total), 0)::text from sale_returns sr where sr.sale_id = ${sales.id})`,
+        returnedCogs: sql<string>`(select coalesce(sum(sr.cogs), 0)::text from sale_returns sr where sr.sale_id = ${sales.id})`,
         lineCount: sql<number>`(select count(*)::int from sale_lines sl where sl.sale_id = ${sales.id})`,
         firstItem: sql<string | null>`(select p.name from sale_lines sl join variants v on v.id = sl.variant_id join products p on p.id = v.product_id where sl.sale_id = ${sales.id} order by sl.id limit 1)`,
       })
@@ -878,7 +881,7 @@ export function registerRoutes(app: Express) {
       .orderBy(desc(sales.date), desc(sales.id))
       .limit(500);
     const showCost = req.user!.role !== "cashier";
-    res.json(rows.map((r) => ({ ...r.sale, cogs: showCost ? r.sale.cogs : undefined, customerName: r.customerName, cashier: r.cashier, zeroPrice: !!r.zeroPrice, qty: r.qty, returnedQty: r.returnedQty, lineCount: r.lineCount, firstItem: r.firstItem })));
+    res.json(rows.map((r) => ({ ...r.sale, cogs: showCost ? r.sale.cogs : undefined, customerName: r.customerName, cashier: r.cashier, zeroPrice: !!r.zeroPrice, qty: r.qty, returnedQty: r.returnedQty, returnedTotal: r.returnedTotal, returnedCogs: showCost ? r.returnedCogs : undefined, lineCount: r.lineCount, firstItem: r.firstItem })));
   }));
   app.get("/api/sales/:id", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
     const sale = await salesSvc.getSale(db, paramId(req));
@@ -1034,20 +1037,27 @@ export function registerRoutes(app: Express) {
     // it was made. The drawer below books them the same way, so the two always agree.
     // Per account: the net kept, and apart what was handed over and what went back as change (a
     // negative payment); a sale cancelled that day takes its own amounts back out.
-    const result = await db.execute<{ account_id: number; name: string; currency: string; usd: string; native: string; received_usd: string; received_native: string; change_usd: string; change_native: string }>(sql`
+    const result = await db.execute<{ account_id: number; name: string; currency: string; usd: string; native: string; received_usd: string; received_native: string; change_usd: string; change_native: string; refund_usd: string; refund_native: string }>(sql`
       select x.account_id, a.name, a.currency, sum(x.usd) as usd, sum(x.native) as native,
-        coalesce(sum(x.usd) filter (where not x.change), 0) as received_usd,
-        coalesce(sum(x.native) filter (where not x.change), 0) as received_native,
+        coalesce(sum(x.usd) filter (where not x.change and not x.refund), 0) as received_usd,
+        coalesce(sum(x.native) filter (where not x.change and not x.refund), 0) as received_native,
         coalesce(-sum(x.usd) filter (where x.change), 0) as change_usd,
-        coalesce(-sum(x.native) filter (where x.change), 0) as change_native
+        coalesce(-sum(x.native) filter (where x.change), 0) as change_native,
+        coalesce(-sum(x.usd) filter (where x.refund), 0) as refund_usd,
+        coalesce(-sum(x.native) filter (where x.refund), 0) as refund_native
       from (
-        select p.account_id, p.amount_usd as usd, p.amount_native as native, p.amount_usd < 0 as change
+        select p.account_id, p.amount_usd as usd, p.amount_native as native, p.amount_usd < 0 as change, false as refund
           from sale_payments p join sales s on s.id = p.sale_id
           where s.date = ${date}
         union all
-        select p.account_id, -p.amount_usd, -p.amount_native, p.amount_usd < 0
+        select p.account_id, -p.amount_usd, -p.amount_native, p.amount_usd < 0, false
           from sale_payments p join sales s on s.id = p.sale_id join journals vj on vj.id = s.void_journal_id
           where vj.date = ${date}
+        union all
+        -- Refunds of goods brought back that day leave the drawer they were paid from.
+        select l.account_id, l.debit - l.credit, coalesce(l.native_amount, l.debit - l.credit), false, true
+          from journal_lines l join journals j on j.id = l.journal_id join accounts ma on ma.id = l.account_id
+          where j.type = 'sale_return' and ma.is_money and j.date = ${date}
       ) x join accounts a on a.id = x.account_id
       group by x.account_id, a.name, a.currency
       order by a.name

@@ -339,6 +339,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
     for (const [i, l] of used.entries()) {
       const target = l.mode === "party" ? l.partyId : l.accountId;
       if (!target) return setError(t(`Line ${i + 1}: pick a contact or an account.`, `Ligne ${i + 1}\u00a0: choisissez un contact ou un compte.`));
+      if (l.amount.trim() && !isAmount(l.amount)) return setError(t(`Line ${i + 1}: correct the amount.`, `Ligne ${i + 1}\u00a0: corrigez le montant.`));
       if (!isAmount(l.amount) || !d(l.amount).gt(0)) return setError(t(`Line ${i + 1}: enter an amount greater than zero.`, `Ligne ${i + 1}\u00a0: saisissez un montant supérieur à zéro.`));
     }
     if (francSlip >= 0) return setError(francSlipText);
@@ -420,7 +421,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
                   <LineAccountSelect types={ACCOUNT_TYPES[kind]} value={l.accountId} onChange={(id) => set(l.key, { accountId: id })} />
                 )}
               </div>
-              <Input inputMode="decimal" thousands={currency === "CDF"} aria-invalid={(isCdf && isAmount(l.amount) && !d(l.amount).isInteger()) || undefined} className="text-right tabular" placeholder={t(`Amount (${curLabel(currency)})`, `Montant (${curLabel(currency)})`)} value={l.amount} onChange={(e) => set(l.key, { amount: e.target.value })} />
+              <Input inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-invalid={(isCdf && isAmount(l.amount) && !d(l.amount).isInteger()) || undefined} className="text-right tabular" placeholder={t(`Amount (${curLabel(currency)})`, `Montant (${curLabel(currency)})`)} value={l.amount} onChange={(e) => set(l.key, { amount: e.target.value })} />
               <Input placeholder={t("Note (optional)", "Note (facultatif)")} value={l.memo} onChange={(e) => set(l.key, { memo: e.target.value })} />
               <Button variant="ghost" size="icon" className="justify-self-end" disabled={lines.length <= 1} onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} aria-label={t("Remove line", "Retirer la ligne")}>
                 <Trash2 className="h-4 w-4" />
@@ -595,8 +596,8 @@ function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: For
                     <span className="mb-1 block text-xs text-muted-foreground md:hidden">{t("Account", "Compte")} {i + 1}</span>
                     <AccountSelect aria-label={t("Account", "Compte")} value={l.accountId} onChange={(id) => chooseAccount(l, id)} />
                   </div>
-                  <Input inputMode="decimal" className="text-right tabular" placeholder={t("Debit", "Débit")} value={l.debit} onChange={(e) => set(l.key, { debit: e.target.value, credit: e.target.value ? "" : l.credit })} />
-                  <Input inputMode="decimal" className="text-right tabular" placeholder={t("Credit", "Crédit")} value={l.credit} onChange={(e) => set(l.key, { credit: e.target.value, debit: e.target.value ? "" : l.debit })} />
+                  <Input inputMode="decimal" usd className="text-right tabular" placeholder={t("Debit", "Débit")} value={l.debit} onChange={(e) => set(l.key, { debit: e.target.value, credit: e.target.value ? "" : l.credit })} />
+                  <Input inputMode="decimal" usd className="text-right tabular" placeholder={t("Credit", "Crédit")} value={l.credit} onChange={(e) => set(l.key, { credit: e.target.value, debit: e.target.value ? "" : l.debit })} />
                   <Input className="col-span-2 md:col-span-1" placeholder={t("Note (optional)", "Note (facultatif)")} value={l.memo} onChange={(e) => set(l.key, { memo: e.target.value })} />
                   <Button variant="ghost" size="icon" className="col-span-2 justify-self-end md:col-span-1" disabled={lines.length <= 2} onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} aria-label={t("Remove line", "Retirer la ligne")}>
                     <Trash2 className="h-4 w-4" />
@@ -750,7 +751,7 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
             <MoneyAccountSelect value={fromId} onChange={(id) => setFromId(id)} />
           </Field>
           <Field label={t(`Amount out${from ? ` (${curLabel(from.currency)})` : ""}`, `Montant sorti${from ? ` (${curLabel(from.currency)})` : ""}`)} error={francDecimalsError(t, from?.currency, fromAmount)} required>
-            <Input inputMode="decimal" thousands={from?.currency === "CDF"} value={fromAmount} onChange={(e) => setFromAmount(e.target.value)} placeholder="0" />
+            <Input inputMode="decimal" usd={from?.currency === "USD"} thousands={from?.currency === "CDF"} value={fromAmount} onChange={(e) => setFromAmount(e.target.value)} placeholder="0" />
           </Field>
           <Field
             label={t("To account", "Vers le compte")}
@@ -761,7 +762,7 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
             <MoneyAccountSelect value={toId} onChange={(id) => setToId(id)} />
           </Field>
           <Field label={t(`Amount in${to ? ` (${curLabel(to.currency)})` : ""}`, `Montant reçu${to ? ` (${curLabel(to.currency)})` : ""}`)} error={francDecimalsError(t, to?.currency, toAmount)} required>
-            <Input inputMode="decimal" thousands={to?.currency === "CDF"} value={toAmount} onChange={(e) => { setToAmount(e.target.value); setToTouched(true); }} placeholder="0" />
+            <Input inputMode="decimal" usd={to?.currency === "USD"} thousands={to?.currency === "CDF"} value={toAmount} onChange={(e) => { setToAmount(e.target.value); setToTouched(true); }} placeholder="0" />
           </Field>
           <Field label={t("Note (optional)", "Note (facultatif)")} className="sm:col-span-2">
             <Input value={memo} onChange={(e) => setMemo(e.target.value)} />

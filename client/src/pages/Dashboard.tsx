@@ -14,7 +14,8 @@ import { cdf, d, pct, date as fmtDate, usd } from "@/lib/format";
 interface DashboardData {
   today: string;
   month: string;
-  todaySales: { count: number; total: string };
+  /** Net of the goods brought back today (`returns`). */
+  todaySales: { count: number; total: string; returns?: string };
   monthPnl: { income: string; costOfSales: string; grossProfit: string; operatingExpenses: string; netProfit: string };
   money: { id: number; name: string; currency: "USD" | "CDF"; balance: string; nativeBalance: string }[];
   receivables: string;
@@ -88,7 +89,7 @@ export default function Dashboard() {
             <Button asChild size="sm" variant="secondary"><Link href="/analytics"><BarChart3 className="mr-1 h-4 w-4" /> {t("Analytics", "Analyses")}</Link></Button>
           </div>
           <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
-            <StatCard label={t("Today's sales", "Ventes du jour")} value={usd(data.todaySales.total)} sub={count(t, data.todaySales.count, ["sale", "sales"], ["vente", "ventes"])} />
+            <StatCard label={t("Today's sales", "Ventes du jour")} value={usd(data.todaySales.total)} sub={`${count(t, data.todaySales.count, ["sale", "sales"], ["vente", "ventes"])}${d(data.todaySales.returns).gt(0) ? ` · ${t("returns", "retours")} −${usd(data.todaySales.returns)}` : ""}`} />
             <StatCard
               label={t("Gross profit this month", "Marge brute du mois")}
               value={usd(data.monthPnl.grossProfit)}

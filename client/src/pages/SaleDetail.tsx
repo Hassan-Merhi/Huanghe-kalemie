@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { de } from "@shared/french";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import Decimal from "decimal.js";
@@ -101,6 +102,7 @@ function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () =
                           className={cn("h-8 text-right", over && "border-destructive")}
                           inputMode="decimal"
                           disabled={max.lte(0)}
+                          aria-label={t(`Quantity of ${l.productName} to return`, `Quantité ${de(l.productName)} à retourner`)}
                           placeholder="0"
                           value={qtys[l.id] ?? ""}
                           onChange={(e) => setQtys((q) => ({ ...q, [l.id]: e.target.value }))}

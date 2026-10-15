@@ -1,5 +1,6 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
-import { capitalize, deMonth, monthText } from "@shared/french";
+import Decimal from "decimal.js";
+import { capitalize, de, deMonth, monthText } from "@shared/french";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { Check, ChevronDown, ChevronRight, HandCoins, Pencil, Plus, Printer, Undo2, Wallet } from "lucide-react";
@@ -26,7 +27,7 @@ import { AccountSelect, MoneyAccountSelect, MonthSelect, PartySelect, RateInput,
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useI18n, useT, count } from "@/lib/i18n";
-import { curLabel, cdf, d, date as fmtDate, money, todayLocal, usd } from "@/lib/format";
+import { curLabel, cdf, d, date as fmtDate, money, todayLocal, typedNumberOk, usd } from "@/lib/format";
 import type { Account, Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { PartyDialog } from "@/pages/Contacts";
@@ -436,16 +437,16 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                         {g.e.position && <span className="block text-xs text-muted-foreground">{g.e.position}</span>}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Input className="ml-auto w-24 text-right" inputMode="decimal" thousands={currency === "CDF"} aria-label={t(`Salary of ${g.e.name}`, `Salaire de ${g.e.name}`)} value={g.salary} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { salary: ev.target.value })} />
+                        <Input className="ml-auto w-24 text-right" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Salary of ${g.e.name}`, `Salaire ${de(g.e.name)}`)} value={g.salary} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { salary: ev.target.value })} />
                       </TableCell>
                       <TableCell className="text-right">
-                        <Input className="ml-auto w-20 text-right" inputMode="decimal" thousands={currency === "CDF"} aria-label={t(`Bonus for ${g.e.name}`, `Prime de ${g.e.name}`)} placeholder="—" value={g.bonus} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { bonus: ev.target.value })} />
+                        <Input className="ml-auto w-20 text-right" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Bonus for ${g.e.name}`, `Prime ${de(g.e.name)}`)} placeholder="—" value={g.bonus} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { bonus: ev.target.value })} />
                       </TableCell>
                       <TableCell className="text-right">
-                        <Input className="ml-auto w-20 text-right" inputMode="decimal" thousands={currency === "CDF"} aria-label={t(`Withheld for ${g.e.name}`, `Retenue de ${g.e.name}`)} placeholder="—" value={g.withheld} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { withheld: ev.target.value })} />
+                        <Input className="ml-auto w-20 text-right" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Withheld for ${g.e.name}`, `Retenue ${de(g.e.name)}`)} placeholder="—" value={g.withheld} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { withheld: ev.target.value })} />
                       </TableCell>
                       <TableCell className="text-right">
-                        <Input className="ml-auto w-20 text-right" inputMode="decimal" thousands={currency === "CDF"} aria-label={t(`Penalty for ${g.e.name}`, `Pénalité de ${g.e.name}`)} placeholder="—" value={g.penalty} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { penalty: ev.target.value })} />
+                        <Input className="ml-auto w-20 text-right" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Penalty for ${g.e.name}`, `Pénalité ${de(g.e.name)}`)} placeholder="—" value={g.penalty} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { penalty: ev.target.value })} />
                       </TableCell>
                       <TableCell className="text-right">
                         <Num className={cn("font-medium", g.net.isNegative() && "text-destructive")}>{fmt(g.net.toFixed(2))}</Num>
@@ -485,11 +486,13 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                           ? t("Enter the exchange rate", "Saisissez le taux de change")
                           : included.length === 0
                             ? t("Include at least one employee", "Incluez au moins un employé")
-                            : negative
-                              ? t("Fix the deductions that are more than the salary", "Corrigez les retenues qui dépassent le salaire")
-                              : !total.gt(0)
-                                ? t("The total must be above zero", "Le total doit être supérieur à zéro")
-                                : null
+                            : included.some((g) => ![g.salary, g.bonus, g.withheld, g.penalty].every(typedNumberOk))
+                              ? t("Correct the amounts that cannot be read", "Corrigez les montants illisibles")
+                              : negative
+                                ? t("Fix the deductions that are more than the salary", "Corrigez les retenues qui dépassent le salaire")
+                                : !total.gt(0)
+                                  ? t("The total must be above zero", "Le total doit être supérieur à zéro")
+                                  : null
                   }
                   pending={post.isPending}
                 >
@@ -631,7 +634,10 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
     if (!isCdf) return owedOf(e).toFixed(2);
     const fc = owedFc(e);
     const dollars = owedOf(e).minus(fc.usd);
-    return fc.native.plus(dollars.gt(0) && r.gt(0) ? dollars.times(r) : 0).toDecimalPlaces(0).toFixed(0);
+    // Francs are paid in 100 FC notes: the suggestion is rounded to the nearest 100 FC (at least 100 FC when something is owed).
+    const owed = fc.native.plus(dollars.gt(0) && r.gt(0) ? dollars.times(r) : 0);
+    if (!owed.gt(0)) return "0";
+    return Decimal.max(owed.dividedBy(100).toDecimalPlaces(0, Decimal.ROUND_HALF_UP), 1).times(100).toFixed(0);
   };
   const keyOf = (e: Party) => `${e.id}:${isCdf ? "CDF" : "USD"}`;
   const amountOf = (e: Party) => amounts[keyOf(e)] ?? suggested(e);
@@ -713,7 +719,7 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
                       </div>
                       <div className="text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <Input className="w-28 text-right" inputMode="decimal" thousands={isCdf} aria-label={t(`Amount paid to ${e.name}`, `Montant payé à ${e.name}`)} value={amountOf(e)} onChange={(ev) => setAmounts((p) => ({ ...p, [keyOf(e)]: ev.target.value }))} />
+                          <Input className="w-28 text-right" inputMode="decimal" usd={!isCdf} thousands={isCdf} aria-label={t(`Amount paid to ${e.name}`, `Montant payé à ${e.name}`)} value={amountOf(e)} onChange={(ev) => setAmounts((p) => ({ ...p, [keyOf(e)]: ev.target.value }))} />
                           <span className="w-6 text-left text-xs text-muted-foreground">{isCdf ? "FC" : "$"}</span>
                         </div>
                         {isCdf && d(amountOf(e)).gt(0) && !d(amountOf(e)).mod(100).isZero() && (
@@ -743,7 +749,9 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
                   ? t("Choose the account to pay from", "Choisissez le compte de paiement")
                   : isCdf && !r.gt(0)
                     ? t("Enter the exchange rate", "Saisissez le taux de change")
-                    : lines.length === 0 && t("Enter at least one amount above zero", "Saisissez au moins un montant supérieur à zéro")
+                    : rows.some((e) => !typedNumberOk(amountOf(e)))
+                      ? t("Correct the amounts that cannot be read", "Corrigez les montants illisibles")
+                      : lines.length === 0 && t("Enter at least one amount above zero", "Saisissez au moins un montant supérieur à zéro")
               }
               pending={pay.isPending}
             >
@@ -821,7 +829,7 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
                 hint={isCdf && a.gt(0) && r.gt(0) ? `≈ ${usd(a.div(r).toFixed(2))}` : undefined}
                 required
               >
-                <Input inputMode="decimal" thousands={isCdf} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
+                <Input inputMode="decimal" usd={!isCdf} thousands={isCdf} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
               </Field>
               {isCdf && (
                 <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} required>

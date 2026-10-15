@@ -8,13 +8,15 @@ import Decimal from "decimal.js";
  * A leading "+", "-" or "−" (U+2212) gives the sign.
  * With `thousands` (franc amounts and franc rates, which have no decimals worth typing), a single "." or ","
  * before exactly three digits groups thousands: "50.000" FC is 50 000 FC and a rate of "2.850" is 2 850.
+ * With `usd` (dollar amounts), "1.200" or "1,200" is refused (null): see ambiguousDollars.
  * Returns the plain number text ("4.5"), "" for an empty field, or null when it is not a number.
  */
-export function parseNumberInput(value: unknown, opts: { thousands?: boolean } = {}): string | null {
+export function parseNumberInput(value: unknown, opts: { thousands?: boolean; usd?: boolean } = {}): string | null {
   if (value === null || value === undefined) return "";
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : null;
   let s = String(value).replace(/[\s\u00a0\u202f]/g, "").replace(/\$|FC|CDF|USD|%/gi, "");
   if (s === "") return "";
+  if (opts.usd && ambiguousDollars(s) !== null) return null;
   // A sign typed with the phone keyboard: "+12", "-12" or the true minus "−12" (U+2212).
   let neg = false;
   if (/^[-+\u2212]/.test(s)) {
@@ -41,6 +43,33 @@ export function parseNumberInput(value: unknown, opts: { thousands?: boolean } =
   if (out.endsWith(".")) out = out.slice(0, -1);
   if (!/^\d+(\.\d+)?$/.test(out)) return null;
   return `${neg ? "-" : ""}${out}`;
+}
+
+/**
+ * In a dollar field "1.200" or "1,200" may be 1 200 $ or 1,20 $ (a price of 1,40 $ typed "1.400" is a
+ * thousand times too small or too big). Returns the thousands reading ("1200", "-1200") when the text is that
+ * ambiguous, else null. "0.500" and "12.50" are not ambiguous, nor is "1,200" in English (thousands).
+ */
+export function ambiguousDollars(value: string): string | null {
+  const s = value.replace(/[\s\u00a0\u202f]/g, "").replace(/\$|USD/gi, "");
+  const m = /^([-+\u2212]?)([1-9]\d{0,2})([.,])(\d{3})$/.exec(s);
+  if (!m || (m[3] === "," && lang === "en")) return null;
+  return `${m[1] && m[1] !== "+" ? "-" : ""}${m[2]}${m[4]}`;
+}
+
+/**
+ * What a form field passes up when its text cannot be used as typed: the text itself, which is not a plain
+ * number, so the page's checks refuse it. An ambiguous dollar amount ("1.200") gets a "?" so that it is not
+ * one either ("1.200?"); d() and num() read both as 0.
+ */
+export function unusableText(typed: string): string {
+  return /^-?\d+(\.\d+)?$/.test(typed.trim()) ? `${typed}?` : typed;
+}
+
+/** False for what a number field passed up because it could not be used (see unusableText); "" is fine. */
+export function typedNumberOk(value: string | null | undefined): boolean {
+  const v = (value ?? "").trim();
+  return v === "" || /^-?\d+(\.\d+)?$/.test(v);
 }
 
 export function num(value: unknown): number {
