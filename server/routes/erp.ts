@@ -1,7 +1,7 @@
 import type { Express, Request } from "express";
 import { and, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
-import { accounts, DRAFT_KINDS, journalLines, journals, parties, users, type DraftKind } from "@shared/schema";
+import { accounts, DRAFT_KINDS, journalLines, journals, parties, saleReturns, users, type DraftKind } from "@shared/schema";
 import { dec } from "@shared/money";
 import { db } from "../db";
 import { forbidden, notFound } from "../errors";
@@ -106,6 +106,8 @@ export function registerErpRoutes(
           .where(inArray(journalLines.journalId, ids))
           .orderBy(journalLines.id)
       : [];
+    const returnIds = js.filter((j) => j.journal.sourceType === "sale_return" && j.journal.sourceId).map((j) => j.journal.sourceId!);
+    const returns = returnIds.length ? await db.select({ id: saleReturns.id, saleId: saleReturns.saleId }).from(saleReturns).where(inArray(saleReturns.id, returnIds)) : [];
     const byJournal = new Map<number, typeof lines>();
     for (const l of lines) byJournal.set(l.line.journalId, [...(byJournal.get(l.line.journalId) ?? []), l]);
     let moneyIn = dec(0);
@@ -120,6 +122,13 @@ export function registerErpRoutes(
       return {
         ...journal,
         createdByName,
+        /** The sale behind a sale, cancellation or return, for the "open" link. */
+        saleId:
+          journal.sourceType === "sale" || journal.sourceType === "sale_void"
+            ? journal.sourceId
+            : journal.sourceType === "sale_return"
+              ? (returns.find((r) => r.id === journal.sourceId)?.saleId ?? null)
+              : null,
         amount: ls.reduce((s, l) => s.plus(l.line.debit), dec(0)).toFixed(2),
         lines: ls.map((l) => ({ ...l.line, accountName: l.accountName, accountCode: l.accountCode, isMoney: l.isMoney, partyName: l.partyName })),
       };
