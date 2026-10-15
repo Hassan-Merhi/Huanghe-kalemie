@@ -147,21 +147,29 @@ export async function cancelRun(tx: Tx, month: string, date: string | null | und
   const [run] = await tx.select().from(payrollRuns).where(and(eq(payrollRuns.month, month), eq(payrollRuns.status, "posted"))).for("update");
   if (!run) throw notFound("Payroll run", "Passage de paie introuvable");
   if (run.journalId) {
-    // Withholdings already paid over would leave 2100 owed back by whoever received them.
+    // Withholdings already paid over would leave 2100 owed back by whoever received them. The same lock
+    // as a payment of 2100, so a cancel and that payment cannot both pass. Each currency is compared in
+    // itself (francs in francs), so a month-end revaluation of the francs doesn't count as a payment.
     const withheldId = await systemAccountId(tx, SYSTEM_ACCOUNTS.payrollWithheld);
-    const sumOn = async (journalId?: number) => {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`credit:account:${withheldId}`}))`);
+    const owedOn = async (currency: "USD" | "CDF", journalId?: number) => {
       const [r] = await tx
-        .select({ v: sql<string>`coalesce(sum(${journalLines.credit} - ${journalLines.debit}), 0)` })
+        .select({
+          usd: sql<string>`coalesce(sum(${journalLines.credit} - ${journalLines.debit}), 0)`,
+          native: sql<string>`coalesce(sum(${journalLines.nativeAmount}), 0)`,
+        })
         .from(journalLines)
-        .where(and(eq(journalLines.accountId, withheldId), journalId ? eq(journalLines.journalId, journalId) : sql`true`));
-      return dec(r?.v ?? 0);
+        .where(and(eq(journalLines.accountId, withheldId), eq(journalLines.currency, currency), journalId ? eq(journalLines.journalId, journalId) : sql`true`));
+      return currency === "CDF" ? dec(r?.native ?? 0).negated() : dec(r?.usd ?? 0);
     };
-    const withheld = await sumOn(run.journalId);
-    if (withheld.gt(0) && (await sumOn()).minus(withheld).lt(-0.005)) {
-      throw conflict(
-        "This run's withholdings were already paid over. Cancel that payment first.",
-        "Les retenues de ce passage de paie ont déjà été versées. Annulez d'abord ce versement.",
-      );
+    for (const currency of ["USD", "CDF"] as const) {
+      const withheld = await owedOn(currency, run.journalId);
+      if (withheld.gt(0) && (await owedOn(currency)).minus(withheld).lt(currency === "CDF" ? -0.5 : -0.005)) {
+        throw conflict(
+          "This run's withholdings were already paid over. Cancel that payment first.",
+          "Les retenues de ce passage de paie ont déjà été versées. Annulez d'abord ce versement.",
+        );
+      }
     }
   }
   const cancelJournalId = run.journalId

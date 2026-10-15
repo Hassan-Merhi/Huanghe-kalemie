@@ -4,6 +4,7 @@ import {
   accounts,
   journalLines,
   journals,
+  locations,
   motorcycleUnits,
   parties,
   products,
@@ -71,6 +72,8 @@ export async function priceLimits(tx: Tx, role: Role): Promise<{ maxDiscountPct:
 
 export async function createSale(tx: Tx, input: CreateSaleInput, userId: number, rules?: PriceRules) {
   if (input.lines.length === 0) throw badRequest("Add at least one item", "Ajoutez au moins un article");
+  const [location] = await tx.select({ id: locations.id }).from(locations).where(eq(locations.id, input.locationId));
+  if (!location) throw badRequest("That location does not exist", "Cet emplacement n'existe pas");
 
   const variantIds = Array.from(new Set(input.lines.map((l) => l.variantId)));
   const variantRows = await tx
