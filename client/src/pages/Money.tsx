@@ -78,31 +78,32 @@ export default function Money() {
         <ErrorText error={accountsQ.error} />
       ) : (
         <>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
             {moneyAccounts.map((a) => (
-              <button key={a.id} type="button" className="text-left" onClick={() => setSelected(a.id)}>
+              // Empty accounts take room on a phone for nothing: shown from tablet width up.
+              <button key={a.id} type="button" className={cn("text-left", d(a.balance).isZero() && d(a.nativeBalance).isZero() && selected !== a.id && "hidden sm:block")} onClick={() => setSelected(a.id)}>
                 <Card className={cn("h-full transition-colors hover:border-primary/60", selected === a.id && "border-primary ring-1 ring-primary")}>
-                  <CardContent className="p-4">
-                    <p className="flex items-center gap-1.5 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                  <CardContent className="p-3 sm:p-4">
+                    <p className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:text-xs">
                       <Wallet className="h-3.5 w-3.5" /> {a.name}
                     </p>
                     {a.currency === "CDF" ? (
                       <>
-                        <p className="mt-1 text-2xl font-semibold tabular">{cdf(a.nativeBalance)}</p>
+                        <p className="mt-1 break-words text-lg font-semibold tabular sm:text-2xl">{cdf(a.nativeBalance)}</p>
                         <p className="text-xs text-muted-foreground">
                           {t("Book value", "Valeur comptable")} {usd(a.balance)}
                           {todayRate.gt(0) && <> · {t("today", "aujourd'hui")} ≈ {usd(d(a.nativeBalance).dividedBy(todayRate).toFixed(2))}</>}
                         </p>
                       </>
                     ) : (
-                      <p className="mt-1 text-2xl font-semibold tabular">{usd(a.balance)}</p>
+                      <p className="mt-1 break-words text-lg font-semibold tabular sm:text-2xl">{usd(a.balance)}</p>
                     )}
                   </CardContent>
                 </Card>
               </button>
             ))}
           </div>
-          <div className="grid gap-3 sm:grid-cols-3">
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
             <StatCard label={t("All money (book value)", "Toute la trésorerie (valeur comptable)")} value={usd(totalUsd.toFixed(2))} />
             <StatCard label={t("Customers owe us", "Les clients nous doivent")} value={usd(receivables?.balance ?? 0)} />
             <StatCard label={t("We owe suppliers / agents / staff", "Nous devons aux fournisseurs / agents / employés")} value={usd(d(payables?.balance ?? 0).negated().toFixed(2))} tone={d(payables?.balance ?? 0).lt(0) ? "bad" : undefined} />

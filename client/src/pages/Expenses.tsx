@@ -104,11 +104,11 @@ export default function Expenses() {
               <div className="space-y-1.5">
                 {byCategory.map(([name, amount]) => (
                   <div key={name} className="flex items-center gap-3 text-sm">
-                    <span className="w-40 shrink-0 truncate">{name}</span>
+                    <span className="w-28 shrink-0 truncate sm:w-40">{name}</span>
                     <div className="h-2 flex-1 overflow-hidden rounded bg-muted">
                       <div className="h-full rounded bg-primary" style={{ width: `${total.gt(0) ? amount.dividedBy(total).times(100).toFixed(1) : 0}%` }} />
                     </div>
-                    <Num className="w-24 text-right font-medium">{usd(amount.toFixed(2))}</Num>
+                    <Num className="w-20 shrink-0 text-right sm:w-24 font-medium">{usd(amount.toFixed(2))}</Num>
                   </div>
                 ))}
               </div>

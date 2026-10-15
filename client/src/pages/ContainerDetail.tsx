@@ -1022,12 +1022,12 @@ function PreviewSection({ c, priceOf }: { c: ContainerFull; priceOf: Map<number,
         )}
         {p && (
           <>
-            <div className="grid gap-3 sm:grid-cols-3">
+            <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
               <StatCard label={t("Purchase value", "Valeur d'achat")} value={usd(p.fobTotalUsd)} />
               <StatCard label={t("Container costs", "Frais du conteneur")} value={usd(p.expensesTotalUsd)} sub={d(p.fobTotalUsd).gt(0) ? `+${d(p.expensesTotalUsd).dividedBy(d(p.fobTotalUsd)).times(100).toFixed(1)} %` : undefined} />
               <StatCard label={t("Landed total", "Coût de revient total")} value={usd(p.landedTotalUsd)} />
             </div>
-            <p className="text-xs text-muted-foreground md:hidden">{t("Swipe the table sideways to see every column →", "Faites glisser le tableau sur le côté pour voir toutes les colonnes →")}</p>
+            <p className="text-xs text-muted-foreground hidden sm:block md:hidden">{t("Swipe the table sideways to see every column →", "Faites glisser le tableau sur le côté pour voir toutes les colonnes →")}</p>
             <div className="max-w-full overflow-x-auto rounded-md border">
               <Table>
                 <TableHeader>
@@ -1218,7 +1218,7 @@ function FinalCosts({ c, priceOf }: { c: ContainerFull; priceOf: Map<number, str
   const hasMotos = c.lines.some((l) => l.tracksSerials);
   return (
     <>
-      <div className="grid gap-3 sm:grid-cols-3">
+      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
         <StatCard label={t("Purchase value", "Valeur d'achat")} value={usd(c.fobTotalUsd)} />
         <StatCard label={t("Container costs", "Frais du conteneur")} value={usd(c.expensesTotalUsd)} />
         <StatCard label={t("Landed total", "Coût de revient total")} value={usd(c.landedTotalUsd)} sub={c.offloadDate ? `${t("Offloaded on", "Déchargé le")} ${date(c.offloadDate)}` : undefined} />

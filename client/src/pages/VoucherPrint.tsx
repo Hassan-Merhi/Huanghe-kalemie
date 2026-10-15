@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import { AlertTriangle, ArrowLeft, Printer } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Table } from "@/components/ui/table";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ErrorText, Loading, Num } from "@/components/common";
@@ -129,7 +130,7 @@ export default function VoucherPrint() {
           )}
 
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <Table className="text-sm">
               <thead>
                 <tr className="border-b text-left text-xs uppercase tracking-wide text-muted-foreground">
                   <th className="py-2 pr-2 font-medium">{t("Account", "Compte")}</th>
@@ -168,7 +169,7 @@ export default function VoucherPrint() {
                   <td className="pt-2 text-right"><Num>{usd(totalCredit.toFixed(2))}</Num></td>
                 </tr>
               </tfoot>
-            </table>
+            </Table>
           </div>
 
           <p className="text-sm">
