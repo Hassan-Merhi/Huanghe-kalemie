@@ -58,7 +58,7 @@ describe.skipIf(!hasDb)("Guards found by the fifth audit", async () => {
     const [v] = await db.select().from(variants).where(eq(variants.id, oil));
     expect(Number(v.stockValue) / Number(v.stockQty)).toBeCloseTo(8.5, 2);
 
-    const filter = (await db.transaction((tx) => catalog.createProduct(tx, { name: "Filtre", variants: [{ attributes: {}, sellPrice: "4" }] }))).variants[0].id;
+    const filter = (await db.transaction((tx) => catalog.createProduct(tx, { name: "Filtre", unit: "litre", variants: [{ attributes: {}, sellPrice: "4" }] }))).variants[0].id;
     await offload("C-2", supplierId, "USD", "1", [{ variantId: filter, quantity: "50", unitPrice: "2" }, { variantId: filter, quantity: "0.001", unitPrice: "5000" }], "2026-08-03");
     await db.transaction((tx) => ops.adjustStock(tx, { date: "2026-08-04", locationId, kind: "loss", reason: "Perdu", lines: [{ variantId: filter, qtyChange: "-50.001" }] }, userId, staff));
     await expect(
