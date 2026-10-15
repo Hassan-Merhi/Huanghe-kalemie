@@ -69,7 +69,7 @@ export default function Dashboard() {
             <Button asChild size="sm" variant="secondary"><Link href="/inventory"><ClipboardList className="mr-1 h-4 w-4" /> {t("Inventory", "Inventaire")}</Link></Button>
             <Button asChild size="sm" variant="secondary"><Link href="/analytics"><BarChart3 className="mr-1 h-4 w-4" /> {t("Analytics", "Analyses")}</Link></Button>
           </div>
-          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          <div className="grid grid-cols-2 gap-2 sm:gap-3 lg:grid-cols-4">
             <StatCard label={t("Today's sales", "Ventes du jour")} value={usd(data.todaySales.total)} sub={`${data.todaySales.count} ${t("sale(s)", "vente(s)")}`} />
             <StatCard
               label={t("Gross profit this month", "Marge brute du mois")}

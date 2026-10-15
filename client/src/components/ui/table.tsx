@@ -2,18 +2,54 @@ import * as React from "react"
 
 import { cn } from "@/lib/utils"
 
+/** Copy each column's heading onto its cells, so a phone can show every row as a labelled card. */
+function labelCells(table: HTMLTableElement) {
+  const heads = Array.from(table.querySelectorAll(":scope > thead > tr:last-child > th"));
+  if (!heads.length) return;
+  const labels = heads.map((h) => (h as HTMLElement).innerText?.trim() || h.textContent?.trim() || "");
+  table.querySelectorAll(":scope > tbody > tr, :scope > tfoot > tr").forEach((row) => {
+    let col = 0;
+    Array.from(row.children).forEach((cell) => {
+      const label = labels[col] ?? "";
+      if (cell.getAttribute("data-label") !== label) cell.setAttribute("data-label", label);
+      // Nothing to read in the cell: a phone card leaves it out instead of showing a bare label.
+      const blank = !(cell as HTMLElement).innerText?.trim() && !cell.querySelector("input, button, select, textarea, a, svg, img");
+      if (blank !== cell.hasAttribute("data-blank")) cell.toggleAttribute("data-blank", blank);
+      col += (cell as HTMLTableCellElement).colSpan || 1;
+    });
+  });
+}
+
 const Table = React.forwardRef<
   HTMLTableElement,
-  React.HTMLAttributes<HTMLTableElement>
->(({ className, ...props }, ref) => (
-  <div className="relative w-full overflow-auto">
-    <table
-      ref={ref}
-      className={cn("w-full caption-bottom text-sm", className)}
-      {...props}
-    />
-  </div>
-))
+  React.HTMLAttributes<HTMLTableElement> & {
+    /** On phones, show each row as a card with the column names as labels (default on). */
+    cards?: boolean
+  }
+>(({ className, cards = true, ...props }, ref) => {
+  const inner = React.useRef<HTMLTableElement | null>(null)
+  React.useLayoutEffect(() => {
+    const table = inner.current
+    if (!table || !cards) return
+    labelCells(table)
+    const observer = new MutationObserver(() => labelCells(table))
+    observer.observe(table, { childList: true, subtree: true, characterData: true })
+    return () => observer.disconnect()
+  }, [cards])
+  return (
+    <div className="relative w-full overflow-auto">
+      <table
+        ref={(node) => {
+          inner.current = node
+          if (typeof ref === "function") ref(node)
+          else if (ref) ref.current = node
+        }}
+        className={cn("w-full caption-bottom text-sm", cards && "table-cards", className)}
+        {...props}
+      />
+    </div>
+  )
+})
 Table.displayName = "Table"
 
 const TableHeader = React.forwardRef<

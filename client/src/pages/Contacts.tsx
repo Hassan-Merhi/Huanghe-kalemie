@@ -104,7 +104,7 @@ export default function Contacts() {
         </div>
       </div>
 
-      <div className="mb-4 grid grid-cols-1 gap-3 sm:grid-cols-3">
+      <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
         <StatCard label={t("Contacts", "Contacts")} value={rows.length} />
         <StatCard label={t("They owe us", "Ils nous doivent")} value={usd(owedToUs.toFixed(2))} />
         <StatCard label={t("We owe them", "Nous leur devons")} value={usd(weOwe.toFixed(2))} />

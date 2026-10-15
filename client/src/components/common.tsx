@@ -30,9 +30,9 @@ export function Field({ label, hint, error, children, className }: { label: stri
 export function StatCard({ label, value, sub, tone }: { label: string; value: ReactNode; sub?: ReactNode; tone?: "good" | "bad" | "neutral" }) {
   return (
     <Card>
-      <CardContent className="p-4">
-        <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{label}</p>
-        <p className={cn("mt-1 text-2xl font-semibold tabular", tone === "good" && "text-green-600 dark:text-green-400", tone === "bad" && "text-destructive")}>{value}</p>
+      <CardContent className="p-3 sm:p-4">
+        <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:text-xs">{label}</p>
+        <p className={cn("mt-1 break-words text-lg font-semibold tabular sm:text-2xl", tone === "good" && "text-green-600 dark:text-green-400", tone === "bad" && "text-destructive")}>{value}</p>
         {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
       </CardContent>
     </Card>
