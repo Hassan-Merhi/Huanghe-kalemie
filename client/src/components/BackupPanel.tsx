@@ -53,7 +53,7 @@ export function BackupPanel() {
             </a>
           </Button>
           {q.data && (
-            <p className={stale ? "text-sm text-amber-700 dark:text-amber-400" : "text-sm text-muted-foreground"}>
+            <p className={stale ? "text-sm text-amber-800 dark:text-amber-400" : "text-sm text-muted-foreground"}>
               {last
                 ? t(`Last download: ${dateTime(last)}`, `Dernier téléchargement : ${dateTime(last)}`)
                 : t("No backup has been downloaded yet.", "Aucune sauvegarde n'a encore été téléchargée.")}
@@ -219,7 +219,7 @@ function RestoreCard({ empty }: { empty: boolean }) {
               {t("This file was not made by this server, or it was changed after it was downloaded.", "Ce fichier n'a pas été créé par ce serveur, ou il a été modifié après son téléchargement.")}
             </p>
             <p className="text-muted-foreground">
-              {t("That is normal for a backup from another server or an older version. If nobody should have edited it, do not restore it.", "C'est normal pour une sauvegarde d'un autre serveur ou d'une ancienne version. Si personne n'aurait dû le modifier, ne le restaurez pas.")}
+              {t("That is normal for a backup from another server or an older version. If nobody should have edited it, do not restore it.", "C'est normal pour une sauvegarde d'un autre serveur ou d'une ancienne version. Si personne n'était censé le modifier, ne le restaurez pas.")}
             </p>
             <label className="flex items-start gap-2">
               <Checkbox checked={unsealedOk} onCheckedChange={(v) => setUnsealedOk(v === true)} className="mt-0.5" />
@@ -255,7 +255,7 @@ function RestoreCard({ empty }: { empty: boolean }) {
         )}
         {result && (
           <div className="space-y-2">
-            <p className="text-sm font-medium text-emerald-700 dark:text-emerald-400">
+            <p className="text-sm font-medium text-emerald-800 dark:text-emerald-400">
               {t(
                 `Restored ${number(result.rows)} records; every total matches the backup. You will be asked to sign in again.`,
                 `${number(result.rows)} enregistrements restaurés ; tous les totaux correspondent à la sauvegarde. Vous allez devoir vous reconnecter.`,

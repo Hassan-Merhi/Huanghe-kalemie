@@ -101,7 +101,7 @@ export function StatCard({ label, value, sub, tone }: { label: string; value: Re
     <Card>
       <CardContent className="p-3 sm:p-4">
         <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:text-xs">{label}</p>
-        <p className={cn("mt-1 break-words text-lg font-semibold tabular sm:text-2xl", tone === "good" && "text-green-700 dark:text-green-400", tone === "bad" && "text-destructive")}>{value}</p>
+        <p className={cn("mt-1 break-words text-lg font-semibold tabular sm:text-2xl", tone === "good" && "text-green-800 dark:text-green-400", tone === "bad" && "text-destructive")}>{value}</p>
         {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
       </CardContent>
     </Card>
@@ -134,4 +134,11 @@ export function ErrorText({ error }: { error: unknown }) {
 /** Right-aligned number cell. */
 export function Num({ children, className }: { children: ReactNode; className?: string }) {
   return <span className={cn("tabular whitespace-nowrap", className)}>{children}</span>;
+}
+
+/** Francs change hands in whole notes: an FC amount with centimes is a typing slip (the server refuses it too). */
+export function francDecimalsError(t: (en: string, fr: string) => string, currency: string | null | undefined, value: string): string | null {
+  if (currency !== "CDF" || !value.trim()) return null;
+  const n = Number(value);
+  return Number.isFinite(n) && !Number.isInteger(n) ? t("Franc amounts are whole numbers (no centimes)", "Les montants en FC sont des nombres entiers (sans centimes)") : null;
 }

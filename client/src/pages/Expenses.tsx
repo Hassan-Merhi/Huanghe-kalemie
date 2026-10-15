@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Ban, Info, Plus } from "lucide-react";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
+import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
 import { AccountSelect, MoneyAccountSelect, PartySelect, useRate } from "@/components/pickers";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
-import { d, date, money, monthStart, todayLocal, usd } from "@/lib/format";
+import { curLabel, d, date, money, monthStart, todayLocal, usd } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import type { Account, Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -150,7 +150,7 @@ export default function Expenses() {
                         {r.currency === "CDF" && <div className="text-xs text-muted-foreground"><Num>{usd(r.amountUsd)}</Num></div>}
                       </TableCell>
                       <TableCell className="min-w-[130px] text-sm">
-                        {r.paidFromAccountId ? accountName(r.paidFromAccountId) : <span className="text-amber-700 dark:text-amber-400">{t("Owed to", "Dû à")} {partyName(r.payablePartyId)}</span>}
+                        {r.paidFromAccountId ? accountName(r.paidFromAccountId) : <span className="text-amber-800 dark:text-amber-400">{t("Owed to", "Dû à")} {partyName(r.payablePartyId)}</span>}
                       </TableCell>
                       <TableCell>{r.voidedAt ? <Badge variant="destructive">{t("Cancelled", "Annulée")}</Badge> : <Badge variant="secondary">{t("Recorded", "Enregistrée")}</Badge>}</TableCell>
                       {can("manager") && (
@@ -241,6 +241,8 @@ function AddExpenseDialog({ onClose }: { onClose: () => void }) {
           ? t("Choose who it is owed to", "Choisissez à qui c'est dû")
           : !amt.gt(0)
             ? t("Enter an amount above zero", "Saisissez un montant supérieur à zéro")
+            : francDecimalsError(t, currency, amount)
+              ? francDecimalsError(t, currency, amount)
             : isCdf && !d(rate).gt(0)
               ? t("Enter the exchange rate", "Saisissez le taux de change")
               : null;
@@ -299,18 +301,18 @@ function AddExpenseDialog({ onClose }: { onClose: () => void }) {
                 <Select value={owedCurrency} onValueChange={(v) => setOwedCurrency(v as "USD" | "CDF")}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="USD">USD</SelectItem>
-                    <SelectItem value="CDF">CDF</SelectItem>
+                    <SelectItem value="USD">{t("Dollars ($)", "Dollars ($)")}</SelectItem>
+                    <SelectItem value="CDF">{t("Francs (FC)", "Francs (FC)")}</SelectItem>
                   </SelectContent>
                 </Select>
               </Field>
             </>
           )}
-          <Field label={t(`Amount (${currency})`, `Montant (${currency})`)} required>
-            <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
+          <Field label={t(`Amount (${curLabel(currency)})`, `Montant (${curLabel(currency)})`)} error={francDecimalsError(t, currency, amount)} required>
+            <Input inputMode={isCdf ? "numeric" : "decimal"} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
           </Field>
           {isCdf && (
-            <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 $)")} hint={usdValue ? `= ${usd(usdValue.toFixed(2))}` : undefined} required>
+            <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} hint={usdValue ? `= ${usd(usdValue.toFixed(2))}` : undefined} required>
               <Input inputMode="decimal" value={rate} onChange={(e) => { setRate(e.target.value); setRateTouched(true); }} />
             </Field>
           )}

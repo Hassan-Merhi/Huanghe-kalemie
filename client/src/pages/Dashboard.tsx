@@ -1,4 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
+import { capitalize, deMonth, monthText } from "@shared/french";
 import { Link } from "wouter";
 import { AlertTriangle, ArrowRight, BarChart3, BookOpen, ClipboardList, Container, FilePlus2, Receipt, ShoppingCart } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -38,7 +39,7 @@ export default function Dashboard() {
   const { can } = useAuth();
   const q = useQuery<DashboardData>({ queryKey: ["/api/reports/dashboard"] });
   const data = q.data;
-  const monthName = data ? new Date(`${data.month}-01T00:00:00`).toLocaleDateString("fr-FR", { month: "long", year: "numeric" }) : "";
+
   const moneyTotal = (data?.money ?? []).reduce((s, m) => s.plus(d(m.balance)), d(0));
   // Sales at 0 $ or below cost in the last 90 days (from Rapports > Contrôles).
   const checksQ = useQuery<{ warnings?: { key: string; ok: boolean; actual: string }[] }>({ queryKey: ["/api/reports/self-check"], enabled: can("manager", "partner"), staleTime: 60_000 });
@@ -48,7 +49,7 @@ export default function Dashboard() {
     <div>
       <PageHeader
         title={t("Dashboard", "Tableau de bord")}
-        description={data ? `${fmtDate(data.today)} · ${t("month of", "mois de")} ${monthName}` : undefined}
+        description={data ? `${fmtDate(data.today)} · ${t(`month of ${monthText(data.month, "en")}`, `mois ${deMonth(data.month)}`)}` : undefined}
         actions={
           can("manager") ? (
             <>
@@ -258,7 +259,7 @@ function PositionCard({ p, onTheWay }: { p: NonNullable<DashboardData["position"
           ))}
           <div className="flex justify-between py-2 font-semibold">
             <span>{t("Net", "Net")}</span>
-            <Num className={d(p.net).lt(0) ? "text-destructive" : "text-emerald-600 dark:text-emerald-400"}>{usd(p.net)}</Num>
+            <Num className={d(p.net).lt(0) ? "text-destructive" : "text-emerald-800 dark:text-emerald-400"}>{usd(p.net)}</Num>
           </div>
         </div>
         {purchase.gt(0) && (

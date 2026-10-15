@@ -30,6 +30,8 @@ export interface Position { money: string; stock: string; transit: string; recei
 const C_MAIN = "hsl(var(--primary))";
 const C_MUTED = "hsl(var(--muted-foreground))";
 const C_PROFIT = "#10b981";
+/** Legend labels in the text colour (the swatch keeps the series colour): green text on the page is unreadable. */
+const legendText = (value: string) => <span style={{ color: "hsl(var(--foreground))" }}>{value}</span>;
 const C_LOSS = "hsl(var(--destructive))";
 const GRID = "hsl(var(--border))";
 const AXIS = { fontSize: 11, fill: "hsl(var(--muted-foreground))" };
@@ -129,12 +131,18 @@ function Body({ a }: { a: Analytics }) {
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <StatCard label={t("Sales", "Ventes")} value={usd(a.sales.total)} sub={count(t, a.sales.count, ["sale", "sales"], ["vente", "ventes"])} />
+        <StatCard label={t("Sales (before returns)", "Ventes (avant retours)")} value={usd(a.sales.total)} sub={count(t, a.sales.count, ["sale", "sales"], ["vente", "ventes"])} />
         <StatCard label={t("Gross profit", "Marge brute")} value={usd(a.totals.grossProfit)} tone={d(a.totals.grossProfit).lt(0) ? "bad" : "good"} sub={marginPct ? `${pct(marginPct)} ${t("of income", "des recettes")}` : undefined} />
         <StatCard label={t("Running costs", "Charges")} value={usd(a.totals.operatingExpenses)} />
         <StatCard label={t("Net profit", "Bénéfice net")} value={usd(a.totals.netProfit)} tone={d(a.totals.netProfit).lt(0) ? "bad" : "good"} />
         <StatCard label={t("Credit sales", "Ventes à crédit")} value={usd(a.sales.credit)} sub={d(a.sales.total).gt(0) ? `${pct(d(a.sales.credit).div(d(a.sales.total)).times(100).toNumber(), 0)} ${t("of sales", "des ventes")}` : undefined} />
       </div>
+      <p className="-mt-2 text-xs text-muted-foreground">
+        {t(
+          "Gross and net profit are the books' figures: after returns, franc rounding and exchange differences. For a month still open, Partners and months also counts the month-end restatement of franc and yuan balances, so its result can differ.",
+          "La marge et le bénéfice sont ceux des comptes\u00a0: après retours, arrondis en FC et écarts de change. Pour un mois encore ouvert, Associés et mois compte aussi la réévaluation des soldes en FC et en yuans de fin de mois\u00a0: son résultat peut donc différer.",
+        )}
+      </p>
 
       <div className="grid gap-4 lg:grid-cols-2">
         <ChartCard title={t("Daily income and gross profit", "Recettes et marge brute par jour")} empty={!daily.length}>
@@ -143,7 +151,7 @@ function Body({ a }: { a: Analytics }) {
             <XAxis dataKey="date" tick={AXIS} tickLine={false} axisLine={false} minTickGap={16} />
             <YAxis tick={AXIS} tickLine={false} axisLine={false} tickFormatter={axisUsd} width={52} />
             <Tooltip {...TOOLTIP} formatter={tipUsd} />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
+            <Legend wrapperStyle={{ fontSize: 12 }} formatter={legendText} />
             <Area type="linear" dataKey="revenue" name={t("Income", "Recettes")} stroke={C_MAIN} fill={C_MAIN} fillOpacity={0.15} strokeWidth={2} />
             <Area type="linear" dataKey="grossProfit" name={t("Gross profit", "Marge brute")} stroke={C_PROFIT} fill={C_PROFIT} fillOpacity={0.15} strokeWidth={2} />
           </AreaChart>
@@ -155,7 +163,7 @@ function Body({ a }: { a: Analytics }) {
             <XAxis dataKey="month" tick={<MonthTick />} tickLine={false} axisLine={false} interval={0} height={36} />
             <YAxis tick={AXIS} tickLine={false} axisLine={false} tickFormatter={axisUsd} width={52} />
             <Tooltip {...TOOLTIP} formatter={tipUsd} />
-            <Legend wrapperStyle={{ fontSize: 12 }} />
+            <Legend wrapperStyle={{ fontSize: 12 }} formatter={legendText} />
             <Bar dataKey="income" name={t("Income", "Recettes")} fill={C_MAIN} radius={[2, 2, 0, 0]} />
             <Bar dataKey="grossProfit" name={t("Gross profit", "Marge brute")} fill={C_MUTED} radius={[2, 2, 0, 0]} />
             <Bar dataKey="netProfit" name={t("Net profit", "Bénéfice net")} fill={C_PROFIT} radius={[2, 2, 0, 0]}>
@@ -180,7 +188,7 @@ function Body({ a }: { a: Analytics }) {
             <XAxis type="number" tick={AXIS} tickLine={false} axisLine={false} tickFormatter={axisUsd} />
             <YAxis {...yCat} dataKey="name" />
             <Tooltip {...TOOLTIP} formatter={tipUsd} />
-            <Bar dataKey="usd" name={t("Amount (USD)", "Montant (USD)")} radius={[0, 2, 2, 0]}>
+            <Bar dataKey="usd" name={t("Amount ($)", "Montant ($)")} radius={[0, 2, 2, 0]}>
               {payments.map((p, i) => <Cell key={i} fill={p.name === t("On credit", "À crédit") ? C_MUTED : C_MAIN} />)}
             </Bar>
           </BarChart>
@@ -234,7 +242,7 @@ function Body({ a }: { a: Analytics }) {
                         <TableCell className="text-right"><Num>{fmtQty(i.qty)}</Num></TableCell>
                         <TableCell className="text-right"><Num>{usd(i.revenue)}</Num></TableCell>
                         <TableCell className="text-right">
-                          <Num className={cn(d(i.profit).lt(0) ? "text-destructive" : "text-emerald-600 dark:text-emerald-400")}>{usd(i.profit)}</Num>
+                          <Num className={cn(d(i.profit).lt(0) ? "text-destructive" : "text-emerald-800 dark:text-emerald-400")}>{usd(i.profit)}</Num>
                           {d(i.revenue).gt(0) && <div className="text-xs text-muted-foreground tabular">{pct(d(i.profit).div(d(i.revenue)).times(100).toNumber(), 0)}</div>}
                         </TableCell>
                       </TableRow>
@@ -279,7 +287,7 @@ export function PositionCard({ position: p }: { position: Position }) {
           <TableFooter>
             <TableRow>
               <TableCell className="font-semibold">{t("Net", "Net")}</TableCell>
-              <TableCell className="text-right"><Num className={cn("font-semibold", d(p.net).lt(0) ? "text-destructive" : "text-emerald-600 dark:text-emerald-400")}>{usd(p.net)}</Num></TableCell>
+              <TableCell className="text-right"><Num className={cn("font-semibold", d(p.net).lt(0) ? "text-destructive" : "text-emerald-800 dark:text-emerald-400")}>{usd(p.net)}</Num></TableCell>
             </TableRow>
           </TableFooter>
         </Table>

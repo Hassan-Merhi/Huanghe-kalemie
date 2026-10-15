@@ -1,7 +1,8 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
+import { capitalize, deMonth, monthText } from "@shared/french";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
-import { ChevronDown, ChevronRight, HandCoins, Pencil, Plus, Printer, Undo2, Wallet } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, HandCoins, Pencil, Plus, Printer, Undo2, Wallet } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
@@ -25,7 +26,7 @@ import { AccountSelect, MoneyAccountSelect, MonthSelect, PartySelect, RateInput,
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useI18n, useT, count } from "@/lib/i18n";
-import { cdf, d, date as fmtDate, money, todayLocal, usd } from "@/lib/format";
+import { curLabel, cdf, d, date as fmtDate, money, todayLocal, usd } from "@/lib/format";
 import type { Account, Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { PartyDialog } from "@/pages/Contacts";
@@ -72,16 +73,10 @@ function lastDayOfMonth(month: string) {
   return `${month}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, "0")}`;
 }
 
-function formatMonth(month: string, lang: "fr" | "en") {
-  const [y, m] = month.split("-").map(Number);
-  if (!y || !m) return month;
-  const s = new Intl.DateTimeFormat(lang === "fr" ? "fr-FR" : "en-US", { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(Date.UTC(y, m - 1, 1)));
-  return s.charAt(0).toUpperCase() + s.slice(1);
-}
-
+/** "octobre 2026" in running text (French months are lower case), "October 2026" in English. */
 function useMonthLabel() {
   const { lang } = useI18n();
-  return (month: string) => formatMonth(month, lang);
+  return (month: string) => monthText(month, lang);
 }
 
 /** Employee balance in words. Debit-positive: negative = we owe them, positive = an advance they still owe. */
@@ -94,7 +89,7 @@ export function EmployeeBalance({ balance, className }: { balance: string | null
     return <span className={cn("font-medium text-blue-700 dark:text-blue-400", className)}>{t(`We owe them ${x}`, `On lui doit ${x}`)}</span>;
   }
   const x = usd(b.toFixed(2));
-  return <span className={cn("font-medium text-amber-700 dark:text-amber-400", className)}>{t(`Advance to repay ${x}`, `Avance à rembourser ${x}`)}</span>;
+  return <span className={cn("font-medium text-amber-800 dark:text-amber-400", className)}>{t(`Advance to repay ${x}`, `Avance à rembourser ${x}`)}</span>;
 }
 
 // ---------------------------------------------------------------- Page
@@ -249,6 +244,8 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
   const run = data.runs.find((r) => r.month === month && r.status !== "cancelled") ?? null;
   const cancelledRuns = data.runs.filter((r) => r.month === month && r.status === "cancelled");
   const active = data.employees.filter((e) => e.active);
+  /** Nobody on this run is still owed anything: the salaries are paid, so there is nothing left to pay. */
+  const fullyPaid = !!run && run.lines.every((l) => !d(data.employees.find((e) => e.id === l.partyId)?.balance).isNegative());
   const effectiveAccount = accountId ?? data.salaryAccountId;
   // The current month defaults to today, not its last day: a future-dated entry would be missing from today's reports.
   const today = todayLocal();
@@ -292,7 +289,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
   }
 
   const post = useApiMutation<Record<string, unknown>, PayrollRun>("POST", "/api/payroll/runs", {
-    success: t("Salaries booked", "Salaires comptabilisés"),
+    success: t("Payroll saved", "Paie enregistrée"),
     onSuccess: () => setPaying(true),
   });
   const cancel = useApiMutation<Record<string, unknown>>("POST", `/api/payroll/runs/${month}/cancel`, {
@@ -326,9 +323,15 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
         </Field>
         {run && canEdit && (
           <div className="flex flex-wrap gap-2">
-            <Button onClick={() => setPaying(true)}>
-              <Wallet className="mr-1 h-4 w-4" /> {t("Pay salaries", "Payer les salaires")}
-            </Button>
+            {fullyPaid ? (
+              <Badge variant="outline" className="h-9 border-green-700/40 bg-green-50 px-3 text-sm font-medium text-green-800 dark:border-green-400/40 dark:bg-green-950/40 dark:text-green-300">
+                <Check className="mr-1 h-4 w-4" /> {t("Salaries paid", "Salaires payés")}
+              </Badge>
+            ) : (
+              <Button onClick={() => setPaying(true)}>
+                <Wallet className="mr-1 h-4 w-4" /> {t("Pay salaries", "Payer les salaires")}
+              </Button>
+            )}
             <Button variant="outline" onClick={() => setConfirmCancel(true)}>
               <Undo2 className="mr-1 h-4 w-4" /> {t("Cancel this run", "Annuler ce passage")}
             </Button>
@@ -340,9 +343,9 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
         <Card>
           <CardHeader className="flex flex-row flex-wrap items-center justify-between gap-2 space-y-0">
             <div>
-              <CardTitle className="text-base">{t(`Payroll ${monthLabel(month)}`, `Paie de ${monthLabel(month)}`)}</CardTitle>
+              <CardTitle className="text-base">{t(`Payroll ${monthLabel(month)}`, `Paie ${deMonth(month)}`)}</CardTitle>
               <p className="mt-1 text-sm text-muted-foreground">
-                {t("Booked on", "Comptabilisée le")} {fmtDate(run.date)} · {count(t, run.lines.length, ["employee", "employees"], ["employé", "employés"])}
+                {t("Saved on", "Enregistrée le")} {fmtDate(run.date)} · {count(t, run.lines.length, ["employee", "employees"], ["employé", "employés"])}
               </p>
             </div>
             {run.journalId && (
@@ -362,17 +365,17 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
       ) : (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">{t(`Prepare payroll for ${monthLabel(month)}`, `Préparer la paie de ${monthLabel(month)}`)}</CardTitle>
+            <CardTitle className="text-base">{t(`Prepare payroll for ${monthLabel(month)}`, `Préparer la paie ${deMonth(month)}`)}</CardTitle>
             <p className="text-sm text-muted-foreground">
               {t(
-                "Booking records what each employee earned (salary expense, owed to the employee). Paying them comes next.",
-                "Comptabiliser enregistre ce que chaque employé a gagné (charge de salaires, dû à l'employé). Le paiement vient ensuite.",
+                "Saving records what each employee earned this month and now is owed. Paying them comes next.",
+                "Enregistrer la paie note ce que chaque employé a gagné ce mois-ci et ce qui lui est dû. Le paiement vient ensuite.",
               )}
             </p>
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Field label={t("Expense account", "Compte de charge")} required>
+              <Field label={t("Recorded under", "Classée dans les dépenses")} required>
                 <AccountSelect hideCode value={effectiveAccount} onChange={setAccountId} types={["expense"]} />
               </Field>
               <Field label={t("Date", "Date")} error={dayInMonth ? null : t("The date must be inside the month", "La date doit être dans le mois")} required>
@@ -458,7 +461,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                 </TableFooter>
               </Table>
             </div>
-            {negative && <p className="text-sm text-destructive">{t(`${negative.e.name}: deductions are more than the salary`, `${negative.e.name} : les retenues dépassent le salaire`)}</p>}
+            {negative && <p className="text-sm text-destructive">{t(`${negative.e.name}: deductions are more than the salary`, `${negative.e.name}\u00a0: les retenues dépassent le salaire`)}</p>}
             {canEdit && (
               <div className="flex justify-end">
                 <SubmitButton
@@ -480,7 +483,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                   }
                   pending={post.isPending}
                 >
-                  {t("Book salaries", "Comptabiliser les salaires")}
+                  {t("Save the payroll", "Enregistrer la paie")}
                 </SubmitButton>
               </div>
             )}
@@ -492,16 +495,16 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
         <Card>
           <CardHeader>
             <CardTitle className="text-base">{t("Cancelled runs", "Passages annulés")}</CardTitle>
-            <p className="text-sm text-muted-foreground">{t("Kept for the record. Their entries were reversed.", "Gardés pour l'historique. Leurs écritures ont été contre-passées.")}</p>
+            <p className="text-sm text-muted-foreground">{t("Kept for the record. Their entries were reversed.", "Gardés pour l'historique. Leurs écritures ont été annulées.")}</p>
           </CardHeader>
           <CardContent className="space-y-4 p-0 pb-4">
             {cancelledRuns.map((r) => (
               <div key={r.id} className="space-y-1">
                 <p className="flex flex-wrap items-center gap-2 px-6 text-sm">
                   <Badge variant="destructive">{t("Cancelled", "Annulé")}</Badge>
-                  {t("Booked on", "Comptabilisé le")} {fmtDate(r.date)}
+                  {t("Saved on", "Enregistré le")} {fmtDate(r.date)}
                   {r.cancelledAt && <> · {t("cancelled on", "annulé le")} {fmtDate(r.cancelledAt.slice(0, 10))}</>}
-                  {r.cancelJournalId && <Link href={`/vouchers/${r.cancelJournalId}`} className="text-primary hover:underline">{t("reversal", "contre-passation")}</Link>}
+                  {r.cancelJournalId && <Link href={`/vouchers/${r.cancelJournalId}`} className="text-primary hover:underline">{t("cancelling entry", "écriture d'annulation")}</Link>}
                 </p>
                 <RunLinesTable run={r} />
               </div>
@@ -519,7 +522,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
             <AlertDialogDescription>
               {t(
                 `The salary entry for ${monthLabel(month)} will be reversed. Payments already made stay on the employees' accounts.`,
-                `L'écriture des salaires de ${monthLabel(month)} sera contre-passée. Les paiements déjà faits restent sur le compte des employés.`,
+                `L'écriture des salaires ${deMonth(month)} sera annulée. Les paiements déjà faits restent sur le compte des employés.`,
               )}
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -631,7 +634,7 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
     })
     .filter((l) => l.amount.gt(0));
   const total = lines.reduce((s, l) => s.plus(l.amount), d(0));
-  const frMonth = formatMonth(month, "fr");
+  const frMonth = monthText(month, "fr");
 
   const pay = useApiMutation<Record<string, unknown>, { id: number; total: string }>("POST", "/api/vouchers/payment", {
     success: t("Salaries paid", "Salaires payés"),
@@ -682,7 +685,7 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
                 <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
               </Field>
               {isCdf && (
-                <Field label={t("Rate (CDF per USD)", "Taux (FC pour 1 USD)")} required>
+                <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} required>
                   <RateInput day={day} value={rate} onChange={setRate} />
                 </Field>
               )}
@@ -801,14 +804,14 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
                 <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
               </Field>
               <Field
-                label={`${t("Amount", "Montant")}${account ? ` (${account.currency})` : ""}`}
+                label={`${t("Amount", "Montant")}${account ? ` (${curLabel(account.currency)})` : ""}`}
                 hint={isCdf && a.gt(0) && r.gt(0) ? `≈ ${usd(a.div(r).toFixed(2))}` : undefined}
                 required
               >
                 <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
               </Field>
               {isCdf && (
-                <Field label={t("Rate (CDF per USD)", "Taux (FC pour 1 USD)")} required>
+                <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} required>
                   <RateInput day={day} value={rate} onChange={setRate} />
                 </Field>
               )}
@@ -868,7 +871,7 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
                       <Link href={`/contacts/${e.id}`} className="hover:underline">{e.name}</Link>
                       {e.position && <span className="block text-xs text-muted-foreground">{e.position}</span>}
                     </TableCell>
-                    <TableCell className="text-right"><Num className="font-medium text-amber-700 dark:text-amber-400">{usd(e.balance)}</Num></TableCell>
+                    <TableCell className="text-right"><Num className="font-medium text-amber-800 dark:text-amber-400">{usd(e.balance)}</Num></TableCell>
                   </TableRow>
                 ))}
               </TableBody>
@@ -893,7 +896,7 @@ function HistoryTab({ runs }: { runs: PayrollRun[] }) {
   const monthLabel = useMonthLabel();
   const [open, setOpen] = useState<number | null>(null);
   const sorted = [...runs].sort((a, b) => b.month.localeCompare(a.month));
-  if (sorted.length === 0) return <EmptyState title={t("No payroll booked yet", "Aucune paie comptabilisée pour l'instant")} />;
+  if (sorted.length === 0) return <EmptyState title={t("No payroll booked yet", "Aucune paie enregistrée pour l'instant")} />;
   const grand = sorted.filter((r) => r.status !== "cancelled").reduce((s, r) => s.plus(r.totalUsd), d(0));
   return (
     <Card>
@@ -916,7 +919,7 @@ function HistoryTab({ runs }: { runs: PayrollRun[] }) {
                   <TableRow className="cursor-pointer" onClick={() => setOpen(open === r.id ? null : r.id)}>
                     <TableCell>{open === r.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</TableCell>
                     <TableCell className="font-medium">
-                      {monthLabel(r.month)}
+                      {capitalize(monthLabel(r.month))}
                       {r.status === "cancelled" && <Badge variant="destructive" className="ml-2">{t("Cancelled", "Annulé")}</Badge>}
                     </TableCell>
                     <TableCell className="hidden whitespace-nowrap sm:table-cell">{fmtDate(r.date)}</TableCell>
