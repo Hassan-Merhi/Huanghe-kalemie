@@ -268,6 +268,8 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
   const included = grid.filter((g) => g.include);
   const total = included.reduce((s, g) => s.plus(g.net), d(0));
   const negative = included.find((g) => g.net.isNegative());
+  /** Francs are paid in 100 FC notes: only a warning, the amount stays as typed. */
+  const notRound = currency === "CDF" ? included.find((g) => g.net.gt(0) && !g.net.mod(100).isZero()) : undefined;
   const dayInMonth = effectiveDay.slice(0, 7) === month;
 
   /** Switching currency converts what was typed at the rate, so 250 $ does not become 250 FC. */
@@ -293,7 +295,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
     onSuccess: () => setPaying(true),
   });
   const cancel = useApiMutation<Record<string, unknown>>("POST", `/api/payroll/runs/${month}/cancel`, {
-    success: t("Payroll run cancelled", "Passage de paie annulé"),
+    success: t("Payroll cancelled", "Paie annulée"),
     onSuccess: () => setConfirmCancel(false),
   });
 
@@ -333,7 +335,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
               </Button>
             )}
             <Button variant="outline" onClick={() => setConfirmCancel(true)}>
-              <Undo2 className="mr-1 h-4 w-4" /> {t("Cancel this run", "Annuler ce passage")}
+              <Undo2 className="mr-1 h-4 w-4" /> {t(`Cancel the ${monthLabel(month)} payroll`, `Annuler la paie ${deMonth(month)}`)}
             </Button>
           </div>
         )}
@@ -434,16 +436,16 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                         {g.e.position && <span className="block text-xs text-muted-foreground">{g.e.position}</span>}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Input className="ml-auto w-24 text-right" inputMode="decimal" value={g.salary} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { salary: ev.target.value })} />
+                        <Input className="ml-auto w-24 text-right" inputMode="decimal" thousands={currency === "CDF"} aria-label={t(`Salary of ${g.e.name}`, `Salaire de ${g.e.name}`)} value={g.salary} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { salary: ev.target.value })} />
                       </TableCell>
                       <TableCell className="text-right">
-                        <Input className="ml-auto w-20 text-right" inputMode="decimal" placeholder="0" value={g.bonus} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { bonus: ev.target.value })} />
+                        <Input className="ml-auto w-20 text-right" inputMode="decimal" thousands={currency === "CDF"} aria-label={t(`Bonus for ${g.e.name}`, `Prime de ${g.e.name}`)} placeholder="—" value={g.bonus} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { bonus: ev.target.value })} />
                       </TableCell>
                       <TableCell className="text-right">
-                        <Input className="ml-auto w-20 text-right" inputMode="decimal" placeholder="0" value={g.withheld} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { withheld: ev.target.value })} />
+                        <Input className="ml-auto w-20 text-right" inputMode="decimal" thousands={currency === "CDF"} aria-label={t(`Withheld for ${g.e.name}`, `Retenue de ${g.e.name}`)} placeholder="—" value={g.withheld} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { withheld: ev.target.value })} />
                       </TableCell>
                       <TableCell className="text-right">
-                        <Input className="ml-auto w-20 text-right" inputMode="decimal" placeholder="0" value={g.penalty} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { penalty: ev.target.value })} />
+                        <Input className="ml-auto w-20 text-right" inputMode="decimal" thousands={currency === "CDF"} aria-label={t(`Penalty for ${g.e.name}`, `Pénalité de ${g.e.name}`)} placeholder="—" value={g.penalty} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { penalty: ev.target.value })} />
                       </TableCell>
                       <TableCell className="text-right">
                         <Num className={cn("font-medium", g.net.isNegative() && "text-destructive")}>{fmt(g.net.toFixed(2))}</Num>
@@ -461,6 +463,14 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                 </TableFooter>
               </Table>
             </div>
+            {currency === "CDF" && notRound && (
+              <p className="text-sm text-amber-800 dark:text-amber-400">
+                {t(
+                  `${notRound.e.name}: ${fmt(notRound.net.toFixed(0))} is not a multiple of 100 FC, which is hard to pay in notes`,
+                  `${notRound.e.name} : ${fmt(notRound.net.toFixed(0))} n'est pas un multiple de 100 FC, difficile à payer en billets`,
+                )}
+              </p>
+            )}
             {negative && <p className="text-sm text-destructive">{t(`${negative.e.name}: deductions are more than the salary`, `${negative.e.name}\u00a0: les retenues dépassent le salaire`)}</p>}
             {canEdit && (
               <div className="flex justify-end">
@@ -518,7 +528,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
       <AlertDialog open={confirmCancel} onOpenChange={setConfirmCancel}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("Cancel this payroll run?", "Annuler ce passage de paie\u00a0?")}</AlertDialogTitle>
+            <AlertDialogTitle>{t(`Cancel the ${monthLabel(month)} payroll?`, `Annuler la paie ${deMonth(month)}\u00a0?`)}</AlertDialogTitle>
             <AlertDialogDescription>
               {t(
                 `The salary entry for ${monthLabel(month)} will be reversed. Payments already made stay on the employees' accounts.`,
@@ -533,7 +543,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
               onClick={(e) => { e.preventDefault(); cancel.mutate({}); }}
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
             >
-              {t("Cancel the run", "Annuler le passage")}
+              {t("Cancel the payroll", "Annuler la paie")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -703,9 +713,12 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
                       </div>
                       <div className="text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <Input className="w-28 text-right" inputMode="decimal" value={amountOf(e)} onChange={(ev) => setAmounts((p) => ({ ...p, [keyOf(e)]: ev.target.value }))} />
+                          <Input className="w-28 text-right" inputMode="decimal" thousands={isCdf} aria-label={t(`Amount paid to ${e.name}`, `Montant payé à ${e.name}`)} value={amountOf(e)} onChange={(ev) => setAmounts((p) => ({ ...p, [keyOf(e)]: ev.target.value }))} />
                           <span className="w-6 text-left text-xs text-muted-foreground">{isCdf ? "FC" : "$"}</span>
                         </div>
+                        {isCdf && d(amountOf(e)).gt(0) && !d(amountOf(e)).mod(100).isZero() && (
+                          <p className="mt-1 text-xs text-amber-800 dark:text-amber-400">{t("Not a multiple of 100 FC", "Pas un multiple de 100\u00a0FC")}</p>
+                        )}
                       </div>
                     </div>
                   );
@@ -808,7 +821,7 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
                 hint={isCdf && a.gt(0) && r.gt(0) ? `≈ ${usd(a.div(r).toFixed(2))}` : undefined}
                 required
               >
-                <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
+                <Input inputMode="decimal" thousands={isCdf} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
               </Field>
               {isCdf && (
                 <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} required>

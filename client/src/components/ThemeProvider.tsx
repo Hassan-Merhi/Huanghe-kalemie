@@ -128,7 +128,7 @@ export function ThemeToggle({ className }: { className?: string }) {
   const options = useThemeOptions();
   const current = options.find((o) => o.value === preference) ?? options[2];
   const Icon = preference === "system" ? Monitor : theme === "dark" ? Moon : Sun;
-  const label = `${t("Theme", "Thème")} : ${current.label}`;
+  const label = `${t("Theme", "Thème")}${t(":", "\u00a0:")} ${current.label}`;
   return (
     <DropdownMenu>
       <Tooltip>

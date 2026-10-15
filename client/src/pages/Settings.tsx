@@ -106,7 +106,7 @@ function ShopTab() {
           error={rate.trim() && !d(rate).gt(0) ? t("Enter a rate above zero", "Saisissez un taux supérieur à zéro") : null}
           required
         >
-          <Input inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} />
+          <Input inputMode="decimal" thousands value={rate} onChange={(e) => setRate(e.target.value)} />
         </Field>
         <Field
           label={t("Allowed gap from the day's rate (%)", "Écart permis avec le taux du jour (%)")}

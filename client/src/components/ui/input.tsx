@@ -7,12 +7,17 @@ import { formatLang, inputText, parseNumberInput } from "@/lib/format";
 const BASE =
   "flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 aria-[invalid=true]:border-destructive aria-[invalid=true]:ring-destructive/20 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none md:text-sm";
 
-const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
-  ({ className, type, ...props }, ref) => {
+type InputProps = React.ComponentProps<"input"> & {
+  /** Franc amounts and franc rates: "50.000" or "2,850" group thousands (see parseNumberInput). */
+  thousands?: boolean;
+};
+
+const Input = React.forwardRef<HTMLInputElement, InputProps>(
+  ({ className, type, thousands, ...props }, ref) => {
     // Dates are always shown dd/mm/yyyy, whatever language the phone or browser is set to.
     if (type === "date") return <DateInput className={className} {...props} ref={ref} />;
     // Amounts and quantities accept "4,50" as well as "4.50" and read French-style.
-    if ((props.inputMode === "decimal" || props.inputMode === "numeric") && (!type || type === "text")) return <DecimalInput className={className} {...props} ref={ref} />;
+    if ((props.inputMode === "decimal" || props.inputMode === "numeric") && (!type || type === "text")) return <DecimalInput className={className} thousands={thousands} {...props} ref={ref} />;
     // h-9 to match icon buttons and default buttons.
     return <input type={type} className={cn(BASE, className)} ref={ref} {...props} />;
   },
@@ -106,7 +111,7 @@ const LAYOUT = /^(?:[a-z0-9[\]-]+:)*!?(?:-?m[trblxy]?-|w-|min-w-|max-w-|flex-|ba
  * working with exact decimals; what is shown is French-style ("1 234,5") once the field is left.
  * Text that is not a number is passed on as typed so the page can say what is wrong.
  */
-const DecimalInput = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(({ className, value, onChange, onBlur, ...props }, ref) => {
+const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className, value, onChange, onBlur, thousands, ...props }, ref) => {
   const plain = value === undefined || value === null ? "" : String(value);
   const [text, setText] = React.useState(() => inputText(plain));
   // The value this field last sent up: when it comes back unchanged, keep what the person typed ("4," stays "4,").
@@ -115,7 +120,7 @@ const DecimalInput = React.forwardRef<HTMLInputElement, React.ComponentProps<"in
     if (plain !== sent.current) setText(inputText(plain));
     sent.current = null;
   }, [plain]);
-  const unreadable = text.trim() !== "" && parseNumberInput(text) === null;
+  const unreadable = text.trim() !== "" && parseNumberInput(text, { thousands }) === null;
   const fr = formatLang() === "fr";
   const hintId = React.useId();
   // Size and placement classes go on the wrapper, so the field sits where it did; the rest styles the field.
@@ -136,7 +141,7 @@ const DecimalInput = React.forwardRef<HTMLInputElement, React.ComponentProps<"in
         onChange={(e) => {
           const typed = e.target.value;
           setText(typed);
-          const parsed = parseNumberInput(typed);
+          const parsed = parseNumberInput(typed, { thousands });
           const out = parsed === null ? typed : parsed;
           sent.current = out;
           if (out === plain) sent.current = null;

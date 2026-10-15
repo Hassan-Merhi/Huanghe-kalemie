@@ -8,7 +8,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Field } from "@/components/common";
 import { useI18n, useT } from "@/lib/i18n";
-import { accountLabel, d, todayLocal, usd, qty as fmtQty } from "@/lib/format";
+import { accountLabel, d, money, todayLocal, usd, qty as fmtQty } from "@/lib/format";
 import { api, invalidateAll, withQuery } from "@/lib/api";
 import type { Account, Category, Location, Party, Settings, VariantRow } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
@@ -21,16 +21,44 @@ export function useMoneyAccounts() {
   return { ...q, data: (q.data ?? []).filter((a) => a.isMoney && a.active) };
 }
 
-export function MoneyAccountSelect({ value, onChange, placeholder, "aria-label": ariaLabel }: { value: number | null; onChange: (id: number, account: Account) => void; placeholder?: string; "aria-label"?: string }) {
+/**
+ * Money account picker. Managers and partners see each account's balance in the list, as on the
+ * vouchers form, so a payment is not taken from an empty box; the till leaves it out (`showBalance`).
+ */
+export function MoneyAccountSelect({
+  value,
+  onChange,
+  placeholder,
+  showBalance = true,
+  "aria-label": ariaLabel,
+}: {
+  value: number | null;
+  onChange: (id: number, account: Account) => void;
+  placeholder?: string;
+  showBalance?: boolean;
+  "aria-label"?: string;
+}) {
   const t = useT();
+  const { can } = useAuth();
   const { data } = useMoneyAccounts();
+  const withBalance = showBalance && can("manager", "partner");
+  const balances = useQuery<Account[]>({ queryKey: ["/api/accounts/balances"], enabled: withBalance }).data;
+  const balanceOf = (a: Account) => {
+    const b = withBalance ? balances?.find((x) => x.id === a.id) : undefined;
+    return b ? money(a.currency === "CDF" ? b.nativeBalance : b.balance, a.currency) : null;
+  };
   return (
     <Select value={value ? String(value) : ""} onValueChange={(v) => { const a = data.find((x) => x.id === Number(v)); if (a) onChange(a.id, a); }}>
       <SelectTrigger aria-label={ariaLabel}><SelectValue placeholder={placeholder ?? t("Choose account", "Choisir le compte")} /></SelectTrigger>
       <SelectContent>
-        {data.map((a) => (
-          <SelectItem key={a.id} value={String(a.id)}>{accountLabel(a.name, a.currency)}</SelectItem>
-        ))}
+        {data.map((a) => {
+          const bal = balanceOf(a);
+          return (
+            <SelectItem key={a.id} value={String(a.id)} extra={bal && <span className="ml-auto pl-3 text-xs text-muted-foreground tabular">{bal}</span>}>
+              {accountLabel(a.name, a.currency)}
+            </SelectItem>
+          );
+        })}
       </SelectContent>
     </Select>
   );
@@ -39,6 +67,22 @@ export function MoneyAccountSelect({ value, onChange, placeholder, "aria-label":
 /** Lower case without accents, so "electricite" finds "Électricité". */
 function fold(s: string) {
   return s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").toLowerCase();
+}
+
+/** How well an account matches what was typed: the name itself, then a name starting with it, then a word starting with it. */
+function matchRank(a: Account, query: string): number {
+  if (!query) return 0;
+  const name = fold(a.name);
+  if (name === query || a.code === query) return 0;
+  if (name.startsWith(query) || a.code.startsWith(query)) return 1;
+  if (name.split(/[\s'’(),:-]+/).some((w) => w.startsWith(query))) return 2;
+  return 3;
+}
+
+/** Everyday accounts first (expenses, income), opening balances and the partners' capital last. */
+function typeRank(a: Account): number {
+  if (a.systemKey === "opening_equity" || a.partnerId) return 5;
+  return { expense: 0, income: 0, cost_of_sales: 1, liability: 2, asset: 3, equity: 4 }[a.type] ?? 3;
 }
 
 /**
@@ -70,7 +114,13 @@ export function AccountSelect({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const words = fold(search).split(/\s+/).filter(Boolean);
-  const filtered = rows.filter((a) => words.every((w) => fold(`${a.code} ${a.name}`).includes(w))).slice(0, 80);
+  const query = words.join(" ");
+  const filtered = rows
+    .filter((a) => words.every((w) => fold(`${a.code} ${a.name}`).includes(w)))
+    .map((a) => ({ a, rank: [matchRank(a, query), typeRank(a)] }))
+    .sort((x, y) => x.rank[0] - y.rank[0] || x.rank[1] - y.rank[1] || x.a.code.localeCompare(y.a.code))
+    .map((x) => x.a)
+    .slice(0, 80);
   const [active, setActive] = useState(0);
   useEffect(() => setActive(0), [search, open]);
   const listRef = useRef<HTMLDivElement>(null);
@@ -196,12 +246,15 @@ export function PartySelect({
   onChange,
   placeholder,
   allowCreate = true,
+  "aria-label": ariaLabel,
 }: {
   types: Party["type"][];
   value: number | null;
   onChange: (id: number | null, party?: Party) => void;
   placeholder?: string;
   allowCreate?: boolean;
+  /** Defaults to the kind of contact ("Client"), so a screen reader names the field. */
+  "aria-label"?: string;
 }) {
   const t = useT();
   const [open, setOpen] = useState(false);
@@ -227,7 +280,13 @@ export function PartySelect({
     <>
       <Popover open={open} onOpenChange={setOpen}>
         <PopoverTrigger asChild>
-          <Button variant="outline" role="combobox" className="w-full justify-between font-normal">
+          <Button
+            variant="outline"
+            role="combobox"
+            aria-expanded={open}
+            aria-label={`${ariaLabel ?? (types.length ? t(PARTY_LABELS[types[0]][0], PARTY_LABELS[types[0]][1]) : t("Contact", "Contact"))}${selected ? `${t(":", "\u00a0:")} ${selected.name}` : ""}`}
+            className="w-full justify-between font-normal"
+          >
             <span className={cn("truncate", !selected && "text-muted-foreground")}>{selected ? selected.name : placeholder ?? t("Choose…", "Choisir…")}</span>
             <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
           </Button>
@@ -236,6 +295,7 @@ export function PartySelect({
           <Input
             autoFocus
             placeholder={t("Search name or phone", "Chercher nom ou téléphone")}
+            aria-label={t("Search name or phone", "Chercher nom ou téléphone")}
             value={search}
             onChange={(e) => setSearch(e.target.value)}
             role="combobox"
@@ -445,7 +505,24 @@ export function VariantSearch({
  * A month from the list. By default next month back to two years ago; `max` and `min` ("2026-10")
  * narrow it, e.g. to months that have ended or that have entries.
  */
-export function MonthSelect({ value, onChange, className, min, max, "aria-label": ariaLabel }: { value: string; onChange: (month: string) => void; className?: string; min?: string | null; max?: string | null; "aria-label"?: string }) {
+export function MonthSelect({
+  value,
+  onChange,
+  className,
+  min,
+  max,
+  disabledReason,
+  "aria-label": ariaLabel,
+}: {
+  value: string;
+  onChange: (month: string) => void;
+  className?: string;
+  min?: string | null;
+  max?: string | null;
+  /** Why a month cannot be chosen (shown next to it, greyed out), or null when it can. */
+  disabledReason?: (month: string) => string | null;
+  "aria-label"?: string;
+}) {
   const { lang } = useI18n();
   const options = useMemo(() => {
     const [y, m] = todayLocal().split("-").map(Number);
@@ -464,9 +541,14 @@ export function MonthSelect({ value, onChange, className, min, max, "aria-label"
     <Select value={value} onValueChange={onChange}>
       <SelectTrigger className={className} aria-label={ariaLabel}><SelectValue /></SelectTrigger>
       <SelectContent>
-        {options.map((o) => (
-          <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-        ))}
+        {options.map((o) => {
+          const reason = o.value === value ? null : disabledReason?.(o.value) ?? null;
+          return (
+            <SelectItem key={o.value} value={o.value} disabled={!!reason} extra={reason && <span className="ml-auto pl-3 text-xs">{reason}</span>}>
+              {o.label}
+            </SelectItem>
+          );
+        })}
       </SelectContent>
     </Select>
   );
@@ -576,7 +658,7 @@ export function RateInput({ day, value, onChange, className }: { day: string; va
   const readOnly = user?.role === "cashier";
   return (
     <div className={cn("space-y-1", className)}>
-      <Input inputMode="decimal" value={value} readOnly={readOnly} onChange={(e) => onChange(e.target.value)} aria-label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} />
+      <Input inputMode="decimal" thousands value={value} readOnly={readOnly} onChange={(e) => onChange(e.target.value)} aria-label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} />
       {dayRate.gt(0) && (
         <p className={cn("text-xs", gap.gt(tolerance) ? "text-destructive" : "text-muted-foreground")}>
           {gap.gt(tolerance)

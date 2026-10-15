@@ -298,6 +298,10 @@ export function AdjustForm({
   const onlyRemove = kind === "damage" || kind === "loss";
   const onlyAdd = kind === "opening";
   const signed = !onlyRemove && !onlyAdd;
+  // Stock found is a gain shared by the partners, so staff do not price it (the server refuses): an item in
+  // stock comes back at its average cost, one out of stock at what it cost when bought (within 10 %).
+  const { can } = useAuth();
+  const staffCost = !can() && kind !== "opening";
   // A count is typed as what is on the shelf; the difference with the system is worked out.
   const [countMode, setCountMode] = useState<"counted" | "change">("counted");
   const byCount = kind === "count" && countMode === "counted";
@@ -442,10 +446,12 @@ export function AdjustForm({
         qtyChange: c.toString(),
       };
       if (c.gt(0)) {
-        if (l.unitCost.trim()) {
+        if (staffCost && d(l.variant.stockQty).gte(1)) {
+          // Goes in at the average cost: nothing to send.
+        } else if (l.unitCost.trim()) {
           if (!/^\d+(\.\d+)?$/.test(l.unitCost.trim())) return setError(t(`Invalid cost for ${name}.`, `Coût invalide pour ${name}.`));
           line.unitCost = d(l.unitCost).toString();
-        } else if (d(l.variant.stockQty).lte(0)) {
+        } else if (d(l.variant.stockQty).lte(0) && !staffCost) {
           return setError(t(`Give a cost per unit for ${name}: it has no stock to take an average from.`, `Indiquez un coût unitaire pour ${name}\u00a0: il n'a pas de stock pour calculer une moyenne.`));
         }
         if (l.variant.tracksSerials) {
@@ -541,7 +547,8 @@ export function AdjustForm({
           {lines.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">{t("Search or scan items to adjust.", "Cherchez ou scannez les articles à ajuster.")}</p>}
           {lines.map((l) => {
             const c = change(l);
-            const needsCost = c.gt(0) && d(l.variant.stockQty).lte(0);
+            const needsCost = c.gt(0) && d(l.variant.stockQty).lte(0) && !staffCost;
+            const fixedCost = c.gt(0) && staffCost && d(l.variant.stockQty).gte(1);
             return (
               <div key={l.key} className="rounded-lg border p-3">
                 <div className="flex items-start justify-between gap-2">
@@ -570,10 +577,23 @@ export function AdjustForm({
                       <DecimalInput inputMode={signed ? "text" : "decimal"} value={l.qty} onChange={(e) => setQty(l, e.target.value)} />
                     </Field>
                   )}
-                  {c.gt(0) && (
+                  {fixedCost && (
+                    <div className="text-sm">
+                      <p className="mb-1 text-xs text-muted-foreground">{t("Cost per unit", "Coût unitaire")}</p>
+                      <p className="font-medium tabular">{unitCost(l.variant.avgCost)}</p>
+                      <p className="text-xs text-muted-foreground">{t("Stock found goes in at its average cost; only the owner can change it.", "Le stock retrouvé entre à son coût moyen\u00a0; seul le propriétaire peut le changer.")}</p>
+                    </div>
+                  )}
+                  {c.gt(0) && !fixedCost && (
                     <Field
                       label={t("Cost per unit ($)", "Coût unitaire ($)")}
-                      hint={needsCost ? t("Required: no stock yet", "Obligatoire\u00a0: pas encore de stock") : t("Blank = current average cost", "Vide = coût moyen actuel")}
+                      hint={
+                        needsCost
+                          ? t("Required: no stock yet", "Obligatoire\u00a0: pas encore de stock")
+                          : staffCost
+                            ? t("Blank = what it cost when bought; only the owner can go more than 10% from it", "Vide = son coût d'achat\u00a0; seul le propriétaire peut s'en écarter de plus de 10\u00a0%")
+                            : t("Blank = current average cost", "Vide = coût moyen actuel")
+                      }
                       required={needsCost}
                     >
                       <Input inputMode="decimal" value={l.unitCost} onChange={(e) => update(l.key, { unitCost: e.target.value })} className={cn(needsCost && !l.unitCost.trim() && "border-destructive")} />

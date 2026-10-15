@@ -64,6 +64,12 @@ function Guard({ path, roles, children }: { path: string; roles: Role[]; childre
   return <>{children}</>;
 }
 
+/** An old link to a removed page: on to the page that took its place, or home for a role that cannot see it. */
+function OldLink({ to, roles }: { to: string; roles: Role[] }) {
+  const { can, user } = useAuth();
+  return <Redirect to={can(...roles) ? to : homeOf(user?.role)} />;
+}
+
 function Routes() {
   const { user, loading } = useAuth();
   const [location] = useLocation();
@@ -101,8 +107,8 @@ function Routes() {
         {R("/containers", ["manager", "partner"], Containers)}
         {R("/containers/:id", ["manager", "partner"], ContainerDetail)}
         {/* Pages that were removed: their work is done in Vouchers, Accounts and the dashboard. */}
-        <Route path="/money"><Redirect to="/accounts" /></Route>
-        <Route path="/expenses"><Redirect to="/vouchers?tab=payment" /></Route>
+        <Route path="/money"><OldLink to="/accounts" roles={["manager", "partner"]} /></Route>
+        <Route path="/expenses"><OldLink to="/vouchers?tab=payment&line=account" roles={["manager", "partner"]} /></Route>
         {R("/contacts", ["manager", "cashier", "partner"], Contacts)}
         {R("/contacts/:id", ["manager", "cashier", "partner"], ContactDetail)}
         {R("/partners", ["manager", "partner"], Partners)}

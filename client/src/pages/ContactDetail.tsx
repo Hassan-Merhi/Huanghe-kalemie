@@ -9,12 +9,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
-import { MoneyAccountSelect, PARTY_LABELS, RateInput, useRateField } from "@/components/pickers";
+import { MoneyAccountSelect, PARTY_LABELS, RateInput, useRate, useRateField } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
-import { cdf, d, date as fmtDate, qty as fmtQty, todayLocal, usd } from "@/lib/format";
+import { cdf, curLabel, d, date as fmtDate, money, number as fmtNumber, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import type { Account, Party } from "@/lib/types";
+import { cn } from "@/lib/utils";
 import { BalanceWords, foreignText, PartyDialog, type ForeignBalance } from "@/pages/Contacts";
 
 interface StatementRow {
@@ -30,6 +31,10 @@ interface StatementRow {
   sourceType: string | null;
   sourceId: number | null;
   balance: string;
+  /** Money actually paid, when the contact's line is at the average cost of the francs or yuan settled. */
+  paid?: string;
+  /** What the booked amount adds to `paid`: the exchange difference. */
+  fxDiff?: string;
 }
 interface Statement {
   party: Omit<Party, "balance">;
@@ -183,12 +188,24 @@ export default function ContactDetail() {
                         {r.memo}
                         {r.nativeAmount && r.currency !== "USD" && !d(r.nativeAmount).isZero() && (
                           <span className="block text-xs text-muted-foreground tabular">
-                            {r.currency === "CDF" ? cdf(d(r.nativeAmount).abs().toString()) : `${fmtQty(d(r.nativeAmount).abs().toString())} ${r.currency}`}
+                            {money(d(r.nativeAmount).abs().toString(), r.currency)}
                           </span>
                         )}
                       </TableCell>
-                      <TableCell className="text-right"><Num>{d(r.debit).isZero() ? "" : usd(r.debit)}</Num></TableCell>
-                      <TableCell className="text-right"><Num>{d(r.credit).isZero() ? "" : usd(r.credit)}</Num></TableCell>
+                      {(["debit", "credit"] as const).map((side) => (
+                        <TableCell key={side} className="text-right">
+                          {d(r[side]).isZero() ? null : r.paid && r.fxDiff ? (
+                            <>
+                              <Num>{usd(r.paid)}</Num>
+                              <span className="block whitespace-nowrap text-xs text-muted-foreground">
+                                {d(r.fxDiff).isNegative() ? "\u2212" : "+"}{usd(d(r.fxDiff).abs().toFixed(2))} {t("exchange difference", "écart de change")}
+                              </span>
+                            </>
+                          ) : (
+                            <Num>{usd(r[side])}</Num>
+                          )}
+                        </TableCell>
+                      ))}
                       <TableCell className="text-right whitespace-nowrap"><BalanceWords balance={r.balance} /></TableCell>
                     </TableRow>
                   ))}
@@ -231,6 +248,15 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
   const fcOwed = owedIn("CDF");
   const cnyOwed = !isCustomer && account?.currency === "USD" ? owedIn("CNY") : null;
   const [settleCny, setSettleCny] = useState("");
+  // Dollars paid for yuan: what the yuan owed are worth at the rate on file, and the rate this payment implies.
+  const cnyRate = useRate(day).data?.cnyPerUsd ?? null;
+  const cnyForeign = foreign.find((x) => x.currency === "CNY");
+  const cnyRef = cnyRate && d(cnyRate).gt(0) ? d(cnyRate) : cnyForeign && !d(cnyForeign.usd).isZero() ? d(cnyForeign.native).abs().dividedBy(d(cnyForeign.usd).abs()) : null;
+  const cnyOwedUsd = cnyOwed && cnyRef ? cnyOwed.dividedBy(cnyRef) : null;
+  const impliedCny = cnyOwed && d(settleCny).gt(0) && d(amount).gt(0) ? d(settleCny).dividedBy(d(amount)) : null;
+  const impliedGap = impliedCny && cnyRef ? impliedCny.minus(cnyRef).abs().dividedBy(cnyRef).times(100) : null;
+  /** The dollar amount looks like the yuan figure (50 550 typed for 50 550 ¥): far more dollars than the yuan are worth. */
+  const looksLikeYuan = !!cnyOwedUsd && d(amount).gt(cnyOwedUsd.times(2)) && (!impliedGap || impliedGap.gt(20));
   const blocked = !account
     ? t("Choose an account", "Choisissez un compte")
     : !d(amount).gt(0)
@@ -274,11 +300,19 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
             <MoneyAccountSelect value={account?.id ?? null} onChange={(_, a) => setAccount(a)} />
           </Field>
           <Field
-            label={t(`Amount (${account?.currency ?? "USD"})`, `Montant (${account?.currency ?? "USD"})`)}
+            label={t(`Amount (${curLabel(account?.currency ?? "USD")})`, `Montant (${curLabel(account?.currency ?? "USD")})`)}
+            error={
+              looksLikeYuan
+                ? t(
+                    `That is far more dollars than the ${money(cnyOwed!.toString(), "CNY")} owed are worth (≈ ${usd(cnyOwedUsd!.toFixed(2))}): type the dollars paid, not the yuan`,
+                    `C'est bien plus de dollars que ne valent les ${money(cnyOwed!.toString(), "CNY")} dus (≈ ${usd(cnyOwedUsd!.toFixed(2))})\u00a0: saisissez les dollars payés, pas les yuans`,
+                  )
+                : null
+            }
             required
           >
             <div className="flex gap-2">
-              <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
+              <Input inputMode="decimal" thousands={isCdf} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
               {outstanding && !isCdf && !cnyOwed && (
                 <Button type="button" variant="outline" size="sm" className="h-10" onClick={() => setAmount(outstanding.toFixed(2))}>
                   {t("All", "Tout")}
@@ -301,13 +335,27 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
           )}
           {cnyOwed && (
             <Field
-              label={t("Yuan settled by this payment (CNY)", "Yuans réglés par ce paiement (CNY)")}
-              hint={t(`Owed: ${fmtQty(cnyOwed.toString())} CNY. The difference with the invoice value is an exchange gain or loss.`, `Dû : ${fmtQty(cnyOwed.toString())} CNY. L'écart avec la valeur de la facture est un gain ou une perte de change.`)}
+              label={t("Yuan settled by this payment (¥)", "Yuans réglés par ce paiement (¥)")}
+              hint={
+                <>
+                  {t(
+                    `Owed: ${money(cnyOwed.toString(), "CNY")}${cnyOwedUsd ? ` ≈ ${usd(cnyOwedUsd.toFixed(2))} at the rate on file` : ""}. The difference with the invoice value is an exchange gain or loss.`,
+                    `Dû\u00a0: ${money(cnyOwed.toString(), "CNY")}${cnyOwedUsd ? ` ≈ ${usd(cnyOwedUsd.toFixed(2))} au taux enregistré` : ""}. L'écart avec la valeur de la facture est un gain ou une perte de change.`,
+                  )}
+                  {impliedCny && (
+                    <span className={cn("block", impliedGap && impliedGap.gt(5) && "font-medium text-amber-800 dark:text-amber-400")}>
+                      {t(`This payment: ${fmtNumber(impliedCny.toString(), 2)} ¥ for $1`, `Ce paiement\u00a0: ${fmtNumber(impliedCny.toString(), 2)}\u00a0¥ pour 1\u00a0$`)}
+                      {cnyRef && t(` (on file ${fmtNumber(cnyRef.toString(), 2)})`, ` (enregistré\u00a0: ${fmtNumber(cnyRef.toString(), 2)})`)}
+                      {impliedGap && impliedGap.gt(5) && t(": check the amounts", "\u00a0: vérifiez les montants")}
+                    </span>
+                  )}
+                </>
+              }
               error={d(settleCny).gt(cnyOwed) ? t("More than what is owed", "Plus que ce qui est dû") : null}
               className="sm:col-span-2"
             >
               <div className="flex gap-2">
-                <Input inputMode="decimal" value={settleCny} onChange={(e) => setSettleCny(e.target.value)} placeholder="0" />
+                <Input inputMode="decimal" aria-label={t("Yuan settled (¥)", "Yuans réglés (¥)")} value={settleCny} onChange={(e) => setSettleCny(e.target.value)} placeholder="0" />
                 <Button type="button" variant="outline" size="sm" className="h-10" onClick={() => setSettleCny(cnyOwed.toFixed(2))}>{t("All", "Tout")}</Button>
               </div>
             </Field>

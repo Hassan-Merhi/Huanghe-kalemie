@@ -944,8 +944,8 @@ export function registerRoutes(app: Express) {
         const row = existing.find((e) => e.id === p.id);
         if (!row) throw notFound("Partner", "Associé introuvable");
         await tx.update(partners).set({ name: p.name, sharePct: dec(p.sharePct).toFixed(2), bearsOperatingExpenses: p.bearsOperatingExpenses }).where(eq(partners.id, p.id));
-        await tx.update(accounts).set({ name: `${p.name} : capital` }).where(eq(accounts.id, row.capitalAccountId));
-        await tx.update(accounts).set({ name: `${p.name} : compte de bénéfices` }).where(eq(accounts.id, row.currentAccountId));
+        await tx.update(accounts).set({ name: `${p.name}\u00a0: capital` }).where(eq(accounts.id, row.capitalAccountId));
+        await tx.update(accounts).set({ name: `${p.name}\u00a0: compte de bénéfices` }).where(eq(accounts.id, row.currentAccountId));
       }
     });
     await audit(req, "update", "partners", null, body);

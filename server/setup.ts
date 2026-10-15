@@ -91,11 +91,11 @@ export async function ensureSetup(tx: Tx, opts: SetupOptions = {}) {
     for (const d of defs) {
       const [capital] = await tx
         .insert(accounts)
-        .values({ code: `${d.code}00`, name: `${d.name} : capital`, type: "equity" })
+        .values({ code: `${d.code}00`, name: `${d.name}\u00a0: capital`, type: "equity" })
         .returning();
       const [current] = await tx
         .insert(accounts)
-        .values({ code: `${d.code}10`, name: `${d.name} : compte de bénéfices`, type: "equity" })
+        .values({ code: `${d.code}10`, name: `${d.name}\u00a0: compte de bénéfices`, type: "equity" })
         .returning();
       const [p] = await tx
         .insert(partners)

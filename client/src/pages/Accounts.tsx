@@ -192,7 +192,7 @@ function Chart({ onOpen }: { onOpen: (id: number) => void }) {
                   >
                     <span className="w-14 shrink-0 font-mono text-xs text-muted-foreground">{a.code}</span>
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-sm">{a.name}</span>
+                      <span className="block break-words text-sm">{a.name}</span>
                       <span className="flex flex-wrap gap-1">
                         {a.isMoney && <Badge variant="outline" className="h-4 px-1 text-[10px] font-normal">{a.currency === "CDF" ? "FC" : a.currency}</Badge>}
                         {!a.active && <Badge variant="secondary" className="h-4 px-1 text-[10px] font-normal">{t("Inactive", "Inactif")}</Badge>}
@@ -400,8 +400,8 @@ function Statement({ id, range, type }: { id: number; range: ReturnType<typeof u
               {L.rows.map((r, i) => (
                 <div key={`${r.journalId}-${i}`} className="flex items-start justify-between gap-2 px-4 py-2 text-sm">
                   <div className="min-w-0">
-                    <p className="truncate">{r.lineMemo || r.memo || journalTypeLabel(r.type, t)}</p>
-                    <p className="truncate text-xs text-muted-foreground">
+                    <p className="break-words">{r.lineMemo || r.memo || journalTypeLabel(r.type, t)}</p>
+                    <p className="break-words text-xs text-muted-foreground">
                       {fmtDate(r.date)} · <Link href={`/vouchers/${r.journalId}`} className="font-mono text-primary">{r.number}</Link>
                       {r.partyName ? ` · ${r.partyName}` : ""}
                     </p>

@@ -109,7 +109,8 @@ export default function Vouchers() {
       await invalidateAll();
     }
     setPosted({ kind, id: journalId });
-    navigate(`/vouchers?tab=${kind}`, { replace: true });
+    // Keep "line=account" so the next expense starts on an account line too.
+    navigate(`/vouchers?tab=${kind}${params.get("line") === "account" ? "&line=account" : ""}`, { replace: true });
   }
 
   function formProps(kind: VoucherKind): FormProps {
@@ -162,7 +163,7 @@ export default function Vouchers() {
         <TabsList className="mb-4 flex h-auto w-full flex-wrap justify-start sm:w-auto">
           {VOUCHER_KINDS.map((k) => <TabsTrigger key={k} value={k}>{voucherKindLabel(k, t)}</TabsTrigger>)}
         </TabsList>
-        <TabsContent value="payment">{body("payment", <VoucherForm key={formKey("payment")} kind="payment" {...formProps("payment")} />)}</TabsContent>
+        <TabsContent value="payment">{body("payment", <VoucherForm key={formKey("payment")} kind="payment" startOn={params.get("line") === "account" ? "account" : "party"} {...formProps("payment")} />)}</TabsContent>
         <TabsContent value="receipt">{body("receipt", <VoucherForm key={formKey("receipt")} kind="receipt" {...formProps("receipt")} />)}</TabsContent>
         <TabsContent value="journal">
           {isOwner
@@ -255,7 +256,7 @@ interface VLine {
   memo: string;
 }
 
-const blankVLine = (): VLine => ({ key: rowKey++, mode: "party", partyId: null, accountId: null, amount: "", memo: "" });
+const blankVLine = (mode: VLine["mode"] = "party"): VLine => ({ key: rowKey++, mode, partyId: null, accountId: null, amount: "", memo: "" });
 
 const PARTY_TYPES: Record<"payment" | "receipt", Party["type"][]> = {
   payment: ["supplier", "agent", "employee", "customer"],
@@ -266,7 +267,8 @@ const ACCOUNT_TYPES: Record<"payment" | "receipt", Account["type"][]> = {
   receipt: ["income", "liability", "equity", "asset"],
 };
 
-function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted }: FormProps & { kind: "payment" | "receipt" }) {
+/** `startOn`: what a new line is for; "account" for an expense (the dashboard's "Add expense"), else a contact. */
+function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted, startOn = "party" }: FormProps & { kind: "payment" | "receipt"; startOn?: VLine["mode"] }) {
   const t = useT();
   const p = draft?.payload ?? {};
   const { data: moneyAccounts } = useMoneyAccounts();
@@ -283,7 +285,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted 
       amount: str(l.amount),
       memo: str(l.memo),
     }));
-    return ls.length ? ls : [blankVLine()];
+    return ls.length ? ls : [blankVLine(startOn)];
   });
   const rateField = useRateField(day);
   useEffect(() => {
@@ -299,6 +301,9 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted 
   const rate = d(rateField.rate);
   const total = lines.reduce((s, l) => s.plus(isAmount(l.amount) ? d(l.amount).toDecimalPlaces(2) : 0), d(0));
   const totalUsd = isCdf ? (rate.gt(0) ? total.dividedBy(rate) : null) : total;
+  // Francs change hands in whole notes: say so on the form, before the server refuses it.
+  const francSlip = isCdf ? lines.findIndex((l) => isAmount(l.amount) && !d(l.amount).isInteger()) : -1;
+  const francSlipText = t(`Line ${francSlip + 1}: franc amounts are whole numbers (no centimes).`, `Ligne ${francSlip + 1}\u00a0: les montants en FC sont des nombres entiers (sans centimes).`);
   const bal = balances.data?.find((a) => a.id === accountId);
   const current = bal ? d(isCdf ? bal.nativeBalance : bal.balance) : null;
   const after = current ? (kind === "payment" ? current.minus(total) : current.plus(total)) : null;
@@ -306,7 +311,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted 
   const m = useApiMutation<Record<string, unknown>, { id: number; total: string }>("POST", `/api/vouchers/${kind}`, {
     success: kind === "payment" ? t("Payment recorded", "Paiement enregistré") : t("Receipt recorded", "Recette enregistrée"),
     onSuccess: (r) => {
-      setLines([blankVLine()]);
+      setLines([blankVLine(startOn)]);
       setMemo("");
       onPosted(r.id);
     },
@@ -333,9 +338,10 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted 
     if (!used.length) return setError(t("Add at least one line.", "Ajoutez au moins une ligne."));
     for (const [i, l] of used.entries()) {
       const target = l.mode === "party" ? l.partyId : l.accountId;
-      if (!target) return setError(t(`Line ${i + 1}: pick a contact or an account.`, `Ligne ${i + 1} : choisissez un contact ou un compte.`));
-      if (!isAmount(l.amount) || !d(l.amount).gt(0)) return setError(t(`Line ${i + 1}: enter an amount greater than zero.`, `Ligne ${i + 1} : saisissez un montant supérieur à zéro.`));
+      if (!target) return setError(t(`Line ${i + 1}: pick a contact or an account.`, `Ligne ${i + 1}\u00a0: choisissez un contact ou un compte.`));
+      if (!isAmount(l.amount) || !d(l.amount).gt(0)) return setError(t(`Line ${i + 1}: enter an amount greater than zero.`, `Ligne ${i + 1}\u00a0: saisissez un montant supérieur à zéro.`));
     }
+    if (francSlip >= 0) return setError(francSlipText);
     m.mutate({ date: day, ...payload(true) });
   }
 
@@ -414,7 +420,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted 
                   <LineAccountSelect types={ACCOUNT_TYPES[kind]} value={l.accountId} onChange={(id) => set(l.key, { accountId: id })} />
                 )}
               </div>
-              <Input inputMode="decimal" className="text-right tabular" placeholder={t(`Amount (${curLabel(currency)})`, `Montant (${curLabel(currency)})`)} value={l.amount} onChange={(e) => set(l.key, { amount: e.target.value })} />
+              <Input inputMode="decimal" thousands={currency === "CDF"} aria-invalid={(isCdf && isAmount(l.amount) && !d(l.amount).isInteger()) || undefined} className="text-right tabular" placeholder={t(`Amount (${curLabel(currency)})`, `Montant (${curLabel(currency)})`)} value={l.amount} onChange={(e) => set(l.key, { amount: e.target.value })} />
               <Input placeholder={t("Note (optional)", "Note (facultatif)")} value={l.memo} onChange={(e) => set(l.key, { memo: e.target.value })} />
               <Button variant="ghost" size="icon" className="justify-self-end" disabled={lines.length <= 1} onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} aria-label={t("Remove line", "Retirer la ligne")}>
                 <Trash2 className="h-4 w-4" />
@@ -422,13 +428,14 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted 
             </div>
           ))}
           <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-3">
-            <Button variant="outline" size="sm" onClick={() => setLines((ls) => [...ls, blankVLine()])}>
+            <Button variant="outline" size="sm" onClick={() => setLines((ls) => [...ls, blankVLine(startOn)])}>
               <Plus className="mr-1 h-4 w-4" /> {t("Add line", "Ajouter une ligne")}
             </Button>
             <div className="text-right text-sm">
               <span className="text-muted-foreground">{t("Total", "Total")} </span>
-              <Num className="text-lg font-semibold">{money(total.toFixed(2), currency)}</Num>
-              {isCdf && <span className="block text-xs text-muted-foreground">{totalUsd ? `≈ ${usd(totalUsd.toFixed(2))}` : t("enter the rate", "saisissez le taux")}</span>}
+              <Num className="text-lg font-semibold">{francSlip >= 0 ? "—" : money(total.toFixed(2), currency)}</Num>
+              {francSlip >= 0 && <span className="block text-xs font-medium text-destructive" role="alert">{francSlipText}</span>}
+              {isCdf && francSlip < 0 && <span className="block text-xs text-muted-foreground">{totalUsd ? `≈ ${usd(totalUsd.toFixed(2))}` : t("enter the rate", "saisissez le taux")}</span>}
             </div>
           </div>
         </CardContent>
@@ -605,10 +612,10 @@ function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: For
                 {isCdf(a) && (
                   <div className="mt-2 grid grid-cols-2 gap-2 md:max-w-md">
                     <Field label={t("Amount in CDF", "Montant en FC")} required>
-                      <Input inputMode="decimal" value={l.native} onChange={(e) => setNative(l, e.target.value, l.rate)} />
+                      <Input inputMode="decimal" thousands value={l.native} onChange={(e) => setNative(l, e.target.value, l.rate)} />
                     </Field>
                     <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} required>
-                      <Input inputMode="decimal" value={l.rate} onChange={(e) => setNative(l, l.native, e.target.value)} />
+                      <Input inputMode="decimal" thousands value={l.rate} onChange={(e) => setNative(l, l.native, e.target.value)} />
                     </Field>
                   </div>
                 )}
@@ -743,7 +750,7 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
             <MoneyAccountSelect value={fromId} onChange={(id) => setFromId(id)} />
           </Field>
           <Field label={t(`Amount out${from ? ` (${curLabel(from.currency)})` : ""}`, `Montant sorti${from ? ` (${curLabel(from.currency)})` : ""}`)} error={francDecimalsError(t, from?.currency, fromAmount)} required>
-            <Input inputMode="decimal" value={fromAmount} onChange={(e) => setFromAmount(e.target.value)} placeholder="0" />
+            <Input inputMode="decimal" thousands={from?.currency === "CDF"} value={fromAmount} onChange={(e) => setFromAmount(e.target.value)} placeholder="0" />
           </Field>
           <Field
             label={t("To account", "Vers le compte")}
@@ -754,7 +761,7 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
             <MoneyAccountSelect value={toId} onChange={(id) => setToId(id)} />
           </Field>
           <Field label={t(`Amount in${to ? ` (${curLabel(to.currency)})` : ""}`, `Montant reçu${to ? ` (${curLabel(to.currency)})` : ""}`)} error={francDecimalsError(t, to?.currency, toAmount)} required>
-            <Input inputMode="decimal" value={toAmount} onChange={(e) => { setToAmount(e.target.value); setToTouched(true); }} placeholder="0" />
+            <Input inputMode="decimal" thousands={to?.currency === "CDF"} value={toAmount} onChange={(e) => { setToAmount(e.target.value); setToTouched(true); }} placeholder="0" />
           </Field>
           <Field label={t("Note (optional)", "Note (facultatif)")} className="sm:col-span-2">
             <Input value={memo} onChange={(e) => setMemo(e.target.value)} />

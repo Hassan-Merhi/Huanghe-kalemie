@@ -36,7 +36,7 @@ import {
 } from "./ledger";
 import { issueStock, linkMovementsToJournal, receiveStock } from "./stock";
 import { variantColour } from "./catalog";
-import { de } from "@shared/french";
+import { de, frMoney } from "@shared/french";
 
 async function requireParty(tx: Tx, id: number | null | undefined, types: string[]) {
   if (!id) throw badRequest("Choose who this is for", "Choisissez le bénéficiaire");
@@ -491,7 +491,7 @@ export async function manualJournal(
   const debit = sum(input.lines.map((l) => cents(l.debit ?? 0)));
   const credit = sum(input.lines.map((l) => cents(l.credit ?? 0)));
   if (!debit.equals(credit)) {
-    throw badRequest(`Debits (${debit.toFixed(2)}) and credits (${credit.toFixed(2)}) must be equal`, `Les débits (${debit.toFixed(2)}) et les crédits (${credit.toFixed(2)}) doivent être égaux`);
+    throw badRequest(`Debits (${debit.toFixed(2)}) and credits (${credit.toFixed(2)}) must be equal`, `Les débits (${frMoney(debit)}) et les crédits (${frMoney(credit)}) doivent être égaux`);
   }
   if (debit.isZero()) throw badRequest("Enter some amounts", "Saisissez des montants");
   const ids = input.lines.map((l) => l.accountId);
@@ -551,7 +551,7 @@ async function staffGainCost(tx: Tx, variant: typeof variants.$inferSelect, name
     if (typed && typed.minus(avg).abs().gt(Decimal.max(avg.times("0.01"), "0.01"))) {
       throw forbidden(
         `${name}: stock found goes in at its average cost (${avg.toFixed(2)}). Leave the cost empty, or ask the owner.`,
-        `${name} : le stock retrouvé entre à son coût moyen (${avg.toFixed(2)} $). Laissez le coût vide, ou demandez au propriétaire.`,
+        `${name} : le stock retrouvé entre à son coût moyen (${frMoney(avg)}). Laissez le coût vide, ou demandez au propriétaire.`,
       );
     }
     cost = avg;
@@ -566,7 +566,7 @@ async function staffGainCost(tx: Tx, variant: typeof variants.$inferSelect, name
     if (typed && typed.minus(reference).abs().gt(reference.times("0.10").plus("0.01"))) {
       throw forbidden(
         `${name}: ${typed.toFixed(2)} is far from its cost (${reference.toFixed(2)}). Leave the cost empty to use it, or ask the owner.`,
-        `${name} : ${typed.toFixed(2)} $ s'écarte de son coût (${reference.toFixed(2)} $). Laissez le coût vide pour l'utiliser, ou demandez au propriétaire.`,
+        `${name} : ${frMoney(typed)} s'écarte de son coût (${frMoney(reference)}). Laissez le coût vide pour l'utiliser, ou demandez au propriétaire.`,
       );
     }
     cost = typed ?? reference;
@@ -575,7 +575,7 @@ async function staffGainCost(tx: Tx, variant: typeof variants.$inferSelect, name
   if (!sell.gt(0) || cost.gt(sell)) {
     throw forbidden(
       `${name}: a cost of ${cost.toFixed(2)} is above its selling price (${sell.toFixed(2)}). Ask the owner to enter this stock.`,
-      `${name} : un coût de ${cost.toFixed(2)} $ dépasse son prix de vente (${sell.toFixed(2)} $). Demandez au propriétaire de saisir ce stock.`,
+      `${name} : un coût de ${frMoney(cost)} dépasse son prix de vente (${frMoney(sell)}). Demandez au propriétaire de saisir ce stock.`,
     );
   }
   return cost;

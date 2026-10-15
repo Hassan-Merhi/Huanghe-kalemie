@@ -59,12 +59,13 @@ export function RatesCard() {
             <Field label={t("Date", "Date")} required className="w-44 shrink-0">
               <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
             </Field>
-            <Field label={t("FC per $1", "FC pour 1 $")} required className="min-w-[7rem] flex-1">
-              <Input inputMode="decimal" value={value} onChange={(e) => setValue(e.target.value)} />
+            <Field label={t("FC per $1", "FC pour 1\u00a0$")} required className="min-w-[7rem] flex-1">
+              <Input inputMode="decimal" thousands value={value} onChange={(e) => setValue(e.target.value)} />
             </Field>
             <Field
-              label={t("CNY per $1 (optional)", "CNY pour 1 $ (facultatif)")}
-              hint={lastCny ? undefined : t("About 7.1", "Environ 7,1")}
+              // A short label, on one line like its neighbour, so both fields sit at the same height.
+              label={t("¥ per $1", "¥ pour 1\u00a0$")}
+              hint={lastCny ? t("Optional", "Facultatif") : t("Optional, about 7.1", "Facultatif, environ 7,1")}
               className="min-w-[7rem] flex-1"
             >
               <Input inputMode="decimal" value={cny} onChange={(e) => setCny(e.target.value)} />
@@ -88,7 +89,7 @@ export function RatesCard() {
               {(listQ.data ?? []).slice(0, 15).map((r) => (
                 <div key={r.date} className="flex justify-between py-1">
                   <span>{date(r.date)}</span>
-                  <Num>{cdf(r.cdfPerUsd)}{r.cnyPerUsd ? ` · ${fmtQty(r.cnyPerUsd)} CNY` : ""}</Num>
+                  <Num>{cdf(r.cdfPerUsd)}{r.cnyPerUsd ? ` · ${fmtQty(r.cnyPerUsd)}\u00a0¥` : ""}</Num>
                 </div>
               ))}
             </div>

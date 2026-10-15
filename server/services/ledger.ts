@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, lt, lte, sql } from "drizzle-orm";
+import { deMonth, frDate, frMoney } from "@shared/french";
 import {
   accounts,
   auditLog,
@@ -82,13 +83,13 @@ export async function assertPeriodOpen(tx: Tx, date: string): Promise<void> {
   if (row) {
     const closed = row.month;
     if (closed === month) {
-      throw new AppError(409, `${month} is closed. Reopen it before changing anything dated in that month.`, "PERIOD_CLOSED", `Le mois ${month} est clôturé. Rouvrez-le avant de modifier quoi que ce soit daté de ce mois.`);
+      throw new AppError(409, `${month} is closed. Reopen it before changing anything dated in that month.`, "PERIOD_CLOSED", `Le mois ${deMonth(month)} est clôturé. Rouvrez-le avant de modifier quoi que ce soit daté de ce mois.`);
     }
     throw new AppError(
       409,
       `${closed} is closed, so nothing dated in ${month} or earlier can change. Reopen the closed months first.`,
       "PERIOD_CLOSED",
-      `Le mois ${closed} est clôturé : rien de daté de ${month} ou avant ne peut changer. Rouvrez d'abord les mois clôturés.`,
+      `Le mois ${deMonth(closed)} est clôturé : rien de daté ${deMonth(month)} ou avant ne peut changer. Rouvrez d'abord les mois clôturés.`,
     );
   }
 }
@@ -217,7 +218,7 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
       500,
       `Journal does not balance: debits ${totalDebit.toFixed(2)} vs credits ${totalCredit.toFixed(2)}`,
       "LEDGER_UNBALANCED",
-      `Écriture déséquilibrée : débits ${totalDebit.toFixed(2)} contre crédits ${totalCredit.toFixed(2)}`,
+      `Écriture déséquilibrée : débits ${frMoney(totalDebit)} contre crédits ${frMoney(totalCredit)}`,
     );
   }
   if (lines.length < 2) throw new AppError(500, "A journal needs at least two lines", "LEDGER", "Une écriture doit avoir au moins deux lignes");
@@ -333,10 +334,13 @@ async function assertNotOverdrawn(tx: Tx, account: typeof accounts.$inferSelect,
       409,
       `${account.name} does not hold enough: it would be ${short} ${cur} short on ${row.date}.`,
       "INSUFFICIENT_FUNDS",
-      `Solde insuffisant sur ${account.name} : il manquerait ${short} ${cur} au ${row.date}.`,
+      `Solde insuffisant sur ${account.name} : il manquerait ${frMoney(short, account.currency)} au ${frDate(String(row.date))}.`,
     );
   }
 }
+
+/** Memo of the exchange difference booked when foreign units leave a balance at its average cost. */
+export const COST_FX_MEMO = "Écart de change (coût moyen des devises)";
 
 type PendingLine = { accountId: number; debit: Decimal; credit: Decimal; partyId: number | null; currency: LineCurrency; nativeAmount: string | null; rate: string | null; memo: string | null };
 
@@ -382,7 +386,7 @@ async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string) 
       currency: "USD",
       nativeAmount: null,
       rate: null,
-      memo: "Écart de change (coût moyen des devises)",
+      memo: COST_FX_MEMO,
     });
   }
 }
@@ -399,7 +403,7 @@ export async function reverseJournal(
   if (opts.date < original.date) {
     throw badRequest(
       `The cancellation date cannot be before ${original.number} (${original.date})`,
-      `La date d'annulation ne peut pas être antérieure à ${original.number} (${original.date})`,
+      `La date d'annulation ne peut pas être antérieure à ${original.number} (${frDate(original.date)})`,
     );
   }
   const lines = await tx.select().from(journalLines).where(eq(journalLines.journalId, journalId));
