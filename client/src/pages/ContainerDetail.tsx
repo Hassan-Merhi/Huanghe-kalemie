@@ -499,11 +499,11 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                   </div>
                   {editable && problems[i] && <div className="mt-1 text-xs text-destructive">{problems[i]}</div>}
                   {editable ? (
-                    <div className="mt-2 grid grid-cols-2 gap-2">
+                    <div className="mt-2 grid grid-cols-2 items-end gap-2">
                       <Field label={t("Quantity", "Quantité")}>
                         <Input className="text-right" inputMode="decimal" value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
                       </Field>
-                      <Field label={t(`Unit price (${c.currency})`, `Prix unitaire (${c.currency})`)}>
+                      <Field label={t(`Price each (${c.currency})`, `Prix/unité (${c.currency})`)}>
                         <Input className="text-right" inputMode="decimal" value={r.unitPrice} placeholder="0" onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
                       </Field>
                       <Field label={t("Total weight (kg)", "Poids total (kg)")}>
@@ -1146,7 +1146,8 @@ function OffloadButton({ c, disabledReason }: { c: ContainerFull; disabledReason
   const [noCostsOk, setNoCostsOk] = useState(false);
   return (
     <>
-      <SubmitButton onClick={() => setOpen(true)} blocked={blocked} title={blocked ?? undefined}>
+      {/* The main button only once the container has arrived; before that, offloading is the exception. */}
+      <SubmitButton variant={c.status === "arrived" ? "default" : "outline"} onClick={() => setOpen(true)} blocked={blocked} title={blocked ?? undefined}>
         <PackageCheck className="mr-1 h-4 w-4" /> {t("Offload into stock", "Décharger en stock")}
       </SubmitButton>
       <Dialog open={open} onOpenChange={setOpen}>

@@ -117,7 +117,7 @@ export function useThemeOptions() {
   return [
     { value: "light" as const, label: t("Light", "Clair"), icon: Sun },
     { value: "dark" as const, label: t("Dark", "Sombre"), icon: Moon },
-    { value: "system" as const, label: t("Automatic (device)", "Automatique (appareil)"), icon: Monitor },
+    { value: "system" as const, label: t("Auto (device)", "Auto (appareil)"), icon: Monitor },
   ];
 }
 

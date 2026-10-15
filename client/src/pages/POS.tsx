@@ -510,7 +510,7 @@ export default function POS() {
         description={
           <>
             {t("Scan or search items, take payment, print the receipt.", "Scanner ou chercher les articles, encaisser, imprimer le reçu.")}
-            <span className="[@media(pointer:coarse)]:hidden"> {t("F9 or Ctrl+Enter to finish.", "F9 ou Ctrl+Entrée pour valider.")}</span>
+            <span className="hidden lg:inline [@media(pointer:coarse)]:hidden"> {t("F9 or Ctrl+Enter to finish.", "F9 ou Ctrl+Entrée pour valider.")}</span>
           </>
         }
         actions={
@@ -655,11 +655,11 @@ export default function POS() {
               </div>
 
               <div className="grid grid-cols-2 gap-2">
-                <Button variant="secondary" size="sm" onClick={() => payAllIn("USD")} disabled={total.lte(0) || !findCash("USD")}>
-                  <Banknote className="mr-1 h-4 w-4" /> {t("All in $ cash", "Tout en espèces $")}
+                <Button variant="secondary" size="sm" className="h-auto min-h-8 whitespace-normal py-1.5" onClick={() => payAllIn("USD")} disabled={total.lte(0) || !findCash("USD")}>
+                  <Banknote className="mr-1 hidden h-4 w-4 min-[400px]:inline" /> {t("All in $ cash", "Tout en espèces $")}
                 </Button>
-                <Button variant="secondary" size="sm" onClick={() => payAllIn("CDF")} disabled={total.lte(0) || !findCash("CDF") || rateNum.lte(0)}>
-                  <Banknote className="mr-1 h-4 w-4" /> {t("All in CDF cash", "Tout en espèces FC")}
+                <Button variant="secondary" size="sm" className="h-auto min-h-8 whitespace-normal py-1.5" onClick={() => payAllIn("CDF")} disabled={total.lte(0) || !findCash("CDF") || rateNum.lte(0)}>
+                  <Banknote className="mr-1 hidden h-4 w-4 min-[400px]:inline" /> {t("All in CDF cash", "Tout en espèces FC")}
                 </Button>
               </div>
 
@@ -673,7 +673,7 @@ export default function POS() {
                       </div>
                       <Button variant="ghost" size="icon" onClick={() => setPays((ps) => ps.filter((x) => x.key !== p.key))} aria-label={t("Remove", "Retirer")}><Trash2 className="h-4 w-4" /></Button>
                     </div>
-                    <div className={cn("grid gap-2", acc?.currency === "CDF" ? "grid-cols-2" : "grid-cols-1")}>
+                    <div className={cn("grid items-start gap-2", acc?.currency === "CDF" ? "grid-cols-2" : "grid-cols-1")}>
                       <div className="relative">
                         <Input
                           inputMode="decimal"
@@ -701,7 +701,7 @@ export default function POS() {
 
               <Separator />
               <div className="space-y-1 text-sm">
-                <div className="flex justify-between"><span>{t("Paid (USD)", "Payé (USD)")}</span><Num className="font-medium">{usd(paid.toFixed(2))}</Num></div>
+                <div className="flex justify-between"><span>{t("Paid ($)", "Payé ($)")}</span><Num className="font-medium">{usd(paid.toFixed(2))}</Num></div>
                 <div className="flex justify-between">
                   <span>{credit.gt(0) && customerId ? t("Remaining → on credit", "Reste → à crédit") : t("Left to pay", "Reste à payer")}</span>
                   <Num className={cn("font-semibold", credit.gt(0) && customerId && "text-amber-700 dark:text-amber-400", overpaid && "text-destructive")}>{usd(remaining.toFixed(2))}</Num>

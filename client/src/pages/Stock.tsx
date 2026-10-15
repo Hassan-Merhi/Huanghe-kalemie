@@ -12,6 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { SectionLinks } from "@/components/AppLayout";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
 import { LocationSelect, useLocations, VariantSearch } from "@/components/pickers";
@@ -108,6 +109,7 @@ export default function Stock() {
           <TabsTrigger value="history">{t("Adjustments", "Ajustements")}</TabsTrigger>
           {isManager && multiLocation && <TabsTrigger value="transfer">{t("New transfer", "Nouveau transfert")}</TabsTrigger>}
           <TabsTrigger value="transfers">{t("Transfers", "Transferts")}</TabsTrigger>
+          <SectionLinks />
         </TabsList>
         <TabsContent value="valuation"><Valuation /></TabsContent>
         {isManager && <TabsContent value="adjust"><AdjustForm onDone={() => setTab("history")} /></TabsContent>}

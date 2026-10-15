@@ -377,7 +377,7 @@ export default function SaleDetail() {
               <TableHeader>
                 <TableRow>
                   <TableHead>{t("Item", "Article")}</TableHead>
-                  <TableHead>SKU</TableHead>
+                  <TableHead>{t("SKU", "Code")}</TableHead>
                   <TableHead>{t("Chassis / engine", "Châssis / moteur")}</TableHead>
                   <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
                   <TableHead className="text-right">{t("Returned", "Retourné")}</TableHead>

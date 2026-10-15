@@ -11,6 +11,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { SectionLinks } from "@/components/AppLayout";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
 import { LocationSelect } from "@/components/pickers";
@@ -154,6 +155,7 @@ export default function StockImport() {
             <TabsTrigger value="items">{t("Items and opening stock", "Articles et stock d'ouverture")}</TabsTrigger>
             <TabsTrigger value="prices">{t("Prices", "Prix")}</TabsTrigger>
             <TabsTrigger value="export">{t("Export", "Exporter")}</TabsTrigger>
+            <SectionLinks />
           </TabsList>
         </div>
         <TabsContent value="items"><ItemsImport /></TabsContent>
@@ -312,7 +314,7 @@ function ItemsImport() {
                     <TableHead className="w-12">#</TableHead>
                     <TableHead>{t("Item", "Article")}</TableHead>
                     <TableHead>{t("Variant", "Variante")}</TableHead>
-                    <TableHead>SKU</TableHead>
+                    <TableHead>{t("SKU", "Code")}</TableHead>
                     <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
                     <TableHead className="text-right">{t("Cost", "Coût")}</TableHead>
                     <TableHead>{t("Status", "Statut")}</TableHead>
@@ -443,7 +445,7 @@ function PricesImport() {
                 <TableHeader>
                   <TableRow>
                     <TableHead className="w-12">#</TableHead>
-                    <TableHead>SKU</TableHead>
+                    <TableHead>{t("SKU", "Code")}</TableHead>
                     <TableHead>{t("Barcode", "Code-barres")}</TableHead>
                     <TableHead className="text-right">{t("New price", "Nouveau prix")}</TableHead>
                   </TableRow>
@@ -594,7 +596,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
     const no = t("no", "non");
     downloadXlsx(t("packing-list-template.xlsx", "modele-colisage.xlsx"), [
       [
-        t("Category", "Catégorie"), t("Item", "Article"), t("Size", "Taille"), t("Colour", "Couleur"), "SKU", t("Motorcycle (yes/no)", "Moto (oui/non)"),
+        t("Category", "Catégorie"), t("Item", "Article"), t("Size", "Taille"), t("Colour", "Couleur"), t("SKU", "Code"), t("Motorcycle (yes/no)", "Moto (oui/non)"),
         t("Quantity", "Quantité"), t("Unit price (invoice currency)", "Prix unitaire (devise de la facture)"),
         t("Total weight (kg)", "Poids total (kg)"), t("Total volume (m³)", "Volume total (m³)"), t("Sell price", "Prix de vente"),
       ],

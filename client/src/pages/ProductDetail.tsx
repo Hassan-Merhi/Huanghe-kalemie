@@ -194,7 +194,7 @@ export default function ProductDetail() {
                     <TableRow key={u.id} className={!u.chassisNo ? "bg-amber-50 dark:bg-amber-950/30" : undefined}>
                       <TableCell>{u.label}</TableCell>
                       <TableCell className="whitespace-nowrap font-mono text-xs">
-                        {u.chassisNo ?? <span className="font-sans text-amber-700 dark:text-amber-400">{t("Missing — register in Motorcycles", "Manquant — à saisir dans Motos")}</span>}
+                        {u.chassisNo ?? <Link href="/motorcycles" className="font-sans text-amber-700 underline underline-offset-2 hover:text-amber-900 dark:text-amber-400">{t("Missing — register in Motorcycles", "Manquant — à saisir dans Motos")}</Link>}
                       </TableCell>
                       <TableCell className="whitespace-nowrap font-mono text-xs">{u.engineNo ?? "—"}</TableCell>
                       <TableCell>{u.color ?? "—"}</TableCell>

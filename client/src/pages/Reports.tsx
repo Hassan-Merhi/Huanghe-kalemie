@@ -259,7 +259,7 @@ function SalesByItem() {
 
   function exportCsv() {
     downloadCsv(`sales-by-item_${range.from}_${range.to}.csv`, [
-      [t("Item", "Article"), t("Size / variant", "Taille / variante"), "SKU", t("Category", "Catégorie"), t("Qty", "Qté"), t("Revenue", "Ventes"), t("Cost", "Coût"), t("Profit", "Bénéfice"), t("Margin %", "Marge %")],
+      [t("Item", "Article"), t("Size / variant", "Taille / variante"), t("SKU", "Code"), t("Category", "Catégorie"), t("Qty", "Qté"), t("Revenue", "Ventes"), t("Cost", "Coût"), t("Profit", "Bénéfice"), t("Margin %", "Marge %")],
       ...rows.map((r) => [r.productName, variantText(r.attributes), r.sku, r.categoryName ?? "", r.qty, r.revenue, r.cogs, r.profit, margin(r) ?? ""]),
       [t("Total", "Total"), "", "", "", "", tot.revenue.toFixed(2), tot.cogs.toFixed(2), tot.profit.toFixed(2), totMargin ?? ""],
     ]);

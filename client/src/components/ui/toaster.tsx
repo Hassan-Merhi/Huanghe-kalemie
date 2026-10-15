@@ -12,10 +12,11 @@ export function Toaster() {
   const { toasts } = useToast()
 
   return (
-    <ToastProvider>
+    // Short-lived so a "saved" message does not sit over the bottom of a table; errors stay longer.
+    <ToastProvider duration={3500} label="Notification">
       {toasts.map(function ({ id, title, description, action, ...props }) {
         return (
-          <Toast key={id} {...props}>
+          <Toast key={id} duration={props.variant === "destructive" ? 7000 : undefined} {...props}>
             <div className="grid gap-1">
               {title && <ToastTitle>{title}</ToastTitle>}
               {description && (

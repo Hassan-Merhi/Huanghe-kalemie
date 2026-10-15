@@ -305,7 +305,7 @@ export function VariantSearch({
         ref={inputRef}
         autoFocus={autoFocus}
         className="pl-9"
-        placeholder={placeholder ?? t("Scan barcode or search item, size, SKU", "Scanner ou chercher article, taille, code")}
+        placeholder={placeholder ?? t("Scan or type an item", "Scanner ou taper un article")}
         value={term}
         onChange={(e) => { setTerm(e.target.value); setOpen(true); }}
         onFocus={() => setOpen(true)}

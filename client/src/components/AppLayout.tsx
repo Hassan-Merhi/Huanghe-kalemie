@@ -130,11 +130,37 @@ const SECTIONS: { href: string; en: string; fr: string; roles: Role[] }[][] = [
   ],
 ];
 
+/** The stock pages each have their own tab bar; their sister pages are links at the end of it (one row, not two). */
+const INLINE_SECTION = "/stock";
+
+/** Links to the other pages of the stock section, for the end of a page's own tab bar. */
+export function SectionLinks() {
+  const { can } = useAuth();
+  const { lang } = useI18n();
+  const [location] = useLocation();
+  const section = SECTIONS.find((tabs) => tabs[0].href === INLINE_SECTION)!;
+  const tabs = section.filter((tab) => can(...tab.roles) && tab.href !== location);
+  return (
+    <>
+      <span className="mx-1 h-5 w-px self-center bg-border" aria-hidden />
+      {tabs.map((tab) => (
+        <Link
+          key={tab.href}
+          href={tab.href}
+          className="inline-flex items-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium text-primary hover:underline dark:text-orange-400"
+        >
+          {lang === "fr" ? tab.fr : tab.en} →
+        </Link>
+      ))}
+    </>
+  );
+}
+
 function SectionTabs() {
   const { can } = useAuth();
   const { lang } = useI18n();
   const [location] = useLocation();
-  const section = SECTIONS.find((tabs) => tabs.some((tab) => tab.href === location));
+  const section = SECTIONS.find((tabs) => tabs[0].href !== INLINE_SECTION && tabs.some((tab) => tab.href === location));
   const tabs = section?.filter((tab) => can(...tab.roles)) ?? [];
   if (tabs.length < 2) return null;
   return (
@@ -243,10 +269,11 @@ export function AppLayout({ children }: { children: ReactNode }) {
             <LogOut className="h-4 w-4 sm:mr-1" /> <span className="hidden sm:inline">{t("Sign out", "Déconnexion")}</span>
           </Button>
         </header>
-        <main className="mx-auto w-full max-w-7xl flex-1 p-4 md:p-6">
+        {/* SidebarInset is the page's <main>; this is only the content width. */}
+        <div className="mx-auto w-full max-w-7xl flex-1 p-4 md:p-6">
           <SectionTabs />
           {children}
-        </main>
+        </div>
       </SidebarInset>
     </SidebarProvider>
   );

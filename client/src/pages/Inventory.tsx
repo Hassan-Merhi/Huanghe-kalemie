@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { SectionLinks } from "@/components/AppLayout";
 import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -160,6 +161,7 @@ export default function Inventory() {
           <TabsTrigger value="transit">{t("On the way", "En route")}</TabsTrigger>
           <TabsTrigger value="asof">{t("Stock at a date", "Stock à une date")}</TabsTrigger>
           <TabsTrigger value="item">{t("Item history", "Historique d'un article")}</TabsTrigger>
+          <SectionLinks />
         </TabsList>
         <TabsContent value="location"><ByLocationTab /></TabsContent>
         <TabsContent value="transit"><OnTheWayTab /></TabsContent>
@@ -207,7 +209,7 @@ function ByLocationTab() {
 
   function csv() {
     downloadCsv(`stock-par-emplacement-${todayLocal()}.csv`, [
-      [t("Location", "Emplacement"), t("Item", "Article"), t("Variant", "Variante"), "SKU", t("Category", "Catégorie"), t("Qty", "Qté"), t("Average cost", "Coût moyen"), t("Value", "Valeur"), t("Retail value", "Valeur de vente")],
+      [t("Location", "Emplacement"), t("Item", "Article"), t("Variant", "Variante"), t("SKU", "Code"), t("Category", "Catégorie"), t("Qty", "Qté"), t("Average cost", "Coût moyen"), t("Value", "Valeur"), t("Retail value", "Valeur de vente")],
       ...rows.map((r) => [r.locationName, r.productName, variantText(r.attributes), r.sku, r.categoryName ?? "", r.qty, r.avgCost, r.value, r.retailValue]),
       [t("Total", "Total"), "", "", "", "", totQty, "", totValue.toFixed(2), totRetail.toFixed(2)],
     ]);
@@ -239,7 +241,7 @@ function ByLocationTab() {
         </div>
       )}
 
-      <div className="flex flex-wrap items-center gap-2">
+      <div className={cn("flex flex-wrap items-center gap-2", locations.length <= 1 && "hidden")}>
         <Select value={location} onValueChange={setLocation}>
           <SelectTrigger className="w-full sm:w-56"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -259,7 +261,13 @@ function ByLocationTab() {
         <div className="ml-auto"><CsvButton onClick={csv} disabled={rows.length === 0} /></div>
       </div>
 
-      {rows.length === 0 ? (
+      {locations.length <= 1 ? (
+        // With one place the per-item list would repeat Stock > Valorisation word for word.
+        <p className="text-sm text-muted-foreground">
+          {t("With one location, the item-by-item list is in", "Avec un seul emplacement, la liste article par article est dans")}{" "}
+          <Link href="/stock" className="font-medium text-primary hover:underline dark:text-orange-400">{t("Stock › Valuation", "Stock › Valorisation")}</Link>.
+        </p>
+      ) : rows.length === 0 ? (
         <EmptyState title={t("No stock matches", "Aucun stock ne correspond")} />
       ) : (
         <Card>
@@ -271,7 +279,7 @@ function ByLocationTab() {
                     <TableHead>{t("Item", "Article")}</TableHead>
                     {showLocation && <TableHead className="hidden md:table-cell">{t("Location", "Emplacement")}</TableHead>}
                     <TableHead className="hidden sm:table-cell">{t("Variant", "Variante")}</TableHead>
-                    <TableHead className="hidden lg:table-cell">SKU</TableHead>
+                    <TableHead className="hidden lg:table-cell">{t("SKU", "Code")}</TableHead>
                     <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
                     <TableHead className="hidden text-right md:table-cell">{t("Avg cost", "Coût moyen")}</TableHead>
                     <TableHead className="text-right">{t("Value", "Valeur")}</TableHead>
@@ -409,7 +417,7 @@ function OnTheWayTab() {
                       <TableHeader>
                         <TableRow>
                           <TableHead>{t("Item", "Article")}</TableHead>
-                          <TableHead className="hidden sm:table-cell">SKU</TableHead>
+                          <TableHead className="hidden sm:table-cell">{t("SKU", "Code")}</TableHead>
                           <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
                           <TableHead className="hidden text-right sm:table-cell">{t("Unit price", "Prix unitaire")}</TableHead>
                           <TableHead className="text-right">FOB USD</TableHead>
@@ -469,7 +477,7 @@ function AsOfTab() {
 
   function csv() {
     downloadCsv(`stock-au-${day}.csv`, [
-      [t("Category", "Catégorie"), t("Item", "Article"), t("Variant", "Variante"), "SKU", t("Qty", "Qté"), t("Value", "Valeur")],
+      [t("Category", "Catégorie"), t("Item", "Article"), t("Variant", "Variante"), t("SKU", "Code"), t("Qty", "Qté"), t("Value", "Valeur")],
       ...rows.map((r) => [r.categoryName ?? "", r.productName, variantText(r.attributes), r.sku, r.qty, r.value]),
       [t("Total", "Total"), "", "", "", totQty, totValue.toFixed(2)],
     ]);
@@ -521,7 +529,7 @@ function AsOfTab() {
                     <TableHeader>
                       <TableRow>
                         <TableHead>{t("Item", "Article")}</TableHead>
-                        <TableHead className="hidden sm:table-cell">SKU</TableHead>
+                        <TableHead className="hidden sm:table-cell">{t("SKU", "Code")}</TableHead>
                         <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
                         <TableHead className="text-right">{t("Value", "Valeur")}</TableHead>
                       </TableRow>

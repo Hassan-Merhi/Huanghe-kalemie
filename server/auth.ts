@@ -126,6 +126,8 @@ export function registerAuthRoutes(app: Express) {
   });
 
   app.get("/api/auth/me", (req, res) => {
+    // ?optional=1: the app asking "is anyone signed in?" on load gets null, not an error in the console.
+    if (!req.user && req.query.optional === "1") return res.json(null);
     if (!req.user) return res.status(401).json({ message: "Please sign in", messageFr: "Veuillez vous connecter" });
     res.json(req.user);
   });

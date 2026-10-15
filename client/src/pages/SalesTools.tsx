@@ -127,7 +127,7 @@ function PriceList() {
       .sort((a, b) => (a.categoryName ?? "").localeCompare(b.categoryName ?? "") || a.productName.localeCompare(b.productName) || a.sku.localeCompare(b.sku));
   }, [rows, category, search, serverSearch]);
 
-  const header = [t("Category", "Catégorie"), t("Item", "Article"), t("Variant", "Variante"), "SKU", t("Price USD", "Prix USD"), t("Stock", "Stock")];
+  const header = [t("Category", "Catégorie"), t("Item", "Article"), t("Variant", "Variante"), t("SKU", "Code"), t("Price USD", "Prix USD"), t("Stock", "Stock")];
   const table = () => [header, ...filtered.map((r) => [r.categoryName ?? "", r.productName, variantText(r.attributes), r.sku, Number(r.sellPrice), Number(r.qty)])];
   const catLabel = (c: string) => (c === NO_CAT ? t("No category", "Sans catégorie") : c);
 
@@ -183,7 +183,7 @@ function PriceList() {
                   <TableRow>
                     <TableHead>{t("Item", "Article")}</TableHead>
                     <TableHead className="hidden sm:table-cell print:table-cell">{t("Variant", "Variante")}</TableHead>
-                    <TableHead className="hidden md:table-cell print:table-cell">SKU</TableHead>
+                    <TableHead className="hidden md:table-cell print:table-cell">{t("SKU", "Code")}</TableHead>
                     <TableHead className="text-right">{t("Price", "Prix")}</TableHead>
                     <TableHead className="text-right">{t("Stock", "Stock")}</TableHead>
                   </TableRow>
@@ -412,7 +412,7 @@ function Reorder() {
 
   function exportXlsx() {
     downloadXlsx(`${t("restocking", "reapprovisionnement")}_${todayLocal()}.xlsx`, [
-      [t("Category", "Catégorie"), t("Item", "Article"), t("Variant", "Variante"), "SKU", t("Qty", "Qté"), t("Reorder level", "Seuil"), t("Suggested order", "Commande suggérée"), t("Average cost", "Coût moyen")],
+      [t("Category", "Catégorie"), t("Item", "Article"), t("Variant", "Variante"), t("SKU", "Code"), t("Qty", "Qté"), t("Reorder level", "Seuil"), t("Suggested order", "Commande suggérée"), t("Average cost", "Coût moyen")],
       ...rows.map((r) => [r.categoryName ?? "", r.productName, variantText(r.attributes), r.sku, Number(r.qty), Number(r.reorderLevel), Number(r.suggested.toString()), Number(r.avgCost)]),
     ], t("Restocking", "Réappro"));
   }

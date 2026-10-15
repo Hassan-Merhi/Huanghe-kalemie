@@ -6,7 +6,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Loading, Num, PageHeader, StatCard } from "@/components/common";
-import { compactUsd, d, num, pct, qty as fmtQty, usd, variantText } from "@/lib/format";
+import { accountLabel, compactUsd, d, num, pct, qty as fmtQty, usd, variantText } from "@/lib/format";
 import { count, useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { RangePicker, useRange } from "@/pages/Reports";
@@ -47,6 +47,29 @@ const tipUsd = (v: unknown) => usd(v);
 function monthLabel(m: string) {
   const [y, mo] = m.split("-").map(Number);
   return new Date(Date.UTC(y, mo - 1, 1)).toLocaleDateString("fr-FR", { month: "short", timeZone: "UTC" }).replace(".", "") + (mo === 1 ? ` ${String(y).slice(2)}` : "");
+}
+
+/** Month tick on two lines (month, then the year under January) so all twelve fit and none is skipped. */
+function MonthTick({ x, y, payload }: { x?: number; y?: number; payload?: { value: string } }) {
+  const [month, year] = String(payload?.value ?? "").split(" ");
+  return (
+    <text x={x} y={y} textAnchor="middle" fontSize={10} fill="hsl(var(--muted-foreground))">
+      <tspan x={x} dy="0.9em">{month}</tspan>
+      {year && <tspan x={x} dy="1.1em">{year}</tspan>}
+    </text>
+  );
+}
+
+/** Category names cut to one line on the bar charts' axis; the full name is in the tooltip. */
+const shortName = (s: string) => (s.length > 17 ? `${s.slice(0, 16)}…` : s);
+function CategoryTick({ x, y, payload }: { x?: number; y?: number; payload?: { value: string } }) {
+  const name = String(payload?.value ?? "");
+  return (
+    <text x={x} y={y} dy="0.35em" textAnchor="end" fontSize={11} fill="hsl(var(--muted-foreground))">
+      <title>{name}</title>
+      {shortName(name)}
+    </text>
+  );
 }
 
 function ChartCard({ title, children, empty, height = 260, className }: { title: string; children: ReactNode; empty?: boolean; height?: number; className?: string }) {
@@ -95,13 +118,13 @@ function Body({ a }: { a: Analytics }) {
   const daily = a.daily.map((x) => ({ date: x.date.slice(8, 10) + "/" + x.date.slice(5, 7), revenue: num(x.revenue), grossProfit: num(x.grossProfit) }));
   const trend = a.trend.map((x) => ({ month: monthLabel(x.month), income: num(x.income), grossProfit: num(x.grossProfit), netProfit: num(x.netProfit) }));
   const byCat = [...a.byCategory].sort((x, y) => num(y.revenue) - num(x.revenue)).slice(0, 10).map((x) => ({ name: x.name || t("No category", "Sans catégorie"), revenue: num(x.revenue) }));
-  const payments = [...a.payments].sort((x, y) => num(y.usd) - num(x.usd)).map((x) => ({ name: x.currency === "CDF" ? `${x.name} (FC)` : x.name, usd: num(x.usd) }));
+  const payments = [...a.payments].sort((x, y) => num(y.usd) - num(x.usd)).map((x) => ({ name: x.currency === "CDF" ? accountLabel(x.name, "CDF") : x.name, usd: num(x.usd) }));
   const credit = num(a.sales.credit);
   if (credit > 0) payments.push({ name: t("On credit", "À crédit"), usd: credit });
   const expenses = [...a.expenses].sort((x, y) => num(y.amount) - num(x.amount)).slice(0, 10).map((x) => ({ name: x.name, amount: num(x.amount) }));
   const stock = [...a.stockByCategory].sort((x, y) => num(y.value) - num(x.value)).slice(0, 10).map((x) => ({ name: x.name || t("No category", "Sans catégorie"), value: num(x.value) }));
   const barH = (n: number) => Math.max(160, n * 30 + 40);
-  const yCat = { type: "category" as const, dataKey: "name", width: 110, tick: AXIS, tickLine: false, axisLine: false, interval: 0 };
+  const yCat = { type: "category" as const, dataKey: "name", width: 112, tick: <CategoryTick />, tickLine: false, axisLine: false, interval: 0 };
 
   return (
     <div className="space-y-4">
@@ -129,7 +152,7 @@ function Body({ a }: { a: Analytics }) {
         <ChartCard title={t("Last 12 months", "12 derniers mois")} empty={!trend.length}>
           <BarChart data={trend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
             <CartesianGrid stroke={GRID} strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="month" tick={AXIS} tickLine={false} axisLine={false} interval="preserveStartEnd" />
+            <XAxis dataKey="month" tick={<MonthTick />} tickLine={false} axisLine={false} interval={0} height={36} />
             <YAxis tick={AXIS} tickLine={false} axisLine={false} tickFormatter={axisUsd} width={52} />
             <Tooltip {...TOOLTIP} formatter={tipUsd} />
             <Legend wrapperStyle={{ fontSize: 12 }} />
