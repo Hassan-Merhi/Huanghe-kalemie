@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { frMoney } from "@shared/french";
 import { accounts, expenses, journalLines, journals, parties, voucherDrafts, type DraftKind } from "@shared/schema";
 import { cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
@@ -114,7 +115,7 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
         if (dec(usd).gt(credit)) {
           throw forbidden(
             `Line ${n}: ${p.name} has only ${credit.toFixed(2)} $ to get back. Only the owner can pay a customer more.`,
-            `Ligne ${n} : ${p.name} n'a que ${credit.toFixed(2)} $ à récupérer. Seul le propriétaire peut verser davantage à un client.`,
+            `Ligne ${n} : ${p.name} n'a que ${frMoney(credit)} à récupérer. Seul le propriétaire peut verser davantage à un client.`,
           );
         }
       }
@@ -167,7 +168,7 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
         if (dec(usd).gt(owed) && !(money.currency === "CDF" && amount.lte(francsOwed))) {
           throw forbidden(
             `Line ${n}: only ${owed.toFixed(2)} $ is owed on ${a.name}. Only the owner can pay more.`,
-            `Ligne ${n} : seulement ${owed.toFixed(2)} $ restent dus sur ${a.name}. Seul le propriétaire peut payer davantage.`,
+            `Ligne ${n} : seulement ${frMoney(owed)} restent dus sur ${a.name}. Seul le propriétaire peut payer davantage.`,
           );
         }
       }

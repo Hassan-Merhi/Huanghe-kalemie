@@ -4,7 +4,7 @@ import { splitProfit, type PartnerSplitResult } from "@shared/partnerSplit";
 import { dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict } from "../errors";
-import { deMonth } from "@shared/french";
+import { deMonth, monthText } from "@shared/french";
 import { cents } from "@shared/money";
 import { postJournal, rateFor, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
 import { todayIso } from "../http";
@@ -219,14 +219,14 @@ export async function closePeriod(tx: Tx, month: string, userId: number) {
 
   await tx.insert(periods).values({ month }).onConflictDoNothing();
   const [period] = await tx.select().from(periods).where(eq(periods.month, month)).for("update");
-  if (period.status === "closed") throw conflict(`${month} is already closed`, `Le mois ${month} est déjà clôturé`);
+  if (period.status === "closed") throw conflict(`${month} is already closed`, `Le mois ${deMonth(month)} est déjà clôturé`);
 
   const first = await firstActivityMonth(tx);
   if (first && first < month) {
     const prev = prevMonth(month);
     if (prev >= first) {
       const [p] = await tx.select().from(periods).where(eq(periods.month, prev));
-      if (p?.status !== "closed") throw conflict(`Close ${prev} first. Months are closed in order.`, `Clôturez d'abord ${prev}. Les mois se clôturent dans l'ordre.`);
+      if (p?.status !== "closed") throw conflict(`Close ${prev} first. Months are closed in order.`, `Clôturez d'abord ${monthText(prev)}. Les mois se clôturent dans l'ordre.`);
     }
   }
 
@@ -292,7 +292,7 @@ export async function closePeriod(tx: Tx, month: string, userId: number) {
 /** Reopen the latest closed month so it can be corrected. */
 export async function reopenPeriod(tx: Tx, month: string, userId: number) {
   const [period] = await tx.select().from(periods).where(eq(periods.month, month)).for("update");
-  if (!period || period.status !== "closed") throw conflict(`${month} is not closed`, `Le mois ${month} n'est pas clôturé`);
+  if (!period || period.status !== "closed") throw conflict(`${month} is not closed`, `Le mois ${deMonth(month)} n'est pas clôturé`);
   const [later] = await tx
     .select()
     .from(periods)

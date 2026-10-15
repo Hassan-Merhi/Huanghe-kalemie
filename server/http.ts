@@ -1,6 +1,7 @@
 import type { NextFunction, Request, RequestHandler, Response } from "express";
 import { ZodError, z } from "zod";
 import { MoneyError } from "@shared/money";
+import { frenchSpacing } from "@shared/french";
 import { AppError } from "./errors";
 import { log } from "./log";
 
@@ -21,8 +22,9 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
       issues: err.issues,
     });
   }
-  if (err instanceof AppError) return res.status(err.status).json({ message: err.message, messageFr: err.messageFr, code: err.code });
-  if (err instanceof MoneyError) return res.status(422).json({ message: err.message, messageFr: err.messageFr ?? "Montant invalide", code: "INVALID_AMOUNT" });
+  // French messages get their no-break spaces here, so none of the many messages can wrap before a colon.
+  if (err instanceof AppError) return res.status(err.status).json({ message: err.message, messageFr: err.messageFr && frenchSpacing(err.messageFr), code: err.code });
+  if (err instanceof MoneyError) return res.status(422).json({ message: err.message, messageFr: frenchSpacing(err.messageFr ?? "Montant invalide"), code: "INVALID_AMOUNT" });
   const pgCode = (err as { code?: string; cause?: { code?: string } })?.cause?.code ?? (err as { code?: string })?.code;
   if (pgCode === "23505") return res.status(409).json({ message: "That value is already used", messageFr: "Cette valeur est déjà utilisée", code: "DUPLICATE" });
   if (pgCode === "23514") return res.status(409).json({ message: "Not enough stock for this change", messageFr: "Stock insuffisant pour cette opération", code: "CHECK" });

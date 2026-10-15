@@ -2,7 +2,8 @@ import type { Express, Request } from "express";
 import { and, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { accounts, DRAFT_KINDS, journalLines, journals, parties, partners, saleReturns, users, type DraftKind } from "@shared/schema";
-import { dec, parseTypedNumber } from "@shared/money";
+import { cents, dec, Decimal, parseTypedNumber } from "@shared/money";
+import { COST_FX_MEMO } from "../services/ledger";
 import { db } from "../db";
 import { forbidden, notFound } from "../errors";
 import { requireRole } from "../auth";
@@ -84,31 +85,64 @@ export function registerErpRoutes(
 
   const SALE_JOURNALS = new Set<string>(["sale", "sale_void", "sale_return"]);
   /** Journals where a franc rounding or exchange difference is a side effect, not part of the document. */
-  const FX_SIDE = new Set<string>(["sale", "sale_void", "sale_return", "transfer", "payment", "receipt", "customer_receipt", "supplier_payment", "expense"]);
-  type DayLine = { line: { debit: string; credit: string }; isMoney: boolean; systemKey: string | null };
+  const FX_SIDE = new Set<string>(["sale", "sale_void", "sale_return", "transfer", "payment", "receipt", "customer_receipt", "supplier_payment", "expense", "container_expense", "payroll"]);
+  type DayLine = {
+    line: { debit: string; credit: string; currency: string; nativeAmount: string | null; rate: string | null; memo: string | null };
+    isMoney: boolean;
+    systemKey: string | null;
+  };
   /**
-   * What a daybook row shows: the document's own amount (a sale's total, a transfer's amount sent),
-   * with the money received and the change handed back for a sale as secondary detail, and the two
-   * boxes of a transfer.
+   * The exchange difference postJournal adds when francs (or yuan) leave a balance at its average cost
+   * rather than at the document's rate: shown on its own line, never inside the document's amount.
+   */
+  const isCostFx = (l: DayLine) => l.systemKey === "fx" && l.line.memo === COST_FX_MEMO;
+  /**
+   * A line at the document's own value: francs at the rate typed on the document, not at the box's
+   * average cost (so 2 500 000 FC at 2 808 reads 890,31 $, as on the container).
+   */
+  const docValue = (l: DayLine, side: "debit" | "credit") => {
+    const booked = dec(l.line[side]);
+    if (booked.isZero() || l.line.currency !== "CDF" || !l.line.nativeAmount || !dec(l.line.rate ?? 0).gt(0)) return booked;
+    return cents(dec(l.line.nativeAmount).abs().dividedBy(dec(l.line.rate!)));
+  };
+  /**
+   * What a daybook row shows: the document's own amount (a sale's total, a transfer's amount sent,
+   * a stock count's net change), with the money received and the change handed back for a sale as
+   * secondary detail, the two boxes of a transfer, and any exchange difference apart (`fxDiff`, + a loss).
    */
   const documentAmount = (type: string, ls: DayLine[], shown: { debit: string; credit: string; isMoney?: boolean; accountName?: string | null }[]) => {
-    const total = (rows: DayLine[], side: "debit" | "credit") => rows.reduce((s, l) => s.plus(l.line[side]), dec(0));
+    const total = (rows: DayLine[], side: "debit" | "credit") => rows.reduce((s, l) => s.plus(docValue(l, side)), dec(0));
     const money = ls.filter((l) => l.isMoney);
+    const costFx = ls.filter(isCostFx).reduce((s, l) => s.plus(l.line.debit).minus(l.line.credit), dec(0));
+    // A difference only shows when the document's figures differ from the books, i.e. on the money side.
+    const fxDiff = costFx.isZero() ? {} : { fxDiff: costFx.toFixed(2) };
     if (type === "sale") {
       return {
         amount: total(ls.filter((l) => l.systemKey === "sales"), "credit").toFixed(2),
         received: total(money, "debit").toFixed(2),
         changeGiven: total(money, "credit").toFixed(2),
+        ...fxDiff,
       };
     }
-    if (type === "sale_void" || type === "sale_return") return { amount: total(ls.filter((l) => l.systemKey === "sales"), "debit").toFixed(2) };
+    if (type === "sale_void" || type === "sale_return") return { amount: total(ls.filter((l) => l.systemKey === "sales"), "debit").toFixed(2), ...fxDiff };
     if (type === "transfer") {
       const names = (side: "debit" | "credit") => Array.from(new Set(shown.filter((l) => l.isMoney && dec(l[side]).gt(0)).map((l) => l.accountName ?? ""))).join(", ");
-      return { amount: total(money, "credit").toFixed(2), transfer: { from: names("credit"), to: names("debit") } };
+      return { amount: total(money, "credit").toFixed(2), transfer: { from: names("credit"), to: names("debit") }, ...fxDiff };
+    }
+    if (type === "stock_adjustment") {
+      // A count both finds and loses stock: the net change of the stock's value, with each side apart.
+      const inv = ls.filter((l) => l.systemKey === "inventory");
+      const added = total(inv, "debit");
+      const removed = total(inv, "credit");
+      return { amount: added.minus(removed).toFixed(2), stockAdded: added.toFixed(2), stockRemoved: removed.toFixed(2) };
     }
     // Otherwise every debit, without the cost-of-goods pair of a sale or an exchange difference beside the document.
-    const kept = ls.filter((l) => !(SALE_JOURNALS.has(type) && (l.systemKey === "cogs" || l.systemKey === "inventory")) && !(FX_SIDE.has(type) && l.systemKey === "fx"));
-    return { amount: total(kept, "debit").toFixed(2) };
+    const kept = ls.filter((l) => !(SALE_JOURNALS.has(type) && (l.systemKey === "cogs" || l.systemKey === "inventory")) && !(FX_SIDE.has(type) && l.systemKey === "fx") && !isCostFx(l));
+    // Money paid out at the document's rate: when it differs from the other side at book cost, the money is the document.
+    const paidOut = total(money, "credit");
+    const paidIn = total(money, "debit");
+    const amount = !costFx.isZero() && (paidOut.gt(0) !== paidIn.gt(0)) ? Decimal.max(paidOut, paidIn) : total(kept, "debit");
+    return { amount: amount.toFixed(2), ...fxDiff };
   };
   /** The nearest day before (or after) the given one that has postings, for the daybook's jump buttons. */
   app.get("/api/daybook/active-day", requireRole(...READERS), asyncHandler(async (req, res) => {

@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray, lte, sql } from "drizzle-orm";
+import { frDate, frMoney, frNumber } from "@shared/french";
 import {
   accounts,
   journalLines,
@@ -219,7 +220,7 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
           ? `${g.variant.name}: ${g.amount.minus(discountShares[i]).toFixed(2)} is below its cost (${dec(cogs).toFixed(2)}). Only the owner can sell below cost.`
           : `${g.variant.name}: this price is too low. Ask the owner.`,
         rules?.role === "manager"
-          ? `${g.variant.name} : ${g.amount.minus(discountShares[i]).toFixed(2)} $ est sous le coût (${dec(cogs).toFixed(2)} $). Seul le propriétaire peut vendre à perte.`
+          ? `${g.variant.name} : ${frMoney(g.amount.minus(discountShares[i]))} est sous le coût (${frMoney(cogs)}). Seul le propriétaire peut vendre à perte.`
           : `${g.variant.name} : ce prix est trop bas. Demandez au propriétaire.`,
       );
     }
@@ -418,7 +419,7 @@ export async function returnSale(tx: Tx, saleId: number, input: ReturnInput, use
     throw badRequest("The same item is listed twice on this return", "Le même article figure deux fois sur ce retour");
   }
   if (input.date < sale.date) {
-    throw badRequest(`A return cannot be dated before the sale (${sale.date})`, `Un retour ne peut pas être daté avant la vente (${sale.date})`);
+    throw badRequest(`A return cannot be dated before the sale (${sale.date})`, `Un retour ne peut pas être daté avant la vente (${frDate(sale.date)})`);
   }
   if (!input.refundAccountId && !sale.customerId) {
     throw badRequest("This sale has no customer, so pick the account the refund is paid from", "Cette vente n'a pas de client : choisissez le compte qui paie le remboursement");
@@ -443,7 +444,7 @@ export async function returnSale(tx: Tx, saleId: number, input: ReturnInput, use
     if (!line) throw badRequest("That item is not on this sale", "Cet article ne figure pas sur cette vente");
     const q = stockQty(req.qty);
     const remaining = dec(line.qty).minus(line.returnedQty);
-    if (q.lte(0) || q.gt(remaining)) throw badRequest(`You can return at most ${remaining.toString()} of that item`, `Vous pouvez retourner au maximum ${remaining.toString()} de cet article`);
+    if (q.lte(0) || q.gt(remaining)) throw badRequest(`You can return at most ${remaining.toString()} of that item`, `Vous pouvez retourner au maximum ${frNumber(remaining)} de cet article`);
     if (!q.isInteger()) {
       const [p] = await tx.select({ unit: products.unit, name: products.name, sku: variants.sku }).from(variants).innerJoin(products, eq(products.id, variants.productId)).where(eq(variants.id, line.variantId));
       if (p && wholeUnit(p.unit)) throw wholeUnitError(`${p.name} (${p.sku})`);
@@ -505,11 +506,23 @@ export async function returnSale(tx: Tx, saleId: number, input: ReturnInput, use
     const [acc] = await tx.select().from(accounts).where(eq(accounts.id, input.refundAccountId!));
     if (!acc) throw badRequest("Refund account not found", "Compte de remboursement introuvable");
     // Refund the USD value; for a CDF box, pay it out at the given rate.
-    // Francs are handed back in whole notes and coins.
+    // Francs go back in 100 FC steps, like the till's change: the few francs over or under are the
+    // return's rounding, posted to the same "Arrondi FC" line as a sale's.
     const rate = acc.currency === "CDF" ? await resolveRate(tx, input.date, input.rate) : null;
-    const native = rate ? toCash.times(rate).toDecimalPlaces(0) : toCash;
+    const native = rate ? Decimal.max(toCash.times(rate).dividedBy(FRANC_ROUNDING).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).times(FRANC_ROUNDING), FRANC_ROUNDING) : toCash;
     const leg = await moneyLeg(tx, { accountId: input.refundAccountId!, amount: native, rate, date: input.date });
-    refundLines.push({ accountId: leg.accountId, credit: toCash, nativeAmount: leg.nativeAmount, rate: leg.rate });
+    const paidOut = rate ? dec(leg.usd) : toCash;
+    refundLines.push({ accountId: leg.accountId, credit: paidOut, nativeAmount: leg.nativeAmount, rate: leg.rate });
+    // Positive: the customer got a few cents less than the refund (a gain); negative: a few cents more (a loss).
+    const rounding = toCash.minus(paidOut);
+    if (!rounding.isZero()) {
+      refundLines.push({
+        accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.fx),
+        debit: rounding.isNegative() ? rounding.abs() : 0,
+        credit: rounding.isPositive() ? rounding : 0,
+        memo: "Arrondi FC",
+      });
+    }
   }
   if (total.gt(toCash)) refundLines.push({ accountId: receivables, credit: total.minus(toCash), partyId: sale.customerId });
 

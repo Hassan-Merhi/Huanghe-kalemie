@@ -55,7 +55,7 @@ export default function Dashboard() {
           can("manager") ? (
             <>
               <Button asChild><Link href="/pos"><ShoppingCart className="mr-1 h-4 w-4" /> {t("New sale", "Nouvelle vente")}</Link></Button>
-              <Button asChild variant="outline"><Link href="/vouchers?tab=payment"><Receipt className="mr-1 h-4 w-4" /> {t("Add expense", "Ajouter une dépense")}</Link></Button>
+              <Button asChild variant="outline"><Link href="/vouchers?tab=payment&line=account"><Receipt className="mr-1 h-4 w-4" /> {t("Add expense", "Ajouter une dépense")}</Link></Button>
               <Button asChild variant="outline"><Link href="/containers"><Container className="mr-1 h-4 w-4" /> {t("New container", "Nouveau conteneur")}</Link></Button>
             </>
           ) : undefined

@@ -13,11 +13,11 @@ import {
   stockLevels,
   variants,
 } from "@shared/schema";
-import { dec, sum, Decimal } from "@shared/money";
+import { cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { notFound } from "../errors";
 import { monthRange, pnlByAccount, summarizePnl } from "./periods";
-import { contactForeignBalances, SYSTEM_ACCOUNTS, systemAccountId } from "./ledger";
+import { contactForeignBalances, COST_FX_MEMO, SYSTEM_ACCOUNTS, systemAccountId } from "./ledger";
 
 /** Debit − credit per account (and native CDF balance) up to a date. */
 export async function accountBalances(tx: Tx, asOf?: string) {
@@ -286,12 +286,37 @@ export async function partyStatement(tx: Tx, partyId: number) {
     .innerJoin(journals, eq(journals.id, journalLines.journalId))
     .where(eq(journalLines.partyId, partyId))
     .orderBy(asc(journals.date), asc(journals.id));
+  // A payment whose francs or yuan left a balance at their average cost is booked on the contact at that
+  // cost: the row shows the money actually paid (`paid`) and the exchange difference apart (`fxDiff`).
+  const journalIds = Array.from(new Set(rows.map((r) => r.journalId)));
+  const others = journalIds.length
+    ? await tx
+        .select({ journalId: journalLines.journalId, debit: journalLines.debit, credit: journalLines.credit, partyId: journalLines.partyId, currency: journalLines.currency, nativeAmount: journalLines.nativeAmount, rate: journalLines.rate, memo: journalLines.memo, isMoney: accounts.isMoney, systemKey: accounts.systemKey })
+        .from(journalLines)
+        .innerJoin(accounts, eq(accounts.id, journalLines.accountId))
+        .where(and(inArray(journalLines.journalId, journalIds), or(eq(accounts.isMoney, true), and(eq(accounts.systemKey, SYSTEM_ACCOUNTS.fx), eq(journalLines.memo, COST_FX_MEMO)), sql`${journalLines.partyId} is not null`)))
+    : [];
+  const paidOf = (journalId: number) => {
+    const ls = others.filter((l) => l.journalId === journalId);
+    const fx = ls.filter((l) => l.systemKey === SYSTEM_ACCOUNTS.fx).reduce((s, l) => s.plus(l.debit).minus(l.credit), dec(0));
+    const contacts = new Set(ls.filter((l) => l.partyId !== null).map((l) => l.partyId));
+    if (fx.isZero() || contacts.size !== 1) return null;
+    const value = (l: (typeof ls)[number], side: "debit" | "credit") =>
+      dec(l[side]).isZero() || l.currency !== "CDF" || !l.nativeAmount || !dec(l.rate ?? 0).gt(0) ? dec(l[side]) : cents(dec(l.nativeAmount).abs().dividedBy(dec(l.rate!)));
+    const money = ls.filter((l) => l.isMoney);
+    const out = money.reduce((s, l) => s.plus(value(l, "credit")), dec(0));
+    const into = money.reduce((s, l) => s.plus(value(l, "debit")), dec(0));
+    return out.gt(0) !== into.gt(0) ? Decimal.max(out, into) : null;
+  };
   let running = dec(0);
   return {
     party,
     rows: rows.map((r) => {
       running = running.plus(r.debit).minus(r.credit);
-      return { ...r, balance: running.toFixed(2) };
+      const booked = dec(r.debit).minus(r.credit).abs();
+      const paid = paidOf(r.journalId);
+      const doc = paid && !paid.equals(booked) ? { paid: paid.toFixed(2), fxDiff: booked.minus(paid).toFixed(2) } : {};
+      return { ...r, ...doc, balance: running.toFixed(2) };
     }),
     balance: running.toFixed(2),
     foreign: await contactForeignBalances(tx, partyId),

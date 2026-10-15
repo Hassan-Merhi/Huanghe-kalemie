@@ -25,7 +25,7 @@ import { MonthSelect } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useI18n, useT } from "@/lib/i18n";
-import { d, pct, date as fmtDate, previousMonth, todayLocal, usd } from "@/lib/format";
+import { d, nextMonth, pct, date as fmtDate, previousMonth, todayLocal, usd } from "@/lib/format";
 import type { Partner } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { WIDE_PRINT_CSS, journalTypeLabel } from "@/pages/ContactDetail";
@@ -187,7 +187,21 @@ function MonthSection() {
   // Only months that have started and that come after the first entry in the books.
   const firstMonth = useQuery<{ date: string | null }>({ queryKey: ["/api/books/first-date"] }).data?.date?.slice(0, 7) ?? null;
   const latestClosed = periods.filter((p) => p.status === "closed").map((p) => p.month).sort().pop();
-  const ended = month < todayLocal().slice(0, 7);
+  const thisMonth = todayLocal().slice(0, 7);
+  const ended = month < thisMonth;
+  // Months close in order: the next one to close is the one after the last closed (or the books' first month).
+  const nextToClose = latestClosed ? nextMonth(latestClosed) : firstMonth;
+  const monthBlocked = (m: string) =>
+    m >= thisMonth
+      ? t("still running", "en cours")
+      : nextToClose && m > nextToClose
+        ? t(`close ${monthName(nextToClose)} first`, `clôturez d'abord ${monthName(nextToClose)}`)
+        : null;
+  // Open on the oldest month still to close, until the person picks another.
+  const [picked, setPicked] = useState(false);
+  useEffect(() => {
+    if (!picked && periodsQ.isSuccess && nextToClose && nextToClose < thisMonth) setMonth(nextToClose);
+  }, [picked, periodsQ.isSuccess, nextToClose, thisMonth]);
   const p = previewQ.data;
 
   const close = useApiMutation("POST", `/api/periods/${month}/close`, { success: t("Month closed", "Mois clôturé"), onSuccess: () => setConfirm(null) });
@@ -205,14 +219,23 @@ function MonthSection() {
               <CardDescription>{t("Choose a month to see how its profit is shared.", "Choisissez un mois pour voir le partage de son bénéfice.")}</CardDescription>
             </div>
             <div className="flex flex-wrap items-center gap-2">
-              <MonthSelect className="w-48" value={month} onChange={setMonth} max={todayLocal().slice(0, 7)} min={firstMonth} aria-label={t("Month", "Mois")} />
+              <MonthSelect className="w-56" value={month} onChange={(m) => { setPicked(true); setMonth(m); }} max={thisMonth} min={firstMonth} disabledReason={monthBlocked} aria-label={t("Month", "Mois")} />
               {p && (
                 <Badge variant={p.status === "closed" ? "default" : "secondary"}>
                   {p.status === "closed" ? t("Closed", "Clôturé") : t("Open", "Ouvert")}
                 </Badge>
               )}
               {can() && p?.status === "open" && (
-                <SubmitButton onClick={() => setConfirm("close")} blocked={!ended && t("Only a month that has ended can be closed", "Seul un mois terminé peut être clôturé")}>
+                <SubmitButton
+                  onClick={() => setConfirm("close")}
+                  blocked={
+                    !ended
+                      ? t("Only a month that has ended can be closed", "Seul un mois terminé peut être clôturé")
+                      : nextToClose && month > nextToClose
+                        ? t(`Months close in order: close ${monthName(nextToClose)} first`, `Les mois se clôturent dans l'ordre\u00a0: clôturez d'abord ${monthName(nextToClose)}`)
+                        : null
+                  }
+                >
                   <Lock className="mr-1 h-4 w-4" /> {t("Close month", "Clôturer le mois")}
                 </SubmitButton>
               )}
@@ -280,7 +303,7 @@ function MonthSection() {
                         <TableCell className="text-right"><Signed value={s.shareOfGrossProfit} /></TableCell>
                         <TableCell className="text-right">
                           <Num className={d(s.operatingExpensesCharged).isZero() ? "text-muted-foreground" : ""}>
-                            {d(s.operatingExpensesCharged).isZero() ? usd(0) : `− ${usd(s.operatingExpensesCharged)}`}
+                            {d(s.operatingExpensesCharged).isZero() ? usd(0) : `−${usd(s.operatingExpensesCharged)}`}
                           </Num>
                         </TableCell>
                         <TableCell className="text-right font-semibold"><Signed value={s.net} /></TableCell>
@@ -292,7 +315,7 @@ function MonthSection() {
                       <TableCell>{t("Total", "Total")}</TableCell>
                       <TableCell className="text-right">{pct(100, 0)}</TableCell>
                       <TableCell className="text-right"><Signed value={p.split.grossProfit} /></TableCell>
-                      <TableCell className="text-right"><Num>{d(p.split.operatingExpenses).isZero() ? "" : "− "}{usd(p.split.operatingExpenses)}</Num></TableCell>
+                      <TableCell className="text-right"><Num>{d(p.split.operatingExpenses).isZero() ? "" : "−"}{usd(p.split.operatingExpenses)}</Num></TableCell>
                       <TableCell className="text-right"><Signed value={p.split.netProfit} /></TableCell>
                     </TableRow>
                   </TableFooter>
@@ -387,7 +410,7 @@ function MonthSection() {
       <AlertDialog open={confirm === "close"} onOpenChange={(o) => !o && setConfirm(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t(`Close ${monthName(month)}?`, `Clôturer ${monthName(month)} ?`)}</AlertDialogTitle>
+            <AlertDialogTitle>{t(`Close ${monthName(month)}?`, `Clôturer ${monthName(month)}\u00a0?`)}</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2">
                 <p>{t("This locks the month: nothing dated in it can be added or changed until it is reopened.", "Cela verrouille le mois\u00a0: rien de daté dans ce mois ne peut être ajouté ou modifié tant qu'il n'est pas rouvert.")}</p>
@@ -413,7 +436,7 @@ function MonthSection() {
       <AlertDialog open={confirm === "reopen"} onOpenChange={(o) => !o && setConfirm(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t(`Reopen ${monthName(month)}?`, `Rouvrir ${monthName(month)} ?`)}</AlertDialogTitle>
+            <AlertDialogTitle>{t(`Reopen ${monthName(month)}?`, `Rouvrir ${monthName(month)}\u00a0?`)}</AlertDialogTitle>
             <AlertDialogDescription>
               {t(
                 "The results posted to the partners for this month are taken back and the month can be changed again. Close it again when the corrections are done.",
@@ -439,7 +462,7 @@ function Step({ label, value, minus, strong }: { label: string; value: string; m
     <div className={cn("rounded-lg border p-3", strong && "border-primary/40 bg-primary/5")}>
       <p className="text-xs text-muted-foreground">{label}</p>
       <p className={cn("mt-1 tabular", strong ? "text-xl font-semibold" : "text-lg", neg && "text-destructive")}>
-        {minus && !d(value).isZero() ? "− " : ""}
+        {minus && !d(value).isZero() ? "−" : ""}
         {usd(value)}
       </p>
     </div>
@@ -511,7 +534,7 @@ function StatementSection({ partners }: { partners: Partner[] }) {
                       </TableCell>
                       <TableCell className="text-right">
                         <Num className={a.isNegative() ? "text-destructive" : "text-green-800 dark:text-green-400"}>
-                          {a.isNegative() ? "− " : "+ "}
+                          {a.isNegative() ? "−" : "+"}
                           {usd(a.abs().toFixed(2))}
                         </Num>
                       </TableCell>

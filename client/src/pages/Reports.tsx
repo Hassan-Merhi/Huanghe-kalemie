@@ -404,7 +404,7 @@ function DailyCash() {
                 value={usd(r.total)}
                 sub={r.voidsCount > 0 ? `${count(t, r.voidsCount, ["cancellation", "cancellations"], ["annulation", "annulations"])} −${usd(r.voidsTotal)}` : undefined}
               />
-              <StatCard label={t("Returns", "Retours")} value={`− ${usd(r.returnsTotal)}`} sub={count(t, r.returnsCount, ["return", "returns"], ["retour", "retours"])} />
+              <StatCard label={t("Returns", "Retours")} value={`−${usd(r.returnsTotal)}`} sub={count(t, r.returnsCount, ["return", "returns"], ["retour", "retours"])} />
               <StatCard label={t("Sold on credit", "Vendu à crédit")} value={usd(r.credit)} />
             </div>
             <div className="overflow-x-auto">
@@ -1110,10 +1110,10 @@ function ManualJournalDialog({ onClose }: { onClose: () => void }) {
                 {isCdf(a) && (
                   <div className="mt-2 grid grid-cols-2 gap-2">
                     <Field label={t("Amount in CDF", "Montant en FC")} required>
-                      <Input inputMode="decimal" value={l.native} onChange={(e) => setNative(l, e.target.value, l.rate)} />
+                      <Input inputMode="decimal" thousands value={l.native} onChange={(e) => setNative(l, e.target.value, l.rate)} />
                     </Field>
                     <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} required>
-                      <Input inputMode="decimal" value={l.rate} onChange={(e) => setNative(l, l.native, e.target.value)} />
+                      <Input inputMode="decimal" thousands value={l.rate} onChange={(e) => setNative(l, l.native, e.target.value)} />
                     </Field>
                   </div>
                 )}

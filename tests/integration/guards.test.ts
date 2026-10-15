@@ -174,7 +174,7 @@ describe.skipIf(!hasDb)("Guards on amounts, rates and privacy", async () => {
     expect(hidden.has(ps[1].capitalAccountId)).toBe(false);
     const j = { type: "partner_withdrawal", memo: "Retrait de A" };
     const lines = [
-      { accountId: ps[0].currentAccountId, debit: "100.00", credit: "0.00", accountName: "A : compte de bénéfices", memo: null },
+      { accountId: ps[0].currentAccountId, debit: "100.00", credit: "0.00", accountName: "A\u00a0: compte de bénéfices", memo: null },
       { accountId: cashUsd, debit: "0.00", credit: "100.00", accountName: "Caisse USD", memo: null },
     ];
     const m = reports.maskPartnerJournal(j, lines, hidden);

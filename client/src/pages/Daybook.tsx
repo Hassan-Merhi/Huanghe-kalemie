@@ -15,7 +15,7 @@ import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
 import { downloadCsv } from "@/lib/sheets";
-import { cdf, d, date as fmtDate, frenchPunctuation, qty, todayLocal, usd } from "@/lib/format";
+import { cdf, curLabel, d, date as fmtDate, frenchPunctuation, money, qty, todayLocal, usd } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { RangePicker, useRange } from "@/pages/Reports";
 import { journalTypeLabel } from "@/pages/ContactDetail";
@@ -57,6 +57,11 @@ interface DaybookRow {
   changeGiven?: string;
   /** Transfers: the boxes the money left and reached. */
   transfer?: { from: string; to: string };
+  /** Exchange difference beside the document (francs or yuan at their average cost): + a loss, − a gain. */
+  fxDiff?: string;
+  /** Stock counts: value of the stock found and of the stock lost (the amount is the net). */
+  stockAdded?: string;
+  stockRemoved?: string;
   lines: DaybookLine[];
 }
 
@@ -99,8 +104,8 @@ function sourceHref(r: DaybookRow): string {
 
 function typeTone(type: string): string {
   if (type.startsWith("sale") || type === "customer_receipt" || type === "receipt") return "border-emerald-500/40 text-emerald-800 dark:text-emerald-400";
-  if (type === "expense" || type === "payment" || type === "supplier_payment" || type === "payroll") return "border-orange-500/40 text-orange-700 dark:text-orange-400";
-  if (type.startsWith("container")) return "border-sky-500/40 text-sky-700 dark:text-sky-400";
+  if (type === "expense" || type === "payment" || type === "supplier_payment" || type === "payroll") return "border-orange-500/40 text-orange-800 dark:text-orange-400";
+  if (type.startsWith("container")) return "border-sky-500/40 text-sky-800 dark:text-sky-400";
   if (type === "reversal" || type === "sale_void") return "border-destructive/40 text-destructive";
   return "";
 }
@@ -126,10 +131,21 @@ function contactsOf(r: DaybookRow): string {
   return Array.from(new Set(r.lines.map((l) => l.partyName).filter(Boolean))).join(", ");
 }
 
-/** "reçu 35,61 $ · rendu 23,11 $" under a sale paid with more than its total. */
+/**
+ * The second line under an amount: "reçu 35,61 $ · rendu 23,11 $" under a sale paid with more than its total,
+ * "trouvé 32,90 $ · perdu 57,26 $" under a stock count, and any exchange difference kept apart from the document.
+ */
 function cashDetail(r: DaybookRow, t: T): string | null {
-  if (!r.received || !d(r.changeGiven).gt(0)) return null;
-  return `${t("received", "reçu")} ${usd(r.received)} · ${t("change", "rendu")} ${usd(r.changeGiven)}`;
+  const parts: string[] = [];
+  if (r.received && d(r.changeGiven).gt(0)) parts.push(`${t("received", "reçu")} ${usd(r.received)} · ${t("change", "rendu")} ${usd(r.changeGiven)}`);
+  if (r.stockAdded && r.stockRemoved && d(r.stockAdded).gt(0) && d(r.stockRemoved).gt(0)) {
+    parts.push(`${t("found", "trouvé")} ${usd(r.stockAdded)} · ${t("lost", "perdu")} ${usd(r.stockRemoved)}`);
+  }
+  if (r.fxDiff && !d(r.fxDiff).isZero()) {
+    const fx = d(r.fxDiff);
+    parts.push(`${t("exchange", "écart de change")} ${usd(fx.abs().toFixed(2))} (${fx.gt(0) ? t("loss", "perte") : t("gain", "gain")})`);
+  }
+  return parts.length ? parts.join(" · ") : null;
 }
 
 export default function Daybook() {
@@ -426,7 +442,7 @@ export default function Daybook() {
                             </TableCell>
                             <TableCell className="text-right font-medium">
                               <Num>{usd(r.amount)}</Num>
-                              {cashDetail(r, t) && <span className="block whitespace-nowrap text-xs font-normal text-muted-foreground">{cashDetail(r, t)}</span>}
+                              {cashDetail(r, t) && <span className="block max-w-[16rem] text-xs font-normal text-muted-foreground ml-auto">{cashDetail(r, t)}</span>}
                             </TableCell>
                             <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{r.createdByName ?? ""}</TableCell>
                             <TableCell className="w-12 pl-0 text-right" onClick={(e) => e.stopPropagation()}>
@@ -461,14 +477,14 @@ export default function Daybook() {
                     <button type="button" className="w-full text-left" onClick={() => toggle(r.id)}>
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <p className={cn("truncate font-medium", r.reversedByJournalId && "line-through text-muted-foreground")}>{(r.memo && frenchPunctuation(r.memo)) || contacts || journalTypeLabel(r.type, t)}</p>
-                          <p className="truncate text-xs text-muted-foreground">
+                          <p className={cn("break-words font-medium", r.reversedByJournalId && "line-through text-muted-foreground")}>{(r.memo && frenchPunctuation(r.memo)) || contacts || journalTypeLabel(r.type, t)}</p>
+                          <p className="break-words text-xs text-muted-foreground">
                             {fmtDate(r.date)} · <span className="font-mono">{r.number}</span>{contacts && r.memo ? ` · ${contacts}` : ""}
                           </p>
                         </div>
                         <div className="shrink-0 text-right">
                           <Num className="font-medium">{usd(r.amount)}</Num>
-                          {cashDetail(r, t) && <span className="block text-[11px] text-muted-foreground">{cashDetail(r, t)}</span>}
+                          {cashDetail(r, t) && <span className="block max-w-[10rem] text-[11px] text-muted-foreground">{cashDetail(r, t)}</span>}
                           <div className="mt-1 flex flex-wrap justify-end gap-1"><TypeBadge type={r.type} t={t} /><StatusBadges r={r} t={t} /></div>
                         </div>
                       </div>
@@ -568,8 +584,8 @@ function LinesTable({ lines, t }: { lines: DaybookLine[]; t: T }) {
               <td className="py-1 pr-3 text-right"><Num>{d(l.debit).isZero() ? "" : usd(l.debit)}</Num></td>
               <td className="py-1 pr-3 text-right"><Num>{d(l.credit).isZero() ? "" : usd(l.credit)}</Num></td>
               <td className="py-1 text-right text-xs">
-                <Num>{l.nativeAmount != null ? cdf(l.nativeAmount) : ""}</Num>
-                {l.nativeAmount != null && l.rate && <span className="block text-muted-foreground">{t("rate", "taux")} {qty(l.rate)}{"\u00a0"}FC/$</span>}
+                <Num>{l.nativeAmount != null ? money(l.nativeAmount, l.currency ?? "CDF") : ""}</Num>
+                {l.nativeAmount != null && l.rate && <span className="block text-muted-foreground">{t("rate", "taux")} {qty(l.rate)}{"\u00a0"}{curLabel(l.currency ?? "CDF")}/$</span>}
               </td>
             </tr>
           ))}
@@ -585,13 +601,13 @@ function LinesList({ lines, t }: { lines: DaybookLine[]; t: T }) {
       {lines.map((l) => (
         <div key={l.id} className="flex items-start justify-between gap-2 border-b px-2 py-1.5 last:border-b-0">
           <div className="min-w-0">
-            <p className="truncate"><span className="font-mono text-xs text-muted-foreground">{l.accountCode}</span> {l.accountName}</p>
-            {(l.partyName || l.memo) && <p className="truncate text-xs text-muted-foreground">{[l.partyName, l.memo].filter(Boolean).join(" · ")}</p>}
+            <p className="break-words"><span className="font-mono text-xs text-muted-foreground">{l.accountCode}</span> {l.accountName}</p>
+            {(l.partyName || l.memo) && <p className="break-words text-xs text-muted-foreground">{[l.partyName, l.memo].filter(Boolean).join(" · ")}</p>}
           </div>
           <div className="shrink-0 text-right text-xs">
             {!d(l.debit).isZero() && <Num>{t("Dr", "D")} {usd(l.debit)}</Num>}
             {!d(l.credit).isZero() && <Num>{t("Cr", "C")} {usd(l.credit)}</Num>}
-            {l.nativeAmount != null && <span className="block text-muted-foreground">{cdf(l.nativeAmount)}</span>}
+            {l.nativeAmount != null && <span className="block text-muted-foreground">{money(l.nativeAmount, l.currency ?? "CDF")}</span>}
           </div>
         </div>
       ))}

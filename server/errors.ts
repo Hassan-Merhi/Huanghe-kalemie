@@ -1,3 +1,5 @@
+import { frNumber } from "@shared/french";
+
 /**
  * Errors shown to the user. Each carries an English and a French message; the client shows the
  * one matching the chosen language.
@@ -25,4 +27,4 @@ export const wholeUnitError = (item: string) =>
 
 /** Francs are counted in whole notes; an amount with centimes is a typing slip. */
 export const francDecimalsError = (amount: { toString(): string }) =>
-  badRequest(`Franc amounts are whole numbers (${amount.toString()} FC has decimals)`, `Les montants en FC sont des nombres entiers (${amount.toString().replace(".", ",")} FC a des décimales)`);
+  badRequest(`Franc amounts are whole numbers (${amount.toString()} FC has decimals)`, `Les montants en FC sont des nombres entiers (${frNumber(amount.toString())}\u00a0FC a des décimales)`);

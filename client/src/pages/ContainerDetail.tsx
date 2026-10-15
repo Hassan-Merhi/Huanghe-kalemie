@@ -955,15 +955,15 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
                 <Select value={owedCurrency} onValueChange={(v) => setOwedCurrency(v as "USD" | "CDF")}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="USD">USD</SelectItem>
-                    <SelectItem value="CDF">CDF</SelectItem>
+                    <SelectItem value="USD">{t("Dollars ($)", "Dollars ($)")}</SelectItem>
+                    <SelectItem value="CDF">{t("Francs (FC)", "Francs (FC)")}</SelectItem>
                   </SelectContent>
                 </Select>
               </Field>
             </>
           )}
           <Field label={t(`Amount (${curLabel(currency)})`, `Montant (${curLabel(currency)})`)} error={francDecimalsError(t, currency, amount)} required>
-            <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
+            <Input inputMode="decimal" thousands={isCdf} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
           </Field>
           {isCdf && (
             <Field
@@ -971,7 +971,7 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
               hint={usdValue ? `= ${usd(usdValue.toFixed(2))}` : undefined}
               required
             >
-              <Input inputMode="decimal" value={rate} onChange={(e) => { setRate(e.target.value); setRateTouched(true); }} />
+              <Input inputMode="decimal" thousands value={rate} onChange={(e) => { setRate(e.target.value); setRateTouched(true); }} />
             </Field>
           )}
 

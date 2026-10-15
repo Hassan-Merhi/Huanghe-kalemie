@@ -16,7 +16,7 @@ import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, Submi
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT, count } from "@/lib/i18n";
-import { cdf, d, qty as fmtQty, usd } from "@/lib/format";
+import { cdf, d, money, qty as fmtQty, usd } from "@/lib/format";
 import type { Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -30,7 +30,7 @@ export interface ForeignBalance {
 }
 /** "56 000 FC owed to them", "1 200 CNY they owe us"… Negative native = we owe the contact. */
 export function foreignText(f: ForeignBalance, t: (en: string, fr: string) => string) {
-  const amount = f.currency === "CDF" ? cdf(d(f.native).abs().toString()) : `${fmtQty(d(f.native).abs().toString())} CNY`;
+  const amount = money(d(f.native).abs().toString(), f.currency);
   return d(f.native).isNegative() ? t(`${amount} owed to them`, `${amount} à leur payer`) : t(`${amount} they owe`, `${amount} qu'ils doivent`);
 }
 

@@ -152,7 +152,7 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
       {discount.gt(0) && (
         <>
           <ReceiptRow left={t("Subtotal", "Sous-total")} right={usd(gross.toFixed(2))} />
-          <ReceiptRow left={t("Discount", "Remise")} right={`-${usd(discount.toFixed(2))}`} />
+          <ReceiptRow left={t("Discount", "Remise")} right={`−${usd(discount.toFixed(2))}`} />
         </>
       )}
       <ReceiptRow bold left={t("TOTAL", "TOTAL")} right={usd(sale.total)} />
@@ -374,10 +374,11 @@ export default function POS() {
   /** Change comes by default from a drawer in the currency the customer paid in (the last payment typed). */
   const payCurrency: "USD" | "CDF" = paidRows.length ? (accById(paidRows[paidRows.length - 1].accountId)!.currency as "USD" | "CDF") : "USD";
   // Francs cannot be counted to the cent of a dollar: up to 100 FC over or under is rounding (as on the server).
+  const francTolerance = rateNum.gt(0) ? d(100).dividedBy(rateNum).toDecimalPlaces(2, Decimal.ROUND_UP) : d(0);
   const francs = pays.some((p) => accById(p.accountId)?.currency === "CDF" && d(p.amount).gt(0));
-  const tolerance = francs && rateNum.gt(0) ? d(100).dividedBy(rateNum).toDecimalPlaces(2, Decimal.ROUND_UP) : d(0);
+  const payTolerance = francs ? francTolerance : d(0);
   const excess = received.minus(total);
-  const changeAcc = accById(changeAccId) ?? (excess.gt(tolerance) ? findCash(payCurrency) ?? findCash("USD") : undefined);
+  const changeAcc = accById(changeAccId) ?? (excess.gt(payTolerance) ? findCash(payCurrency) ?? findCash("USD") : undefined);
   // Francs go back in 100 FC steps (no smaller notes); the few francs over or under are the sale's rounding,
   // which the server accepts up to 100 FC. Dollars go back to the cent.
   const exactExcess = receivedExact.minus(total);
@@ -386,8 +387,10 @@ export default function POS() {
       ? Decimal.max(exactExcess.times(rateNum).dividedBy(100).toDecimalPlaces(0, ROUND).times(100), 0)
       : Decimal.max(c2(exactExcess), 0)
     : d(0);
-  const showChange = excess.gt(tolerance) || !!changeAmt;
+  const showChange = excess.gt(payTolerance) || !!changeAmt;
   const changeNative = showChange && changeAcc ? (changeAmt ? c2(d(changeAmt)) : autoChange) : d(0);
+  // Change handed back in francs is rounded too, so it counts like a franc payment (the server does the same).
+  const tolerance = francs || (changeAcc?.currency === "CDF" && changeNative.gt(0)) ? francTolerance : d(0);
   /** Change from a drawer in another currency than the customer paid in: asked again before saving. */
   const crossChange = !!changeAcc && changeNative.gt(0) && payCurrencies.size > 0 && !payCurrencies.has(changeAcc.currency);
   const changeText = changeAcc ? money(changeNative.toFixed(2), changeAcc.currency) : "";
@@ -402,6 +405,11 @@ export default function POS() {
   const remaining = total.minus(paid);
   const overpaid = remaining.lt(tolerance.negated());
   const credit = remaining.gt(tolerance) ? remaining : d(0);
+  /** A few francs over or under, taken as the sale's rounding: shown in francs, not as cents left to pay. */
+  // Worked out before rounding to the cent, so it is the francs actually over or under (25 FC, not 0,01 $ = 28 FC).
+  const changeExact = changeAcc?.currency === "CDF" ? (rateNum.gt(0) ? changeNative.dividedBy(rateNum) : d(0)) : changeNative;
+  const francRounding =
+    !remaining.isZero() && remaining.abs().lte(tolerance) && rateNum.gt(0) ? total.minus(receivedExact.minus(changeExact)).times(rateNum).toDecimalPlaces(0, ROUND) : null;
 
   const takenUnitIds = useMemo(() => new Set(lines.map((l) => l.unitId).filter((x): x is number => !!x)), [lines]);
 
@@ -430,7 +438,7 @@ export default function POS() {
         problems.push(
           t(
             `${l.variant.productName}: the discount is more than the ${maxDiscountPct}% you may give`,
-            `${l.variant.productName} : la remise dépasse les ${maxDiscountPct} % autorisés`,
+            `${l.variant.productName}\u00a0: la remise dépasse les ${maxDiscountPct}\u00a0% autorisés`,
           ),
         );
       }
@@ -710,7 +718,7 @@ export default function POS() {
             <CardContent className="space-y-3 p-4 pt-0">
               <div className="rounded-lg bg-muted p-3">
                 <div className="flex justify-between text-sm text-muted-foreground"><span>{t("Subtotal", "Sous-total")}</span><Num>{usd(grossSubtotal.toFixed(2))}</Num></div>
-                {!totalDiscount.isZero() && <div className="flex justify-between text-sm text-muted-foreground"><span>{t("Discount", "Remise")}</span><Num>-{usd(totalDiscount.toFixed(2))}</Num></div>}
+                {!totalDiscount.isZero() && <div className="flex justify-between text-sm text-muted-foreground"><span>{t("Discount", "Remise")}</span><Num>−{usd(totalDiscount.toFixed(2))}</Num></div>}
                 <div className="flex items-baseline justify-between">
                   <span className="font-medium">{t("Total", "Total")}</span>
                   <span className="text-3xl font-bold tabular">{usd(total.toFixed(2))}</span>
@@ -733,7 +741,7 @@ export default function POS() {
                   <div key={p.key} className="space-y-2 rounded-md border p-2">
                     <div className="flex gap-2">
                       <div className="min-w-0 flex-1">
-                        <MoneyAccountSelect value={p.accountId} onChange={(_id, account) => changePayAccount(p, account)} aria-label={t("Payment account", "Compte du paiement")} />
+                        <MoneyAccountSelect showBalance={false} value={p.accountId} onChange={(_id, account) => changePayAccount(p, account)} aria-label={t("Payment account", "Compte du paiement")} />
                       </div>
                       <Button variant="ghost" size="icon" onClick={() => setPays((ps) => ps.filter((x) => x.key !== p.key))} aria-label={t("Remove", "Retirer")}><Trash2 className="h-4 w-4" /></Button>
                     </div>
@@ -741,6 +749,7 @@ export default function POS() {
                       <div className="relative">
                         <Input
                           inputMode="decimal"
+                          thousands={acc?.currency === "CDF"}
                           className="pr-10"
                           aria-label={acc?.currency === "CDF" ? t("Amount in FC", "Montant en FC") : t("Amount in $", "Montant en $")}
                           placeholder={t("Amount", "Montant")}
@@ -774,10 +783,11 @@ export default function POS() {
                     )}
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                    <MoneyAccountSelect value={changeAcc?.id ?? null} onChange={(id) => { setChangeAccId(id); setChangeAmt(""); }} aria-label={t("Drawer the change comes from", "Caisse d'où sort la monnaie")} />
+                    <MoneyAccountSelect showBalance={false} value={changeAcc?.id ?? null} onChange={(id) => { setChangeAccId(id); setChangeAmt(""); }} aria-label={t("Drawer the change comes from", "Caisse d'où sort la monnaie")} />
                     <div className="relative">
                       <Input
                         inputMode={changeAcc?.currency === "CDF" ? "numeric" : "decimal"}
+                        thousands={changeAcc?.currency === "CDF"}
                         className="pr-10"
                         aria-label={changeAcc?.currency === "CDF" ? t("Change given back in FC", "Monnaie rendue en FC") : t("Change given back in $", "Monnaie rendue en $")}
                         placeholder={t("Other", "Autre")}
@@ -822,10 +832,17 @@ export default function POS() {
                 {changeUsd.gt(0) && <div className="flex justify-between"><span>{t("Received ($)", "Reçu ($)")}</span><Num>{usd(received.toFixed(2))}</Num></div>}
                 {changeUsd.gt(0) && <div className="flex justify-between"><span>{t("Change given back", "Monnaie rendue")}</span><Num>−{usd(changeUsd.toFixed(2))}</Num></div>}
                 <div className="flex justify-between"><span>{t("Paid ($)", "Payé ($)")}</span><Num className="font-medium">{usd(paid.toFixed(2))}</Num></div>
-                <div className="flex justify-between">
-                  <span>{credit.gt(0) && customerId ? t("Remaining → on credit", "Reste → à crédit") : t("Left to pay", "Reste à payer")}</span>
-                  <Num className={cn("font-semibold", credit.gt(0) && customerId && "text-amber-800 dark:text-amber-400", overpaid && "text-destructive")}>{usd(remaining.toFixed(2))}</Num>
-                </div>
+                {francRounding && !francRounding.isZero() ? (
+                  <div className="flex justify-between text-muted-foreground" data-testid="franc-rounding">
+                    <span>{t("FC rounding", "Arrondi FC")}</span>
+                    <Num>{cdf(francRounding.abs().toString())}</Num>
+                  </div>
+                ) : (
+                  <div className="flex justify-between">
+                    <span>{credit.gt(0) && customerId ? t("Remaining → on credit", "Reste → à crédit") : t("Left to pay", "Reste à payer")}</span>
+                    <Num className={cn("font-semibold", credit.gt(0) && customerId && "text-amber-800 dark:text-amber-400", overpaid && "text-destructive")}>{usd((francRounding ? d(0) : remaining).toFixed(2))}</Num>
+                  </div>
+                )}
               </div>
 
               <details className="rounded-md border p-2 text-sm">
@@ -833,7 +850,7 @@ export default function POS() {
                 <div className="mt-2 space-y-2">
                   <p className="text-xs text-muted-foreground">{t("Only a helper: record the money kept above, not what the customer handed over.", "Seulement une aide\u00a0: enregistrer ci-dessus l'argent gardé, pas ce que le client a donné.")}</p>
                   <div className="flex gap-2">
-                    <Input inputMode="decimal" aria-label={t("Cash handed over", "Montant reçu")} placeholder={t("Cash handed over", "Montant reçu")} value={handed} onChange={(e) => setHanded(e.target.value)} />
+                    <Input inputMode="decimal" thousands={handedCur === "CDF"} aria-label={t("Cash handed over", "Montant reçu")} placeholder={t("Cash handed over", "Montant reçu")} value={handed} onChange={(e) => setHanded(e.target.value)} />
                     <Select value={handedCur} onValueChange={(v) => setHandedCur(v as "USD" | "CDF")}>
                       <SelectTrigger className="w-24" aria-label={t("Currency handed over", "Devise reçue")}><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -882,7 +899,10 @@ export default function POS() {
           <div className="min-w-0 flex-1">
             <p className="text-xs text-muted-foreground">{t("Total", "Total")} · {lines.length} {lines.length > 1 ? t("items", "articles") : t("item", "article")}</p>
             <p className="truncate text-xl font-bold tabular">{usd(total.toFixed(2))}</p>
-            {changeAcc && changeNative.gt(0) ? (
+            {problems.length > 0 && lines.length > 0 ? (
+              // Without this the bar only says "Pay" and the reason is out of sight, at the foot of the payment card.
+              <p className="truncate text-xs font-medium text-destructive" role="status" data-testid="problem-bar">{problems[0]}</p>
+            ) : changeAcc && changeNative.gt(0) ? (
               <p className="truncate text-sm font-bold" data-testid="change-due-bar">{t("Give back", "Rendre")}{t(":", "\u00a0:")} {changeText}</p>
             ) : credit.gt(0) && customerId ? (
               <p className="truncate text-xs font-semibold text-amber-800 dark:text-amber-400">{t(`${usd(credit.toFixed(2))} on credit`, `dont ${usd(credit.toFixed(2))} à crédit`)}</p>

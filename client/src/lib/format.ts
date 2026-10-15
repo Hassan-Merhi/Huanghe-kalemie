@@ -6,9 +6,11 @@ import Decimal from "decimal.js";
  * one mark is the decimal mark ("2,5" = 2.5, "1.234" = 1.234 as the server writes quantities), several
  * group thousands ("1.234.567"); in English a single "," before exactly three digits groups thousands.
  * A leading "+", "-" or "−" (U+2212) gives the sign.
+ * With `thousands` (franc amounts and franc rates, which have no decimals worth typing), a single "." or ","
+ * before exactly three digits groups thousands: "50.000" FC is 50 000 FC and a rate of "2.850" is 2 850.
  * Returns the plain number text ("4.5"), "" for an empty field, or null when it is not a number.
  */
-export function parseNumberInput(value: unknown): string | null {
+export function parseNumberInput(value: unknown, opts: { thousands?: boolean } = {}): string | null {
   if (value === null || value === undefined) return "";
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : null;
   let s = String(value).replace(/[\s\u00a0\u202f]/g, "").replace(/\$|FC|CDF|USD|%/gi, "");
@@ -33,7 +35,7 @@ export function parseNumberInput(value: unknown): string | null {
     const count = commas || dots;
     const i = s.indexOf(mark);
     if (count > 1) out = s.split(mark).join("");
-    else if (mark === "," && lang === "en" && /^\d{1,3},\d{3}$/.test(s)) out = s.replace(",", "");
+    else if ((opts.thousands || (mark === "," && lang === "en")) && /^\d{1,3}[.,]\d{3}$/.test(s)) out = s.replace(mark, "");
     else out = `${s.slice(0, i) || "0"}.${s.slice(i + 1)}`;
   }
   if (out.endsWith(".")) out = out.slice(0, -1);
@@ -81,8 +83,9 @@ function nf(min: number, max: number): Intl.NumberFormat {
   let f = cache.get(key);
   if (!f) {
     const intl = new Intl.NumberFormat(lang === "fr" ? "fr-FR" : "en-US", { minimumFractionDigits: min, maximumFractionDigits: max });
-    // fr-FR groups thousands with U+202F; use the ordinary no-break space everywhere.
-    f = { format: (n: number) => intl.format(n).replace(/\u202f/g, NB) } as Intl.NumberFormat;
+    // fr-FR groups thousands with U+202F; use the ordinary no-break space everywhere. Negatives take the
+    // true minus sign (U+2212), with no space, like every amount the formatters below write.
+    f = { format: (n: number) => intl.format(n).replace(/\u202f/g, NB).replace(/^-/, MINUS) } as Intl.NumberFormat;
     cache.set(key, f);
   }
   return f;
@@ -92,6 +95,8 @@ function nf(min: number, max: number): Intl.NumberFormat {
  * which some phone fonts draw with no width at all ("1761,00 $").
  */
 const NB = "\u00a0";
+/** The minus sign of every negative amount on screen: "−7,80 $", never "-7,80 $" or "− 7,80 $". */
+export const MINUS = "\u2212";
 
 /** A plain number in the interface language, e.g. 1 415,5 or 1,415.5. */
 export function number(value: unknown, maxDecimals = 2, minDecimals = 0): string {
@@ -99,7 +104,7 @@ export function number(value: unknown, maxDecimals = 2, minDecimals = 0): string
 }
 
 function withDollar(n: number, body: string): string {
-  const sign = n < 0 ? "-" : "";
+  const sign = n < 0 ? MINUS : "";
   return lang === "fr" ? `${sign}${body}${NB}$` : `${sign}$${body}`;
 }
 
@@ -144,7 +149,7 @@ export function compactUsd(v: number): string {
   const a = Math.abs(v);
   const [n, suffix] = a >= 1_000_000 ? [a / 1_000_000, "M"] : a >= 1000 ? [a / 1000, "k"] : [a, ""];
   const body = nf(0, a >= 10_000 && a < 1_000_000 ? 0 : suffix ? 1 : 0).format(n);
-  const sign = v < 0 ? "-" : "";
+  const sign = v < 0 ? MINUS : "";
   return lang === "fr" ? `${sign}${body}${NB}${suffix}$` : `${sign}$${body}${suffix}`;
 }
 
@@ -192,6 +197,13 @@ export function monthStart(day: string = todayLocal()): string {
 export function previousMonth(day: string = todayLocal()): string {
   const [y, m] = day.split("-").map(Number);
   const d = new Date(Date.UTC(y, m - 2, 1));
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+/** "2026-08" → "2026-09". */
+export function nextMonth(month: string): string {
+  const [y, m] = month.split("-").map(Number);
+  const d = new Date(Date.UTC(y, m, 1));
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
