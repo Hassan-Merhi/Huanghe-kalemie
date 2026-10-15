@@ -219,6 +219,8 @@ export async function addExpense(tx: Tx, containerId: number, input: ContainerEx
     lines: [{ accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.goodsInTransit), debit: amountUsd }, creditLine],
   });
   await tx.update(containerExpenses).set({ journalId }).where(eq(containerExpenses.id, expense.id));
+  // Francs owed to an agent are settled by any dollar advance already paid to them.
+  if (input.payablePartyId && currency === "CDF") await applyAdvances(tx, input.payablePartyId, input.date, `Avance imputée sur les frais du conteneur ${container.number}`, userId);
   return expense;
 }
 

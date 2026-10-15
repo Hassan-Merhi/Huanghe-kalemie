@@ -28,6 +28,7 @@ import {
   rateTolerancePct,
   postJournal,
   reverseJournal,
+  shopToday,
   SYSTEM_ACCOUNTS,
   systemAccountId,
   toUsd,
@@ -147,6 +148,8 @@ export async function createExpense(tx: Tx, input: ExpenseInput, userId: number)
     lines: [{ accountId: account.id, debit: usd }, creditLine],
   });
   const [updated] = await tx.update(expenses).set({ journalId }).where(eq(expenses.id, expense.id)).returning();
+  // A bill owed in francs is settled by any dollar advance already paid to that contact.
+  if (input.payablePartyId && currency === "CDF") await applyAdvances(tx, input.payablePartyId, input.date, `Avance imputée sur la dépense ${input.description}`, userId);
   return updated;
 }
 
@@ -311,10 +314,20 @@ export async function advanceToFrancLines(tx: Tx, payables: number, partyId: num
  */
 export async function applyAdvances(tx: Tx, partyId: number, date: string, memo: string, userId: number): Promise<number | null> {
   const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
-  const lines = await advanceToYuanLines(tx, payables, partyId, date);
-  if (!lines.length) lines.push(...(await advanceToFrancLines(tx, payables, partyId, date)));
+  const linesOn = async (on: string) => {
+    const lines = await advanceToYuanLines(tx, payables, partyId, on);
+    if (!lines.length) lines.push(...(await advanceToFrancLines(tx, payables, partyId, on)));
+    return lines;
+  };
+  let on = date;
+  let lines = await linesOn(on);
+  // A bill dated before a deposit paid since: the deposit settles it from today.
+  if (!lines.length && date < shopToday()) {
+    on = shopToday();
+    lines = await linesOn(on);
+  }
   if (!lines.length) return null;
-  return postJournal(tx, { date, type: "supplier_payment", memo, userId, lines });
+  return postJournal(tx, { date: on, type: "supplier_payment", memo, userId, lines });
 }
 
 /**

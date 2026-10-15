@@ -3,7 +3,7 @@ import { accounts, expenses, journalLines, journals, parties, voucherDrafts, typ
 import { cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, forbidden, notFound } from "../errors";
-import { contactLines, foreignBalance, moneyLeg, postJournal, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type PostLine } from "./ledger";
+import { contactLines, foreignBalance, moneyLeg, postJournal, rateFor, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type PostLine } from "./ledger";
 import * as ops from "./operations";
 
 /*
@@ -162,9 +162,12 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
           .from(journalLines)
           .where(eq(journalLines.accountId, a.id));
         const owed = Decimal.max(dec(bal?.v ?? 0), 0);
-        // Francs owed in francs may be paid in full whatever today's rate.
-        const francsOwed = money.currency === "CDF" ? (await foreignBalance(tx, a.id, null, "CDF", input.date)).native.negated() : new Decimal(0);
-        if (dec(usd).gt(owed) && !(money.currency === "CDF" && amount.lte(francsOwed))) {
+        // Francs owed in francs may be paid in full whatever today's rate: in francs, or in dollars
+        // at the day's rate.
+        const francsOwed = (await foreignBalance(tx, a.id, null, "CDF", input.date)).native.negated();
+        const francsOwedUsd = francsOwed.gt(0) ? cents(francsOwed.dividedBy((await rateFor(tx, input.date)).rate)) : new Decimal(0);
+        const withinFrancs = money.currency === "CDF" ? amount.lte(francsOwed) : dec(usd).lte(Decimal.max(owed, francsOwedUsd));
+        if (dec(usd).gt(owed) && !withinFrancs) {
           throw forbidden(
             `Line ${n}: only ${owed.toFixed(2)} $ is owed on ${a.name}. Only the owner can pay more.`,
             `Ligne ${n} : seulement ${owed.toFixed(2)} $ restent dus sur ${a.name}. Seul le propriétaire peut payer davantage.`,
