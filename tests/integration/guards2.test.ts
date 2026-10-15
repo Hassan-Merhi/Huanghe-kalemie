@@ -53,8 +53,8 @@ describe.skipIf(!hasDb)("Guards against moving value between partners", async ()
 
   it("lets only the owner move the day's rate far", async () => {
     const today = ledger.shopToday();
-    await expect(db.transaction((tx) => ledger.setExchangeRate(tx, { date: today, cdfPerUsd: "1000" }, userId, staff))).rejects.toThrow(/Only the owner/);
-    await db.transaction((tx) => ledger.setExchangeRate(tx, { date: today, cdfPerUsd: "2850" }, userId, staff));
+    await expect(db.transaction((tx) => ledger.setExchangeRate(tx, { date: today, cdfPerUsd: "1000" }, 999, staff))).rejects.toThrow(/Only the owner/);
+    await db.transaction((tx) => ledger.setExchangeRate(tx, { date: today, cdfPerUsd: "2850" }, 999, staff));
     await db.transaction((tx) => ledger.setExchangeRate(tx, { date: today, cdfPerUsd: "2800" }, userId));
   });
 
