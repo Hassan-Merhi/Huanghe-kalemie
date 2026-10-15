@@ -47,12 +47,12 @@ describe.skipIf(!hasDb)("Guards found by the fourth audit", async () => {
         ops.adjustStock(tx, { date: "2026-08-02", locationId, kind: "count", reason: "Comptage", lines: [{ variantId: oil, qtyChange: "-100" }, { variantId: oil, qtyChange: "100", unitCost: "2.2" }] }, userId, staff),
       ),
     ).rejects.toThrow(/twice/);
-    // Out at average, back in at 10% above purchase cost: allowed once, and the next step is measured from the purchase again.
+    // Out at average, back in at the average: the value does not move.
     await db.transaction((tx) => ops.adjustStock(tx, { date: "2026-08-02", locationId, kind: "loss", reason: "Perdu", lines: [{ variantId: oil, qtyChange: "-50" }] }, userId, staff));
-    await db.transaction((tx) => ops.adjustStock(tx, { date: "2026-08-02", locationId, kind: "found", reason: "Trouvé", lines: [{ variantId: oil, qtyChange: "50", unitCost: "2.2" }] }, userId, staff));
     await expect(
-      db.transaction((tx) => ops.adjustStock(tx, { date: "2026-08-02", locationId, kind: "found", reason: "Trouvé", lines: [{ variantId: oil, qtyChange: "1", unitCost: "2.42" }] }, userId, staff)),
-    ).rejects.toThrow(/far from its cost/);
+      db.transaction((tx) => ops.adjustStock(tx, { date: "2026-08-02", locationId, kind: "found", reason: "Trouvé", lines: [{ variantId: oil, qtyChange: "50", unitCost: "2.2" }] }, userId, staff)),
+    ).rejects.toThrow(/average cost/);
+    await db.transaction((tx) => ops.adjustStock(tx, { date: "2026-08-02", locationId, kind: "found", reason: "Trouvé", lines: [{ variantId: oil, qtyChange: "50" }] }, userId, staff));
   });
 
   it("keeps container costs and suppliers on suppliers and agents", async () => {

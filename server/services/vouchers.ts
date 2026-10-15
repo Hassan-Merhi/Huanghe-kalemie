@@ -237,9 +237,17 @@ export async function saveDraft(
   tx: Tx,
   input: { id?: number | null; kind: DraftKind; date: string; memo?: string | null; payload: Record<string, unknown> },
   userId: number,
+  rights: PostingRights = { owner: true },
 ) {
   const values = { kind: input.kind, date: input.date, memo: input.memo ?? null, payload: input.payload, totalUsd: await draftTotal(tx, input.kind, input.payload) };
   if (input.id) {
+    // Someone else's pending voucher is theirs to change (the owner may change any): otherwise a
+    // changed amount would be posted by whoever validates it, with their rights.
+    const [current] = await tx.select({ createdBy: voucherDrafts.createdBy }).from(voucherDrafts).where(eq(voucherDrafts.id, input.id)).for("update");
+    if (!current) throw notFound("Pending voucher", "Pièce en attente introuvable");
+    if (!rights.owner && current.createdBy !== userId) {
+      throw forbidden("Only the person who saved this pending voucher, or the owner, can change it", "Seule la personne qui a enregistré cette pièce en attente, ou le propriétaire, peut la modifier");
+    }
     const [row] = await tx.update(voucherDrafts).set({ ...values, updatedAt: new Date() }).where(eq(voucherDrafts.id, input.id)).returning();
     if (!row) throw notFound("Pending voucher", "Pièce en attente introuvable");
     return row;
@@ -248,7 +256,13 @@ export async function saveDraft(
   return row;
 }
 
-export async function deleteDraft(tx: Tx, id: number) {
+export async function deleteDraft(tx: Tx, id: number, userId?: number, rights: PostingRights = { owner: true }) {
+  if (!rights.owner) {
+    const [current] = await tx.select({ createdBy: voucherDrafts.createdBy }).from(voucherDrafts).where(eq(voucherDrafts.id, id));
+    if (current && current.createdBy !== userId) {
+      throw forbidden("Only the person who saved this pending voucher, or the owner, can delete it", "Seule la personne qui a enregistré cette pièce en attente, ou le propriétaire, peut la supprimer");
+    }
+  }
   const rows = await tx.delete(voucherDrafts).where(eq(voucherDrafts.id, id)).returning({ id: voucherDrafts.id });
   if (!rows.length) throw notFound("Pending voucher", "Pièce en attente introuvable");
 }

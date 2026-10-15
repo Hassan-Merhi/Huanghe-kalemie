@@ -465,11 +465,16 @@ export async function setExchangeRate(
   if (!opts.owner) {
     // Every franc check compares with the day's rate, so only the owner may move it far in one step.
     const limit = Decimal.max(await rateTolerancePct(tx), 5);
-    // Compare with the last rate before this day, so overwriting a day in small steps cannot walk it far.
-    const [prevRow] = await tx.select().from(exchangeRates).where(lt(exchangeRates.date, input.date)).orderBy(desc(exchangeRates.date)).limit(1);
+    // Compare with the last rate before today (for today and tomorrow alike), so neither overwriting
+    // a day in small steps nor stacking tomorrow on today can walk it far. Keeping a day's rate as
+    // it is needs no check.
+    const today = shopToday();
+    const [existing] = await tx.select().from(exchangeRates).where(eq(exchangeRates.date, input.date));
+    const [prevRow] = await tx.select().from(exchangeRates).where(lt(exchangeRates.date, today)).orderBy(desc(exchangeRates.date)).limit(1);
     const prev = prevRow ? dec(prevRow.cdfPerUsd) : (await rateFor(tx, "0000-01-01")).rate;
     const next = dec(input.cdfPerUsd);
-    if (next.minus(prev).abs().dividedBy(prev).times(100).gt(limit)) {
+    const unchanged = (stored: string | null | undefined, given: string) => stored != null && dec(stored).equals(dec(given));
+    if (!unchanged(existing?.cdfPerUsd, input.cdfPerUsd) && next.minus(prev).abs().dividedBy(prev).times(100).gt(limit)) {
       throw new AppError(
         403,
         `${next.toString()} is more than ${limit.toString()}% away from the last rate (${prev.toString()}). Only the owner can make that change.`,
@@ -477,11 +482,11 @@ export async function setExchangeRate(
         `${next.toString()} s'écarte de plus de ${limit.toString()} % du dernier taux (${prev.toString()}). Seul le propriétaire peut faire ce changement.`,
       );
     }
-    if (input.cnyPerUsd) {
+    if (input.cnyPerUsd && !unchanged(existing?.cnyPerUsd, input.cnyPerUsd)) {
       const [cnyRow] = await tx
         .select({ rate: exchangeRates.cnyPerUsd })
         .from(exchangeRates)
-        .where(and(lt(exchangeRates.date, input.date), sql`${exchangeRates.cnyPerUsd} is not null`))
+        .where(and(lt(exchangeRates.date, today), sql`${exchangeRates.cnyPerUsd} is not null`))
         .orderBy(desc(exchangeRates.date))
         .limit(1);
       if (!cnyRow?.rate) {
