@@ -341,7 +341,7 @@ function SalesByItem() {
 // ---------------------------------------------------------------- (3) Daily cash
 
 interface DrawerRow { accountId: number; name: string; currency: string; opening: string; totalIn: string; totalOut: string; closing: string; byType: { type: string; in: string; out: string }[] }
-interface Daily { date: string; count: number; total: string; credit: string; voidsCount: number; voidsTotal: string; returnsCount: number; returnsTotal: string; byAccount: { account_id: number; name: string; currency: string; usd: string; native: string; received_native?: string; change_native?: string }[]; drawer?: DrawerRow[] }
+interface Daily { date: string; count: number; total: string; credit: string; voidsCount: number; voidsTotal: string; returnsCount: number; returnsTotal: string; byAccount: { account_id: number; name: string; currency: string; usd: string; native: string; received_native?: string; change_native?: string; refund_native?: string }[]; drawer?: DrawerRow[] }
 
 function DailyCash() {
   const t = useT();
@@ -360,9 +360,9 @@ function DailyCash() {
       [t("Returns", "Retours"), r.returnsCount, r.returnsTotal],
       [t("Sold on credit ($)", "Vendu à crédit ($)"), r.credit],
       [],
-      [t("Received into", "Reçu dans"), t("Currency", "Devise"), t("Handed over", "Reçu"), t("Change given", "Monnaie rendue"), t("Kept", "Gardé"), t("Value in $", "Valeur en $")],
-      ...r.byAccount.map((a) => [a.name, curLabel(a.currency), a.received_native ?? a.native, a.change_native ?? "0", a.native, a.usd]),
-      [t("Total kept", "Total gardé"), "$", "", "", "", paidUsd.toFixed(2)],
+      [t("Received into", "Reçu dans"), t("Currency", "Devise"), t("Handed over", "Reçu"), t("Change given", "Monnaie rendue"), t("Refunds", "Remboursements"), t("Kept", "Gardé"), t("Value in $", "Valeur en $")],
+      ...r.byAccount.map((a) => [a.name, curLabel(a.currency), a.received_native ?? a.native, a.change_native ?? "0", a.refund_native ?? "0", a.native, a.usd]),
+      [t("Total kept", "Total gardé"), "$", "", "", "", "", paidUsd.toFixed(2)],
     ];
     if (r.drawer) {
       rows.push([]);
@@ -414,19 +414,21 @@ function DailyCash() {
                     <TableHead>{t("Received into", "Reçu dans")}</TableHead>
                     <TableHead className="text-right">{t("Handed over", "Reçu")}</TableHead>
                     <TableHead className="text-right">{t("Change given", "Monnaie rendue")}</TableHead>
+                    <TableHead className="text-right">{t("Refunds", "Remboursements")}</TableHead>
                     <TableHead className="text-right">{t("Kept", "Gardé")}</TableHead>
                     <TableHead className="text-right">{t("Value in $", "Valeur en $")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {r.byAccount.length === 0 && (
-                    <TableRow><TableCell colSpan={5} className="text-center text-muted-foreground">{t("No payments", "Aucun paiement")}</TableCell></TableRow>
+                    <TableRow><TableCell colSpan={6} className="text-center text-muted-foreground">{t("No payments", "Aucun paiement")}</TableCell></TableRow>
                   )}
                   {r.byAccount.map((a) => (
                     <TableRow key={a.account_id}>
                       <TableCell className="font-medium">{a.name}</TableCell>
                       <TableCell className="text-right"><Num>{money(a.received_native ?? a.native, a.currency)}</Num></TableCell>
                       <TableCell className="text-right"><Num>{d(a.change_native).isZero() ? "—" : `−${money(a.change_native, a.currency)}`}</Num></TableCell>
+                      <TableCell className="text-right"><Num>{d(a.refund_native).isZero() ? "—" : `−${money(a.refund_native, a.currency)}`}</Num></TableCell>
                       <TableCell className="text-right"><Num className="font-medium">{money(a.native, a.currency)}</Num></TableCell>
                       <TableCell className="text-right"><Num>{usd(a.usd)}</Num></TableCell>
                     </TableRow>
@@ -434,14 +436,14 @@ function DailyCash() {
                 </TableBody>
                 <TableFooter>
                   <TableRow>
-                    <TableCell colSpan={4}>{t("Total kept", "Total gardé")}</TableCell>
+                    <TableCell colSpan={5}>{t("Total kept", "Total gardé")}</TableCell>
                     <TableCell className="text-right"><Num>{usd(paidUsd.toFixed(2))}</Num></TableCell>
                   </TableRow>
                 </TableFooter>
               </Table>
             </div>
             <p className="text-xs text-muted-foreground">
-              {t("Sales payments only. The drawer count below includes everything else.", "Paiements des ventes seulement. Le comptage de caisse ci-dessous inclut tout le reste.")}
+              {t("Sales payments and refunds only. The drawer count below includes everything else.", "Paiements et remboursements des ventes seulement. Le comptage de caisse ci-dessous inclut tout le reste.")}
             </p>
             {r.drawer && (
               <div className="space-y-2">
@@ -1089,10 +1091,10 @@ function ManualJournalDialog({ onClose }: { onClose: () => void }) {
                     <AccountSelect value={l.accountId} onChange={(id) => set(l.key, { accountId: id, partyId: null, native: "", rate: "" })} />
                   </Field>
                   <Field label={t("Debit ($)", "Débit ($)")}>
-                    <Input inputMode="decimal" value={l.debit} onChange={(e) => set(l.key, { debit: e.target.value, credit: e.target.value ? "" : l.credit })} />
+                    <Input inputMode="decimal" usd value={l.debit} onChange={(e) => set(l.key, { debit: e.target.value, credit: e.target.value ? "" : l.credit })} />
                   </Field>
                   <Field label={t("Credit ($)", "Crédit ($)")}>
-                    <Input inputMode="decimal" value={l.credit} onChange={(e) => set(l.key, { credit: e.target.value, debit: e.target.value ? "" : l.debit })} />
+                    <Input inputMode="decimal" usd value={l.credit} onChange={(e) => set(l.key, { credit: e.target.value, debit: e.target.value ? "" : l.debit })} />
                   </Field>
                   <div className="flex items-end">
                     <Button variant="ghost" size="icon" disabled={lines.length <= 2} onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} aria-label={t("Remove", "Retirer")}>

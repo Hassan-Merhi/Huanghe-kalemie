@@ -96,12 +96,12 @@ export function SubmitButton({
   );
 }
 
-export function StatCard({ label, value, sub, tone }: { label: string; value: ReactNode; sub?: ReactNode; tone?: "good" | "bad" | "neutral" }) {
+export function StatCard({ label, value, sub, tone }: { label: string; value: ReactNode; sub?: ReactNode; tone?: "good" | "bad" | "warn" | "neutral" }) {
   return (
     <Card>
       <CardContent className="p-3 sm:p-4">
         <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:text-xs">{label}</p>
-        <p className={cn("mt-1 break-words text-lg font-semibold tabular sm:text-2xl", tone === "good" && "text-green-800 dark:text-green-400", tone === "bad" && "text-destructive")}>{value}</p>
+        <p className={cn("mt-1 break-words text-lg font-semibold tabular sm:text-2xl", tone === "good" && "text-green-800 dark:text-green-400", tone === "bad" && "text-destructive", tone === "warn" && "text-amber-800 dark:text-amber-400")}>{value}</p>
         {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
       </CardContent>
     </Card>

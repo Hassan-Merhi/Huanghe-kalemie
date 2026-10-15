@@ -497,6 +497,9 @@ export async function dashboard(tx: Tx, today: string) {
     .select({ count: sql<number>`count(*)::int`, total: sql<string>`coalesce(sum(${sales.total}), 0)` })
     .from(sales)
     .where(and(eq(sales.date, today), eq(sales.status, "completed")));
+  // Goods brought back today come off today's sales, as on the Sales page.
+  const todayReturns = await tx.execute<{ total: string }>(sql`select coalesce(sum(total), 0)::text as total from sale_returns where date = ${today}`);
+  const returnsToday = dec(todayReturns.rows[0]?.total ?? 0);
   const monthPnl = summarizePnl(await pnlByAccount(tx, from, to));
   const balances = await accountBalances(tx);
   const money = balances.filter((b) => b.isMoney && b.active);
@@ -528,7 +531,7 @@ export async function dashboard(tx: Tx, today: string) {
   return {
     today,
     month,
-    todaySales: { count: todaySales.count, total: dec(todaySales.total).toFixed(2) },
+    todaySales: { count: todaySales.count, total: dec(todaySales.total).minus(returnsToday).toFixed(2), returns: returnsToday.toFixed(2) },
     monthPnl,
     money: money.map((m) => ({ id: m.id, name: m.name, currency: m.currency, balance: m.balance, nativeBalance: m.nativeBalance })),
     receivables: balances.find((b) => b.id === receivablesId)?.balance ?? "0.00",

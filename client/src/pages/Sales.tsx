@@ -27,6 +27,9 @@ interface SaleListRow {
   zeroPrice?: boolean;
   qty?: string;
   returnedQty?: string;
+  /** Amount and cost of the goods brought back (all returns on the sale). */
+  returnedTotal?: string;
+  returnedCogs?: string;
   lineCount?: number;
   firstItem?: string | null;
 }
@@ -38,7 +41,9 @@ interface Daily {
   credit: string;
   voidsCount: number;
   voidsTotal: string;
-  byAccount: { account_id: number; name: string; currency: string; usd: string; native: string }[];
+  returnsCount?: number;
+  returnsTotal?: string;
+  byAccount: { account_id: number; name: string; currency: string; usd: string; native: string; refund_native?: string }[];
 }
 
 function DailySummary() {
@@ -60,10 +65,16 @@ function DailySummary() {
         ) : (
           <div className="mt-2 grid gap-4 sm:grid-cols-[auto_1fr]">
             <div>
-              <p className="text-3xl font-semibold tabular">{usd(d(data.total).minus(data.voidsTotal).toFixed(2))}</p>
+              {/* Sold today, less what was cancelled and what was brought back today. */}
+              <p className="text-3xl font-semibold tabular">{usd(d(data.total).minus(data.voidsTotal).minus(d(data.returnsTotal)).toFixed(2))}</p>
               {data.voidsCount > 0 && (
                 <p className="text-sm text-muted-foreground">
                   {count(t, data.voidsCount, ["sale cancelled", "sales cancelled"], ["vente annulée", "ventes annulées"])} (−{usd(data.voidsTotal)})
+                </p>
+              )}
+              {d(data.returnsTotal).gt(0) && (
+                <p className="text-sm text-muted-foreground">
+                  {t("Returns", "Retours")} −{usd(data.returnsTotal)}
                 </p>
               )}
               {d(data.credit).gt(0) && <p className="text-sm text-amber-800 dark:text-amber-400">{t("of which on credit", "dont à crédit")} {usd(data.credit)}</p>}
@@ -75,6 +86,11 @@ function DailySummary() {
                   <p className="text-xs text-muted-foreground">{a.name}</p>
                   <p className="font-medium tabular">{a.currency === "CDF" ? cdf(a.native) : usd(a.usd)}</p>
                   {a.currency === "CDF" && <p className="text-xs text-muted-foreground tabular">≈ {usd(a.usd)}</p>}
+                  {d(a.refund_native).gt(0) && (
+                    <p className="text-xs text-muted-foreground tabular">
+                      {t("of which refunded", "dont remboursé")} −{a.currency === "CDF" ? cdf(a.refund_native) : usd(a.refund_native)}
+                    </p>
+                  )}
                 </div>
               ))}
             </div>
@@ -113,6 +129,70 @@ function Profit({ value, muted }: { value: string; muted?: boolean }) {
   );
 }
 
+/** A sale as the list shows it: net of the goods brought back. */
+function netOf(r: SaleListRow) {
+  const total = d(r.total).minus(d(r.returnedTotal));
+  const cogs = r.cogs !== undefined ? d(r.cogs).minus(d(r.returnedCogs)) : undefined;
+  return { total, cogs, profit: cogs !== undefined ? total.minus(cogs) : undefined, returned: d(r.returnedTotal) };
+}
+
+function Items({ r }: { r: SaleListRow }) {
+  const t = useT();
+  if (!r.firstItem) return null;
+  return (
+    <>
+      {r.firstItem}
+      {(r.lineCount ?? 1) > 1 && ` + ${count(t, (r.lineCount ?? 1) - 1, ["other", "others"], ["autre", "autres"])}`}
+    </>
+  );
+}
+
+function Customer({ r }: { r: SaleListRow }) {
+  const t = useT();
+  return <>{r.customerName ?? <span className="text-muted-foreground">{t("Walk-in", "De passage")}</span>}</>;
+}
+
+/** The sale's state next to its number: cancelled, or worth a second look. */
+function Marks({ r }: { r: SaleListRow }) {
+  const t = useT();
+  const n = netOf(r);
+  if (r.status === "voided") return <Badge variant="destructive" className="ml-1">{t("Cancelled", "Annulée")}</Badge>;
+  return <SaleFlags zeroPrice={r.zeroPrice} total={n.total.toFixed(2)} cogs={n.cogs?.toFixed(2)} />;
+}
+
+/** On phones: one fixed card per sale, number, date and total first, then who and what, then the figures. */
+function SaleCard({ r, showCost }: { r: SaleListRow; showCost: boolean }) {
+  const t = useT();
+  const voided = r.status === "voided";
+  const n = netOf(r);
+  return (
+    <Link href={`/sales/${r.id}`} className={cn("block rounded-lg border p-3 active:bg-muted/50", voided && "text-muted-foreground")} data-testid="sale-card">
+      <div className="flex items-baseline justify-between gap-2">
+        <div className="min-w-0">
+          <span className="font-semibold">{r.number}</span>
+          <span className="ml-2 text-xs text-muted-foreground">{fmtDate(r.date)}</span>
+          <Marks r={r} />
+        </div>
+        <Num className={cn("shrink-0 text-lg font-semibold", voided && "line-through")}>{usd((voided ? d(r.total) : n.total).toFixed(2))}</Num>
+      </div>
+      <div className="mt-0.5 flex items-baseline justify-between gap-2 text-sm">
+        <p className="min-w-0 truncate">
+          <Customer r={r} />
+          {r.firstItem && <span className="text-muted-foreground"> · <Items r={r} /></span>}
+        </p>
+        {!voided && n.returned.gt(0) && <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground">{t("returns", "retours")} −{usd(n.returned.toFixed(2))}</span>}
+      </div>
+      <div className="mt-1.5 flex items-center justify-between gap-2 text-xs text-muted-foreground">
+        <p className="min-w-0 tabular">
+          {t("Qty", "Qté")} {fmtQty(d(r.qty).minus(d(r.returnedQty)).toString())} · {t("Paid", "Payé")} {usd(r.paidUsd)}
+          {d(r.creditUsd).gt(0) && !voided && <span className="text-amber-800 dark:text-amber-400"> · {t("Credit", "Crédit")} {usd(r.creditUsd)}</span>}
+        </p>
+        {showCost && n.profit !== undefined && <Profit value={n.profit.toFixed(2)} muted={voided} />}
+      </div>
+    </Link>
+  );
+}
+
 export default function Sales() {
   const t = useT();
   const { can, user } = useAuth();
@@ -127,15 +207,23 @@ export default function Sales() {
   });
   const rows = q.data ?? [];
   const live = rows.filter((r) => r.status !== "voided");
-  const sumOf = (f: (r: SaleListRow) => string | undefined) => live.reduce((s, r) => s.plus(d(f(r))), d(0));
-  const totals = { total: sumOf((r) => r.total), paid: sumOf((r) => r.paidUsd), credit: sumOf((r) => r.creditUsd), cogs: sumOf((r) => r.cogs), qty: sumOf((r) => r.qty) };
+  const sumOf = (f: (r: SaleListRow) => unknown) => live.reduce((s, r) => s.plus(d(f(r))), d(0));
+  // Period totals are net of returns, like each row.
+  const totals = {
+    total: sumOf((r) => netOf(r).total),
+    returned: sumOf((r) => r.returnedTotal),
+    paid: sumOf((r) => r.paidUsd),
+    credit: sumOf((r) => r.creditUsd),
+    cogs: sumOf((r) => netOf(r).cogs),
+    qty: sumOf((r) => d(r.qty).minus(d(r.returnedQty))),
+  };
   const profit = totals.total.minus(totals.cogs);
 
   return (
     <div>
       <PageHeader
         title={t("Sales", "Ventes")}
-        description={isCashier ? t("Today's sales.", "Les ventes d'aujourd'hui.") : t("All sales for the chosen dates. Returns are shown on each sale.", "Toutes les ventes de la période. Les retours sont visibles sur chaque vente.")}
+        description={isCashier ? t("Today's sales.", "Les ventes d'aujourd'hui.") : t("All sales for the chosen dates, net of returns.", "Toutes les ventes de la période, retours déduits.")}
         actions={can("manager", "cashier") ? <Button asChild><Link href="/pos"><Plus className="mr-1 h-4 w-4" /> {t("New sale", "Nouvelle vente")}</Link></Button> : undefined}
       />
       <DailySummary />
@@ -149,18 +237,18 @@ export default function Sales() {
         </Field>
         {!isCashier && (
           <>
-            <Field label={t("From", "Du")}><Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
-            <Field label={t("To", "Au")}><Input type="date" value={to} onChange={(e) => setTo(e.target.value)} /></Field>
+            <Field label={t("From", "Du")}><Input type="date" className="sm:w-44" value={from} onChange={(e) => setFrom(e.target.value)} /></Field>
+            <Field label={t("To", "Au")}><Input type="date" className="sm:w-44" value={to} onChange={(e) => setTo(e.target.value)} /></Field>
           </>
         )}
       </div>
 
       {live.length > 0 && (
-        <div className={cn("mb-4 grid grid-cols-2 gap-3", showCost ? "lg:grid-cols-5" : "lg:grid-cols-4")}>
+        <div className={cn("mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3", showCost ? "xl:grid-cols-5" : "xl:grid-cols-4")}>
           <StatCard label={t("Sales", "Ventes")} value={live.length} sub={`${fmtQty(totals.qty.toString())} ${t("units sold", "unités vendues")}`} />
-          <StatCard label={t("Paid", "Encaissé")} value={usd(totals.paid.toFixed(2))} />
-          <StatCard label={t("Total", "Total")} value={usd(totals.total.toFixed(2))} />
-          <StatCard label={t("On credit", "À crédit")} value={usd(totals.credit.toFixed(2))} tone={totals.credit.gt(0) ? "bad" : "neutral"} />
+          <StatCard label={t("Paid", "Payé")} value={usd(totals.paid.toFixed(2))} />
+          <StatCard label={t("Total", "Total")} value={usd(totals.total.toFixed(2))} sub={totals.returned.gt(0) ? `${t("returns", "retours")} −${usd(totals.returned.toFixed(2))}` : undefined} />
+          <StatCard label={t("On credit", "À crédit")} value={usd(totals.credit.toFixed(2))} tone={totals.credit.gt(0) ? "warn" : "neutral"} />
           {showCost && (
             <StatCard
               label={t("Profit", "Marge")}
@@ -179,72 +267,77 @@ export default function Sales() {
       ) : rows.length === 0 ? (
         <EmptyState title={t("No sales", "Aucune vente")}>{t("Sales made at the till appear here.", "Les ventes faites à la caisse apparaissent ici.")}</EmptyState>
       ) : (
-        <Card>
-          <div className="overflow-x-auto [contain:inline-size]">
-            <Table>
-              <TableHeader>
-                <TableRow>
-                  <TableHead>{t("No.", "N°")}</TableHead>
-                  <TableHead>{t("Date", "Date")}</TableHead>
-                  <TableHead>{t("Customer", "Client")}</TableHead>
-                  <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
-                  <TableHead className="text-right">{t("Paid", "Payé")}</TableHead>
-                  <TableHead className="text-right">{t("Total", "Total")}</TableHead>
-                  <TableHead className="text-right">{t("Credit", "Crédit")}</TableHead>
-                  {showCost && <TableHead className="text-right">{t("Cost", "Coût")}</TableHead>}
-                  {showCost && <TableHead className="text-right">{t("Profit", "Marge")}</TableHead>}
-                  <TableHead>{t("Sold by", "Vendu par")}</TableHead>
-                </TableRow>
-              </TableHeader>
-              <TableBody>
-                {rows.map((r) => {
-                  const voided = r.status === "voided";
-                  return (
-                    <TableRow key={r.id} className={cn("cursor-pointer odd:bg-muted/30", voided && "text-muted-foreground")} onClick={() => navigate(`/sales/${r.id}`)}>
-                      <TableCell className="font-medium">
-                        <span className="whitespace-nowrap">{r.number}</span> {voided && <Badge variant="destructive" className="ml-1">{t("Cancelled", "Annulée")}</Badge>}
-                        {!voided && <SaleFlags zeroPrice={r.zeroPrice} total={r.total} cogs={r.cogs} />}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">{fmtDate(r.date)}</TableCell>
-                      <TableCell className="min-w-[160px]">
-                        <div>{r.customerName ?? <span className="text-muted-foreground">{t("Walk-in", "De passage")}</span>}</div>
-                        {r.firstItem && (
-                          <div className="max-w-[260px] truncate text-xs text-muted-foreground">
-                            {r.firstItem}
-                            {(r.lineCount ?? 1) > 1 && ` + ${count(t, (r.lineCount ?? 1) - 1, ["other", "others"], ["autre", "autres"])}`}
-                          </div>
-                        )}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <Num>{r.qty !== undefined ? fmtQty(r.qty) : ""}</Num>
-                        {d(r.returnedQty).gt(0) && <div className="text-xs text-muted-foreground whitespace-nowrap">−{fmtQty(r.returnedQty)} {t("returned", "retourné")}</div>}
-                      </TableCell>
-                      <TableCell className="text-right"><Num>{usd(r.paidUsd)}</Num></TableCell>
-                      <TableCell className="text-right"><Num className={cn("font-medium", voided && "line-through")}>{usd(r.total)}</Num></TableCell>
-                      <TableCell className="text-right"><Num className={cn(d(r.creditUsd).gt(0) && !voided && "text-amber-800 dark:text-amber-400")}>{d(r.creditUsd).gt(0) ? usd(r.creditUsd) : ""}</Num></TableCell>
-                      {showCost && <TableCell className="text-right"><Num>{r.cogs !== undefined ? usd(r.cogs) : ""}</Num></TableCell>}
-                      {showCost && <TableCell className="text-right">{r.cogs !== undefined ? <Profit value={d(r.total).minus(r.cogs).toFixed(2)} muted={voided} /> : ""}</TableCell>}
-                      <TableCell className="whitespace-nowrap text-muted-foreground">{r.cashier ?? ""}</TableCell>
-                    </TableRow>
-                  );
-                })}
-              </TableBody>
-              <TableFooter>
-                <TableRow>
-                  <TableCell colSpan={3}>{count(t, live.length, ["sale", "sales"], ["vente", "ventes"])}{t(", not counting cancelled ones", ", hors annulées")}</TableCell>
-                  <TableCell className="text-right"><Num>{fmtQty(totals.qty.toString())}</Num></TableCell>
-                  <TableCell className="text-right"><Num>{usd(totals.paid.toFixed(2))}</Num></TableCell>
-                  <TableCell className="text-right"><Num>{usd(totals.total.toFixed(2))}</Num></TableCell>
-                  <TableCell className="text-right"><Num>{usd(totals.credit.toFixed(2))}</Num></TableCell>
-                  {showCost && <TableCell className="text-right"><Num>{usd(totals.cogs.toFixed(2))}</Num></TableCell>}
-                  {showCost && <TableCell className="text-right"><Profit value={profit.toFixed(2)} /></TableCell>}
-                  <TableCell />
-                </TableRow>
-              </TableFooter>
-            </Table>
+        <>
+          <div className="space-y-2 sm:hidden">
+            {rows.map((r) => <SaleCard key={r.id} r={r} showCost={showCost} />)}
           </div>
+          <Card className="hidden sm:block">
+            <div className="overflow-x-auto [contain:inline-size]">
+              {/* The cost of each sale is on the sale's own page; here the list stays narrow enough for 1024 px. */}
+              <Table cards={false} className="[&_td]:px-3 [&_td]:py-2.5 [&_th]:px-3">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>{t("No. · date", "N° · date")}</TableHead>
+                    <TableHead>{t("Customer", "Client")}</TableHead>
+                    <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
+                    <TableHead className="text-right">{t("Paid", "Payé")}</TableHead>
+                    <TableHead className="text-right">{t("Total", "Total")}</TableHead>
+                    {showCost && <TableHead className="text-right">{t("Profit", "Marge")}</TableHead>}
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {rows.map((r) => {
+                    const voided = r.status === "voided";
+                    const n = netOf(r);
+                    return (
+                      <TableRow key={r.id} className={cn("cursor-pointer odd:bg-muted/30", voided && "text-muted-foreground")} onClick={() => navigate(`/sales/${r.id}`)}>
+                        <TableCell className="font-medium">
+                          <Link href={`/sales/${r.id}`} className="whitespace-nowrap hover:underline" onClick={(e) => e.stopPropagation()}>{r.number}</Link>
+                          <Marks r={r} />
+                          <div className="whitespace-nowrap text-xs font-normal text-muted-foreground">
+                            {fmtDate(r.date)}
+                            {r.cashier && ` · ${r.cashier}`}
+                          </div>
+                        </TableCell>
+                        <TableCell className="min-w-[140px]">
+                          <div><Customer r={r} /></div>
+                          {r.firstItem && <div className="max-w-[220px] truncate text-xs text-muted-foreground"><Items r={r} /></div>}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Num>{r.qty !== undefined ? fmtQty(d(r.qty).minus(d(r.returnedQty)).toString()) : ""}</Num>
+                          {d(r.returnedQty).gt(0) && <div className="whitespace-nowrap text-xs text-muted-foreground">{fmtQty(r.returnedQty)} {t("returned", "retourné")}</div>}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Num>{usd(r.paidUsd)}</Num>
+                          {/* What was not paid: owed by the customer. */}
+                          {d(r.creditUsd).gt(0) && <div className={cn("whitespace-nowrap text-xs", !voided && "text-amber-800 dark:text-amber-400")}>{t("credit", "crédit")} {usd(r.creditUsd)}</div>}
+                        </TableCell>
+                        <TableCell className="text-right">
+                          <Num className={cn("font-medium", voided && "line-through")}>{usd((voided ? d(r.total) : n.total).toFixed(2))}</Num>
+                          {!voided && n.returned.gt(0) && <div className="whitespace-nowrap text-xs text-muted-foreground">{t("of", "sur")} {usd(r.total)}</div>}
+                        </TableCell>
+                        {showCost && <TableCell className="text-right">{n.profit !== undefined ? <Profit value={n.profit.toFixed(2)} muted={voided} /> : ""}</TableCell>}
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+                <TableFooter>
+                  <TableRow>
+                    <TableCell colSpan={2}>{count(t, live.length, ["sale", "sales"], ["vente", "ventes"])}{t(", not counting cancelled ones", ", hors annulées")}</TableCell>
+                    <TableCell className="text-right"><Num>{fmtQty(totals.qty.toString())}</Num></TableCell>
+                    <TableCell className="text-right">
+                      <Num>{usd(totals.paid.toFixed(2))}</Num>
+                      {totals.credit.gt(0) && <div className="whitespace-nowrap text-xs font-normal text-amber-800 dark:text-amber-400">{t("credit", "crédit")} {usd(totals.credit.toFixed(2))}</div>}
+                    </TableCell>
+                    <TableCell className="text-right"><Num>{usd(totals.total.toFixed(2))}</Num></TableCell>
+                    {showCost && <TableCell className="text-right"><Profit value={profit.toFixed(2)} /></TableCell>}
+                  </TableRow>
+                </TableFooter>
+              </Table>
+            </div>
+          </Card>
           {rows.length >= 500 && <p className="p-3 text-xs text-muted-foreground">{t("Showing the latest 500 sales; narrow the dates to see more.", "Affichage des 500 dernières ventes\u00a0; réduisez la période pour voir plus.")}</p>}
-        </Card>
+        </>
       )}
     </div>
   );

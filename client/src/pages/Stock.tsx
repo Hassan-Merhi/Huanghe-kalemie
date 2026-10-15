@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { de } from "@shared/french";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { AlertTriangle, ArrowRightLeft, Bike, CheckCircle2, ChevronDown, ChevronRight, Search, Trash2 } from "lucide-react";
@@ -461,7 +462,7 @@ export function AdjustForm({
         }
       } else if (l.variant.tracksSerials) {
         if (l.unitIds.length !== c.abs().toNumber()) {
-          return setError(t(`Pick exactly ${count(t, c.abs().toNumber(), ["motorcycle", "motorcycles"], ["", ""])} of ${name} to remove.`, `Choisissez exactement ${count(t, c.abs().toNumber(), ["", ""], ["moto", "motos"])} de ${name} à retirer.`));
+          return setError(t(`Pick exactly ${count(t, c.abs().toNumber(), ["motorcycle", "motorcycles"], ["", ""])} of ${name} to remove.`, `Choisissez exactement ${count(t, c.abs().toNumber(), ["", ""], ["moto", "motos"])} ${de(name)} à retirer.`));
         }
         line.unitIds = l.unitIds;
       }
@@ -596,7 +597,7 @@ export function AdjustForm({
                       }
                       required={needsCost}
                     >
-                      <Input inputMode="decimal" value={l.unitCost} onChange={(e) => update(l.key, { unitCost: e.target.value })} className={cn(needsCost && !l.unitCost.trim() && "border-destructive")} />
+                      <Input inputMode="decimal" usd value={l.unitCost} onChange={(e) => update(l.key, { unitCost: e.target.value })} className={cn(needsCost && !l.unitCost.trim() && "border-destructive")} />
                     </Field>
                   )}
                   {byCount && isQty(l.counted ?? "") && c.isZero() && (
@@ -820,11 +821,11 @@ function TransferForm({ onDone }: { onDone: () => void }) {
     if (lines.length === 0) return setError(t("Add at least one item.", "Ajoutez au moins un article."));
     for (const l of lines) {
       if (!isPositive(l.qty)) return setError(t(`Enter a quantity for ${l.variant.productName}.`, `Saisissez une quantité pour ${l.variant.productName}.`));
-      if (d(l.qty).gt(d(l.variant.locationQty))) return setError(t(`Not enough ${l.variant.productName} at the source location.`, `Pas assez de ${l.variant.productName} à l'emplacement de départ.`));
+      if (d(l.qty).gt(d(l.variant.locationQty))) return setError(t(`Not enough ${l.variant.productName} at the source location.`, `Pas assez ${de(l.variant.productName)} à l'emplacement de départ.`));
       if (!d(l.qty).isInteger() && wholeUnit(l.variant.unit)) return setError(t(`${l.variant.productName} is counted in whole units: use a whole number.`, `${l.variant.productName} se compte à l'unité\u00a0: saisissez un nombre entier.`));
       if (l.variant.tracksSerials) {
         if (!d(l.qty).isInteger()) return setError(t("Motorcycles must be whole units.", "Les motos doivent être en unités entières."));
-        if (l.unitIds.length !== d(l.qty).toNumber()) return setError(t(`Pick exactly ${count(t, Number(l.qty), ["motorcycle", "motorcycles"], ["", ""])} of ${l.variant.productName} to move.`, `Choisissez exactement ${count(t, Number(l.qty), ["", ""], ["moto", "motos"])} de ${l.variant.productName} à déplacer.`));
+        if (l.unitIds.length !== d(l.qty).toNumber()) return setError(t(`Pick exactly ${count(t, Number(l.qty), ["motorcycle", "motorcycles"], ["", ""])} of ${l.variant.productName} to move.`, `Choisissez exactement ${count(t, Number(l.qty), ["", ""], ["moto", "motos"])} ${de(l.variant.productName)} à déplacer.`));
       }
     }
     m.mutate({

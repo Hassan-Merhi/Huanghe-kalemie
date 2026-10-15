@@ -312,7 +312,7 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
             required
           >
             <div className="flex gap-2">
-              <Input inputMode="decimal" thousands={isCdf} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
+              <Input inputMode="decimal" usd={!isCdf} thousands={isCdf} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
               {outstanding && !isCdf && !cnyOwed && (
                 <Button type="button" variant="outline" size="sm" className="h-10" onClick={() => setAmount(outstanding.toFixed(2))}>
                   {t("All", "Tout")}

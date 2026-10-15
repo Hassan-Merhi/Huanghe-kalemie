@@ -343,7 +343,7 @@ function VariantDialog({ product, variant, onClose }: { product: Product; varian
           <div className="grid grid-cols-2 gap-3">
             <Field label={variant ? t("SKU", "Code") : t("SKU (blank = auto)", "Code (vide = auto)")}><Input value={sku} onChange={(e) => setSku(e.target.value)} /></Field>
             <Field label={t("Barcode", "Code-barres")}><Input value={barcode} onChange={(e) => setBarcode(e.target.value)} /></Field>
-            <Field label={t("Sell price ($)", "Prix de vente ($)")} error={priceError}><Input inputMode="decimal" value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} /></Field>
+            <Field label={t("Sell price ($)", "Prix de vente ($)")} error={priceError}><Input inputMode="decimal" usd value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} /></Field>
             <Field label={t("Reorder level", "Seuil de réappro.")} error={reorderError}><Input inputMode="decimal" value={reorderLevel} onChange={(e) => setReorderLevel(e.target.value)} /></Field>
           </div>
           <label className="flex items-center gap-3 text-sm"><Switch checked={active} onCheckedChange={setActive} /> {t("Active", "Actif")}</label>

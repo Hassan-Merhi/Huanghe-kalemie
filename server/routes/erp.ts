@@ -117,7 +117,12 @@ export function registerErpRoutes(
     const money = ls.filter((l) => l.isMoney);
     const costFx = ls.filter(isCostFx).reduce((s, l) => s.plus(l.line.debit).minus(l.line.credit), dec(0));
     // A difference only shows when the document's figures differ from the books, i.e. on the money side.
-    const fxDiff = costFx.isZero() ? {} : { fxDiff: costFx.toFixed(2) };
+    const fxDiff: { fxDiff?: string; fxRounding?: string } = costFx.isZero() ? {} : { fxDiff: costFx.toFixed(2) };
+    // The till's and the refunds' franc rounding ("Arrondi FC", + a loss), named as such beside the exchange difference.
+    if (type === "sale" || type === "sale_return") {
+      const rounding = ls.filter((l) => l.systemKey === "fx" && l.line.memo === "Arrondi FC").reduce((s, l) => s.plus(l.line.debit).minus(l.line.credit), dec(0));
+      if (!rounding.isZero()) fxDiff.fxRounding = rounding.toFixed(2);
+    }
     if (type === "sale") {
       return {
         amount: total(ls.filter((l) => l.systemKey === "sales"), "credit").toFixed(2),

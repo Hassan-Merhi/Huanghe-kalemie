@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { de } from "@shared/french";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Check, Download, Percent, Printer, Search, ShoppingCart, X } from "lucide-react";
@@ -232,7 +233,7 @@ function PriceCell({ row }: { row: Row }) {
     try {
       await api("PATCH", `/api/variants/${row.variantId}`, { sellPrice: d(value).toFixed(2) });
       await invalidateAll();
-      toast({ title: t(`Price of ${row.sku} saved`, `Prix de ${row.sku} enregistré`) });
+      toast({ title: t(`Price of ${row.sku} saved`, `Prix ${de(row.sku)} enregistré`) });
     } catch (e) {
       toast({ title: e instanceof Error ? e.message : String(e), variant: "destructive" });
       setValue(d(row.sellPrice).toFixed(2));
@@ -246,7 +247,7 @@ function PriceCell({ row }: { row: Row }) {
       <div className="no-print flex items-center justify-end gap-1 print:hidden">
         <Input
           className={cn("h-8 w-24 text-right tabular", !valid && "border-destructive", changed && "border-primary")}
-          inputMode="decimal"
+          inputMode="decimal" usd
           value={value}
           disabled={saving}
           aria-label={t("Sell price", "Prix de vente")}

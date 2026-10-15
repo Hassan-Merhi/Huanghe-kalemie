@@ -357,7 +357,7 @@ function NewProductDialog({ onClose, onCreated }: { onClose: () => void; onCreat
 
           {mode === "none" ? (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Field label={t("Sell price ($)", "Prix de vente ($)")}><Input inputMode="decimal" value={single.sellPrice} onChange={(e) => setSingle({ ...single, sellPrice: e.target.value })} /></Field>
+              <Field label={t("Sell price ($)", "Prix de vente ($)")}><Input inputMode="decimal" usd value={single.sellPrice} onChange={(e) => setSingle({ ...single, sellPrice: e.target.value })} /></Field>
               <Field label={t("Reorder level", "Seuil de réappro.")}><Input inputMode="decimal" value={single.reorderLevel} onChange={(e) => setSingle({ ...single, reorderLevel: e.target.value })} /></Field>
               <Field label={t("SKU (blank = auto)", "Code (vide = auto)")}><Input value={single.sku} onChange={(e) => setSingle({ ...single, sku: e.target.value })} /></Field>
               <Field label={t("Barcode", "Code-barres")}><Input value={single.barcode} onChange={(e) => setSingle({ ...single, barcode: e.target.value })} /></Field>
@@ -382,7 +382,7 @@ function NewProductDialog({ onClose, onCreated }: { onClose: () => void; onCreat
                 <Button type="button" variant="outline" size="sm" onClick={() => setAttrs([...attrs, { name: "", values: "" }])}>
                   <Plus className="mr-1 h-4 w-4" /> {t("Attribute", "Attribut")}
                 </Button>
-                <Field label={t("Default price", "Prix par défaut")} className="w-32"><Input inputMode="decimal" value={defaultPrice} onChange={(e) => setDefaultPrice(e.target.value)} /></Field>
+                <Field label={t("Default price", "Prix par défaut")} className="w-32"><Input inputMode="decimal" usd value={defaultPrice} onChange={(e) => setDefaultPrice(e.target.value)} /></Field>
                 <Field label={t("Default reorder", "Seuil par défaut")} className="w-32"><Input inputMode="decimal" value={defaultReorder} onChange={(e) => setDefaultReorder(e.target.value)} /></Field>
                 <Button type="button" size="sm" onClick={generate}>
                   <Wand2 className="mr-1 h-4 w-4" /> {t("Generate variants", "Générer les variantes")}
@@ -415,7 +415,7 @@ function NewProductDialog({ onClose, onCreated }: { onClose: () => void; onCreat
                           ))}
                           <TableCell className="p-1"><Input className="h-8 min-w-[100px]" value={r.sku} onChange={(e) => updateRow(r.key, { sku: e.target.value })} /></TableCell>
                           <TableCell className="p-1"><Input className="h-8 min-w-[110px]" value={r.barcode} onChange={(e) => updateRow(r.key, { barcode: e.target.value })} /></TableCell>
-                          <TableCell className="p-1"><Input className="h-8 w-24" inputMode="decimal" value={r.sellPrice} onChange={(e) => updateRow(r.key, { sellPrice: e.target.value })} /></TableCell>
+                          <TableCell className="p-1"><Input className="h-8 w-24" inputMode="decimal" usd value={r.sellPrice} onChange={(e) => updateRow(r.key, { sellPrice: e.target.value })} /></TableCell>
                           <TableCell className="p-1"><Input className="h-8 w-20" inputMode="decimal" value={r.reorderLevel} onChange={(e) => updateRow(r.key, { reorderLevel: e.target.value })} /></TableCell>
                           <TableCell className="p-1">
                             <Button type="button" variant="ghost" size="icon" onClick={() => setRows(rows.filter((x) => x.key !== r.key))}><Trash2 className="h-4 w-4" /></Button>

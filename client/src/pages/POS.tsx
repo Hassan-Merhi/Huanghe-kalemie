@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { de } from "@shared/french";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import Decimal from "decimal.js";
@@ -16,7 +17,7 @@ import { LocationSelect, MoneyAccountSelect, PartySelect, RateInput, VariantSear
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
-import { cdf, curLabel, d, date as fmtDate, frenchPunctuation, money, qty as fmtQty, todayLocal, usd, variantText } from "@/lib/format";
+import { cdf, curLabel, d, date as fmtDate, frenchPunctuation, money, qty as fmtQty, todayLocal, typedNumberOk, usd, variantText } from "@/lib/format";
 import { unitLabel, wholeUnit } from "@/lib/units";
 import type { Account, MotorcycleUnit, Party, Settings, VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -302,6 +303,8 @@ export default function POS() {
   /** Change handed back from another drawer (francs taken, dollars given back). Empty amount: worked out. */
   const [changeAccId, setChangeAccId] = useState<number | null>(null);
   const [changeAmt, setChangeAmt] = useState("");
+  /** "Tout rendre en francs" was pressed: the francs drawer was chosen on purpose, so no second question. */
+  const [francsChosen, setFrancsChosen] = useState(false);
   const [handedCur, setHandedCur] = useState<"USD" | "CDF">("USD");
   const [receipt, setReceipt] = useState<SaleFull | null>(null);
   const keyRef = useRef(1);
@@ -392,7 +395,7 @@ export default function POS() {
   // Change handed back in francs is rounded too, so it counts like a franc payment (the server does the same).
   const tolerance = francs || (changeAcc?.currency === "CDF" && changeNative.gt(0)) ? francTolerance : d(0);
   /** Change from a drawer in another currency than the customer paid in: asked again before saving. */
-  const crossChange = !!changeAcc && changeNative.gt(0) && payCurrencies.size > 0 && !payCurrencies.has(changeAcc.currency);
+  const crossChange = !francsChosen && !!changeAcc && changeNative.gt(0) && payCurrencies.size > 0 && !payCurrencies.has(changeAcc.currency);
   const changeText = changeAcc ? money(changeNative.toFixed(2), changeAcc.currency) : "";
   /** Dollar change with cents: the francs drawer can give it all back in 100 FC steps instead. */
   const cdfCash = findCash("CDF");
@@ -420,11 +423,14 @@ export default function POS() {
   if (!locationId) todo.push(t("Choose the location", "Choisissez le lieu"));
   if (lines.length === 0) todo.push(t("Add at least one item", "Ajoutez au moins un article"));
   for (const l of lines) {
-    if (!l.unitPrice.trim() || d(l.unitPrice).lte(0)) problems.push(t(`Enter the price of ${l.variant.productName} (it is 0 $)`, `Saisissez le prix de ${l.variant.productName} (il est à 0\u00a0$)`));
-    if (d(l.qty).lte(0)) problems.push(t(`Quantity of ${l.variant.productName} must be more than zero`, `La quantité de ${l.variant.productName} doit être supérieure à zéro`));
+    // A price or discount typed so that it cannot be read ("1.400": 1 400 $ or 1,40 $?) is said by its field.
+    if (!typedNumberOk(l.unitPrice)) problems.push(t(`Correct the price of ${l.variant.productName}`, `Corrigez le prix ${de(l.variant.productName)}`));
+    else if (!l.unitPrice.trim() || d(l.unitPrice).lte(0)) problems.push(t(`Enter the price of ${l.variant.productName} (it is 0 $)`, `Saisissez le prix ${de(l.variant.productName)} (il est à 0\u00a0$)`));
+    if (d(l.qty).lte(0)) problems.push(t(`Quantity of ${l.variant.productName} must be more than zero`, `La quantité ${de(l.variant.productName)} doit être supérieure à zéro`));
     else if (!d(l.qty).isInteger() && wholeUnit(l.variant.unit)) {
       problems.push(t(`${l.variant.productName} is sold by the ${unitLabel(t, l.variant.unit, 1)}: enter a whole number`, `${l.variant.productName} se vend à l'unité (${unitLabel(t, l.variant.unit, 1)}) : saisissez un nombre entier`));
     }
+    if (!typedNumberOk(l.lineDiscount)) problems.push(t(`Correct the discount on ${l.variant.productName}`, `Corrigez la remise sur ${l.variant.productName}`));
     if (lineAmount(l).lt(0)) problems.push(t(`The discount on ${l.variant.productName} is bigger than the line`, `La remise sur ${l.variant.productName} dépasse la ligne`));
     if (l.variant.tracksSerials && !l.unitId) problems.push(t(`Choose the chassis number for ${l.variant.productName}`, `Choisissez le numéro de châssis pour ${l.variant.productName}`));
   }
@@ -444,15 +450,18 @@ export default function POS() {
       }
     }
   }
+  if (!typedNumberOk(discount)) problems.push(t("Correct the sale discount", "Corrigez la remise sur la vente"));
   if (saleDiscount.lt(0) || saleDiscount.gt(subtotal)) problems.push(t("The sale discount is bigger than the sale", "La remise dépasse le montant de la vente"));
   for (const p of pays) {
     const acc = accById(p.accountId);
+    if (!typedNumberOk(p.amount)) problems.push(t("Correct the payment amount", "Corrigez le montant du paiement"));
     if (!acc && d(p.amount).gt(0)) problems.push(t("Choose the account for each payment", "Choisissez le compte pour chaque paiement"));
     // An empty payment row is simply ignored when the sale is saved.
     if (acc && d(p.amount).lt(0)) problems.push(t("A payment cannot be negative", "Un paiement ne peut pas être négatif"));
     if (acc?.currency === "CDF" && d(p.amount).gt(0) && d(p.rate ?? dayRate).lte(0)) problems.push(t("Enter the exchange rate for CDF payments", "Saisissez le taux pour les paiements en francs"));
     if (acc?.currency === "CDF" && !d(p.amount).isInteger()) problems.push(t("Franc amounts are whole numbers", "Les montants en FC sont des nombres entiers"));
   }
+  if (!typedNumberOk(changeAmt)) problems.push(t("Correct the change given back", "Corrigez la monnaie rendue"));
   if (overpaid) problems.push(t("Payments are more than the total, even after the change given back.", "Les paiements dépassent le total, même après la monnaie rendue."));
   if (changeAcc?.currency === "CDF" && !changeNative.isInteger()) problems.push(t("Franc amounts are whole numbers", "Les montants en FC sont des nombres entiers"));
   if (changeUsd.gt(0) && changeUsd.gte(received)) problems.push(t("The change is more than the money received", "La monnaie rendue dépasse l'argent reçu"));
@@ -510,6 +519,7 @@ export default function POS() {
     setHanded("");
     setChangeAccId(null);
     setChangeAmt("");
+    setFrancsChosen(false);
   }
   const mutation = useApiMutation<SaleBody, SaleFull>("POST", "/api/sales", {
     success: t("Sale recorded", "Vente enregistrée"),
@@ -599,7 +609,7 @@ export default function POS() {
               />
             )}
             <div className="w-48">
-              <LocationSelect value={locationId} onChange={setLocationId} />
+              <LocationSelect value={locationId} onChange={setLocationId} aria-label={t("Location of the sale", "Lieu de la vente")} />
             </div>
           </div>
         }
@@ -652,29 +662,29 @@ export default function POS() {
                           <div>
                             <p className="mb-1 text-xs text-muted-foreground">{t("Qty", "Qté")}</p>
                             {l.variant.tracksSerials ? (
-                              <Input value="1" disabled className="h-9" aria-label={t(`Quantity of ${l.variant.productName}`, `Quantité de ${l.variant.productName}`)} />
+                              <Input value="1" disabled className="h-9" aria-label={t(`Quantity of ${l.variant.productName}`, `Quantité ${de(l.variant.productName)}`)} />
                             ) : (
                               <div className="flex items-center gap-1">
-                                <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" aria-label={t(`Lower the quantity of ${l.variant.productName}`, `Diminuer la quantité de ${l.variant.productName}`)} onClick={() => updateLine(l.key, { qty: Decimal.max(d(l.qty).minus(1), 1).toString() })}><Minus className="h-3 w-3" /></Button>
-                                <Input className="h-9 min-w-0 text-center" inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} aria-label={t(`Quantity of ${l.variant.productName}`, `Quantité de ${l.variant.productName}`)} aria-invalid={(!d(l.qty).isInteger() && wholeUnit(l.variant.unit)) || undefined} value={l.qty} onChange={(e) => updateLine(l.key, { qty: e.target.value })} />
-                                <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" aria-label={t(`Raise the quantity of ${l.variant.productName}`, `Augmenter la quantité de ${l.variant.productName}`)} onClick={() => updateLine(l.key, { qty: d(l.qty).plus(1).toString() })}><Plus className="h-3 w-3" /></Button>
+                                <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" aria-label={t(`Lower the quantity of ${l.variant.productName}`, `Diminuer la quantité ${de(l.variant.productName)}`)} onClick={() => updateLine(l.key, { qty: Decimal.max(d(l.qty).minus(1), 1).toString() })}><Minus className="h-3 w-3" /></Button>
+                                <Input className="h-9 min-w-0 text-center" inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} aria-label={t(`Quantity of ${l.variant.productName}`, `Quantité ${de(l.variant.productName)}`)} aria-invalid={(!d(l.qty).isInteger() && wholeUnit(l.variant.unit)) || undefined} value={l.qty} onChange={(e) => updateLine(l.key, { qty: e.target.value })} />
+                                <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" aria-label={t(`Raise the quantity of ${l.variant.productName}`, `Augmenter la quantité ${de(l.variant.productName)}`)} onClick={() => updateLine(l.key, { qty: d(l.qty).plus(1).toString() })}><Plus className="h-3 w-3" /></Button>
                               </div>
                             )}
                           </div>
                           <div>
                             <p className="mb-1 text-xs text-muted-foreground">{t("Unit price $", "Prix unitaire $")}</p>
-                            <Input className="h-9" inputMode="decimal" aria-label={t(`Unit price of ${l.variant.productName} ($)`, `Prix unitaire de ${l.variant.productName} ($)`)} value={l.unitPrice} onChange={(e) => updateLine(l.key, { unitPrice: e.target.value })} />
+                            <Input className="h-9" inputMode="decimal" usd aria-label={t(`Unit price of ${l.variant.productName} ($)`, `Prix unitaire ${de(l.variant.productName)} ($)`)} value={l.unitPrice} onChange={(e) => updateLine(l.key, { unitPrice: e.target.value })} />
                           </div>
                           <div>
                             <p className="mb-1 text-xs text-muted-foreground">{t("Discount $", "Remise $")}</p>
-                            <Input className="h-9" inputMode="decimal" placeholder="0" aria-label={t(`Discount on ${l.variant.productName} ($)`, `Remise sur ${l.variant.productName} ($)`)} value={l.lineDiscount} onChange={(e) => updateLine(l.key, { lineDiscount: e.target.value })} />
+                            <Input className="h-9" inputMode="decimal" usd placeholder="0" aria-label={t(`Discount on ${l.variant.productName} ($)`, `Remise sur ${l.variant.productName} ($)`)} value={l.lineDiscount} onChange={(e) => updateLine(l.key, { lineDiscount: e.target.value })} />
                           </div>
                           <div className="text-right">
                             <p className="mb-1 text-xs text-muted-foreground">{t("Line total", "Total ligne")}</p>
                             <p className={cn("pt-1.5 font-semibold", lineAmount(l).lt(0) && "text-destructive")}><Num>{usd(lineAmount(l).toFixed(2))}</Num></p>
                           </div>
                         </div>
-                        {d(l.unitPrice).lte(0) && (
+                        {typedNumberOk(l.unitPrice) && d(l.unitPrice).lte(0) && (
                           <p className="flex items-center gap-1 text-xs font-medium text-destructive">
                             <AlertTriangle className="h-3 w-3 shrink-0" /> {t("Price is 0 $: enter the selling price", "Prix à 0\u00a0$\u00a0: saisissez le prix de vente")}
                           </p>
@@ -702,7 +712,7 @@ export default function POS() {
                 )}
               </Field>
               <Field label={t("Sale discount $", "Remise sur la vente $")}>
-                <Input inputMode="decimal" placeholder="0" value={discount} onChange={(e) => setDiscount(e.target.value)} />
+                <Input inputMode="decimal" usd placeholder="0" value={discount} onChange={(e) => setDiscount(e.target.value)} />
               </Field>
               <Field label={t("Note", "Note")} className="sm:col-span-2">
                 <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
@@ -748,7 +758,7 @@ export default function POS() {
                     <div className={cn("grid items-start gap-2", acc?.currency === "CDF" ? "grid-cols-2" : "grid-cols-1")}>
                       <div className="relative">
                         <Input
-                          inputMode="decimal"
+                          inputMode="decimal" usd={acc?.currency === "USD"}
                           thousands={acc?.currency === "CDF"}
                           className="pr-10"
                           aria-label={acc?.currency === "CDF" ? t("Amount in FC", "Montant en FC") : t("Amount in $", "Montant en $")}
@@ -783,10 +793,10 @@ export default function POS() {
                     )}
                   </div>
                   <div className="grid grid-cols-2 gap-2">
-                    <MoneyAccountSelect showBalance={false} value={changeAcc?.id ?? null} onChange={(id) => { setChangeAccId(id); setChangeAmt(""); }} aria-label={t("Drawer the change comes from", "Caisse d'où sort la monnaie")} />
+                    <MoneyAccountSelect showBalance={false} value={changeAcc?.id ?? null} onChange={(id) => { setChangeAccId(id); setChangeAmt(""); setFrancsChosen(false); }} aria-label={t("Drawer the change comes from", "Caisse d'où sort la monnaie")} />
                     <div className="relative">
                       <Input
-                        inputMode={changeAcc?.currency === "CDF" ? "numeric" : "decimal"}
+                        inputMode={changeAcc?.currency === "CDF" ? "numeric" : "decimal"} usd={changeAcc?.currency === "USD"}
                         thousands={changeAcc?.currency === "CDF"}
                         className="pr-10"
                         aria-label={changeAcc?.currency === "CDF" ? t("Change given back in FC", "Monnaie rendue en FC") : t("Change given back in $", "Monnaie rendue en $")}
@@ -811,7 +821,7 @@ export default function POS() {
                     )}
                   </p>
                   {changeInFrancs && cdfCash && changeInFrancs.gt(0) && (
-                    <Button variant="outline" size="sm" className="h-auto min-h-8 w-full whitespace-normal py-1" onClick={() => { setChangeAccId(cdfCash.id); setChangeAmt(""); }}>
+                    <Button variant="outline" size="sm" className="h-auto min-h-8 w-full whitespace-normal py-1" onClick={() => { setChangeAccId(cdfCash.id); setChangeAmt(""); setFrancsChosen(true); }}>
                       {t(`No cents? Give it all back in francs: ${cdf(changeInFrancs.toString())}`, `Pas de cents\u00a0? Tout rendre en francs\u00a0: ${cdf(changeInFrancs.toString())}`)}
                     </Button>
                   )}
@@ -820,7 +830,7 @@ export default function POS() {
                       <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
                       {t(
                         `The customer paid in ${[...payCurrencies].map(curLabel).join(" and ")} but the change comes out of ${changeAcc.name}: you will be asked to confirm.`,
-                        `Le client a payé en ${[...payCurrencies].map(curLabel).join(" et ")} mais la monnaie sort de ${changeAcc.name}\u00a0: une confirmation sera demandée.`,
+                        `Le client a payé en ${[...payCurrencies].map(curLabel).join(" et ")} mais la monnaie sort ${de(changeAcc.name)}\u00a0: une confirmation sera demandée.`,
                       )}
                     </p>
                   )}
@@ -831,7 +841,8 @@ export default function POS() {
               <div className="space-y-1 text-sm">
                 {changeUsd.gt(0) && <div className="flex justify-between"><span>{t("Received ($)", "Reçu ($)")}</span><Num>{usd(received.toFixed(2))}</Num></div>}
                 {changeUsd.gt(0) && <div className="flex justify-between"><span>{t("Change given back", "Monnaie rendue")}</span><Num>−{usd(changeUsd.toFixed(2))}</Num></div>}
-                <div className="flex justify-between"><span>{t("Paid ($)", "Payé ($)")}</span><Num className="font-medium">{usd(paid.toFixed(2))}</Num></div>
+                {/* Within the franc rounding the sale is paid in full, as the receipt says; the rounding line below explains the cents. */}
+                <div className="flex justify-between"><span>{t("Paid ($)", "Payé ($)")}</span><Num className="font-medium">{usd((francRounding ? total : paid).toFixed(2))}</Num></div>
                 {francRounding && !francRounding.isZero() ? (
                   <div className="flex justify-between text-muted-foreground" data-testid="franc-rounding">
                     <span>{t("FC rounding", "Arrondi FC")}</span>
@@ -850,7 +861,7 @@ export default function POS() {
                 <div className="mt-2 space-y-2">
                   <p className="text-xs text-muted-foreground">{t("Only a helper: record the money kept above, not what the customer handed over.", "Seulement une aide\u00a0: enregistrer ci-dessus l'argent gardé, pas ce que le client a donné.")}</p>
                   <div className="flex gap-2">
-                    <Input inputMode="decimal" thousands={handedCur === "CDF"} aria-label={t("Cash handed over", "Montant reçu")} placeholder={t("Cash handed over", "Montant reçu")} value={handed} onChange={(e) => setHanded(e.target.value)} />
+                    <Input inputMode="decimal" usd={handedCur === "USD"} thousands={handedCur === "CDF"} aria-label={t("Cash handed over", "Montant reçu")} placeholder={t("Cash handed over", "Montant reçu")} value={handed} onChange={(e) => setHanded(e.target.value)} />
                     <Select value={handedCur} onValueChange={(v) => setHandedCur(v as "USD" | "CDF")}>
                       <SelectTrigger className="w-24" aria-label={t("Currency handed over", "Devise reçue")}><SelectValue /></SelectTrigger>
                       <SelectContent>

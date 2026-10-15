@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { de } from "@shared/french";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import { AlertTriangle, ArrowLeft, Bike, Info, Lock, PackageCheck, Pencil, Plus, Save, Trash2, Undo2, X } from "lucide-react";
@@ -15,7 +16,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Textarea } from "@/components/ui/textarea";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
-import { curLabel, cdf, d, date, money, number, pct, qty, todayLocal, unitCost, usd, variantText } from "@/lib/format";
+import { curLabel, cdf, d, date, money, number, pct, qty, todayLocal, typedNumberOk, unitCost, usd, variantText } from "@/lib/format";
 import { unitLabel, wholeUnit } from "@/lib/units";
 import { useT, count } from "@/lib/i18n";
 import type { Account, Party, VariantRow } from "@/lib/types";
@@ -100,7 +101,8 @@ function fmtCur(value: unknown, currency: string) {
 }
 
 function itemLabel(l: { productName: string; attributes: Record<string, string> }) {
-  const v = variantText(l.attributes);
+  // "1 L", "17 mm": a number and its unit stay on one line.
+  const v = variantText(l.attributes).replace(/(\d) (?=\S)/g, "$1\u00a0");
   return v ? `${l.productName} · ${v}` : l.productName;
 }
 
@@ -445,6 +447,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
     if (!q.isInteger() && wholeUnit(r.unit)) return t(`Counted by the ${unitLabel(t, r.unit, 1)}: enter a whole number`, `Se compte à l'unité (${unitLabel(t, r.unit, 1)})\u00a0: saisissez un nombre entier`);
     // A line just added has no price yet: only say so once the field was left or saving was tried.
     if (!r.unitPrice.trim()) return touched.has(r.key) ? t("Enter the unit price", "Entrez le prix unitaire") : PENDING;
+    if (!typedNumberOk(r.unitPrice)) return t("Correct the unit price", "Corrigez le prix unitaire");
     if (d(r.unitPrice).isNegative()) return t("Price cannot be negative", "Le prix ne peut pas être négatif");
     return null;
   });
@@ -521,7 +524,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                         <Input className="text-right" inputMode="decimal" value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
                       </Field>
                       <Field label={t(`Price each (${curLabel(c.currency)})`, `Prix/unité (${curLabel(c.currency)})`)}>
-                        <Input className="text-right" inputMode="decimal" value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
+                        <Input className="text-right" inputMode="decimal" usd={c.currency === "USD"} value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
                       </Field>
                       <Field label={t("Total weight (kg)", "Poids total (kg)")}>
                         <Input className="text-right" inputMode="decimal" placeholder={t("total kg", "kg total")} value={r.weightKg} onChange={(e) => update(r.key, { weightKg: e.target.value })} />
@@ -582,10 +585,10 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                       {editable ? (
                         <>
                           <TableCell className="text-right">
-                            <Input className="ml-auto w-20 text-right" inputMode="decimal" aria-label={t(`Quantity of ${itemLabel(r)}`, `Quantité de ${itemLabel(r)}`)} value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
+                            <Input className="ml-auto w-20 text-right" inputMode="decimal" aria-label={t(`Quantity of ${itemLabel(r)}`, `Quantité ${de(itemLabel(r))}`)} value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
                           </TableCell>
                           <TableCell className="text-right">
-                            <Input className="ml-auto w-28 text-right" inputMode="decimal" aria-label={t(`Unit price of ${itemLabel(r)}`, `Prix unitaire de ${itemLabel(r)}`)} value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
+                            <Input className="ml-auto w-28 text-right" inputMode="decimal" usd={c.currency === "USD"} aria-label={t(`Unit price of ${itemLabel(r)}`, `Prix unitaire ${de(itemLabel(r))}`)} value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
                           </TableCell>
                           <TableCell className="text-right">
                             <Input className="ml-auto w-24 text-right" inputMode="decimal" aria-label={t("Total weight for the line (kg)", "Poids total de la ligne (kg)")} placeholder={t("total kg", "kg total")} value={r.weightKg} onChange={(e) => update(r.key, { weightKg: e.target.value })} />
@@ -696,7 +699,7 @@ function ExpensesSection({ c, editable }: { c: ContainerFull; editable: boolean 
                   <TableHead>{t("Date", "Date")}</TableHead>
                   <TableHead>{t("Type", "Type")}</TableHead>
                   <TableHead className="text-right">{t("Amount", "Montant")}</TableHead>
-                  <TableHead className="text-right">USD</TableHead>
+                  <TableHead className="text-right">$</TableHead>
                   <TableHead>{t("Split", "Répartition")}</TableHead>
                   <TableHead>{t("Paid from / owed to", "Payé par / dû à")}</TableHead>
                   {editable && <TableHead className="w-10" />}
@@ -963,7 +966,7 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
             </>
           )}
           <Field label={t(`Amount (${curLabel(currency)})`, `Montant (${curLabel(currency)})`)} error={francDecimalsError(t, currency, amount)} required>
-            <Input inputMode="decimal" thousands={isCdf} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
+            <Input inputMode="decimal" usd={currency === "USD"} thousands={isCdf} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
           </Field>
           {isCdf && (
             <Field

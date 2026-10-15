@@ -242,8 +242,10 @@ export function AppLayout({ children }: { children: ReactNode }) {
           <NavLinks />
         </SidebarContent>
         <SidebarFooter className="border-t border-sidebar-border">
-          <div className="truncate px-2 py-1 text-xs text-sidebar-foreground/70">
-            {user ? (user.fullName === roleLabel(user.role, t) ? user.fullName : `${user.fullName} · ${roleLabel(user.role, t)}`) : ""}
+          {/* The name, then the role on its own line: "Associé(e) (lecture seule)" is too long to cut. */}
+          <div className="px-2 py-1 text-xs leading-snug text-sidebar-foreground/70">
+            {user && <div className="truncate">{user.fullName}</div>}
+            {user && user.fullName !== roleLabel(user.role, t) && <div className="break-words">{roleLabel(user.role, t)}</div>}
           </div>
         </SidebarFooter>
       </Sidebar>
