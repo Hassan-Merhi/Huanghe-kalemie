@@ -1,5 +1,5 @@
 import express, { type Express, type Request } from "express";
-import { and, asc, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, inArray, lte, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   accounts,
@@ -409,8 +409,8 @@ export function registerRoutes(app: Express) {
   app.get("/api/stock/transfers", requireRole(...READERS), asyncHandler(async (req, res) => {
     const q = z.object({ from: isoDate.optional(), to: isoDate.optional() }).parse(req.query);
     // Each transfer line is stored as a pair of movements: out of one place, then into the other.
-    const rows = await db.execute<{ id: number; date: string; qty: string; note: string | null; sku: string; attributes: Record<string, string>; product_name: string; from_name: string; to_name: string; username: string | null }>(sql`
-      select o.id, o.date, i.qty, o.note, v.sku, v.attributes, p.name as product_name, lf.name as from_name, lt.name as to_name, u.username
+    const rows = await db.execute<{ id: number; date: string; qty: string; note: string | null; sku: string; attributes: Record<string, string>; product_name: string; from_name: string; to_name: string; username: string | null; full_name: string | null }>(sql`
+      select o.id, o.date, i.qty, o.note, v.sku, v.attributes, p.name as product_name, lf.name as from_name, lt.name as to_name, u.username, u.full_name
       from stock_movements o
       join stock_movements i on i.id = o.id + 1 and i.type = 'transfer_in' and i.variant_id = o.variant_id
       join variants v on v.id = o.variant_id
@@ -424,7 +424,7 @@ export function registerRoutes(app: Express) {
       order by o.id desc
       limit 500
     `);
-    res.json(rows.rows.map((r) => ({ id: r.id, date: r.date, qty: r.qty, note: r.note, sku: r.sku, productName: r.product_name, label: catalog.variantLabel(r.attributes), fromName: r.from_name, toName: r.to_name, username: r.username })));
+    res.json(rows.rows.map((r) => ({ id: r.id, date: r.date, qty: r.qty, note: r.note, sku: r.sku, productName: r.product_name, label: catalog.variantLabel(r.attributes), fromName: r.from_name, toName: r.to_name, username: r.username, userName: r.full_name || r.username })));
   }));
   // ---------------------------------------------------------------- Backups (owner only)
 
@@ -758,12 +758,19 @@ export function registerRoutes(app: Express) {
     arrivalDate: isoDate.optional().nullable(),
     notes: z.string().max(2000).optional().nullable(),
   });
+  /** Container numbers are unique (as stored, in capitals): say which number, not "this value is already used". */
+  async function assertContainerNumberFree(tx: Tx, number: string, exceptId?: number) {
+    const wanted = number.trim().toUpperCase();
+    const [other] = await tx.select({ id: containers.id }).from(containers).where(and(eq(containers.number, wanted), exceptId ? ne(containers.id, exceptId) : undefined));
+    if (other) throw new AppError(409, `Container number ${wanted} already exists`, "DUPLICATE_NUMBER", `Le numéro de conteneur ${wanted} existe déjà`);
+  }
   app.post("/api/containers", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = containerSchema.parse(req.body);
     const [supplier] = await db.select().from(parties).where(eq(parties.id, body.supplierId));
     if (!supplier || supplier.type !== "supplier") throw badRequest("Pick a supplier", "Choisissez un fournisseur");
     await assertActiveLocation(db, body.locationId);
     if (body.rateToUsd) await containerSvc.assertContainerRate(db, body.currency ?? "USD", body.rateToUsd, todayIso());
+    await assertContainerNumberFree(db, body.number);
     const [row] = await db.insert(containers).values({ ...body, number: body.number.trim().toUpperCase(), currency: (body.currency ?? "USD").toUpperCase() }).returning();
     await audit(req, "create", "container", row.id);
     res.status(201).json(row);
@@ -797,6 +804,7 @@ export function registerRoutes(app: Express) {
         if (!supplier || supplier.type !== "supplier") throw badRequest("Pick a supplier", "Choisissez un fournisseur");
       }
       if (body.locationId !== undefined) await assertActiveLocation(tx, body.locationId);
+      if (body.number !== undefined) await assertContainerNumberFree(tx, body.number, c.id);
       const [row] = await tx
         .update(containers)
         .set({ ...body, ...(body.number && { number: body.number.trim().toUpperCase() }), ...(body.currency && { currency: body.currency.toUpperCase() }) })
@@ -884,6 +892,9 @@ export function registerRoutes(app: Express) {
         // Cash handed back on those returns (the refund drawer's line), so "Payé" reads net of refunds.
         // Francs count at the refund's rate, not at the drawer's average cost (the gap is an exchange difference).
         refundedUsd: sql<string>`(select coalesce(sum(case when jl.native_amount is not null and jl.rate > 0 then round(abs(jl.native_amount) / jl.rate, 2) else jl.credit end), 0)::text from sale_returns sr join journal_lines jl on jl.journal_id = sr.journal_id and jl.account_id = sr.refund_account_id where sr.sale_id = ${sales.id})`,
+        // Credit still on the sale after returns: what the return journals took off the customer's
+        // receivable (the same lines the sale page reads), never below zero.
+        creditLeftUsd: sql<string>`greatest(${sales.creditUsd} - (select coalesce(sum(jl.credit), 0) from sale_returns sr join journal_lines jl on jl.journal_id = sr.journal_id join accounts a on a.id = jl.account_id and a.system_key = 'receivables' where sr.sale_id = ${sales.id}), 0)::numeric(20,2)::text`,
         lineCount: sql<number>`(select count(*)::int from sale_lines sl where sl.sale_id = ${sales.id})`,
         firstItem: sql<string | null>`(select p.name from sale_lines sl join variants v on v.id = sl.variant_id join products p on p.id = v.product_id where sl.sale_id = ${sales.id} order by sl.id limit 1)`,
       })
@@ -894,7 +905,7 @@ export function registerRoutes(app: Express) {
       .orderBy(desc(sales.date), desc(sales.id))
       .limit(500);
     const showCost = req.user!.role !== "cashier";
-    res.json(rows.map((r) => ({ ...r.sale, cogs: showCost ? r.sale.cogs : undefined, customerName: r.customerName, cashier: r.cashier, zeroPrice: !!r.zeroPrice, qty: r.qty, returnedQty: r.returnedQty, returnedTotal: r.returnedTotal, returnedCogs: showCost ? r.returnedCogs : undefined, refundedUsd: r.refundedUsd, lineCount: r.lineCount, firstItem: r.firstItem })));
+    res.json(rows.map((r) => ({ ...r.sale, cogs: showCost ? r.sale.cogs : undefined, customerName: r.customerName, cashier: r.cashier, zeroPrice: !!r.zeroPrice, qty: r.qty, returnedQty: r.returnedQty, returnedTotal: r.returnedTotal, returnedCogs: showCost ? r.returnedCogs : undefined, refundedUsd: r.refundedUsd, creditLeftUsd: r.creditLeftUsd, lineCount: r.lineCount, firstItem: r.firstItem })));
   }));
   app.get("/api/sales/:id", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
     const sale = await salesSvc.getSale(db, paramId(req));
@@ -1088,6 +1099,13 @@ export function registerRoutes(app: Express) {
       .select({ count: sql<number>`count(*)::int`, total: sql<string>`coalesce(sum(${saleReturns.total}), 0)` })
       .from(saleReturns)
       .where(eq(saleReturns.date, date));
+    // Credit on the day's sales that returns have since taken off the customer's receivable (at most
+    // each sale's credit), so "of which on credit" reads after returns, as on the Sales list.
+    const creditReturned = await db.execute<{ usd: string }>(sql`
+      select coalesce(sum(least(s.credit_usd, (select coalesce(sum(jl.credit), 0) from sale_returns sr join journal_lines jl on jl.journal_id = sr.journal_id join accounts a on a.id = jl.account_id and a.system_key = 'receivables' where sr.sale_id = s.id))), 0) as usd
+      from sales s
+      where s.date = ${date} and s.credit_usd > 0
+    `);
     // Drawer count (not for cashiers, who do not see balances): every money account's opening
     // balance, what came in and went out that day by kind of operation, and the expected closing.
     let drawer: unknown = undefined;
@@ -1132,7 +1150,7 @@ export function registerRoutes(app: Express) {
       date,
       count: totals.count,
       total: dec(totals.total).toFixed(2),
-      credit: dec(totals.credit).minus(v.credit).toFixed(2),
+      credit: dec(totals.credit).minus(v.credit).minus(creditReturned.rows[0]?.usd ?? 0).toFixed(2),
       voidsCount: v.count,
       voidsTotal: dec(v.total).toFixed(2),
       returnsCount: returns.count,

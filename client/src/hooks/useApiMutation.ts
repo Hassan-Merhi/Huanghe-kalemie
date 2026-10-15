@@ -25,7 +25,12 @@ function hash(text: string) {
 export function useApiMutation<TBody = unknown, TResult = unknown>(
   method: "POST" | "PUT" | "PATCH" | "DELETE",
   url: string | ((body: TBody) => string),
-  opts: { success?: string; onSuccess?: (result: TResult, body: TBody) => void } = {},
+  opts: {
+    success?: string;
+    onSuccess?: (result: TResult, body: TBody) => void;
+    /** A page that shows an error itself (on the field it is about) returns true, and no toast covers the form. */
+    onError?: (error: Error) => boolean | void;
+  } = {},
 ) {
   const { toast } = useToast();
   // Changes after each success, so the same form sent again later is a new posting.
@@ -46,6 +51,7 @@ export function useApiMutation<TBody = unknown, TResult = unknown>(
     // A second tap while the first is saving: the first one's result will show.
     onError: (e) => {
       if (e instanceof ApiError && e.code === "IN_PROGRESS") return;
+      if (opts.onError?.(e)) return;
       toast({ title: e.message, variant: "destructive" });
     },
   });

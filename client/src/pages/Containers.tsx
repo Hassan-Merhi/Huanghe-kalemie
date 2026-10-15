@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { useApiMutation } from "@/hooks/useApiMutation";
+import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { d, date, qty, usd } from "@/lib/format";
 import { useT } from "@/lib/i18n";
@@ -164,14 +165,29 @@ function NewContainerDialog({ onClose, onCreated }: { onClose: () => void; onCre
   const [arrivalDate, setArrivalDate] = useState("");
   const [status, setStatus] = useState<Exclude<ContainerStatus, "finalized">>("draft");
   const [notes, setNotes] = useState("");
+  // A number already used is said on its field, with the number, before saving when the list knows it.
+  const existing = useQuery<ContainerRow[]>({ queryKey: ["/api/containers"] }).data ?? [];
+  const [takenError, setTakenError] = useState<string | null>(null);
+  const typedNumber = number.trim().toUpperCase();
+  const taken = typedNumber !== "" && existing.some((c) => c.number.toUpperCase() === typedNumber);
+  const numberError = taken
+    ? t(`Container number ${typedNumber} already exists`, `Le numéro de conteneur ${typedNumber} existe déjà`)
+    : takenError;
   const create = useApiMutation<Record<string, unknown>, ContainerRow>("POST", "/api/containers", {
     success: t("Container created", "Conteneur créé"),
     onSuccess: (row) => onCreated(row.id),
+    onError: (e) => {
+      if (!(e instanceof ApiError && e.code === "DUPLICATE_NUMBER")) return false;
+      setTakenError(e.message);
+      return true;
+    },
   });
   const foreign = currency !== "USD";
   const rateOk = !foreign || d(rateToUsd).gt(0);
   const blocked = !number.trim()
     ? t("Enter the container number", "Saisissez le numéro du conteneur")
+    : numberError
+      ? numberError
     : !supplierId
       ? t("Choose a supplier", "Choisissez un fournisseur")
       : !locationId
@@ -202,8 +218,16 @@ function NewContainerDialog({ onClose, onCreated }: { onClose: () => void; onCre
           <DialogDescription>{t("You can add the items and costs on the next screen.", "Vous ajouterez les articles et les frais à l'écran suivant.")}</DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label={t("Container number", "Numéro du conteneur")} required>
-            <Input autoFocus value={number} onChange={(e) => setNumber(e.target.value)} placeholder="MSKU1234567" />
+          <Field label={t("Container number", "Numéro du conteneur")} required error={numberError}>
+            <Input
+              autoFocus
+              value={number}
+              onChange={(e) => {
+                setNumber(e.target.value);
+                setTakenError(null);
+              }}
+              placeholder="MSKU1234567"
+            />
           </Field>
           <Field label={t("Supplier", "Fournisseur")} required>
             <PartySelect types={["supplier"]} value={supplierId} onChange={(id) => setSupplierId(id)} />

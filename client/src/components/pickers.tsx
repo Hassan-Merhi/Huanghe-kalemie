@@ -611,7 +611,7 @@ export function ContainerRateField({ currency, value, onChange, day = todayLocal
           <span className="font-medium text-amber-800 dark:text-amber-400">
             {t(
               `Far from the rate on file (1 $ = ${fmtQty(onFile)} ${label}, ${gap!.toDecimalPlaces(0).toString()}% apart): check the invoice`,
-              `Loin du taux enregistré (1 $ = ${fmtQty(onFile)} ${label}, ${gap!.toDecimalPlaces(0).toString()} % d'écart)\u00a0: vérifiez la facture`,
+              `Loin du taux enregistré (1\u00a0$ = ${fmtQty(onFile)}\u00a0${label}, ${fmtQty(gap!.toDecimalPlaces(0).toString())}\u00a0% d'écart)\u00a0: vérifiez la facture`,
             )}
           </span>
         ) : onFile ? (
@@ -623,6 +623,8 @@ export function ContainerRateField({ currency, value, onChange, day = todayLocal
     >
       <Input
         inputMode="decimal"
+        // A franc rate has no decimals worth typing: "2.808" is 2 808 FC, as at the till.
+        thousands={currency === "CDF"}
         value={text}
         onChange={(e) => {
           setText(e.target.value);

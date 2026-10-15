@@ -6,7 +6,9 @@ import { cn } from "@/lib/utils"
 function labelCells(table: HTMLTableElement) {
   const heads = Array.from(table.querySelectorAll(":scope > thead > tr:last-child > th"));
   if (!heads.length) return;
-  const labels = heads.map((h) => (h as HTMLElement).innerText?.trim() || h.textContent?.trim() || "");
+  // A heading made of several lines (a cost and its method) can give its card label: a hidden heading's
+  // text would otherwise run its lines together ("FretPar valeur d'achat").
+  const labels = heads.map((h) => h.getAttribute("data-card-label") || (h as HTMLElement).innerText?.trim() || h.textContent?.trim() || "");
   table.querySelectorAll(":scope > tbody > tr, :scope > tfoot > tr").forEach((row) => {
     let col = 0;
     Array.from(row.children).forEach((cell) => {
