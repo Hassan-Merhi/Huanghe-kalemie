@@ -17,8 +17,9 @@ import { MoneyAccountSelect, useMoneyAccounts, useRate } from "@/components/pick
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
-import { cdf, d, date as fmtDate, qty as fmtQty, todayLocal, usd, variantText } from "@/lib/format";
-import type { Account, Settings } from "@/lib/types";
+import { cdf, d, date as fmtDate, qty as fmtQty, todayLocal, usd, variantText, unclearQty } from "@/lib/format";
+import type { Account, Party, Settings } from "@/lib/types";
+import { wholeUnit } from "@/lib/units";
 import { cn } from "@/lib/utils";
 import { ReceiptDialog, paymentText, type SaleFull } from "./POS";
 import { SaleFlags } from "./Sales";
@@ -46,8 +47,13 @@ function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () =
   const tooMany = chosen.some((x) => x.q.gt(x.max));
   const refund = chosen.reduce((s, x) => s.plus(d(x.line.lineTotal).times(x.q).dividedBy(x.line.qty).toDecimalPlaces(2)), d(0));
   const isCdf = mode === "account" && account?.currency === "CDF";
-  const blocked =
-    chosen.length === 0
+  // Francs go back rounded down to 100 FC: the customer gets these, worth a few cents less than the goods.
+  const payOutFc = isCdf && d(effRate).gt(0) ? refund.times(d(effRate)).dividedBy(100).toDecimalPlaces(0, Decimal.ROUND_FLOOR).times(100) : null;
+  // "1.000" pieces is asked about by its field (1 000 or 1?), never read as 1.
+  const unclear = sale.lines.map((l) => unclearQty(t, qtys[l.id])).find(Boolean);
+  const blocked = unclear
+    ? unclear
+    : chosen.length === 0
       ? t("Enter the quantity coming back", "Saisissez la quantité retournée")
       : tooMany
         ? t("You cannot return more than was sold", "Impossible de retourner plus que la quantité vendue")
@@ -100,7 +106,9 @@ function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () =
                       <TableCell className="text-right">
                         <Input
                           className={cn("h-8 text-right", over && "border-destructive")}
-                          inputMode="decimal"
+                          inputMode={wholeUnit(l.unit) ? "numeric" : "decimal"}
+                          whole={wholeUnit(l.unit)}
+                          inlineAlert
                           disabled={max.lte(0)}
                           aria-label={t(`Quantity of ${l.productName} to return`, `Quantité ${de(l.productName)} à retourner`)}
                           placeholder="0"
@@ -133,7 +141,7 @@ function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () =
                   <MoneyAccountSelect value={accountId} onChange={(id) => setAccountId(id)} />
                 </Field>
                 {isCdf && (
-                  <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} hint={`${t("Pay out:", "À rendre\u00a0:")} ${cdf(refund.times(d(effRate)).dividedBy(100).toDecimalPlaces(0, Decimal.ROUND_FLOOR).times(100).toString())} ${t("(rounded down to 100 FC)", "(arrondi à 100\u00a0FC inférieurs)")}`} required>
+                  <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} hint={`${t("Pay out:", "À rendre\u00a0:")} ${cdf((payOutFc ?? d(0)).toString())} ${t("(rounded down to 100 FC)", "(arrondi à 100\u00a0FC inférieurs)")}`} required>
                     <Input inputMode="decimal" thousands value={effRate} onChange={(e) => setRate(e.target.value)} />
                   </Field>
                 )}
@@ -142,10 +150,20 @@ function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () =
               <p className="text-sm text-muted-foreground">{t(`The refund comes off ${sale.customer?.name ?? "the customer"}'s balance.`, `Le remboursement est déduit du solde de ${sale.customer?.name ?? "client"}.`)}</p>
             )}
           </div>
-          <div className="flex justify-between rounded-md bg-muted p-3 font-medium">
-            <span>{t("Refund total", "Total remboursé")}</span>
-            <Num>{usd(refund.toFixed(2))}</Num>
-          </div>
+          {payOutFc ? (
+            <div className="space-y-1 rounded-md bg-muted p-3">
+              <div className="flex justify-between gap-2 text-sm"><span>{t("Value of the items", "Valeur des articles")}</span><Num>{usd(refund.toFixed(2))}</Num></div>
+              <div className="flex justify-between gap-2 font-medium">
+                <span>{t("Handed back", "Rendu")}</span>
+                <Num>{cdf(payOutFc.toString())} ({usd(payOutFc.dividedBy(d(effRate)).toFixed(2))})</Num>
+              </div>
+            </div>
+          ) : (
+            <div className="flex justify-between rounded-md bg-muted p-3 font-medium">
+              <span>{t("Refund total", "Total remboursé")}</span>
+              <Num>{usd(refund.toFixed(2))}</Num>
+            </div>
+          )}
           <ErrorText error={m.error} />
         </div>
         <DialogFooter>
@@ -184,12 +202,17 @@ function ReturnSlip({ sale, ret, accName }: { sale: SaleFull; ret: SaleFull["ret
         );
       })}
       {dash}
-      <div className="flex justify-between gap-2 font-bold"><span>{t("REFUND", "REMBOURSÉ")}</span><span className="tabular">{usd(ret.total)}</span></div>
+      {/* A franc refund: the goods' value, then the francs handed back (rounded down to 100 FC) and their worth. */}
+      {ret.refundCurrency === "CDF" ? (
+        <div className="flex justify-between gap-2"><span>{t("Value of the items", "Valeur des articles")}</span><span className="tabular">{usd(ret.total)}</span></div>
+      ) : (
+        <div className="flex justify-between gap-2 font-bold"><span>{t("REFUND", "REMBOURSÉ")}</span><span className="tabular">{usd(ret.total)}</span></div>
+      )}
       {ret.refundAccountId && ret.refundNative ? (
         <>
           <div className="flex justify-between gap-2 font-bold">
             <span>{t("Handed back", "Rendu au client")}</span>
-            <span className="tabular">{ret.refundCurrency === "CDF" ? cdf(ret.refundNative) : usd(ret.refundNative)}</span>
+            <span className="tabular">{ret.refundCurrency === "CDF" ? `${cdf(ret.refundNative)} (${usd(ret.refundUsd ?? "0")})` : usd(ret.refundNative)}</span>
           </div>
           <p>{t("From", "Depuis")} {accName(ret.refundAccountId)}</p>
           {d(ret.refundToBalanceUsd).gt(0) && (
@@ -264,7 +287,7 @@ function VoidDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }) 
 }
 
 /** Credit given on the sale, what returns took off the customer's account, and what is left. */
-function CreditRows({ credit, creditedReturns, creditLeft }: { credit: Decimal; creditedReturns: Decimal; creditLeft: Decimal }) {
+function CreditRows({ credit, creditedReturns, creditLeft, owes }: { credit: Decimal; creditedReturns: Decimal; creditLeft: Decimal; owes: Decimal | null }) {
   const t = useT();
   if (creditedReturns.isZero()) {
     return (
@@ -293,7 +316,10 @@ function CreditRows({ credit, creditedReturns, creditLeft }: { credit: Decimal; 
       </div>
       {creditedReturns.gt(credit) && (
         <p className="py-2 text-xs text-muted-foreground">
-          {t(`The extra ${usd(creditedReturns.minus(credit).toFixed(2))} is held for the customer on their balance.`, `Les ${usd(creditedReturns.minus(credit).toFixed(2))} en plus restent en avance sur le solde du client.`)}
+          {/* The extra comes off the customer's other debts first; only what is left over is held for them. */}
+          {owes?.gt(0)
+            ? t(`The extra ${usd(creditedReturns.minus(credit).toFixed(2))} reduces what the customer still owes (${usd(owes.toFixed(2))}).`, `Les ${usd(creditedReturns.minus(credit).toFixed(2))} en plus réduisent sa dette restante (${usd(owes.toFixed(2))}).`)
+            : t(`The extra ${usd(creditedReturns.minus(credit).toFixed(2))} is held for the customer on their balance.`, `Les ${usd(creditedReturns.minus(credit).toFixed(2))} en plus restent en avance sur le solde du client.`)}
         </p>
       )}
     </>
@@ -324,6 +350,8 @@ export default function SaleDetail() {
   const accName = (accId: number | null) => moneyAccounts.find((a) => a.id === accId)?.name ?? (accId ? `#${accId}` : "");
   const [dialog, setDialog] = useState<null | "receipt" | "return" | "void">(null);
   const [slipId, setSlipId] = useState<number | null>(null);
+  // What the customer owes overall, to say where returns beyond this sale's credit went.
+  const customers = useQuery<Party[]>({ queryKey: ["/api/parties"], enabled: !!q.data?.customerId && d(q.data.creditUsd).gt(0) });
 
   if (q.isLoading) return <Loading />;
   if (q.error || !q.data) return <ErrorText error={q.error ?? t("Sale not found", "Vente introuvable")} />;
@@ -339,6 +367,8 @@ export default function SaleDetail() {
   const credit = d(sale.creditUsd);
   const creditLeft = Decimal.max(credit.minus(creditedReturns), 0);
   const creditReduced = credit.gt(0) && creditedReturns.gt(0);
+  const customerBalance = customers.data?.find((p) => p.id === sale.customerId)?.balance;
+  const customerOwes = customerBalance === undefined ? null : d(customerBalance);
   // Cash handed back on returns: "Payé" reads net of it, as on the Sales list.
   const refunded = sale.returns.reduce((s, r) => s.plus(d(r.refundUsd)), d(0));
   const paidNet = voided ? d(sale.paidUsd) : d(sale.paidUsd).minus(refunded);
@@ -484,12 +514,12 @@ export default function SaleDetail() {
                     <Num className="font-medium">{paymentText(p)}</Num>
                   </div>
                 ))}
-                {credit.gt(0) && <CreditRows credit={credit} creditedReturns={creditedReturns} creditLeft={creditLeft} />}
+                {credit.gt(0) && <CreditRows credit={credit} creditedReturns={creditedReturns} creditLeft={creditLeft} owes={customerOwes} />}
               </div>
             )}
             {sale.payments.length === 0 && creditReduced && (
               <div className="mt-2 divide-y text-sm">
-                <CreditRows credit={credit} creditedReturns={creditedReturns} creditLeft={creditLeft} />
+                <CreditRows credit={credit} creditedReturns={creditedReturns} creditLeft={creditLeft} owes={customerOwes} />
               </div>
             )}
           </CardContent>
@@ -514,7 +544,7 @@ export default function SaleDetail() {
                     </div>
                     <p className="text-xs text-muted-foreground">
                       {r.refundAccountId
-                        ? `${t("Refunded from", "Remboursé depuis")} ${accName(r.refundAccountId)}${r.refundCurrency === "CDF" && r.refundNative ? ` · ${cdf(r.refundNative)}` : ""}`
+                        ? `${t("Refunded from", "Remboursé depuis")} ${accName(r.refundAccountId)}${r.refundCurrency === "CDF" && r.refundNative ? ` · ${cdf(r.refundNative)} (${usd(r.refundUsd ?? "0")})` : ""}`
                         : t("Taken off the customer's balance", "Déduit du solde du client")}
                       {r.reason ? ` · ${r.reason}` : ""}
                     </p>

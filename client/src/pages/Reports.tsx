@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
-import { AccountSelect, PartySelect } from "@/components/pickers";
+import { AccountSelect, PartySelect, useAccounts } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { downloadCsv } from "@/lib/sheets";
@@ -156,6 +156,7 @@ interface Pnl {
 
 function ProfitLoss() {
   const t = useT();
+  const sys = useSystemText();
   const range = useRange();
   const ok = validDate(range.from) && validDate(range.to);
   const q = useQuery<Pnl>({ queryKey: ["/api/reports/profit-loss", { from: range.from, to: range.to }], enabled: ok });
@@ -170,7 +171,7 @@ function ProfitLoss() {
     if (!p) return;
     const rows: unknown[][] = [[t("Group", "Groupe"), t("Code", "Code"), t("Account", "Compte"), t("Amount ($)", "Montant ($)")]];
     for (const [type, label, key] of groups) {
-      for (const a of p.accounts.filter((x) => x.type === type)) rows.push([label, a.code, a.name, a.amount]);
+      for (const a of p.accounts.filter((x) => x.type === type)) rows.push([label, a.code, sys.account(a.name), a.amount]);
       rows.push([label, "", t("Total", "Total"), p.totals[key]]);
     }
     rows.push(["", "", t("Gross profit", "Marge brute"), p.totals.grossProfit]);
@@ -206,7 +207,7 @@ function ProfitLoss() {
                         </TableRow>
                         {p.accounts.filter((a) => a.type === type).map((a) => (
                           <TableRow key={a.accountId}>
-                            <TableCell className="pl-6"><span className="mr-2 font-mono text-xs text-muted-foreground">{a.code}</span>{a.name}</TableCell>
+                            <TableCell className="pl-6"><span className="mr-2 font-mono text-xs text-muted-foreground">{a.code}</span>{sys.account(a.name)}</TableCell>
                             <TableCell className="text-right"><Num>{usd(a.amount)}</Num></TableCell>
                           </TableRow>
                         ))}
@@ -225,7 +226,8 @@ function ProfitLoss() {
                   </TableBody>
                   <TableFooter>
                     <TableRow>
-                      <TableCell className="font-semibold">{t("Net profit (gross profit − running costs)", "Bénéfice net (marge brute − frais)")}</TableCell>
+                      {/* On a phone the label runs across the card, the amount under it, like the rows above. */}
+                      <TableCell className="font-semibold max-sm:col-span-2">{t("Net profit (gross profit − running costs)", "Bénéfice net (marge brute − frais)")}</TableCell>
                       <TableCell className="text-right font-semibold"><Num className={cn(d(p.totals.netProfit).isNegative() && "text-destructive")}>{usd(p.totals.netProfit)}</Num></TableCell>
                     </TableRow>
                   </TableFooter>
@@ -346,6 +348,7 @@ interface Daily { date: string; count: number; total: string; credit: string; vo
 
 function DailyCash() {
   const t = useT();
+  const sys = useSystemText();
   const [day, setDay] = useState(todayLocal());
   const q = useQuery<Daily>({ queryKey: ["/api/reports/daily", { date: day }], enabled: validDate(day) });
   const r = q.data;
@@ -362,7 +365,7 @@ function DailyCash() {
       [t("Sold on credit ($)", "Vendu à crédit ($)"), r.credit],
       [],
       [t("Received into", "Reçu dans"), t("Currency", "Devise"), t("Handed over", "Reçu"), t("Change given", "Monnaie rendue"), t("Refunds", "Remboursements"), t("Kept", "Gardé"), t("Value in $", "Valeur en $")],
-      ...r.byAccount.map((a) => [a.name, curLabel(a.currency), a.received_native ?? a.native, a.change_native ?? "0", a.refund_native ?? "0", a.native, a.usd]),
+      ...r.byAccount.map((a) => [sys.account(a.name), curLabel(a.currency), a.received_native ?? a.native, a.change_native ?? "0", a.refund_native ?? "0", a.native, a.usd]),
       [t("Total kept", "Total gardé"), "$", "", "", "", "", paidUsd.toFixed(2)],
     ];
     if (r.drawer) {
@@ -370,7 +373,7 @@ function DailyCash() {
       rows.push([t("Drawer count", "Comptage de caisse")]);
       rows.push([t("Box or account", "Caisse ou compte"), t("Currency", "Devise"), t("Opening", "Ouverture"), t("In", "Entrées"), t("Out", "Sorties"), t("Expected at closing", "Attendu à la fermeture")]);
       for (const a of r.drawer) {
-        rows.push([a.name, a.currency, a.opening, a.totalIn, a.totalOut, a.closing]);
+        rows.push([sys.account(a.name), a.currency, a.opening, a.totalIn, a.totalOut, a.closing]);
         for (const b of a.byType) rows.push([`  ${journalTypeLabel(b.type, t)}`, a.currency, "", b.in, b.out, ""]);
       }
     }
@@ -426,7 +429,7 @@ function DailyCash() {
                   )}
                   {r.byAccount.map((a) => (
                     <TableRow key={a.account_id}>
-                      <TableCell className="font-medium">{a.name}</TableCell>
+                      <TableCell className="font-medium">{sys.account(a.name)}</TableCell>
                       <TableCell className="text-right"><Num>{money(a.received_native ?? a.native, a.currency)}</Num></TableCell>
                       <TableCell className="text-right"><Num>{d(a.change_native).isZero() ? "—" : `−${money(a.change_native, a.currency)}`}</Num></TableCell>
                       <TableCell className="text-right"><Num>{d(a.refund_native).isZero() ? "—" : `−${money(a.refund_native, a.currency)}`}</Num></TableCell>
@@ -470,7 +473,7 @@ function DailyCash() {
                       {r.drawer.map((a) => (
                         <TableRow key={a.accountId}>
                           <TableCell>
-                            <span className="font-medium">{a.name}</span>
+                            <span className="font-medium">{sys.account(a.name)}</span>
                             {a.byType.length > 0 && (
                               <span className="block text-xs text-muted-foreground">
                                 {a.byType.map((b) => `${journalTypeLabel(b.type, t)}${t(":", "\u00a0:")} ${d(b.in).gt(0) ? `+${money(b.in, a.currency)}` : ""}${d(b.in).gt(0) && d(b.out).gt(0) ? " " : ""}${d(b.out).gt(0) ? `−${money(b.out, a.currency)}` : ""}`).join(" · ")}
@@ -674,13 +677,14 @@ interface Bs {
 
 function BalanceSheet() {
   const t = useT();
+  const sys = useSystemText();
   const [asOf, setAsOf] = useState(todayLocal());
   const q = useQuery<Bs>({ queryKey: ["/api/reports/balance-sheet", { asOf }], enabled: validDate(asOf) });
   const bs = q.data;
 
   function exportCsv() {
     if (!bs) return;
-    const rows = (title: string, xs: BsLine[]) => [[title, "", ""], ...xs.map((x) => [x.code, x.name, x.amount])];
+    const rows = (title: string, xs: BsLine[]) => [[title, "", ""], ...xs.map((x) => [x.code, sys.account(x.name), x.amount])];
     downloadCsv(`bilan_${asOf}.csv`, [
       [t("Code", "Code"), t("Account", "Compte"), t("Amount ($)", "Montant ($)")],
       ...rows(t("Assets", "Actif"), bs.assets),
@@ -704,7 +708,7 @@ function BalanceSheet() {
             {xs.map((x) => (
               <TableRow key={`${x.id}-${x.name}`}>
                 <TableCell>
-                  {x.name}
+                  {sys.account(x.name)}
                   {x.nativeBalance && <div className="text-xs text-muted-foreground"><Num>{cdf(x.nativeBalance)}</Num></div>}
                 </TableCell>
                 <TableCell className="text-right"><Num>{usd(x.amount)}</Num></TableCell>
@@ -754,6 +758,7 @@ function BalanceSheet() {
 
 function TrialBalance() {
   const t = useT();
+  const sys = useSystemText();
   const [asOf, setAsOf] = useState(todayLocal());
   const q = useQuery<Tb>({ queryKey: ["/api/reports/trial-balance", { asOf }], enabled: validDate(asOf) });
   const tb = q.data;
@@ -764,7 +769,7 @@ function TrialBalance() {
       [t("Code", "Code"), t("Account", "Compte"), t("Type", "Type"), t("Debit", "Débit"), t("Credit", "Crédit")],
       ...tb.rows.map((r) => {
         const b = d(r.balance);
-        return [r.code, r.name, accountTypeLabel(r.type, t), b.isPositive() ? b.toFixed(2) : "", b.isNegative() ? b.abs().toFixed(2) : ""];
+        return [r.code, sys.account(r.name), accountTypeLabel(r.type, t), b.isPositive() ? b.toFixed(2) : "", b.isNegative() ? b.abs().toFixed(2) : ""];
       }),
       ["", t("Total", "Total"), "", tb.totalDebit, tb.totalCredit],
     ]);
@@ -805,7 +810,7 @@ function TrialBalance() {
                     const b = d(r.balance);
                     return (
                       <TableRow key={r.id}>
-                        <TableCell><span className="mr-2 font-mono text-xs text-muted-foreground">{r.code}</span>{r.name}</TableCell>
+                        <TableCell><span className="mr-2 font-mono text-xs text-muted-foreground">{r.code}</span>{sys.account(r.name)}</TableCell>
                         <TableCell className="whitespace-nowrap text-muted-foreground">{accountTypeLabel(r.type, t)}</TableCell>
                         <TableCell className="text-right"><Num>{b.isPositive() ? usd(b.toFixed(2)) : ""}</Num></TableCell>
                         <TableCell className="text-right"><Num>{b.isNegative() ? usd(b.abs().toFixed(2)) : ""}</Num></TableCell>
@@ -1016,7 +1021,7 @@ const blankLine = (): DraftLine => ({ key: lineKey++, accountId: null, partyId: 
 
 function ManualJournalDialog({ onClose }: { onClose: () => void }) {
   const t = useT();
-  const accountsQ = useQuery<Account[]>({ queryKey: ["/api/accounts"] });
+  const accountsQ = useAccounts();
   const accounts = accountsQ.data ?? [];
   const [day, setDay] = useState(todayLocal());
   const [memo, setMemo] = useState("");
@@ -1154,7 +1159,7 @@ function Ledger() {
   const t = useT();
   const range = useRange();
   const [accountId, setAccountId] = useState<number | null>(null);
-  const accountsQ = useQuery<Account[]>({ queryKey: ["/api/accounts"] });
+  const accountsQ = useAccounts();
   useEffect(() => {
     if (!accountId && accountsQ.data?.length) {
       const first = accountsQ.data.find((a) => a.isMoney && a.active) ?? accountsQ.data[0];
@@ -1171,7 +1176,7 @@ function Ledger() {
     const head = [t("Date", "Date"), t("No.", "N°"), t("Type", "Type"), t("Details", "Détails"), t("Party", "Tiers"), t("Debit ($)", "Débit ($)"), t("Credit ($)", "Crédit ($)"), t("Balance USD", "Solde USD")];
     if (cdfAcc) head.push("CDF", t("CDF balance", "Solde en FC"));
     const rows: unknown[][] = [
-      [`${L.account.code} · ${L.account.name}`],
+      [`${L.account.code} · ${sys.account(L.account.name)}`],
       head,
       [L.from, "", "", t("Opening balance", "Solde d'ouverture"), "", "", "", L.openingBalance, ...(cdfAcc ? ["", L.openingNative ?? ""] : [])],
       ...L.rows.map((r) => [r.date, r.number, journalTypeLabel(r.type, t), r.lineMemo || r.memo || "", r.partyName ?? "", r.debit, r.credit, r.balance, ...(cdfAcc ? [r.nativeAmount ?? "", r.nativeBalance ?? ""] : [])]),
@@ -1196,7 +1201,7 @@ function Ledger() {
       {L && (
         <Card>
           <CardHeader className="pb-2">
-            <CardTitle className="text-base">{L.account.code} · {L.account.name}</CardTitle>
+            <CardTitle className="text-base">{L.account.code} · {sys.account(L.account.name)}</CardTitle>
             <p className="text-sm text-muted-foreground">
               {accountTypeLabel(L.account.type, t)} · {t("Balances are debit minus credit", "Soldes = débit moins crédit")}
             </p>

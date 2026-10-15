@@ -13,7 +13,7 @@ import { MoneyAccountSelect, PARTY_LABELS, RateInput, useRate, useRateField } fr
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
-import { cdf, curLabel, d, date as fmtDate, money, number as fmtNumber, qty as fmtQty, todayLocal, usd } from "@/lib/format";
+import { cdf, curLabel, d, date as fmtDate, money, number as fmtNumber, qty as fmtQty, todayLocal, typedNumberOk, usd } from "@/lib/format";
 import type { Account, Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { paymentSplit, type PaymentPart } from "@/lib/allocation";
@@ -381,7 +381,10 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
               )}
             </div>
           </Field>
-          {split.length > 0 ? (
+          {cnyOwed && !typedNumberOk(settleCny) ? (
+            // "6.500" yuan not yet clarified: what the payment settles depends on it, so it is not guessed.
+            <p className="text-xs text-muted-foreground sm:col-span-2" data-testid="payment-split">{t("Say how many yuan are settled to see what this payment covers.", "Précisez les yuans réglés pour voir ce que couvre ce paiement.")}</p>
+          ) : split.length > 0 ? (
             <p className="text-xs text-muted-foreground sm:col-span-2" data-testid="payment-split">{splitText}</p>
           ) : fcOwed && !(cnyOwed && d(settleCny).gt(0)) ? (
             <p className="text-xs text-muted-foreground sm:col-span-2">

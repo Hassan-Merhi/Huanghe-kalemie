@@ -1,6 +1,7 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import { de } from "@shared/french";
 import { useQuery } from "@tanstack/react-query";
+import Decimal from "decimal.js";
 import { Link } from "wouter";
 import { AlertTriangle, ArrowRightLeft, Bike, CheckCircle2, ChevronDown, ChevronRight, Search, Trash2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -20,7 +21,7 @@ import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, Submi
 import { LocationSelect, useLocations, VariantSearch } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api, withQuery } from "@/lib/api";
-import { d, date, monthStart, qty, qtyTotal, todayLocal, unitCost, usd, variantText } from "@/lib/format";
+import { d, date, monthStart, qty, qtyTotal, todayLocal, unitCost, usd, variantText, unclearQty } from "@/lib/format";
 import { qtyWithUnit, wholeUnit } from "@/lib/units";
 import { useAuth } from "@/lib/auth";
 import { useT, count } from "@/lib/i18n";
@@ -438,6 +439,9 @@ export function AdjustForm({
     const payload = [];
     for (const l of lines) {
       const name = `${l.variant.productName} (${l.variant.sku})`;
+      // "1.000" pieces is asked about by its field (1 000 or 1?), never read as 1.
+      const unclear = unclearQty(t, byCount ? l.counted : l.qty);
+      if (unclear) return setError(`${unclear} (${name})`);
       if (byCount && isQty(l.counted ?? "") && d(l.qty).isZero()) return setError(t(`${name}: the count matches the stock, nothing to adjust. Remove the line.`, `${name}\u00a0: le comptage correspond au stock, rien à ajuster. Retirez la ligne.`));
       if (!isQty(l.qty) || d(l.qty).isZero()) return setError(t(`Enter a quantity for ${name} or remove the line.`, `Saisissez une quantité pour ${name} ou retirez la ligne.`));
       const c = change(l);
@@ -476,11 +480,21 @@ export function AdjustForm({
     m.mutate(body);
   }
 
-  /** Value of the stock found and of the stock lost, at the cost each line goes in or out at. */
+  /**
+   * Value of the stock found and of the stock lost, worked out to the cent as the server books it: stock found
+   * at the cost typed (else the exact average), stock lost as its share of the item's stock value.
+   */
   const valueOf = (l: AdjLine) => {
     const c = change(l);
-    const cost = c.gt(0) ? (l.unitCost.trim() ? d(l.unitCost) : d(l.variant.avgCost)) : d(l.variant.avgCost);
-    return c.times(cost);
+    const sq = d(l.variant.stockQty);
+    const sv = d(l.variant.stockValue);
+    if (c.gt(0)) {
+      const fixed = staffCost && sq.gte(1);
+      const cost = !fixed && l.unitCost.trim() ? d(l.unitCost) : sq.gt(0) ? sv.dividedBy(sq) : d(0);
+      return c.times(cost).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    }
+    if (c.isZero() || !sq.gt(0)) return d(0);
+    return (c.abs().gte(sq) ? sv : sv.times(c.abs()).dividedBy(sq).toDecimalPlaces(2, Decimal.ROUND_HALF_UP)).negated();
   };
   const found = lines.reduce((s, l) => (valueOf(l).gt(0) ? s.plus(valueOf(l)) : s), d(0));
   const lost = lines.reduce((s, l) => (valueOf(l).lt(0) ? s.plus(valueOf(l).abs()) : s), d(0));
@@ -580,11 +594,11 @@ export function AdjustForm({
                       hint={t(`In the system here: ${qty(l.variant.locationQty)}`, `Dans le système ici\u00a0: ${qty(l.variant.locationQty)}`)}
                       required
                     >
-                      <DecimalInput inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} value={l.counted ?? ""} onChange={(e) => setCounted(l, e.target.value)} />
+                      <DecimalInput inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} inlineAlert value={l.counted ?? ""} onChange={(e) => setCounted(l, e.target.value)} />
                     </Field>
                   ) : (
                     <Field label={onlyRemove ? t("Qty removed", "Qté retirée") : onlyAdd ? t("Qty", "Qté") : t("Qty change (+/−)", "Variation (+/−)")} required>
-                      <DecimalInput inputMode={signed ? "text" : "decimal"} value={l.qty} onChange={(e) => setQty(l, e.target.value)} />
+                      <DecimalInput inputMode={signed ? "text" : wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} inlineAlert value={l.qty} onChange={(e) => setQty(l, e.target.value)} />
                     </Field>
                   )}
                   {fixedCost && (
@@ -615,7 +629,7 @@ export function AdjustForm({
                   {!c.isZero() && (
                     <div className="flex items-end pb-2 text-sm">
                       <span className={c.lt(0) ? "text-destructive" : "text-green-800 dark:text-green-400"}>
-                        {byCount ? `${t("Difference", "Écart")} ` : ""}{c.gt(0) ? "+" : ""}{qty(c.toString())} · ≈ {usd(c.times(c.gt(0) && l.unitCost.trim() ? d(l.unitCost) : d(l.variant.avgCost)).toFixed(2))}
+                        {byCount ? `${t("Difference", "Écart")} ` : ""}{c.gt(0) ? "+" : ""}{qty(c.toString())} · ≈ {usd(valueOf(l).toFixed(2))}
                       </span>
                     </div>
                   )}
@@ -861,6 +875,8 @@ function TransferForm({ onDone }: { onDone: () => void }) {
     if (!fromId || !toId || fromId === toId) return setError(t("Pick two different locations.", "Choisissez deux emplacements différents."));
     if (lines.length === 0) return setError(t("Add at least one item.", "Ajoutez au moins un article."));
     for (const l of lines) {
+      const unclear = unclearQty(t, l.qty);
+      if (unclear) return setError(`${unclear} (${l.variant.productName})`);
       if (!isPositive(l.qty)) return setError(t(`Enter a quantity for ${l.variant.productName}.`, `Saisissez une quantité pour ${l.variant.productName}.`));
       if (d(l.qty).gt(d(l.variant.locationQty))) return setError(t(`Not enough ${l.variant.productName} at the source location.`, `Pas assez ${de(l.variant.productName)} à l'emplacement de départ.`));
       if (!d(l.qty).isInteger() && wholeUnit(l.variant.unit)) return setError(t(`${l.variant.productName} is counted in whole units: use a whole number.`, `${l.variant.productName} se compte à l'unité\u00a0: saisissez un nombre entier.`));
@@ -928,7 +944,7 @@ function TransferForm({ onDone }: { onDone: () => void }) {
                         <div className="text-xs text-muted-foreground">{l.variant.sku}</div>
                       </TableCell>
                       <TableCell className="text-right"><Num>{qty(l.variant.locationQty)}</Num></TableCell>
-                      <TableCell><Input className="w-24" inputMode="decimal" value={l.qty} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} /></TableCell>
+                      <TableCell><Input className="w-24" inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} inlineAlert value={l.qty} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} /></TableCell>
                       <TableCell><Button variant="ghost" size="icon" onClick={() => setLines(lines.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></Button></TableCell>
                     </TableRow>
                     {l.variant.tracksSerials && fromId && isPositive(l.qty) && (

@@ -21,14 +21,16 @@ type InputProps = React.ComponentProps<"input"> & {
   whole?: boolean;
   /** The "did you mean" question sits in the flow below the field, for fields stacked in a table (no overlap with the next row). */
   inlineAlert?: boolean;
+  /** Extra classes for that question, e.g. to run it under the buttons beside a narrow field. */
+  alertClassName?: string;
 };
 
 const Input = React.forwardRef<HTMLInputElement, InputProps>(
-  ({ className, type, thousands, usd, currency, whole, inlineAlert, ...props }, ref) => {
+  ({ className, type, thousands, usd, currency, whole, inlineAlert, alertClassName, ...props }, ref) => {
     // Dates are always shown dd/mm/yyyy, whatever language the phone or browser is set to.
     if (type === "date") return <DateInput className={className} {...props} ref={ref} />;
     // Amounts and quantities accept "4,50" as well as "4.50" and read French-style.
-    if ((props.inputMode === "decimal" || props.inputMode === "numeric") && (!type || type === "text")) return <DecimalInput className={className} thousands={thousands} usd={usd} currency={currency} whole={whole} inlineAlert={inlineAlert} {...props} ref={ref} />;
+    if ((props.inputMode === "decimal" || props.inputMode === "numeric") && (!type || type === "text")) return <DecimalInput className={className} thousands={thousands} usd={usd} currency={currency} whole={whole} inlineAlert={inlineAlert} alertClassName={alertClassName} {...props} ref={ref} />;
     // h-9 to match icon buttons and default buttons.
     return <input type={type} className={cn(BASE, className)} ref={ref} {...props} />;
   },
@@ -123,7 +125,7 @@ const LAYOUT = /^(?:[a-z0-9[\]-]+:)*!?(?:-?m[trblxy]?-|w-|min-w-|max-w-|flex-|ba
  * Text that is not a number is passed on as typed so the page can say what is wrong; in a dollar field an
  * ambiguous "1.200" is passed on as "1.200?" (see unusableText) so that no page saves it as 1,20 $.
  */
-const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className, value, onChange, onBlur, onFocus, thousands: thousandsProp, usd: usdProp, currency, whole, inlineAlert, ...props }, ref) => {
+const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className, value, onChange, onBlur, onFocus, thousands: thousandsProp, usd: usdProp, currency, whole, inlineAlert, alertClassName, ...props }, ref) => {
   const thousands = thousandsProp || currency === "CDF";
   const usd = usdProp || (!!currency && currency !== "CDF");
   const cur = usdProp || !currency || currency === "CDF" ? "USD" : currency;
@@ -193,6 +195,7 @@ const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className
             inlineAlert ? "mt-1 block text-left" : "absolute left-0 top-full z-20 mt-1",
             // The question wraps within the field's width, so it never runs off a phone's screen.
             ambiguous ? cn("w-full", !inlineAlert && "min-w-[9rem]") : "whitespace-nowrap",
+            alertClassName,
           )}
         >
           {ambiguous
