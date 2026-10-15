@@ -92,7 +92,7 @@ export default function Stock() {
   const { data: locations = [] } = useLocations();
   const isManager = can("manager");
   const multiLocation = locations.filter((l) => l.active).length > 1;
-  const [tab, setTab] = useState("valuation");
+  const [tab, setTab] = useState(() => new URLSearchParams(window.location.search).get("tab") ?? "valuation");
 
   return (
     <div>

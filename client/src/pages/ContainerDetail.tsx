@@ -18,6 +18,7 @@ import { d, date, money, qty, todayLocal, unitCost, usd, variantText } from "@/l
 import { useT } from "@/lib/i18n";
 import type { Account, Party, VariantRow } from "@/lib/types";
 import { ContainerStatusBadge, useStatusLabel, type ContainerRow, type ContainerStatus } from "./Containers";
+import { ContainerImportButton } from "./StockImport";
 
 // ---------------------------------------------------------------- Types
 
@@ -160,6 +161,7 @@ export default function ContainerDetail() {
   }, [pricesQ.data]);
 
   const [linesDirty, setLinesDirty] = useState(false);
+  const [linesKey, setLinesKey] = useState(0);
 
   if (q.isLoading) return <Loading />;
   if (q.error || !c) return <ErrorText error={q.error ?? t("Container not found", "Conteneur introuvable")} />;
@@ -191,7 +193,17 @@ export default function ContainerDetail() {
         <FinalCosts c={c} priceOf={priceOf} />
       ) : (
         <>
-          <LinesEditor c={c} editable={editable} onDirtyChange={setLinesDirty} />
+          {editable && (
+            <div className="flex justify-end">
+              <ContainerImportButton
+                containerId={c.id}
+                currency={c.currency}
+                linesDirty={linesDirty}
+                onImported={() => { setLinesDirty(false); setLinesKey((k) => k + 1); }}
+              />
+            </div>
+          )}
+          <LinesEditor key={linesKey} c={c} editable={editable} onDirtyChange={setLinesDirty} />
           <ExpensesSection c={c} editable={editable} />
           <PreviewSection c={c} priceOf={priceOf} />
         </>
