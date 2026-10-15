@@ -12,10 +12,11 @@ import {
   stockMovements,
   variants,
 } from "@shared/schema";
-import { cents, dec, sum, Decimal } from "@shared/money";
+import { cents, dec, sum, Decimal, type DecimalInput } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, forbidden, notFound } from "../errors";
 import {
+  cnyRateFor,
   contactLines,
   foreignBalance,
   bookValue,
@@ -238,6 +239,64 @@ export async function receiveFromCustomer(tx: Tx, input: PartyPaymentInput, user
   });
 }
 
+/**
+ * The payables side of money paid to a supplier, agent or employee. When they are owed in yuan (and
+ * not in francs), the money settles, after any dollars owed, the yuan: as many yuan as the money
+ * buys at the yuan rate on file (else at what the yuan cost), and the exchange difference goes to
+ * gains or losses when posted. Only what is left goes through the usual dollar and franc balances.
+ */
+export async function payablesLines(
+  tx: Tx,
+  input: { payables: number; partyId: number; usd: DecimalInput; money: { currency: string; nativeAmount: string | null; rate: string | null }; date: string; memo?: string | null },
+): Promise<PostLine[]> {
+  const { payables, partyId } = input;
+  const cny = await foreignBalance(tx, payables, partyId, "CNY", input.date);
+  const fcOwed = (await foreignBalance(tx, payables, partyId, "CDF", input.date)).native.negated();
+  const usdOwed = Decimal.max((await foreignBalance(tx, payables, partyId, "USD", input.date)).usd.negated(), 0);
+  const total = cents(input.usd);
+  const memo = input.memo ?? null;
+  let cnyUsd = new Decimal(0);
+  const lines: PostLine[] = [];
+  if (cny.native.isNegative() && cny.usd.isNegative() && !fcOwed.gt(0)) {
+    const owedNative = cny.native.abs();
+    const available = Decimal.max(total.minus(usdOwed), 0);
+    const dayRate = await cnyRateFor(tx, input.date);
+    let native = new Decimal(0);
+    if (available.gt(0) && dayRate) {
+      native = cents(available.times(dayRate));
+      cnyUsd = available;
+      if (native.gte(owedNative)) {
+        native = owedNative;
+        cnyUsd = Decimal.min(cents(owedNative.dividedBy(dayRate)), available);
+      }
+    } else if (available.gt(0)) {
+      cnyUsd = Decimal.min(available, cny.usd.abs());
+      native = cnyUsd.equals(cny.usd.abs()) ? owedNative : cents(owedNative.times(cnyUsd).dividedBy(cny.usd.abs()));
+    }
+    if (cnyUsd.gt(0) && native.gt(0)) {
+      lines.push({ accountId: payables, partyId, debit: cnyUsd, currency: "CNY", nativeAmount: native, rate: native.dividedBy(cnyUsd).toFixed(4), memo });
+    } else cnyUsd = new Decimal(0);
+  }
+  const rest = total.minus(cnyUsd);
+  if (rest.gt(0)) {
+    const restNative = input.money.nativeAmount
+      ? cnyUsd.isZero() ? dec(input.money.nativeAmount) : cents(dec(input.money.nativeAmount).times(rest).dividedBy(total))
+      : null;
+    lines.push(
+      ...(await contactLines(tx, {
+        accountId: payables,
+        partyId,
+        side: "debit",
+        usd: rest,
+        money: { currency: input.money.currency, nativeAmount: restNative ? restNative.toFixed(2) : null, rate: input.money.rate },
+        date: input.date,
+        memo,
+      })),
+    );
+  }
+  return lines;
+}
+
 /** Pay a supplier or agent (container invoice, clearing agent, transporter, unpaid bills). */
 export async function payParty(tx: Tx, input: PartyPaymentInput, userId: number) {
   const party = await requireParty(tx, input.partyId, ["supplier", "agent", "employee"]);
@@ -254,48 +313,15 @@ export async function payParty(tx: Tx, input: PartyPaymentInput, userId: number)
     if (leg.currency !== "USD") throw badRequest("Pay a yuan invoice from a dollar account", "Payez une facture en yuans depuis un compte en dollars");
     // The yuan settled must be worth roughly what the dollars paid: compare with the yuan rate of the
     // day when one is on file, else with what those yuan cost.
-    const [day] = await tx
-      .select({ rate: exchangeRates.cnyPerUsd })
-      .from(exchangeRates)
-      .where(and(lte(exchangeRates.date, input.date), sql`${exchangeRates.cnyPerUsd} is not null`))
-      .orderBy(desc(exchangeRates.date))
-      .limit(1);
-    const reference = day?.rate ? dec(day.rate) : cny.usd.isZero() ? null : cny.native.abs().dividedBy(cny.usd.abs());
+    const day = await cnyRateFor(tx, input.date);
+    const reference = day ? day : cny.usd.isZero() ? null : cny.native.abs().dividedBy(cny.usd.abs());
     if (reference) {
       const tolerance = Decimal.max(await rateTolerancePct(tx), 5);
       await assertImpliedRate(tx, input.date, settle.dividedBy(leg.usd), reference, "CNY", tolerance);
     }
     partyLines = [{ accountId: payables, partyId: party.id, debit: leg.usd, currency: "CNY", nativeAmount: settle, rate: settle.dividedBy(leg.usd).toFixed(4) }];
   } else {
-    // Money paid to a supplier owed in yuan (and not in francs) settles, after any dollars owed, the
-    // yuan at what they cost; only what is left goes through the usual dollar and franc balances.
-    const cny = await foreignBalance(tx, payables, party.id, "CNY", input.date);
-    const fcOwed = (await foreignBalance(tx, payables, party.id, "CDF", input.date)).native.negated();
-    const usdOwed = Decimal.max((await foreignBalance(tx, payables, party.id, "USD", input.date)).usd.negated(), 0);
-    const total = dec(leg.usd);
-    let cnyUsd = new Decimal(0);
-    partyLines = [];
-    if (cny.native.isNegative() && cny.usd.isNegative() && !fcOwed.gt(0)) {
-      cnyUsd = Decimal.min(Decimal.max(total.minus(usdOwed), 0), cny.usd.abs());
-      if (cnyUsd.gt(0)) {
-        const native = cnyUsd.equals(cny.usd.abs()) ? cny.native.abs() : cents(cny.native.abs().times(cnyUsd).dividedBy(cny.usd.abs()));
-        partyLines.push({ accountId: payables, partyId: party.id, debit: cnyUsd, currency: "CNY", nativeAmount: native, rate: native.dividedBy(cnyUsd).toFixed(4) });
-      }
-    }
-    const rest = total.minus(cnyUsd);
-    if (rest.gt(0)) {
-      const restNative = leg.nativeAmount ? (cnyUsd.isZero() ? dec(leg.nativeAmount) : cents(dec(leg.nativeAmount).times(rest).dividedBy(total))) : null;
-      partyLines.push(
-        ...(await contactLines(tx, {
-          accountId: payables,
-          partyId: party.id,
-          side: "debit",
-          usd: rest,
-          money: { currency: leg.currency, nativeAmount: restNative ? restNative.toFixed(2) : null, rate: leg.rate },
-          date: input.date,
-        })),
-      );
-    }
+    partyLines = await payablesLines(tx, { payables, partyId: party.id, usd: leg.usd, money: leg, date: input.date });
   }
   return postJournal(tx, {
     date: input.date,

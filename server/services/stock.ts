@@ -1,5 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
-import { motorcycleUnits, products, stockLevels, stockMovements, variants, type MovementType } from "@shared/schema";
+import { locations, motorcycleUnits, products, stockLevels, stockMovements, variants, type MovementType } from "@shared/schema";
 import { Decimal, cents, dec, type DecimalInput } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict } from "../errors";
@@ -31,6 +31,35 @@ async function lockVariant(tx: Tx, variantId: number) {
   const [variant] = await tx.select().from(variants).where(eq(variants.id, variantId)).for("update");
   if (!variant) throw badRequest(`Variant ${variantId} not found`, `Variante ${variantId} introuvable`);
   return variant;
+}
+
+/** New activity at a switched-off location is refused; undoing earlier sales there still works. */
+const NEW_ACTIVITY: MovementType[] = ["opening", "container_in", "sale", "adjustment", "transfer_in", "transfer_out"];
+
+async function assertLocationOpen(tx: Tx, locationId: number, type: MovementType) {
+  if (!NEW_ACTIVITY.includes(type)) return;
+  const [loc] = await tx.select({ name: locations.name, active: locations.active }).from(locations).where(eq(locations.id, locationId));
+  if (!loc) throw badRequest("That location does not exist", "Cet emplacement n'existe pas");
+  if (!loc.active) throw badRequest(`${loc.name} is switched off: switch it back on first`, `${loc.name} est désactivé : réactivez-le d'abord`);
+}
+
+/**
+ * What can leave a location on `date` without any later day going below zero: an entry typed for
+ * an earlier day cannot take stock that only arrived after it.
+ */
+async function availableOn(tx: Tx, variantId: number, locationId: number, date: string, current: Decimal): Promise<Decimal> {
+  const result = await tx.execute<{ as_of: string | null; later_min: string | null }>(sql`
+    with d as (
+      select ${stockMovements.date} as day, sum(${stockMovements.qty}) as q from ${stockMovements}
+      where ${stockMovements.variantId} = ${variantId} and ${stockMovements.locationId} = ${locationId}
+      group by ${stockMovements.date}
+    ), r as (select day, sum(q) over (order by day) as bal from d)
+    select (select coalesce(sum(q), 0) from d where day <= ${date}) as as_of,
+           (select min(bal) from r where day > ${date}) as later_min`);
+  const row = result.rows[0];
+  let available = Decimal.min(current, dec(row?.as_of ?? 0));
+  if (row?.later_min != null) available = Decimal.min(available, dec(row.later_min));
+  return Decimal.max(available, 0);
 }
 
 async function locationQty(tx: Tx, variantId: number, locationId: number): Promise<Decimal> {
@@ -69,6 +98,7 @@ export async function receiveStock(
   const v = cents(input.value);
   if (q.lte(0)) throw badRequest("Quantity must be greater than zero", "La quantité doit être supérieure à zéro");
   if (v.isNegative()) throw badRequest("Stock value cannot be negative", "La valeur du stock ne peut pas être négative");
+  await assertLocationOpen(tx, input.locationId, input.type);
   const variant = await lockVariant(tx, input.variantId);
   await tx
     .update(variants)
@@ -104,8 +134,9 @@ export async function issueStock(
 ): Promise<string> {
   const q = stockQty(input.qty);
   if (q.lte(0)) throw badRequest("Quantity must be greater than zero", "La quantité doit être supérieure à zéro");
+  await assertLocationOpen(tx, input.locationId, input.type);
   const variant = await lockVariant(tx, input.variantId);
-  const available = await locationQty(tx, variant.id, input.locationId);
+  const available = await availableOn(tx, variant.id, input.locationId, input.date, await locationQty(tx, variant.id, input.locationId));
   if (available.lt(q)) {
     throw conflict(
       `Not enough stock of ${input.label ?? variant.sku}: ${available.toString()} available, ${q.toString()} needed`,
@@ -151,8 +182,10 @@ export async function transferStock(
   const q = stockQty(input.qty);
   if (q.lte(0)) throw badRequest("Quantity must be greater than zero", "La quantité doit être supérieure à zéro");
   if (input.fromLocationId === input.toLocationId) throw badRequest("Pick two different locations", "Choisissez deux emplacements différents");
+  await assertLocationOpen(tx, input.fromLocationId, "transfer_out");
+  await assertLocationOpen(tx, input.toLocationId, "transfer_in");
   const variant = await lockVariant(tx, input.variantId);
-  const available = await locationQty(tx, variant.id, input.fromLocationId);
+  const available = await availableOn(tx, variant.id, input.fromLocationId, input.date, await locationQty(tx, variant.id, input.fromLocationId));
   if (available.lt(q)) throw conflict(`Not enough stock of ${variant.sku} to transfer`, `Stock insuffisant de ${variant.sku} pour le transfert`);
   const [product] = await tx.select({ tracksSerials: products.tracksSerials }).from(products).where(eq(products.id, variant.productId));
   if (product?.tracksSerials) {

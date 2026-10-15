@@ -277,6 +277,9 @@ function supplierInvoiceNative(currency: string, lines: { quantity: string; unit
 export async function assertContainerRate(tx: Tx, currency: string, rateToUsd: string | null | undefined, date: string) {
   const rate = dec(rateToUsd ?? "1");
   const cur = currency.toUpperCase();
+  if (cur !== "USD" && cur !== "CDF" && cur !== "CNY") {
+    throw badRequest("A container is invoiced in USD, CDF or CNY", "Un conteneur est facturé en USD, CDF ou CNY");
+  }
   if (cur === "USD") {
     if (!rate.equals(1)) throw badRequest("A container invoiced in USD has a rate of 1", "Un conteneur facturé en USD a un taux de 1");
     return;

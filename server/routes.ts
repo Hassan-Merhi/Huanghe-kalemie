@@ -732,7 +732,7 @@ export function registerRoutes(app: Express) {
     number: z.string().min(1).max(60),
     supplierId: id,
     status: z.enum(CONTAINER_STATUSES).exclude(["finalized"]).optional(),
-    currency: z.string().length(3).optional(),
+    currency: z.string().transform((c) => c.toUpperCase()).pipe(z.enum(["USD", "CDF", "CNY"])).optional(),
     rateToUsd: positiveDecimal.optional(),
     locationId: id,
     shipDate: isoDate.optional().nullable(),
