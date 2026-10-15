@@ -66,7 +66,7 @@ const JOURNAL_TYPES = [
   "opening", "manual", "sale", "sale_void", "sale_return", "customer_receipt", "supplier_payment",
   "container_expense", "container_finalize", "container_reversal", "expense", "transfer",
   "partner_contribution", "partner_withdrawal", "stock_adjustment", "payment", "receipt",
-  "payroll", "period_close", "reversal",
+  "payroll", "revaluation", "period_close", "reversal",
 ];
 
 /** Types the server lets the owner reverse from here; the others are undone from their own screens. */

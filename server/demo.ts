@@ -4,7 +4,7 @@
  * Refuses to run when sales already exist.
  */
 import { eq, sql } from "drizzle-orm";
-import { accounts, containers, locations, motorcycleUnits, parties, partners, sales } from "@shared/schema";
+import { accounts, containers, exchangeRates, locations, motorcycleUnits, parties, partners, sales } from "@shared/schema";
 import { db } from "./db";
 import { runMigrations } from "./migrate";
 import { ensureSetup } from "./setup";
@@ -28,6 +28,12 @@ export async function isEmptyShop(): Promise<boolean> {
 
 /** Adds the demo items, container, sales and expenses. Call only on an empty shop. */
 export async function seedDemo(): Promise<void> {
+
+  // A rate for every day, moving a little around 2,800 FC.
+  await db
+    .insert(exchangeRates)
+    .values(Array.from({ length: 76 }, (_, k) => ({ date: day(75 - k), cdfPerUsd: String(2800 + (((k * 37) % 41) - 20)) })))
+    .onConflictDoNothing();
 
   const accs = await db.select().from(accounts);
   const acc = (key: string) => accs.find((a) => a.systemKey === key || a.code === key)!.id;
@@ -148,6 +154,8 @@ export async function seedDemo(): Promise<void> {
   }
 
   await db.transaction(async (tx) => {
+    // A bill in francs left unpaid: it stays owed in francs to the agent.
+    await ops.createExpense(tx, { date: day(6), accountId: acc("6030"), description: "Transport des pièces au dépôt", amount: "84000", currency: "CDF", payablePartyId: agent.id }, userId);
     await ops.createExpense(tx, { date: day(12), accountId: acc("6070"), description: "Carburant du groupe électrogène", amount: "196000", rate: "2800", paidFromAccountId: acc("cash_cdf") }, userId);
   });
 

@@ -13,7 +13,7 @@ import { computeLandedCost, type AllocationMethod, type LandedCostResult } from 
 import { cents, dec, sum } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, notFound } from "../errors";
-import { moneyLeg, postJournal, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd } from "./ledger";
+import { moneyLeg, postJournal, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type ForeignCurrency } from "./ledger";
 import { issueStock, linkMovementsToJournal, receiveStock, stockQty } from "./stock";
 import { variantColour } from "./catalog";
 
@@ -158,15 +158,21 @@ export async function addExpense(tx: Tx, containerId: number, input: ContainerEx
   let amountUsd: string;
   let rate: string | null = null;
   if (input.paidFromAccountId) {
-    const leg = await moneyLeg(tx, { accountId: input.paidFromAccountId, amount, rate: input.rate });
+    const leg = await moneyLeg(tx, { accountId: input.paidFromAccountId, amount, rate: input.rate, date: input.date });
     currency = leg.currency;
     amountUsd = leg.usd;
     rate = leg.rate;
     creditLine = { accountId: leg.accountId, credit: leg.usd, nativeAmount: leg.nativeAmount, rate: leg.rate };
   } else {
-    amountUsd = toUsd(currency, amount, input.rate);
-    rate = currency === "CDF" ? dec(input.rate).toFixed(4) : null;
-    creditLine = { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.payables), credit: amountUsd, partyId: input.payablePartyId };
+    rate = currency === "CDF" ? await resolveRate(tx, input.date, input.rate) : null;
+    amountUsd = toUsd(currency, amount, rate);
+    // A bill in francs stays owed in francs on the contact.
+    creditLine = {
+      accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.payables),
+      credit: amountUsd,
+      partyId: input.payablePartyId,
+      ...(currency === "CDF" ? { currency: "CDF" as const, nativeAmount: amount, rate } : {}),
+    };
   }
 
   const [expense] = await tx
@@ -253,6 +259,14 @@ export async function previewLandedCost(tx: Tx, containerId: number): Promise<La
  * Offload: put the container's stock in at landed cost.
  * Journal: Dr Inventory (landed total) / Cr Payables to the supplier (FOB) / Cr Goods in transit (expenses).
  */
+/** A supplier invoice in yuan or francs stays owed in that currency on the supplier. */
+function supplierInvoiceNative(currency: string, lines: { quantity: string; unitPrice: string }[], fobUsd: string) {
+  if (currency !== "CNY" && currency !== "CDF") return {};
+  const native = sum(lines.map((l) => cents(dec(l.quantity).times(l.unitPrice))));
+  if (native.isZero() || dec(fobUsd).isZero()) return {};
+  return { currency: currency as ForeignCurrency, nativeAmount: native, rate: native.dividedBy(fobUsd).toFixed(4) };
+}
+
 export async function finalizeContainer(tx: Tx, containerId: number, offloadDate: string, userId: number) {
   const container = await lockEditable(tx, containerId);
   const full = await getContainer(tx, containerId);
@@ -262,6 +276,7 @@ export async function finalizeContainer(tx: Tx, containerId: number, offloadDate
   const result = await previewLandedCost(tx, containerId);
 
   const inventoryId = await systemAccountId(tx, SYSTEM_ACCOUNTS.inventory);
+  const invoice = supplierInvoiceNative(container.currency, full.lines, result.fobTotalUsd);
   const journalId = await postJournal(tx, {
     date: offloadDate,
     type: "container_finalize",
@@ -276,6 +291,7 @@ export async function finalizeContainer(tx: Tx, containerId: number, offloadDate
         credit: result.fobTotalUsd,
         partyId: container.supplierId,
         memo: `Facture fournisseur ${container.number}`,
+        ...invoice,
       },
       { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.goodsInTransit), credit: result.expensesTotalUsd },
     ],
@@ -431,9 +447,15 @@ export async function reverseContainer(tx: Tx, containerId: number, date: string
     memo: `Annulation du déchargement du conteneur ${container.number}`,
     sourceType: "container",
     sourceId: containerId,
+    exactValues: true,
     userId,
     lines: [
-      { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.payables), debit: container.fobTotalUsd!, partyId: container.supplierId },
+      {
+        accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.payables),
+        debit: container.fobTotalUsd!,
+        partyId: container.supplierId,
+        ...supplierInvoiceNative(container.currency, full.lines, container.fobTotalUsd!),
+      },
       { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.goodsInTransit), debit: container.expensesTotalUsd! },
       { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.inventory), credit: removed.toFixed(2) },
       {

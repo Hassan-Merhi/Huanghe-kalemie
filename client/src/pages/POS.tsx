@@ -11,7 +11,7 @@ import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { EmptyState, Field, Num, PageHeader } from "@/components/common";
-import { LocationSelect, MoneyAccountSelect, PartySelect, VariantSearch, useMoneyAccounts, useRate } from "@/components/pickers";
+import { LocationSelect, MoneyAccountSelect, PartySelect, RateInput, VariantSearch, useMoneyAccounts, useRate } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
@@ -637,7 +637,7 @@ export default function POS() {
                         <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm font-medium text-muted-foreground">{acc?.currency === "CDF" ? "FC" : "$"}</span>
                       </div>
                       {acc?.currency === "CDF" && (
-                        <Input inputMode="decimal" placeholder={t("Rate", "Taux")} value={p.rate ?? dayRate} onChange={(e) => updatePay(p.key, { rate: e.target.value })} title={t("CDF per 1 USD", "CDF pour 1 USD")} />
+                        <RateInput day={saleDate} value={p.rate ?? dayRate} onChange={(v) => updatePay(p.key, { rate: v })} />
                       )}
                     </div>
                     {acc?.currency === "CDF" && (

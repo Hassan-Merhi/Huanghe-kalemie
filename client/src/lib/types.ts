@@ -109,6 +109,8 @@ export interface Party {
   active: boolean;
   /** Debit-positive: customers owe us when positive; we owe suppliers when negative. */
   balance: string;
+  /** The part of the balance kept in francs or yuan. */
+  foreign?: { currency: "CDF" | "CNY"; native: string; usd: string }[];
 }
 
 export interface Partner {
@@ -126,6 +128,7 @@ export interface Settings {
   shopName?: string;
   defaultCdfRate?: string;
   receiptFooter?: string;
+  rateTolerancePct?: string;
   latestRate: { date: string; cdfPerUsd: string } | null;
   today: string;
 }

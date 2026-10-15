@@ -17,7 +17,7 @@ import { dec, sum } from "@shared/money";
 import type { Tx } from "../db";
 import { notFound } from "../errors";
 import { monthRange, pnlByAccount, summarizePnl } from "./periods";
-import { SYSTEM_ACCOUNTS, systemAccountId } from "./ledger";
+import { contactForeignBalances, SYSTEM_ACCOUNTS, systemAccountId } from "./ledger";
 
 /** Debit − credit per account (and native CDF balance) up to a date. */
 export async function accountBalances(tx: Tx, asOf?: string) {
@@ -137,6 +137,8 @@ export async function partyStatement(tx: Tx, partyId: number) {
       memo: journals.memo,
       debit: journalLines.debit,
       credit: journalLines.credit,
+      currency: journalLines.currency,
+      nativeAmount: journalLines.nativeAmount,
       sourceType: journals.sourceType,
       sourceId: journals.sourceId,
     })
@@ -152,6 +154,7 @@ export async function partyStatement(tx: Tx, partyId: number) {
       return { ...r, balance: running.toFixed(2) };
     }),
     balance: running.toFixed(2),
+    foreign: await contactForeignBalances(tx, partyId),
   };
 }
 
@@ -172,7 +175,12 @@ export async function partyBalances(tx: Tx, type?: string) {
     .from(parties)
     .where(type ? eq(parties.type, type as "customer") : undefined)
     .orderBy(asc(parties.name));
-  return rows.map((r) => ({ ...r, balance: dec(r.balance).toFixed(2) }));
+  const foreign = await contactForeignBalances(tx);
+  return rows.map((r) => ({
+    ...r,
+    balance: dec(r.balance).toFixed(2),
+    foreign: foreign.filter((f) => f.partyId === r.id && !dec(f.native).isZero()).map(({ currency, native, usd }) => ({ currency, native, usd })),
+  }));
 }
 
 export async function partnerSummaries(tx: Tx) {

@@ -16,13 +16,25 @@ import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT, count } from "@/lib/i18n";
-import { d, usd } from "@/lib/format";
+import { cdf, d, qty as fmtQty, usd } from "@/lib/format";
 import type { Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type PartyType = Party["type"];
 
 /** Balance in plain words. Debit-positive: positive = they owe us, negative = we owe them. */
+export interface ForeignBalance {
+  currency: "CDF" | "CNY";
+  native: string;
+  usd: string;
+}
+/** "56 000 FC owed to them", "1 200 CNY they owe us"… Negative native = we owe the contact. */
+export function foreignText(f: ForeignBalance, t: (en: string, fr: string) => string) {
+  const amount = f.currency === "CDF" ? cdf(d(f.native).abs().toString()) : `${fmtQty(d(f.native).abs().toString())} CNY`;
+  return d(f.native).isNegative() ? t(`${amount} owed to them`, `${amount} à leur payer`) : t(`${amount} they owe`, `${amount} qu'ils doivent`);
+}
+
+
 export function BalanceWords({ balance, className }: { balance: string; className?: string }) {
   const t = useT();
   const b = d(balance);
@@ -130,7 +142,10 @@ export default function Contacts() {
                         {p.notes && <span className="block max-w-xs truncate text-xs text-muted-foreground">{p.notes}</span>}
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{p.phone}</TableCell>
-                      <TableCell className="text-right whitespace-nowrap"><BalanceWords balance={p.balance} /></TableCell>
+                      <TableCell className="text-right whitespace-nowrap">
+                        <BalanceWords balance={p.balance} />
+                        {p.foreign?.map((f) => <span key={f.currency} className="block text-xs text-muted-foreground">{t("of which", "dont")} {foreignText(f, t)}</span>)}
+                      </TableCell>
                       {can("manager") && (
                         <TableCell onClick={(e) => e.stopPropagation()}>
                           <Button variant="ghost" size="icon" onClick={() => setEditing(p)} aria-label={t("Edit", "Modifier")}>

@@ -74,11 +74,13 @@ function ShopTab() {
   const [shopName, setShopName] = useState("");
   const [rate, setRate] = useState("");
   const [footer, setFooter] = useState("");
+  const [tolerance, setTolerance] = useState("3");
   useEffect(() => {
     if (!q.data) return;
     setShopName(String(q.data.shopName ?? ""));
     setRate(String(q.data.defaultCdfRate ?? ""));
     setFooter(String(q.data.receiptFooter ?? ""));
+    setTolerance(String(q.data.rateTolerancePct ?? "3"));
   }, [q.data]);
   const m = useApiMutation("PATCH", "/api/settings", { success: t("Settings saved", "Paramètres enregistrés") });
   if (q.isLoading) return <Loading />;
@@ -97,11 +99,17 @@ function ShopTab() {
         >
           <Input inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} />
         </Field>
+        <Field
+          label={t("Allowed gap from the day's rate (%)", "Écart permis avec le taux du jour (%)")}
+          hint={t("A franc amount typed with a rate further from the day's rate than this is refused.", "Un montant en francs saisi avec un taux plus éloigné du taux du jour est refusé.")}
+        >
+          <Input inputMode="decimal" value={tolerance} onChange={(e) => setTolerance(e.target.value)} />
+        </Field>
         <Field label={t("Receipt footer", "Pied de reçu")}><Textarea rows={3} maxLength={300} value={footer} onChange={(e) => setFooter(e.target.value)} /></Field>
         <div className="flex justify-end">
           <Button
-            disabled={!shopName.trim() || !d(rate).gt(0) || m.isPending}
-            onClick={() => m.mutate({ shopName: shopName.trim(), defaultCdfRate: d(rate).toString(), receiptFooter: footer })}
+            disabled={!shopName.trim() || !d(rate).gt(0) || !/^\d{1,2}(\.\d{1,2})?$/.test(tolerance.trim()) || m.isPending}
+            onClick={() => m.mutate({ shopName: shopName.trim(), defaultCdfRate: d(rate).toString(), receiptFooter: footer, rateTolerancePct: tolerance.trim() })}
           >
             {t("Save", "Enregistrer")}
           </Button>

@@ -117,7 +117,12 @@ export function registerRoutes(app: Express) {
 
   app.patch("/api/settings", requireRole(), asyncHandler(async (req, res) => {
     const body = z
-      .object({ shopName: z.string().min(1).max(120).optional(), defaultCdfRate: positiveDecimal.optional(), receiptFooter: z.string().max(300).optional() })
+      .object({
+        shopName: z.string().min(1).max(120).optional(),
+        defaultCdfRate: positiveDecimal.optional(),
+        receiptFooter: z.string().max(300).optional(),
+        rateTolerancePct: z.string().regex(/^\d{1,2}(\.\d{1,2})?$/, "Tolerance must be a percentage like 3").optional(),
+      })
       .parse(req.body);
     for (const [key, value] of Object.entries(body)) {
       if (value === undefined) continue;
@@ -519,9 +524,11 @@ export function registerRoutes(app: Express) {
 
   // ---------------------------------------------------------------- Money movements
 
-  const partyPayment = z.object({ date: isoDate, partyId: id, accountId: id, amount: positiveDecimal, rate: optionalDecimal, memo: z.string().max(300).optional().nullable() });
+  const partyPayment = z.object({ date: isoDate, partyId: id, accountId: id, amount: positiveDecimal, rate: optionalDecimal, memo: z.string().max(300).optional().nullable(), settleNative: optionalDecimal });
   app.post("/api/money/customer-receipt", requireRole(...SELLERS), asyncHandler(async (req, res) => {
     const body = partyPayment.parse(req.body);
+    // Cashiers take francs at the day's rate and record today's money.
+    if (req.user!.role === "cashier") Object.assign(body, { rate: null, date: todayIso() });
     res.status(201).json({ id: await db.transaction((tx) => ops.receiveFromCustomer(tx, body, uid(req))) });
   }));
   app.post("/api/money/party-payment", requireRole(...STAFF), asyncHandler(async (req, res) => {
@@ -733,6 +740,8 @@ export function registerRoutes(app: Express) {
       .parse(req.body);
     // Cashiers always sell today.
     const date = req.user!.role === "cashier" || !body.date ? todayIso() : body.date;
+    // Cashiers take francs at the day's rate.
+    if (req.user!.role === "cashier") body.payments = body.payments.map((p) => ({ ...p, rate: null }));
     const sale = await db.transaction((tx) => salesSvc.createSale(tx, { ...body, date }, uid(req)));
     res.status(201).json(req.user!.role === "cashier" ? withoutCost(sale) : sale);
   }));

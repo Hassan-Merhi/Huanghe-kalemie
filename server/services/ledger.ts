@@ -1,14 +1,17 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import {
   accounts,
   counters,
+  exchangeRates,
   journalLines,
   journals,
   periods,
+  settings,
   type Currency,
+  type LineCurrency,
   type JournalType,
 } from "@shared/schema";
-import { cents, dec, sum, type DecimalInput } from "@shared/money";
+import { cents, dec, sum, Decimal, type DecimalInput } from "@shared/money";
 import type { Tx } from "../db";
 import { AppError, badRequest } from "../errors";
 
@@ -95,14 +98,21 @@ export function toUsd(currency: Currency, native: DecimalInput, rate?: DecimalIn
   return cents(dec(native).dividedBy(r)).toFixed(2);
 }
 
+export type ForeignCurrency = "CDF" | "CNY";
+
 export interface PostLine {
   accountId: number;
   debit?: DecimalInput;
   credit?: DecimalInput;
   partyId?: number | null;
-  /** For CDF money accounts: unsigned native amount and the CDF per USD rate. */
+  /**
+   * Unsigned native amount and its rate (units per 1 USD). Required on CDF money accounts; on a
+   * contact line it puts the amount in that contact's balance in that currency.
+   */
   nativeAmount?: DecimalInput | null;
   rate?: DecimalInput | null;
+  /** Currency of nativeAmount on a non-money line (money accounts use their own currency). */
+  currency?: ForeignCurrency | null;
   memo?: string | null;
 }
 
@@ -117,6 +127,45 @@ export interface PostJournalInput {
   lines: PostLine[];
   /** Period close posts into the month it closes, so it skips the lock check. */
   skipPeriodCheck?: boolean;
+  /**
+   * Keep every USD amount exactly as given. Otherwise francs (or yuan) leaving a balance are
+   * valued at what that balance cost on average, and the difference is an exchange gain or loss.
+   */
+  exactValues?: boolean;
+}
+
+/** Native and USD totals of one foreign-currency balance: a CDF money account, or a contact's CDF/CNY balance. */
+export async function foreignBalance(tx: Tx, accountId: number, partyId: number | null, currency: LineCurrency, asOf?: string) {
+  const [row] = await tx
+    .select({
+      native: sql<string>`coalesce(sum(${journalLines.nativeAmount}), 0)`,
+      usd: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)`,
+    })
+    .from(journalLines)
+    .innerJoin(journals, eq(journals.id, journalLines.journalId))
+    .where(
+      and(
+        eq(journalLines.accountId, accountId),
+        partyId ? eq(journalLines.partyId, partyId) : sql`true`,
+        eq(journalLines.currency, currency),
+        asOf ? lte(journals.date, asOf) : sql`true`,
+      ),
+    );
+  return { native: dec(row.native), usd: dec(row.usd) };
+}
+
+/**
+ * USD value, at average book cost, of `native` units taken out of a balance of `bal`. Only the part
+ * the balance covers is at book cost; anything beyond it keeps `fallbackUsd` in proportion.
+ */
+export function bookValue(bal: { native: Decimal; usd: Decimal }, native: Decimal, fallbackUsd: Decimal): Decimal {
+  const n = bal.native.abs();
+  const u = bal.usd.abs();
+  // Only a balance whose USD side has the same sign as its native side has a meaningful cost.
+  if (n.isZero() || (!bal.usd.isZero() && bal.usd.isNegative() !== bal.native.isNegative())) return fallbackUsd;
+  if (native.lte(n)) return native.equals(n) ? u : cents(u.times(native).dividedBy(n));
+  const rest = native.minus(n);
+  return u.plus(cents(fallbackUsd.times(rest).dividedBy(native)));
 }
 
 /**
@@ -167,10 +216,11 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
     if (account.systemKey && PARTY_REQUIRED.includes(account.systemKey) && !l.partyId) {
       throw badRequest(`${account.name} needs a customer, supplier or agent`, `${account.name} nécessite un client, un fournisseur ou un agent`);
     }
-    const isCdf = account.isMoney && account.currency === "CDF";
+    const isCdfMoney = account.isMoney && account.currency === "CDF";
+    const currency: Currency | ForeignCurrency = isCdfMoney ? "CDF" : !account.isMoney && l.currency && l.nativeAmount != null ? l.currency : "USD";
     let nativeAmount: string | null = null;
     let rate: string | null = null;
-    if (isCdf) {
+    if (currency !== "USD") {
       if (l.nativeAmount === undefined || l.nativeAmount === null || !l.rate) {
         throw badRequest(`${account.name} is a CDF account: give the CDF amount and the rate`, `${account.name} est un compte en FC : indiquez le montant en FC et le taux`);
       }
@@ -180,15 +230,17 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
     }
     return {
       accountId: l.accountId,
-      debit: l.debit.toFixed(2),
-      credit: l.credit.toFixed(2),
+      debit: l.debit,
+      credit: l.credit,
       partyId: l.partyId ?? null,
-      currency: (isCdf ? "CDF" : "USD") as Currency,
+      currency: currency as LineCurrency,
       nativeAmount,
       rate,
       memo: l.memo ?? null,
     };
   });
+
+  if (!input.exactValues) await costForeignOutflows(tx, values, input.date);
 
   const number = await nextNumber(tx, "journal", "J-");
   const [journal] = await tx
@@ -205,8 +257,59 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
     })
     .returning({ id: journals.id });
 
-  await tx.insert(journalLines).values(values.map((v) => ({ ...v, journalId: journal.id })));
+  await tx.insert(journalLines).values(
+    values.map((v) => ({ ...v, debit: v.debit.toFixed(2), credit: v.credit.toFixed(2), journalId: journal.id })),
+  );
   return journal.id;
+}
+
+type PendingLine = { accountId: number; debit: Decimal; credit: Decimal; partyId: number | null; currency: LineCurrency; nativeAmount: string | null; rate: string | null; memo: string | null };
+
+/**
+ * Value each foreign-currency line that takes units out of a balance at that balance's average
+ * USD cost, and book the difference from the given value as an exchange gain or loss.
+ */
+async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string) {
+  const running = new Map<string, { native: Decimal; usd: Decimal }>();
+  let fxDebit = new Decimal(0);
+  for (const v of values) {
+    if (v.currency === "USD" || !v.nativeAmount) continue;
+    const key = `${v.accountId}|${v.partyId ?? ""}|${v.currency}`;
+    let bal = running.get(key);
+    if (!bal) {
+      // One posting at a time per balance, so two payments cannot both spend the same francs.
+      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`fx:${key}`}))`);
+      bal = await foreignBalance(tx, v.accountId, v.partyId, v.currency, date);
+      running.set(key, bal);
+    }
+    const native = dec(v.nativeAmount);
+    const given = v.debit.minus(v.credit);
+    const reduces = !bal.native.isZero() && !native.isZero() && bal.native.isNegative() !== native.isNegative();
+    if (reduces) {
+      const value = bookValue(bal, native.abs(), given.abs());
+      if (v.credit.gt(0)) {
+        fxDebit = fxDebit.plus(value.minus(v.credit));
+        v.credit = value;
+      } else {
+        fxDebit = fxDebit.minus(value.minus(v.debit));
+        v.debit = value;
+      }
+    }
+    bal.native = bal.native.plus(native);
+    bal.usd = bal.usd.plus(v.debit.minus(v.credit));
+  }
+  if (!fxDebit.isZero()) {
+    values.push({
+      accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.fx),
+      debit: fxDebit.isPositive() ? fxDebit : new Decimal(0),
+      credit: fxDebit.isNegative() ? fxDebit.abs() : new Decimal(0),
+      partyId: null,
+      currency: "USD",
+      nativeAmount: null,
+      rate: null,
+      memo: "Écart de change (coût moyen des devises)",
+    });
+  }
 }
 
 /** Post the exact opposite of a journal, dated `date`, and link the two. */
@@ -235,6 +338,7 @@ export async function reverseJournal(
     reversesJournalId: original.id,
     userId: opts.userId,
     skipPeriodCheck: opts.skipPeriodCheck,
+    exactValues: true,
     lines: lines.map((l) => ({
       accountId: l.accountId,
       debit: l.credit,
@@ -242,6 +346,7 @@ export async function reverseJournal(
       partyId: l.partyId,
       nativeAmount: l.nativeAmount ? dec(l.nativeAmount).abs() : null,
       rate: l.rate,
+      currency: l.currency === "USD" ? null : (l.currency as ForeignCurrency),
       memo: l.memo,
     })),
   });
@@ -250,12 +355,48 @@ export async function reverseJournal(
   return reversalId;
 }
 
+/** CDF per 1 USD for a date: that day's rate, else the latest before it, else the default setting. */
+export async function rateFor(tx: Tx, date: string): Promise<{ rate: Decimal; source: string }> {
+  const [row] = await tx.select().from(exchangeRates).where(lte(exchangeRates.date, date)).orderBy(desc(exchangeRates.date)).limit(1);
+  if (row) return { rate: dec(row.cdfPerUsd), source: row.date };
+  const [setting] = await tx.select().from(settings).where(eq(settings.key, "defaultCdfRate"));
+  return { rate: dec((setting?.value as string | undefined) ?? "2800"), source: "default" };
+}
+
+/** How far a typed rate may be from the day's rate, in percent. */
+export async function rateTolerancePct(tx: Tx): Promise<Decimal> {
+  const [setting] = await tx.select().from(settings).where(eq(settings.key, "rateTolerancePct"));
+  return dec((setting?.value as string | undefined) ?? "3");
+}
+
+/**
+ * The rate to use for a franc amount on `date`: the day's rate when none is given, or the given one
+ * when it is within the tolerance of the day's rate.
+ */
+export async function resolveRate(tx: Tx, date: string, given?: DecimalInput | null): Promise<string> {
+  const day = await rateFor(tx, date);
+  if (given === undefined || given === null || given === "") return day.rate.toFixed(4);
+  const r = dec(given, "exchange rate");
+  if (r.lte(0)) throw badRequest("The exchange rate must be greater than zero", "Le taux de change doit être supérieur à zéro");
+  const tolerance = await rateTolerancePct(tx);
+  const gap = r.minus(day.rate).abs().dividedBy(day.rate).times(100);
+  if (gap.gt(tolerance)) {
+    throw badRequest(
+      `The rate ${r.toString()} is more than ${tolerance.toString()}% away from the rate of the day (${day.rate.toString()}). Change the day's rate first if it moved.`,
+      `Le taux ${r.toString()} s'écarte de plus de ${tolerance.toString()} % du taux du jour (${day.rate.toString()}). Modifiez d'abord le taux du jour s'il a changé.`,
+    );
+  }
+  return r.toFixed(4);
+}
+
 export interface MoneyLeg {
   accountId: number;
   /** Amount in the account's currency. */
   amount: DecimalInput;
-  /** CDF per USD, required for CDF accounts. */
+  /** CDF per USD; the day's rate when left out. */
   rate?: DecimalInput | null;
+  /** Date of the posting, for the day's rate. */
+  date: string;
 }
 
 /** Resolve a money account and give its USD amount plus the native fields for the journal line. */
@@ -268,14 +409,82 @@ export async function moneyLeg(
   if (!account.active) throw badRequest(`${account.name} is inactive`, `Le compte ${account.name} est inactif`);
   const amount = cents(leg.amount);
   if (amount.lte(0)) throw badRequest("Amounts must be greater than zero", "Les montants doivent être supérieurs à zéro");
-  const usd = toUsd(account.currency, amount, leg.rate);
+  const rate = account.currency === "CDF" ? await resolveRate(tx, leg.date, leg.rate) : null;
+  const usd = toUsd(account.currency, amount, rate);
   return {
     accountId: account.id,
     currency: account.currency,
     usd,
     nativeAmount: account.currency === "CDF" ? amount.toFixed(2) : null,
-    rate: account.currency === "CDF" ? dec(leg.rate).toFixed(4) : null,
+    rate,
   };
+}
+
+/**
+ * Lines for the contact side of a payment or receipt. Francs paid to (or received from) a contact
+ * who has a balance in francs settle that balance first, in francs; the rest goes to their USD
+ * balance. The franc part is then valued at that balance's own cost when posted.
+ */
+export async function contactLines(
+  tx: Tx,
+  input: {
+    accountId: number;
+    partyId: number;
+    side: "debit" | "credit";
+    usd: DecimalInput;
+    money: { currency: string; nativeAmount: string | null; rate: string | null };
+    date: string;
+    memo?: string | null;
+  },
+): Promise<PostLine[]> {
+  const usd = cents(input.usd);
+  const base = { accountId: input.accountId, partyId: input.partyId, memo: input.memo ?? null };
+  const plain = [{ ...base, [input.side]: usd }];
+  if (usd.isZero()) return plain;
+  // Balances as of the payment's date, so an entry typed later for an earlier day sees the past.
+  const owed = (b: { native: Decimal; usd: Decimal }, field: "native" | "usd") =>
+    // A payment (debit) settles what we owe them (negative); a receipt settles what they owe us.
+    input.side === "debit" ? Decimal.max(b[field].negated(), 0) : Decimal.max(b[field], 0);
+  const fc = owed(await foreignBalance(tx, input.accountId, input.partyId, "CDF", input.date), "native");
+  if (fc.isZero()) return plain;
+  let native: Decimal;
+  let nativeUsd: Decimal;
+  let rate: string;
+  if (input.money.currency === "CDF" && input.money.nativeAmount) {
+    // Francs settle the franc balance first.
+    native = cents(input.money.nativeAmount);
+    nativeUsd = usd;
+    rate = input.money.rate!;
+  } else {
+    // Dollars settle the dollar balance first; only what is left goes to the francs, at the day's rate.
+    const dollarsOwed = owed(await foreignBalance(tx, input.accountId, input.partyId, "USD", input.date), "usd");
+    nativeUsd = Decimal.max(usd.minus(dollarsOwed), 0);
+    if (nativeUsd.isZero()) return plain;
+    rate = await resolveRate(tx, input.date);
+    native = cents(nativeUsd.times(rate));
+  }
+  const portion = Decimal.min(native, fc);
+  const portionUsd = portion.equals(native) ? nativeUsd : cents(nativeUsd.times(portion).dividedBy(native));
+  const lines: PostLine[] = [{ ...base, [input.side]: portionUsd, currency: "CDF", nativeAmount: portion, rate }];
+  if (usd.gt(portionUsd)) lines.push({ ...base, [input.side]: usd.minus(portionUsd) });
+  return lines;
+}
+
+/** A contact's balances in francs and yuan (only the non-zero ones). */
+export async function contactForeignBalances(tx: Tx, partyId?: number) {
+  const rows = await tx
+    .select({
+      partyId: journalLines.partyId,
+      currency: journalLines.currency,
+      native: sql<string>`coalesce(sum(${journalLines.nativeAmount}), 0)`,
+      usd: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)`,
+    })
+    .from(journalLines)
+    .where(and(sql`${journalLines.partyId} is not null`, sql`${journalLines.currency} <> 'USD'`, partyId ? eq(journalLines.partyId, partyId) : sql`true`))
+    .groupBy(journalLines.partyId, journalLines.currency);
+  return rows
+    .filter((r) => !dec(r.native).isZero() || !dec(r.usd).isZero())
+    .map((r) => ({ partyId: r.partyId!, currency: r.currency as ForeignCurrency, native: dec(r.native).toFixed(2), usd: dec(r.usd).toFixed(2) }));
 }
 
 export async function accountByIds(tx: Tx, ids: number[]) {

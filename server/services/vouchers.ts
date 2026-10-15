@@ -3,7 +3,7 @@ import { accounts, expenses, journals, parties, voucherDrafts, type DraftKind } 
 import { cents, dec, sum } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, notFound } from "../errors";
-import { moneyLeg, postJournal, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type PostLine } from "./ledger";
+import { contactLines, moneyLeg, postJournal, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type PostLine } from "./ledger";
 import * as ops from "./operations";
 
 /*
@@ -44,7 +44,7 @@ const BLOCKED_KEYS: string[] = [
 
 async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherInput) {
   if (input.lines.length === 0) throw badRequest("Add at least one line", "Ajoutez au moins une ligne");
-  const money = await moneyLeg(tx, { accountId: input.accountId, amount: sum(input.lines.map((l) => cents(l.amount))), rate: input.rate });
+  const money = await moneyLeg(tx, { accountId: input.accountId, amount: sum(input.lines.map((l) => cents(l.amount))), rate: input.rate, date: input.date });
   const receivables = await systemAccountId(tx, SYSTEM_ACCOUNTS.receivables);
   const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
 
@@ -59,12 +59,21 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
     const amount = cents(l.amount);
     if (amount.lte(0)) throw badRequest(`Line ${n}: the amount must be greater than zero`, `Ligne ${n} : le montant doit être supérieur à zéro`);
     if (!!l.partyId === !!l.accountId) throw badRequest(`Line ${n}: pick a contact or an account`, `Ligne ${n} : choisissez un contact ou un compte`);
-    const usd = toUsd(money.currency, amount, input.rate);
+    const usd = toUsd(money.currency, amount, money.rate);
     const side = kind === "payment" ? { debit: usd } : { credit: usd };
     if (l.partyId) {
       const p = partyRows.find((x) => x.id === l.partyId);
       if (!p) throw badRequest(`Line ${n}: that contact does not exist`, `Ligne ${n} : ce contact n'existe pas`);
-      lines.push({ ...side, usd, accountId: p.type === "customer" ? receivables : payables, partyId: p.id, memo: l.memo || p.name });
+      const split = await contactLines(tx, {
+        accountId: p.type === "customer" ? receivables : payables,
+        partyId: p.id,
+        side: kind === "payment" ? "debit" : "credit",
+        usd,
+        money: { currency: money.currency, nativeAmount: money.currency === "CDF" ? amount.toFixed(2) : null, rate: money.rate },
+        memo: l.memo || p.name,
+        date: input.date,
+      });
+      split.forEach((line, k) => lines.push({ ...line, usd: k === 0 ? usd : "0" }));
     } else {
       const a = accountRows.find((x) => x.id === l.accountId);
       if (!a) throw badRequest(`Line ${n}: that account does not exist`, `Ligne ${n} : ce compte n'existe pas`);

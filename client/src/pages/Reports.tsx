@@ -554,7 +554,7 @@ function TrialBalance() {
 interface JournalLine { id: number; accountId: number; accountName: string; accountCode: string; partyName: string | null; debit: string; credit: string; currency: string; nativeAmount: string | null; rate: string | null; memo: string | null }
 interface Journal { id: number; number: string; date: string; type: string; memo: string | null; reversesJournalId: number | null; reversedByJournalId: number | null; lines: JournalLine[] }
 
-const JOURNAL_TYPES = ["opening", "manual", "sale", "sale_void", "sale_return", "customer_receipt", "supplier_payment", "container_expense", "container_finalize", "container_reversal", "expense", "transfer", "partner_contribution", "partner_withdrawal", "stock_adjustment", "period_close", "reversal"];
+const JOURNAL_TYPES = ["opening", "manual", "sale", "sale_void", "sale_return", "customer_receipt", "supplier_payment", "container_expense", "container_finalize", "container_reversal", "expense", "transfer", "partner_contribution", "partner_withdrawal", "stock_adjustment", "payment", "receipt", "payroll", "revaluation", "period_close", "reversal"];
 const REVERSIBLE = ["manual", "opening", "transfer", "customer_receipt", "supplier_payment", "partner_contribution", "partner_withdrawal"];
 
 function Journals() {

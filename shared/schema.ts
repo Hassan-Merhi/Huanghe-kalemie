@@ -31,6 +31,8 @@ export type Role = (typeof ROLES)[number];
 
 export const CURRENCIES = ["USD", "CDF"] as const;
 export type Currency = (typeof CURRENCIES)[number];
+/** Journal lines also carry yuan: a supplier's balance from a CNY container invoice. */
+export type LineCurrency = Currency | "CNY";
 
 // ---------------------------------------------------------------- Users & settings
 
@@ -303,6 +305,7 @@ export const JOURNAL_TYPES = [
   "payment",
   "receipt",
   "payroll",
+  "revaluation",
   "period_close",
   "reversal",
 ] as const;
@@ -343,7 +346,7 @@ export const journalLines = pgTable(
     credit: money("credit").notNull().default("0"),
     partyId: integer("party_id").references(() => parties.id),
     /** For CDF money accounts: signed native amount (+ debit, − credit) and the rate used. */
-    currency: varchar("currency", { length: 3 }).$type<Currency>().notNull().default("USD"),
+    currency: varchar("currency", { length: 3 }).$type<LineCurrency>().notNull().default("USD"),
     nativeAmount: money("native_amount"),
     rate: numeric("rate", { precision: 14, scale: 4 }),
     memo: text("memo"),
@@ -381,6 +384,8 @@ export const periods = pgTable("periods", {
   operatingExpenses: money("operating_expenses"),
   result: jsonb("result"),
   closingJournalId: integer("closing_journal_id"),
+  /** Month-end revaluation of franc balances at the closing rate, posted when the month closes. */
+  revaluationJournalId: integer("revaluation_journal_id"),
   closedAt: timestamp("closed_at"),
   closedBy: integer("closed_by"),
 });

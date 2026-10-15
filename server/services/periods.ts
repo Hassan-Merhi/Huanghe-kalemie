@@ -4,7 +4,8 @@ import { splitProfit, type PartnerSplitResult } from "@shared/partnerSplit";
 import { dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict } from "../errors";
-import { postJournal, reverseJournal } from "./ledger";
+import { cents } from "@shared/money";
+import { postJournal, rateFor, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
 import { todayIso } from "../http";
 
 export function monthRange(month: string): { from: string; to: string } {
@@ -70,6 +71,52 @@ export function summarizePnl(rows: PnlAccountRow[]) {
   };
 }
 
+/**
+ * Month-end revaluation: every franc balance (cash, bank, a contact's francs) is restated at the
+ * rate of the month's last day. Returns the lines and the net gain (negative for a loss).
+ */
+export async function revaluationLines(tx: Tx, month: string): Promise<{ lines: PostLine[]; gain: Decimal; rate: Decimal }> {
+  const { to } = monthRange(month);
+  const { rate } = await rateFor(tx, to);
+  const rows = await tx
+    .select({
+      accountId: journalLines.accountId,
+      partyId: journalLines.partyId,
+      native: sql<string>`coalesce(sum(${journalLines.nativeAmount}), 0)`,
+      usd: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)`,
+    })
+    .from(journalLines)
+    .innerJoin(journals, eq(journals.id, journalLines.journalId))
+    .where(and(eq(journalLines.currency, "CDF"), lte(journals.date, to)))
+    .groupBy(journalLines.accountId, journalLines.partyId);
+  const lines: PostLine[] = [];
+  let gain = new Decimal(0);
+  for (const r of rows) {
+    const diff = cents(dec(r.native).dividedBy(rate)).minus(r.usd);
+    if (diff.isZero()) continue;
+    gain = gain.plus(diff);
+    lines.push({
+      accountId: r.accountId,
+      partyId: r.partyId,
+      debit: diff.isPositive() ? diff : 0,
+      credit: diff.isNegative() ? diff.abs() : 0,
+      currency: "CDF",
+      nativeAmount: "0",
+      rate,
+      memo: `Réévaluation au taux de fin de mois (${rate.toString()} FC)`,
+    });
+  }
+  if (lines.length) {
+    lines.push({
+      accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.fx),
+      debit: gain.isNegative() ? gain.abs() : 0,
+      credit: gain.isPositive() ? gain : 0,
+      memo: "Écart de change de réévaluation",
+    });
+  }
+  return { lines, gain, rate };
+}
+
 export async function activePartners(tx: Tx) {
   return tx.select().from(partners).where(eq(partners.active, true)).orderBy(asc(partners.id));
 }
@@ -92,7 +139,19 @@ export async function previewPeriod(tx: Tx, month: string): Promise<PeriodPrevie
     return { ...stored, status: "closed" };
   }
   const rows = await pnlByAccount(tx, from, to);
-  const totals = summarizePnl(rows);
+  // The revaluation is posted when the month closes; show it already, so the split shown is the split booked.
+  const pending = await revaluationLines(tx, month);
+  if (!pending.gain.isZero()) {
+    const fxId = await systemAccountId(tx, SYSTEM_ACCOUNTS.fx);
+    const existing = rows.find((r) => r.accountId === fxId);
+    if (existing) existing.amount = dec(existing.amount).plus(pending.gain).toFixed(2);
+    else {
+      const [fx] = await tx.select().from(accounts).where(eq(accounts.id, fxId));
+      rows.push({ accountId: fxId, code: fx.code, name: fx.name, type: "income", amount: pending.gain.toFixed(2) });
+      rows.sort((a, b) => a.code.localeCompare(b.code));
+    }
+  }
+  const totals = summarizePnl(rows.filter((r) => !dec(r.amount).isZero()));
   const ps = await activePartners(tx);
   const split = splitProfit(
     totals.grossProfit,
@@ -136,6 +195,20 @@ export async function closePeriod(tx: Tx, month: string, userId: number) {
     }
   }
 
+  const reval = await revaluationLines(tx, month);
+  const revaluationJournalId = reval.lines.length
+    ? await postJournal(tx, {
+        date: to,
+        type: "revaluation",
+        memo: `Réévaluation des francs au ${to} (1 $ = ${reval.rate.toString()} FC)`,
+        sourceType: "period",
+        sourceId: period.id,
+        userId,
+        exactValues: true,
+        lines: reval.lines,
+      })
+    : null;
+
   const preview = await previewPeriod(tx, month);
   const ps = await activePartners(tx);
   const lines = preview.accounts.map((r) => {
@@ -172,6 +245,7 @@ export async function closePeriod(tx: Tx, month: string, userId: number) {
       operatingExpenses: preview.totals.operatingExpenses,
       result: stored,
       closingJournalId: journalId,
+      revaluationJournalId,
       closedAt: new Date(),
       closedBy: userId,
     })
@@ -199,8 +273,17 @@ export async function reopenPeriod(tx: Tx, month: string, userId: number) {
       skipPeriodCheck: true,
     });
   }
+  if (period.revaluationJournalId) {
+    await reverseJournal(tx, period.revaluationJournalId, {
+      date: monthRange(month).to,
+      type: "revaluation",
+      memo: `Réouverture ${month} : annulation de la réévaluation`,
+      userId,
+      skipPeriodCheck: true,
+    });
+  }
   await tx
     .update(periods)
-    .set({ status: "open", closingJournalId: null, result: null, grossProfit: null, operatingExpenses: null, closedAt: null, closedBy: null })
+    .set({ status: "open", closingJournalId: null, revaluationJournalId: null, result: null, grossProfit: null, operatingExpenses: null, closedAt: null, closedBy: null })
     .where(eq(periods.id, period.id));
 }
