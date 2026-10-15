@@ -10,6 +10,7 @@ import {
   CONTAINER_STATUSES,
   containers,
   exchangeRates,
+  stockLevels,
   expenses,
   journalLines,
   journals,
@@ -32,7 +33,7 @@ import { ALLOCATION_METHODS } from "@shared/landedCost";
 import { validatePartnerShares } from "@shared/partnerSplit";
 import { dec } from "@shared/money";
 import { db } from "./db";
-import { badRequest, conflict, forbidden, notFound } from "./errors";
+import { AppError, badRequest, conflict, forbidden, notFound } from "./errors";
 import { checkPassword, hashPassword, requireAuth, requireRole } from "./auth";
 import {
   asyncHandler,
@@ -254,6 +255,11 @@ export function registerRoutes(app: Express) {
   }));
   app.patch("/api/locations/:id", requireRole(), asyncHandler(async (req, res) => {
     const body = z.object({ name: z.string().min(1).max(80).optional(), active: z.boolean().optional() }).parse(req.body);
+    if (body.active === false) {
+      // Stock in a switched-off place could no longer be sold, counted or moved.
+      const [held] = await db.select({ n: sql<number>`count(*)::int` }).from(stockLevels).where(and(eq(stockLevels.locationId, paramId(req)), sql`${stockLevels.qty} <> 0`));
+      if (held.n > 0) throw badRequest("Move the stock out of this place before switching it off", "Transférez le stock hors de cet emplacement avant de le désactiver");
+    }
     const [row] = await db.update(locations).set(body).where(eq(locations.id, paramId(req))).returning();
     await audit(req, "update", "location", paramId(req), body);
     res.json(row);
@@ -444,18 +450,26 @@ export function registerRoutes(app: Express) {
   const rawBody = express.raw({ type: () => true, limit: "200mb" });
   app.post("/api/backup/inspect", requireRole(), rawBody, asyncHandler(async (req, res) => {
     const file = backup.parseBackup(req.body as Buffer);
-    res.json({ exportedAt: file.exportedAt, migrations: file.migrations, totals: file.totals, empty: await backup.isEmptyShop(db) });
+    res.json({ exportedAt: file.exportedAt, migrations: file.migrations, totals: file.totals, sealed: file.sealed, empty: await backup.isEmptyShop(db) });
   }));
   app.post("/api/backup/restore", requireRole(), rawBody, asyncHandler(async (req, res) => {
     // The current password travels in a header because the body is the file itself.
     await checkPassword(uid(req), req.get("X-Current-Password") ?? "");
     const replace = req.query.replace === "1";
     const file = backup.parseBackup(req.body as Buffer);
+    if (!file.sealed && req.query.unsealed !== "1") {
+      throw new AppError(
+        422,
+        "This file was not made by this server, or it was changed after. Confirm to restore it anyway.",
+        "BACKUP_UNSEALED",
+        "Ce fichier n'a pas été créé par ce serveur, ou il a été modifié depuis. Confirmez pour le restaurer quand même.",
+      );
+    }
     // Before replacing anything, keep what is there now so the restore itself can be undone.
     if (replace && !(await backup.isEmptyShop(db))) await backup.saveSnapshot("before_restore");
     const result = await db.transaction((tx) => backup.restore(tx, file, { replace }));
     // The restored users may not include whoever restored, so their name is kept with the id.
-    await db.insert(auditLog).values({ userId: uid(req), action: "restore", entity: "backup", entityId: null, data: { exportedAt: file.exportedAt, rows: result.rows, replace, by: req.user!.username } });
+    await db.insert(auditLog).values({ userId: uid(req), action: "restore", entity: "backup", entityId: null, data: { exportedAt: file.exportedAt, rows: result.rows, replace, sealed: file.sealed, by: req.user!.username } });
     res.json(result);
   }));
   app.get("/api/stock/adjustments", requireRole(...READERS), asyncHandler(async (_req, res) => {

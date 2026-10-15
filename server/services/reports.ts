@@ -116,8 +116,38 @@ export async function balanceSheet(tx: Tx, asOf?: string, partnerId?: number | n
     amount: dec(r.balance).times(sign).toFixed(2),
   });
   const nonZero = (r: BalanceRow) => !dec(r.balance).isZero();
-  const assets = rows.filter((r) => r.type === "asset" && nonZero(r)).map((r) => line(r, 1));
-  const liabilities = rows.filter((r) => r.type === "liability" && nonZero(r)).map((r) => line(r, -1));
+  // Contacts on the wrong side are shown on the other side, not netted: an advance paid to a supplier
+  // is something the shop owns, and a customer's deposit is something it owes.
+  const partyAccounts = [await systemAccountId(tx, SYSTEM_ACCOUNTS.receivables), await systemAccountId(tx, SYSTEM_ACCOUNTS.payables)];
+  const dateFilter = asOf ? sql`and j.date <= ${asOf}` : sql``;
+  const byParty = await tx.execute<{ account_id: number; debit: string; credit: string }>(sql`
+    select account_id,
+      coalesce(sum(case when b > 0 then b else 0 end), 0)::text as debit,
+      coalesce(sum(case when b < 0 then -b else 0 end), 0)::text as credit
+    from (
+      select l.account_id, l.party_id, sum(l.debit - l.credit) as b
+      from ${journalLines} l join ${journals} j on j.id = l.journal_id
+      where l.account_id in (${sql.join(partyAccounts.map((id) => sql`${id}`), sql`, `)}) ${dateFilter}
+      group by l.account_id, l.party_id
+    ) x group by account_id`);
+  const assets: ReturnType<typeof line>[] = [];
+  const liabilities: ReturnType<typeof line>[] = [];
+  for (const r of rows) {
+    if ((r.type !== "asset" && r.type !== "liability") || !nonZero(r) && !partyAccounts.includes(r.id)) continue;
+    const split = byParty.rows.find((b) => b.account_id === r.id);
+    if (split) {
+      const debit = dec(split.debit);
+      const credit = dec(split.credit);
+      const owedToUs = r.type === "asset" ? r.name : `${r.name} (avances versées)`;
+      const weOwe = r.type === "liability" ? r.name : `${r.name} (avances reçues)`;
+      if (!debit.isZero()) assets.push({ ...line(r, 1), name: owedToUs, amount: debit.toFixed(2), nativeBalance: null });
+      if (!credit.isZero()) liabilities.push({ ...line(r, -1), name: weOwe, amount: credit.toFixed(2), nativeBalance: null });
+      continue;
+    }
+    // Any other account sits on the side its balance says.
+    if (dec(r.balance).isPositive()) assets.push({ ...line(r, 1), name: r.type === "asset" ? r.name : `${r.name} (solde débiteur)` });
+    else liabilities.push({ ...line(r, -1), name: r.type === "liability" ? r.name : `${r.name} (solde créditeur)` });
+  }
   const equity = rows.filter((r) => r.type === "equity" && nonZero(r)).map((r) => line(r, -1));
   // Income is a credit, costs a debit: what is left in them is this period's profit, not yet shared.
   const result = sum(rows.filter((r) => ["income", "cost_of_sales", "expense"].includes(r.type)).map((r) => r.balance)).negated();
