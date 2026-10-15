@@ -27,6 +27,16 @@ import ContactDetail from "@/pages/ContactDetail";
 import Partners from "@/pages/Partners";
 import Reports from "@/pages/Reports";
 import Settings from "@/pages/Settings";
+import Vouchers from "@/pages/Vouchers";
+import VoucherPrint from "@/pages/VoucherPrint";
+import OptionalVouchers from "@/pages/OptionalVouchers";
+import Daybook from "@/pages/Daybook";
+import Accounts from "@/pages/Accounts";
+import Payroll from "@/pages/Payroll";
+import Inventory from "@/pages/Inventory";
+import StockImport from "@/pages/StockImport";
+import SalesTools from "@/pages/SalesTools";
+import Analytics from "@/pages/Analytics";
 
 function Guard({ roles, children }: { roles: Role[]; children: React.ReactNode }) {
   const { can, user } = useAuth();
@@ -57,7 +67,17 @@ function Routes() {
         {R("/products", ["manager", "cashier", "partner"], Products)}
         {R("/products/:id", ["manager", "cashier", "partner"], ProductDetail)}
         {R("/motorcycles", ["manager", "cashier", "partner"], Motorcycles)}
+        {R("/stock/import", ["manager"], StockImport)}
         {R("/stock", ["manager", "partner"], Stock)}
+        {R("/inventory", ["manager", "partner"], Inventory)}
+        {R("/daybook", ["manager", "partner"], Daybook)}
+        {R("/vouchers/:id", ["manager", "partner"], VoucherPrint)}
+        {R("/vouchers", ["manager", "partner"], Vouchers)}
+        {R("/optional-vouchers", ["manager", "partner"], OptionalVouchers)}
+        {R("/accounts", ["manager", "partner"], Accounts)}
+        {R("/payroll", ["manager", "partner"], Payroll)}
+        {R("/sales-tools", ["manager", "cashier", "partner"], SalesTools)}
+        {R("/analytics", ["manager", "partner"], Analytics)}
         {R("/containers", ["manager", "partner"], Containers)}
         {R("/containers/:id", ["manager", "partner"], ContainerDetail)}
         {R("/expenses", ["manager", "partner"], Expenses)}

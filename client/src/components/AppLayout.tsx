@@ -15,6 +15,15 @@ import {
   Wallet,
   Bike,
   PieChart,
+  BookOpen,
+  FileText,
+  FilePen,
+  Layers,
+  FileUp,
+  LayoutGrid,
+  Landmark,
+  UserCheck,
+  TrendingUp,
 } from "lucide-react";
 import {
   Sidebar,
@@ -44,6 +53,8 @@ interface NavItem {
   fr: string;
   icon: typeof LayoutDashboard;
   roles: Role[];
+  /** Only highlight on this exact path (not its sub-pages). */
+  exact?: boolean;
 }
 
 const NAV: { en: string; fr: string; items: NavItem[] }[] = [
@@ -52,28 +63,49 @@ const NAV: { en: string; fr: string; items: NavItem[] }[] = [
     fr: "Boutique",
     items: [
       { href: "/", en: "Dashboard", fr: "Tableau de bord", icon: LayoutDashboard, roles: ["manager", "partner"] },
-      { href: "/pos", en: "Point of sale", fr: "Caisse", icon: ShoppingCart, roles: ["manager", "cashier"] },
-      { href: "/sales", en: "Sales", fr: "Ventes", icon: Receipt, roles: ["manager", "cashier", "partner"] },
+      { href: "/daybook", en: "Daybook", fr: "Journal du jour", icon: BookOpen, roles: ["manager", "partner"] },
+      { href: "/vouchers", en: "Vouchers", fr: "Pièces", icon: FileText, roles: ["manager", "partner"] },
+      { href: "/optional-vouchers", en: "Optional vouchers", fr: "Pièces facultatives", icon: FilePen, roles: ["manager", "partner"] },
     ],
   },
   {
-    en: "Stock",
-    fr: "Stock",
+    en: "Inventory",
+    fr: "Inventaire",
     items: [
+      { href: "/inventory", en: "Inventory", fr: "Inventaire", icon: Layers, roles: ["manager", "partner"] },
+      { href: "/stock", en: "Stock", fr: "Stock", icon: Boxes, roles: ["manager", "partner"], exact: true },
       { href: "/products", en: "Items", fr: "Articles", icon: Package, roles: ["manager", "cashier", "partner"] },
       { href: "/motorcycles", en: "Motorcycles", fr: "Motos", icon: Bike, roles: ["manager", "cashier", "partner"] },
-      { href: "/stock", en: "Stock", fr: "Stock", icon: Boxes, roles: ["manager", "partner"] },
       { href: "/containers", en: "Containers", fr: "Conteneurs", icon: Container, roles: ["manager", "partner"] },
+      { href: "/stock/import", en: "Stock import", fr: "Import de stock", icon: FileUp, roles: ["manager"] },
     ],
   },
   {
-    en: "Money",
-    fr: "Argent",
+    en: "Sales & POS",
+    fr: "Ventes et caisse",
     items: [
-      { href: "/expenses", en: "Expenses", fr: "Dépenses", icon: Wallet, roles: ["manager", "partner"] },
+      { href: "/pos", en: "Point of sale", fr: "Caisse", icon: ShoppingCart, roles: ["manager", "cashier"] },
+      { href: "/sales", en: "Sales", fr: "Ventes", icon: Receipt, roles: ["manager", "cashier", "partner"] },
+      { href: "/sales-tools", en: "Sales tools", fr: "Outils de vente", icon: LayoutGrid, roles: ["manager", "cashier", "partner"] },
+    ],
+  },
+  {
+    en: "Accounting",
+    fr: "Comptabilité",
+    items: [
+      { href: "/accounts", en: "Accounts", fr: "Comptes", icon: Landmark, roles: ["manager", "partner"] },
       { href: "/money", en: "Cash and accounts", fr: "Caisse et comptes", icon: HandCoins, roles: ["manager", "partner"] },
+      { href: "/expenses", en: "Expenses", fr: "Dépenses", icon: Wallet, roles: ["manager", "partner"] },
       { href: "/contacts", en: "Customers and suppliers", fr: "Clients et fournisseurs", icon: Users, roles: ["manager", "cashier", "partner"] },
+      { href: "/payroll", en: "Payroll", fr: "Paie", icon: UserCheck, roles: ["manager", "partner"] },
       { href: "/partners", en: "Partners and months", fr: "Associés et mois", icon: PieChart, roles: ["manager", "partner"] },
+    ],
+  },
+  {
+    en: "Analytics",
+    fr: "Analyses",
+    items: [
+      { href: "/analytics", en: "Analytics", fr: "Analyses", icon: TrendingUp, roles: ["manager", "partner"] },
       { href: "/reports", en: "Reports", fr: "Rapports", icon: BarChart3, roles: ["manager", "partner"] },
     ],
   },
@@ -100,7 +132,7 @@ function NavLinks() {
             <SidebarGroupContent>
               <SidebarMenu>
                 {items.map((item) => {
-                  const active = item.href === "/" ? location === "/" : location.startsWith(item.href);
+                  const active = item.href === "/" || item.exact ? location === item.href : location === item.href || location.startsWith(item.href + "/");
                   return (
                     <SidebarMenuItem key={item.href}>
                       <SidebarMenuButton asChild isActive={active}>

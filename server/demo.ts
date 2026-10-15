@@ -12,6 +12,8 @@ import * as catalog from "./services/catalog";
 import * as containerSvc from "./services/containers";
 import * as salesSvc from "./services/sales";
 import * as ops from "./services/operations";
+import * as vouchers from "./services/vouchers";
+import * as payroll from "./services/payroll";
 
 function day(offset: number) {
   const d = new Date(Date.now() + 2 * 3600_000 - offset * 86400_000);
@@ -38,6 +40,9 @@ export async function seedDemo(): Promise<void> {
   const [supplier] = await db.insert(parties).values({ type: "supplier", name: "Huanghe Group (Chongqing)", phone: "+86 23 0000 0000" }).returning();
   const [agent] = await db.insert(parties).values({ type: "agent", name: "Transit Lubumbashi SARL", phone: "+243 990 000 000" }).returning();
   const [customer] = await db.insert(parties).values({ type: "customer", name: "Garage Mwamba", phone: "+243 970 111 222" }).returning();
+  const [cashier] = await db.insert(parties).values({ type: "employee", name: "Amani Kabila", position: "Caissier", monthlySalary: "250", startDate: day(200) }).returning();
+  const [mechanic] = await db.insert(parties).values({ type: "employee", name: "Bahati Mulongo", position: "Mécanicien", monthlySalary: "300", startDate: day(150) }).returning();
+  const [guard] = await db.insert(parties).values({ type: "employee", name: "Jean Kasongo", position: "Gardien", monthlySalary: "150", startDate: day(300) }).returning();
 
   const bike = await db.transaction((tx) =>
     catalog.createProduct(tx, {
@@ -143,10 +148,63 @@ export async function seedDemo(): Promise<void> {
   }
 
   await db.transaction(async (tx) => {
-    await ops.createExpense(tx, { date: day(28), accountId: acc("6000"), description: "Shop rent", amount: "600", paidFromAccountId: acc("cash_usd") }, userId);
-    await ops.createExpense(tx, { date: day(5), accountId: acc("6010"), description: "Staff salaries", amount: "900", paidFromAccountId: acc("cash_usd") }, userId);
-    await ops.createExpense(tx, { date: day(12), accountId: acc("6070"), description: "Generator fuel", amount: "196000", rate: "2800", paidFromAccountId: acc("cash_cdf") }, userId);
+    await ops.createExpense(tx, { date: day(12), accountId: acc("6070"), description: "Carburant du groupe électrogène", amount: "196000", rate: "2800", paidFromAccountId: acc("cash_cdf") }, userId);
   });
+
+  // One payment voucher for the month's bills.
+  await db.transaction((tx) =>
+    vouchers.postVoucher(
+      tx,
+      "payment",
+      {
+        date: day(28),
+        accountId: acc("cash_usd"),
+        memo: "Factures du mois",
+        lines: [
+          { accountId: acc("6000"), amount: "600", memo: "Loyer de la boutique" },
+          { accountId: acc("6040"), amount: "45", memo: "Crédit téléphone et internet" },
+          { partyId: agent.id, amount: "2000", memo: "Acompte sur les droits de douane" },
+        ],
+      },
+      userId,
+    ),
+  );
+
+  // Salaries: an advance, last month's payroll, then the payment of what is left.
+  const today = day(0);
+  const lastMonth = new Date(Date.UTC(Number(today.slice(0, 4)), Number(today.slice(5, 7)) - 2, 1)).toISOString().slice(0, 7);
+  await db.transaction((tx) => vouchers.postVoucher(tx, "payment", { date: day(Number(today.slice(8, 10)) + 10), accountId: acc("cash_usd"), memo: "Avance sur salaire", lines: [{ partyId: mechanic.id, amount: "80" }] }, userId));
+  const salaryAccount = await payroll.salaryAccountId(db);
+  await db.transaction((tx) =>
+    payroll.runPayroll(
+      tx,
+      { month: lastMonth, accountId: salaryAccount!, lines: [{ partyId: cashier.id, salary: "250" }, { partyId: mechanic.id, salary: "300", bonus: "20" }, { partyId: guard.id, salary: "150" }] },
+      userId,
+    ),
+  );
+  await db.transaction((tx) =>
+    vouchers.postVoucher(
+      tx,
+      "payment",
+      { date: day(Math.max(0, Number(today.slice(8, 10)) - 2)), accountId: acc("cash_usd"), memo: `Salaires ${lastMonth}`, lines: [{ partyId: cashier.id, amount: "250" }, { partyId: mechanic.id, amount: "240" }, { partyId: guard.id, amount: "150" }] },
+      userId,
+    ),
+  );
+
+  // A second container still on its way, and a draft voucher waiting for approval.
+  const [c2] = await db
+    .insert(containers)
+    .values({ number: "HHU-2026-002", supplierId: supplier.id, locationId: loc.id, status: "in_transit", shipDate: day(10), arrivalDate: day(-25) })
+    .returning();
+  await db.transaction((tx) =>
+    containerSvc.replaceLines(tx, c2.id, [
+      { variantId: bike.variants[0].id, quantity: "15", unitPrice: "830", weightKg: "1800", volumeCbm: "22" },
+      { variantId: tyre.variants[1].id, quantity: "150", unitPrice: "10.5", weightKg: "680", volumeCbm: "4.5" },
+    ]),
+  );
+  await db.transaction((tx) =>
+    vouchers.saveDraft(tx, { kind: "payment", date: day(0), memo: "Réparation de la porte (à valider)", payload: { accountId: acc("cash_usd"), memo: "Réparation de la porte", lines: [{ accountId: acc("6060"), amount: "35", memo: "Serrurier" }] } }, userId),
+  );
   console.log("Demo data created.");
 }
 
