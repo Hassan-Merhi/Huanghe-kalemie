@@ -220,7 +220,7 @@ export async function addExpense(tx: Tx, containerId: number, input: ContainerEx
   });
   await tx.update(containerExpenses).set({ journalId }).where(eq(containerExpenses.id, expense.id));
   // Francs owed to an agent are settled by any dollar advance already paid to them.
-  if (input.payablePartyId && currency === "CDF") await applyAdvances(tx, input.payablePartyId, input.date, `Avance imputée sur les frais du conteneur ${container.number}`, userId, { type: "container_expense", id: expense.id });
+  if (input.payablePartyId && currency === "CDF") await applyAdvances(tx, input.payablePartyId, input.date, `Avance imputée sur les frais du conteneur ${container.number}`, userId, { type: "container_expense", id: expense.id }, "CDF");
   return expense;
 }
 
@@ -447,7 +447,7 @@ export async function finalizeContainer(tx: Tx, containerId: number, offloadDate
   // A dollar deposit already paid to the supplier settles the yuan invoice now, so the yuan owed is
   // what is really left to pay.
   if (container.currency === "CNY" || container.currency === "CDF") {
-    await applyAdvances(tx, container.supplierId, offloadDate, `Avance imputée sur le conteneur ${container.number}`, userId, { type: "container", id: containerId });
+    await applyAdvances(tx, container.supplierId, offloadDate, `Avance imputée sur le conteneur ${container.number}`, userId, { type: "container", id: containerId }, container.currency as "CNY" | "CDF");
   }
   return result;
 }
