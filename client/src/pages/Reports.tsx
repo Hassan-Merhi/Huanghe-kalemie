@@ -117,6 +117,7 @@ export default function Reports() {
             <TabsTrigger value="pnl">{t("Profit & loss", "Résultat")}</TabsTrigger>
             <TabsTrigger value="items">{t("Sales by item", "Ventes par article")}</TabsTrigger>
             <TabsTrigger value="daily">{t("Daily cash", "Caisse du jour")}</TabsTrigger>
+            <TabsTrigger value="bs">{t("Balance sheet", "Bilan")}</TabsTrigger>
             <TabsTrigger value="tb">{t("Trial balance", "Balance")}</TabsTrigger>
             <TabsTrigger value="journal">{t("Journal", "Journal")}</TabsTrigger>
             <TabsTrigger value="ledger">{t("Account ledger", "Grand livre")}</TabsTrigger>
@@ -127,6 +128,7 @@ export default function Reports() {
         <TabsContent value="pnl"><TabNote>{t("What the shop earned in the period: sales minus the cost of the goods sold and the running costs.", "Ce que la boutique a gagné sur la période : les ventes moins le coût des articles vendus et les frais de fonctionnement.")}</TabNote><ProfitLoss /></TabsContent>
         <TabsContent value="items"><TabNote>{t("Which items sold, how many, and what each one earned after its cost.", "Quels articles se sont vendus, combien, et ce que chacun a rapporté après son coût.")}</TabNote><SalesByItem /></TabsContent>
         <TabsContent value="daily"><TabNote>{t("One day at the till: sales by payment type, then what each cash box and account should hold at closing.", "Une journée de caisse : les ventes par moyen de paiement, puis ce que chaque caisse et compte doit contenir à la fermeture.")}</TabNote><DailyCash /></TabsContent>
+        <TabsContent value="bs"><TabNote>{t("What the shop owns, what it owes, and what is left for the partners, on a date.", "Ce que la boutique possède, ce qu'elle doit, et ce qui revient aux associés, à une date.")}</TabNote><BalanceSheet /></TabsContent>
         <TabsContent value="tb"><TabNote>{t("Every account's balance on a date. Both columns must be equal: that proves nothing is missing from the books.", "Le solde de chaque compte à une date. Les deux colonnes doivent être égales : cela prouve que rien ne manque dans les comptes.")}</TabNote><TrialBalance /></TabsContent>
         <TabsContent value="journal"><TabNote>{t("Every entry in date order, with the accounts each one moved.", "Toutes les écritures par date, avec les comptes que chacune a touchés.")}</TabNote><Journals /></TabsContent>
         <TabsContent value="ledger"><TabNote>{t("Everything that went through one account, line by line, with the running balance.", "Tout ce qui est passé par un compte, ligne par ligne, avec le solde au fur et à mesure.")}</TabNote><Ledger /></TabsContent>
@@ -629,6 +631,104 @@ function SelfCheck() {
           );
         })}
       </div>
+    </div>
+  );
+}
+
+interface BsLine {
+  id: number;
+  code: string;
+  name: string;
+  currency: string;
+  nativeBalance: string | null;
+  amount: string;
+}
+interface Bs {
+  assets: BsLine[];
+  liabilities: BsLine[];
+  equity: BsLine[];
+  totalAssets: string;
+  totalLiabilities: string;
+  totalEquity: string;
+  balanced: boolean;
+}
+
+function BalanceSheet() {
+  const t = useT();
+  const [asOf, setAsOf] = useState(todayLocal());
+  const q = useQuery<Bs>({ queryKey: ["/api/reports/balance-sheet", { asOf }], enabled: validDate(asOf) });
+  const bs = q.data;
+
+  function exportCsv() {
+    if (!bs) return;
+    const rows = (title: string, xs: BsLine[]) => [[title, "", ""], ...xs.map((x) => [x.code, x.name, x.amount])];
+    downloadCsv(`bilan_${asOf}.csv`, [
+      [t("Code", "Code"), t("Account", "Compte"), t("Amount (USD)", "Montant (USD)")],
+      ...rows(t("Assets", "Actif"), bs.assets),
+      ["", t("Total assets", "Total actif"), bs.totalAssets],
+      ...rows(t("Liabilities", "Dettes"), bs.liabilities),
+      ["", t("Total liabilities", "Total dettes"), bs.totalLiabilities],
+      ...rows(t("Equity", "Capitaux propres"), bs.equity),
+      ["", t("Total equity", "Total capitaux propres"), bs.totalEquity],
+    ]);
+  }
+
+  const section = (title: string, xs: BsLine[], total: string, totalLabel: string) => (
+    <Card>
+      <CardHeader className="pb-2"><CardTitle className="text-base">{title}</CardTitle></CardHeader>
+      <CardContent className="p-0">
+        <Table>
+          <TableBody>
+            {xs.length === 0 && (
+              <TableRow><TableCell className="text-muted-foreground">{t("Nothing", "Rien")}</TableCell><TableCell /></TableRow>
+            )}
+            {xs.map((x) => (
+              <TableRow key={`${x.id}-${x.name}`}>
+                <TableCell>
+                  {x.name}
+                  {x.nativeBalance && <div className="text-xs text-muted-foreground"><Num>{cdf(x.nativeBalance)}</Num></div>}
+                </TableCell>
+                <TableCell className="text-right"><Num>{usd(x.amount)}</Num></TableCell>
+              </TableRow>
+            ))}
+          </TableBody>
+          <TableFooter>
+            <TableRow>
+              <TableCell className="font-semibold">{totalLabel}</TableCell>
+              <TableCell className="text-right font-semibold"><Num>{usd(total)}</Num></TableCell>
+            </TableRow>
+          </TableFooter>
+        </Table>
+      </CardContent>
+    </Card>
+  );
+
+  return (
+    <div className="space-y-4">
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <Field label={t("As of", "Au")}>
+          <Input type="date" className="w-44" value={asOf} onChange={(e) => setAsOf(e.target.value)} />
+        </Field>
+        <div className="flex items-center gap-2">
+          {bs && (
+            <Badge variant={bs.balanced ? "default" : "destructive"}>
+              {bs.balanced ? t("Balanced ✓", "Équilibré ✓") : t("Not balanced", "Non équilibré")}
+            </Badge>
+          )}
+          <CsvButton onClick={exportCsv} disabled={!bs} />
+        </div>
+      </div>
+      <ErrorText error={q.error} />
+      {q.isLoading && <Loading />}
+      {bs && (
+        <div className="grid gap-4 lg:grid-cols-2">
+          {section(t("Assets: what the shop owns", "Actif : ce que la boutique possède"), bs.assets, bs.totalAssets, t("Total assets", "Total actif"))}
+          <div className="space-y-4">
+            {section(t("Liabilities: what the shop owes", "Dettes : ce que la boutique doit"), bs.liabilities, bs.totalLiabilities, t("Total liabilities", "Total dettes"))}
+            {section(t("Equity: what belongs to the partners", "Capitaux propres : ce qui revient aux associés"), bs.equity, bs.totalEquity, t("Total equity", "Total capitaux propres"))}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

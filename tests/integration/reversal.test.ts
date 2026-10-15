@@ -18,6 +18,8 @@ describe.skipIf(!hasDb)("Container reversal and party balances", async () => {
     [{ id: locationId }] = await db.select().from(locations).limit(1);
     [{ id: supplierId }] = await db.insert(parties).values({ type: "supplier", name: "Huanghe" }).returning();
     cashUsd = (await db.select().from(accounts)).find((a) => a.systemKey === "cash_usd")!.id;
+    const opening = (await db.select().from(accounts)).find((a) => a.systemKey === "opening_equity")!.id;
+    await db.transaction((tx) => ops.manualJournal(tx, { date: "2026-08-01", memo: "Caisse d'ouverture", type: "opening", lines: [{ accountId: cashUsd, debit: "1000" }, { accountId: opening, credit: "1000" }] }, userId));
     const p = await db.transaction((tx) => catalog.createProduct(tx, { name: "HH150", unit: "unit", tracksSerials: true, variants: [{ attributes: { Couleur: "Noir" }, sellPrice: "1450" }] }));
     bike = p.variants[0].id;
     // Two bikes already in the shop at $900 each.

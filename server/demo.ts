@@ -87,7 +87,7 @@ export async function seedDemo(): Promise<void> {
     catalog.createProduct(tx, { name: "Huile moteur 4T", categoryId: cat("Huiles et lubrifiants"), unit: "litre", variants: [{ attributes: { Contenance: "1 L" }, sellPrice: "5" }] }),
   );
 
-  await db.transaction((tx) => ops.partnerContribution(tx, { date: day(40), partnerId: partnerA.id, accountId: acc("cash_usd"), amount: "60000" }, userId));
+  await db.transaction((tx) => ops.partnerContribution(tx, { date: day(72), partnerId: partnerA.id, accountId: acc("cash_usd"), amount: "60000" }, userId));
 
   await db.transaction((tx) =>
     ops.transferMoney(tx, { date: day(40), fromAccountId: acc("cash_usd"), fromAmount: "1000", toAccountId: acc("cash_cdf"), toAmount: "2800000", rate: "2800", memo: "Change USD en FC" }, userId),

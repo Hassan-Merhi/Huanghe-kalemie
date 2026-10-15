@@ -20,6 +20,7 @@ import {
   moneyLeg,
   nextNumber,
   resolveRate,
+  rateTolerancePct,
   postJournal,
   reverseJournal,
   SYSTEM_ACCOUNTS,
@@ -44,6 +45,29 @@ async function requirePartner(tx: Tx, id: number) {
 }
 
 // ---------------------------------------------------------------- Operating expenses
+
+/** An amount typed in one currency must not be taken from an account in another. */
+export function assertSameCurrency(typed: string | null | undefined, account: string) {
+  if (typed && typed !== account) {
+    throw badRequest(
+      `The amount is in ${typed} but the account pays in ${account}. Pick an account in ${typed} or change the amount.`,
+      `Le montant est en ${typed === "CDF" ? "FC" : typed} mais le compte paie en ${account === "CDF" ? "FC" : account}. Choisissez un compte en ${typed === "CDF" ? "FC" : typed} ou changez le montant.`,
+    );
+  }
+}
+
+/** Refuse an exchange whose implied rate is far from the day's rate (a typo in one of the two amounts). */
+async function assertImpliedRate(tx: Tx, date: string, implied: Decimal, reference: Decimal, label: string, tolerancePct?: Decimal) {
+  const tolerance = tolerancePct ?? (await rateTolerancePct(tx));
+  if (reference.lte(0)) return;
+  const gap = implied.minus(reference).abs().dividedBy(reference).times(100);
+  if (gap.gt(tolerance)) {
+    throw badRequest(
+      `These amounts mean 1 USD = ${implied.toDecimalPlaces(2).toString()} ${label}, more than ${tolerance.toString()}% away from ${reference.toDecimalPlaces(2).toString()}. Check both amounts.`,
+      `Ces montants donnent 1 USD = ${implied.toDecimalPlaces(2).toString()} ${label === "CDF" ? "FC" : label}, soit plus de ${tolerance.toString()} % d'écart avec ${reference.toDecimalPlaces(2).toString()}. Vérifiez les deux montants.`,
+    );
+  }
+}
 
 export interface ExpenseInput {
   date: string;
@@ -73,6 +97,7 @@ export async function createExpense(tx: Tx, input: ExpenseInput, userId: number)
   let creditLine: PostLine;
   if (input.paidFromAccountId) {
     const leg = await moneyLeg(tx, { accountId: input.paidFromAccountId, amount, rate: input.rate, date: input.date });
+    assertSameCurrency(input.currency, leg.currency);
     currency = leg.currency;
     usd = leg.usd;
     rate = leg.rate;
@@ -150,6 +175,15 @@ export async function transferMoney(tx: Tx, input: TransferInput, userId: number
   if (input.fromAccountId === input.toAccountId) throw badRequest("Pick two different accounts", "Choisissez deux comptes différents");
   const from = await moneyLeg(tx, { accountId: input.fromAccountId, amount: input.fromAmount, date: input.date });
   const to = await moneyLeg(tx, { accountId: input.toAccountId, amount: input.toAmount, date: input.date });
+  if (from.currency !== to.currency) {
+    // Changing dollars and francs: the two amounts must agree with the day's rate.
+    const usdSide = from.currency === "USD" ? cents(input.fromAmount) : cents(input.toAmount);
+    const cdfSide = from.currency === "CDF" ? cents(input.fromAmount) : cents(input.toAmount);
+    const day = dec(from.rate ?? to.rate!);
+    await assertImpliedRate(tx, input.date, cdfSide.dividedBy(usdSide), day, "CDF");
+  } else if (!cents(input.fromAmount).equals(cents(input.toAmount))) {
+    throw badRequest("A transfer in one currency must send and receive the same amount", "Un transfert dans la même devise doit envoyer et recevoir le même montant");
+  }
   // What the money leaving is worth: dollars at face value, francs at what they cost on average.
   let value = dec(from.usd);
   if (from.currency === "CDF") {
@@ -216,9 +250,28 @@ export async function payParty(tx: Tx, input: PartyPaymentInput, userId: number)
     if (owed.lte(0)) throw badRequest(`${party.name} is not owed anything in yuan`, `${party.name} n'a rien à recevoir en yuans`);
     if (settle.gt(owed)) throw badRequest(`${party.name} is owed only ${owed.toFixed(2)} CNY`, `${party.name} n'attend que ${owed.toFixed(2)} CNY`);
     if (leg.currency !== "USD") throw badRequest("Pay a yuan invoice from a dollar account", "Payez une facture en yuans depuis un compte en dollars");
+    // The yuan settled must be worth roughly what the dollars paid: compare with what they cost.
+    const bookRate = cny.native.abs().dividedBy(cny.usd.abs());
+    if (!cny.usd.isZero()) {
+      const tolerance = Decimal.max((await rateTolerancePct(tx)).times(3), 10);
+      await assertImpliedRate(tx, input.date, settle.dividedBy(leg.usd), bookRate, "CNY", tolerance);
+    }
     partyLines = [{ accountId: payables, partyId: party.id, debit: leg.usd, currency: "CNY", nativeAmount: settle, rate: settle.dividedBy(leg.usd).toFixed(4) }];
   } else {
     partyLines = await contactLines(tx, { accountId: payables, partyId: party.id, side: "debit", usd: leg.usd, money: leg, date: input.date });
+    // Dollars paid to a supplier owed only in yuan settle the yuan at what they cost, not nothing.
+    const cny = leg.currency === "USD" ? await foreignBalance(tx, payables, party.id, "CNY", input.date) : null;
+    const usdOwed = Decimal.max((await foreignBalance(tx, payables, party.id, "USD", input.date)).usd.negated(), 0);
+    if (cny && cny.native.isNegative() && cny.usd.isNegative() && partyLines.length === 1 && !partyLines[0].currency) {
+      const rest = Decimal.max(dec(leg.usd).minus(usdOwed), 0);
+      const cnyUsd = Decimal.min(rest, cny.usd.abs());
+      if (cnyUsd.gt(0)) {
+        const native = cnyUsd.equals(cny.usd.abs()) ? cny.native.abs() : cents(cny.native.abs().times(cnyUsd).dividedBy(cny.usd.abs()));
+        const base = { accountId: payables, partyId: party.id };
+        partyLines = [{ ...base, debit: cnyUsd, currency: "CNY", nativeAmount: native, rate: native.dividedBy(cnyUsd).toFixed(4) }];
+        if (dec(leg.usd).gt(cnyUsd)) partyLines.push({ ...base, debit: dec(leg.usd).minus(cnyUsd) });
+      }
+    }
   }
   return postJournal(tx, {
     date: input.date,
@@ -336,6 +389,9 @@ export interface AdjustmentInput {
 
 export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number) {
   if (input.lines.length === 0) throw badRequest("Add at least one item", "Ajoutez au moins un article");
+  if (input.lines.every((l) => dec(l.qtyChange, "quantity").isZero())) {
+    throw badRequest("Nothing to adjust: every quantity change is zero", "Rien à ajuster : toutes les variations de quantité sont à zéro");
+  }
   const number = await nextNumber(tx, "adjustment", "ADJ-");
   const [adj] = await tx
     .insert(stockAdjustments)
