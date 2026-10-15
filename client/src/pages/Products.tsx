@@ -314,7 +314,7 @@ function NewProductDialog({ onClose, onCreated }: { onClose: () => void; onCreat
         </DialogHeader>
 
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label={t("Name", "Nom")} className="sm:col-span-2">
+          <Field label={t("Name", "Nom")} className="sm:col-span-2" required>
             <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder={t("e.g. Tyre, HJ125-8 motorcycle", "ex. Pneu, Moto HJ125-8")} />
           </Field>
           <Field label={t("Category", "Catégorie")}>

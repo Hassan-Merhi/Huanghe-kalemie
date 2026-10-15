@@ -1,5 +1,7 @@
-import type { ReactNode } from "react";
+import type { ComponentProps, ReactNode } from "react";
 import { Loader2 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { useT } from "@/lib/i18n";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
@@ -16,13 +18,61 @@ export function PageHeader({ title, description, actions }: { title: string; des
   );
 }
 
-export function Field({ label, hint, error, children, className }: { label: string; hint?: string; error?: string | null; children: ReactNode; className?: string }) {
+/**
+ * A labelled form field. `required` puts a star after the label; `error` replaces the hint.
+ * Every form uses this, so required fields and mistakes look the same everywhere.
+ */
+export function Field({
+  label,
+  hint,
+  error,
+  required,
+  children,
+  className,
+}: {
+  label: string;
+  hint?: ReactNode;
+  error?: string | null;
+  required?: boolean;
+  children: ReactNode;
+  className?: string;
+}) {
+  const t = useT();
   return (
     <div className={cn("space-y-1.5", className)}>
-      <Label>{label}</Label>
+      <Label>
+        {label}
+        {required && (
+          <span className="ml-0.5 text-destructive" aria-hidden title={t("Required", "Obligatoire")}>*</span>
+        )}
+        {required && <span className="sr-only"> ({t("required", "obligatoire")})</span>}
+      </Label>
       {children}
       {hint && !error && <p className="text-xs text-muted-foreground">{hint}</p>}
       {error && <p className="text-xs text-destructive">{error}</p>}
+    </div>
+  );
+}
+
+/**
+ * A button that says why it cannot be pressed. While `blocked` holds a reason the button is disabled
+ * and the reason is shown next to it (above it on a phone); while `pending` it shows a spinner.
+ */
+export function SubmitButton({
+  blocked,
+  pending,
+  children,
+  className,
+  ...props
+}: ComponentProps<typeof Button> & { blocked?: string | null | false; pending?: boolean }) {
+  const reason = blocked || null;
+  return (
+    <div className={cn("flex flex-col gap-1 sm:flex-row sm:items-center sm:gap-2", className)}>
+      {reason && !pending && <p className="text-xs text-muted-foreground sm:text-right" role="status">{reason}</p>}
+      <Button {...props} disabled={!!reason || pending || props.disabled}>
+        {pending && <Loader2 className="mr-1 h-4 w-4 animate-spin" />}
+        {children}
+      </Button>
     </div>
   );
 }

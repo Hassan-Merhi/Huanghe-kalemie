@@ -12,7 +12,7 @@ import { Label } from "@/components/ui/label";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader } from "@/components/common";
+import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
 import { LocationSelect } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api } from "@/lib/api";
@@ -338,10 +338,10 @@ function ItemsImport() {
               </Table>
             </div>
             <div className="grid gap-3 sm:grid-cols-3">
-              <Field label={t("Location (opening stock)", "Emplacement (stock d'ouverture)")}>
+              <Field label={t("Location (opening stock)", "Emplacement (stock d'ouverture)")} required>
                 <LocationSelect value={locationId} onChange={setLocationId} />
               </Field>
-              <Field label={t("Opening stock date", "Date du stock d'ouverture")}>
+              <Field label={t("Opening stock date", "Date du stock d'ouverture")} required>
                 <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
               </Field>
               <div className="flex items-center gap-2 sm:pt-7">
@@ -350,14 +350,14 @@ function ItemsImport() {
               </div>
             </div>
             <div className="flex flex-wrap items-center justify-end gap-2">
-              {errors > 0 && <p className="text-sm text-destructive">{t("Fix the errors in the file and load it again.", "Corrigez les erreurs dans le fichier et chargez-le à nouveau.")}</p>}
               <Button variant="outline" onClick={() => { setRows([]); setPreview([]); }}>{t("Cancel", "Annuler")}</Button>
-              <Button
-                disabled={errors > 0 || !locationId || !day || run.isPending}
+              <SubmitButton
+                blocked={errors > 0 ? t("Fix the errors in the file and load it again", "Corrigez les erreurs dans le fichier et chargez-le à nouveau") : !locationId ? t("Choose the location", "Choisissez l'emplacement") : !day && t("Choose the opening stock date", "Choisissez la date du stock d'ouverture")}
+                pending={run.isPending}
                 onClick={() => run.mutate({ date: day, locationId, updatePrices, rows })}
               >
                 <Upload className="mr-1 h-4 w-4" /> {t("Import", "Importer")} ({rows.length})
-              </Button>
+              </SubmitButton>
             </div>
           </CardContent>
         </Card>
@@ -465,9 +465,9 @@ function PricesImport() {
             </div>
             <div className="flex flex-wrap justify-end gap-2">
               <Button variant="outline" onClick={() => setRows([])}>{t("Cancel", "Annuler")}</Button>
-              <Button disabled={errors > 0 || run.isPending} onClick={() => run.mutate({ rows })}>
+              <SubmitButton blocked={errors > 0 && t("Fix the errors in the file and load it again", "Corrigez les erreurs dans le fichier et chargez-le à nouveau")} pending={run.isPending} onClick={() => run.mutate({ rows })}>
                 <Upload className="mr-1 h-4 w-4" /> {t("Update prices", "Mettre à jour les prix")} ({rows.length})
-              </Button>
+              </SubmitButton>
             </div>
           </CardContent>
         </Card>
@@ -720,9 +720,13 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
         </div>
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <Button disabled={!rows.length || errors > 0 || busy || run.isPending} onClick={() => run.mutate({ mode, rows })}>
+          <SubmitButton
+            blocked={!busy && (!rows.length ? t("Load a file with at least one row", "Chargez un fichier avec au moins une ligne") : errors > 0 && t("Fix the errors in the file and load it again", "Corrigez les erreurs dans le fichier et chargez-le à nouveau"))}
+            pending={busy || run.isPending}
+            onClick={() => run.mutate({ mode, rows })}
+          >
             <Upload className="mr-1 h-4 w-4" /> {mode === "replace" ? t("Replace the lines", "Remplacer les lignes") : t("Add to the lines", "Ajouter aux lignes")} ({rows.length})
-          </Button>
+          </SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

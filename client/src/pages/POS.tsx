@@ -10,7 +10,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { EmptyState, Field, Num, PageHeader } from "@/components/common";
+import { EmptyState, Field, Num, PageHeader, SubmitButton } from "@/components/common";
 import { LocationSelect, MoneyAccountSelect, PartySelect, RateInput, VariantSearch, useMoneyAccounts, useRate } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
@@ -356,12 +356,12 @@ export default function POS() {
 
   // ---- validation
   const problems: string[] = [];
-  if (!locationId) problems.push(t("Choose the location", "Choisir le lieu"));
-  if (lines.length === 0) problems.push(t("Add at least one item", "Ajouter au moins un article"));
+  if (!locationId) problems.push(t("Choose the location", "Choisissez le lieu"));
+  if (lines.length === 0) problems.push(t("Add at least one item", "Ajoutez au moins un article"));
   for (const l of lines) {
     if (d(l.qty).lte(0)) problems.push(t(`Quantity of ${l.variant.productName} must be more than zero`, `La quantité de ${l.variant.productName} doit être supérieure à zéro`));
     if (lineAmount(l).lt(0)) problems.push(t(`The discount on ${l.variant.productName} is bigger than the line`, `La remise sur ${l.variant.productName} dépasse la ligne`));
-    if (l.variant.tracksSerials && !l.unitId) problems.push(t(`Choose the chassis number for ${l.variant.productName}`, `Choisir le numéro de châssis pour ${l.variant.productName}`));
+    if (l.variant.tracksSerials && !l.unitId) problems.push(t(`Choose the chassis number for ${l.variant.productName}`, `Choisissez le numéro de châssis pour ${l.variant.productName}`));
   }
   if (maxDiscountPct && subtotal.gt(0)) {
     for (const l of lines) {
@@ -382,13 +382,13 @@ export default function POS() {
   if (saleDiscount.lt(0) || saleDiscount.gt(subtotal)) problems.push(t("The sale discount is bigger than the sale", "La remise dépasse le montant de la vente"));
   for (const p of pays) {
     const acc = accById(p.accountId);
-    if (!acc && d(p.amount).gt(0)) problems.push(t("Choose the account for each payment", "Choisir le compte pour chaque paiement"));
+    if (!acc && d(p.amount).gt(0)) problems.push(t("Choose the account for each payment", "Choisissez le compte pour chaque paiement"));
     // An empty payment row is simply ignored when the sale is saved.
     if (acc && d(p.amount).lt(0)) problems.push(t("A payment cannot be negative", "Un paiement ne peut pas être négatif"));
-    if (acc?.currency === "CDF" && d(p.amount).gt(0) && d(p.rate ?? dayRate).lte(0)) problems.push(t("Enter the exchange rate for CDF payments", "Saisir le taux pour les paiements en francs"));
+    if (acc?.currency === "CDF" && d(p.amount).gt(0) && d(p.rate ?? dayRate).lte(0)) problems.push(t("Enter the exchange rate for CDF payments", "Saisissez le taux pour les paiements en francs"));
   }
-  if (overpaid) problems.push(t("Payments are more than the total. Enter only the money kept, not the change.", "Les paiements dépassent le total. Saisir seulement l'argent gardé, pas la monnaie rendue."));
-  if (credit.gt(0) && !customerId) problems.push(t("Choose a customer to sell the rest on credit", "Choisir un client pour vendre le reste à crédit"));
+  if (overpaid) problems.push(t("Payments are more than the total. Enter only the money kept, not the change.", "Les paiements dépassent le total. Saisissez seulement l'argent gardé, pas la monnaie rendue."));
+  if (credit.gt(0) && !customerId) problems.push(t("Choose a customer to sell the rest on credit", "Choisissez un client pour vendre le reste à crédit"));
   const valid = problems.length === 0;
 
   // ---- payments helpers
@@ -677,7 +677,7 @@ export default function POS() {
                   <span>{credit.gt(0) ? t("Remaining → on credit", "Reste → à crédit") : t("Remaining", "Reste")}</span>
                   <Num className={cn("font-semibold", credit.gt(0) && "text-amber-600 dark:text-amber-400", overpaid && "text-destructive")}>{usd(remaining.toFixed(2))}</Num>
                 </div>
-                {credit.gt(0) && !customerId && <p className="text-xs text-amber-600 dark:text-amber-400">{t("Choose a customer to sell on credit.", "Choisir un client pour vendre à crédit.")}</p>}
+                {credit.gt(0) && !customerId && <p className="text-xs text-amber-600 dark:text-amber-400">{t("Choose a customer to sell on credit.", "Choisissez un client pour vendre à crédit.")}</p>}
               </div>
 
               <details className="rounded-md border p-2 text-sm">
@@ -709,9 +709,15 @@ export default function POS() {
                   {Array.from(new Set(problems)).map((p) => <li key={p}>• {p}</li>)}
                 </ul>
               )}
-              <Button className="h-12 w-full text-base" disabled={!valid || mutation.isPending} onClick={submit}>
-                {mutation.isPending ? "…" : t(`Finish sale ${usd(total.toFixed(2))}`, `Valider la vente ${usd(total.toFixed(2))}`)}
-              </Button>
+              {/* With the cart filled the problems are listed just above; otherwise say the first one. */}
+              <SubmitButton
+                className="sm:flex-col sm:items-stretch [&>button]:h-12 [&>button]:w-full [&>button]:text-base [&>p]:text-center"
+                blocked={!valid && (lines.length > 0 || tried ? t("Fix the points above", "Corrigez les points ci-dessus") : problems[0])}
+                pending={mutation.isPending}
+                onClick={submit}
+              >
+                {t(`Finish sale ${usd(total.toFixed(2))}`, `Valider la vente ${usd(total.toFixed(2))}`)}
+              </SubmitButton>
               <p className="hidden text-center text-xs text-muted-foreground lg:block">F9 / Ctrl+Entrée</p>
             </CardContent>
           </Card>
@@ -726,9 +732,14 @@ export default function POS() {
             <p className="truncate text-xl font-bold tabular">{usd(total.toFixed(2))}</p>
             {rateNum.gt(0) && total.gt(0) && <p className="truncate text-xs text-muted-foreground">≈ {cdf(total.times(rateNum).toDecimalPlaces(0, ROUND).toString())}</p>}
           </div>
-          <Button className="h-12 shrink-0 px-6 text-base" disabled={lines.length === 0 || mutation.isPending} onClick={mobilePay}>
-            {mutation.isPending ? "…" : valid ? t("Finish", "Valider") : t("Pay", "Payer")}
-          </Button>
+          <SubmitButton
+            className="shrink-0 items-end [&>button]:h-12 [&>button]:px-6 [&>button]:text-base"
+            blocked={lines.length === 0 && t("Add an item", "Ajoutez un article")}
+            pending={mutation.isPending}
+            onClick={mobilePay}
+          >
+            {valid ? t("Finish", "Valider") : t("Pay", "Payer")}
+          </SubmitButton>
         </div>
       )}
 

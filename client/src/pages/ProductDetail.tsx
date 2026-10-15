@@ -12,7 +12,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader } from "@/components/common";
+import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
 import { CategorySelect, useLocations } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { d, date, qty, unitCost, usd } from "@/lib/format";
@@ -233,7 +233,7 @@ function EditProductDialog({ product, onClose }: { product: Product; onClose: ()
       <DialogContent className="max-h-[92vh] overflow-y-auto">
         <DialogHeader><DialogTitle>{t("Edit item", "Modifier l'article")}</DialogTitle></DialogHeader>
         <div className="space-y-3">
-          <Field label={t("Name", "Nom")}><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
+          <Field label={t("Name", "Nom")} required><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
           <Field label={t("Category", "Catégorie")}>
             <div className="flex gap-2">
               <div className="min-w-0 flex-1"><CategorySelect value={categoryId} onChange={setCategoryId} /></div>
@@ -264,8 +264,9 @@ function EditProductDialog({ product, onClose }: { product: Product; onClose: ()
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <Button
-            disabled={!name.trim() || m.isPending}
+          <SubmitButton
+            blocked={!name.trim() && t("Enter a name", "Saisissez un nom")}
+            pending={m.isPending}
             onClick={() =>
               m.mutate({
                 name: name.trim(),
@@ -279,7 +280,7 @@ function EditProductDialog({ product, onClose }: { product: Product; onClose: ()
             }
           >
             {t("Save", "Enregistrer")}
-          </Button>
+          </SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -298,16 +299,16 @@ function VariantDialog({ product, variant, onClose }: { product: Product; varian
   const [sellPrice, setSellPrice] = useState(variant ? d(variant.sellPrice).toFixed(2) : "");
   const [reorderLevel, setReorderLevel] = useState(variant ? d(variant.reorderLevel).toString() : "");
   const [active, setActive] = useState(variant?.active ?? true);
-  const [error, setError] = useState<string | null>(null);
   const m = useApiMutation(variant ? "PATCH" : "POST", variant ? `/api/variants/${variant.id}` : `/api/products/${product.id}/variants`, {
     success: variant ? t("Variant saved", "Variante enregistrée") : t("Variant added", "Variante ajoutée"),
     onSuccess: onClose,
   });
 
+  const priceError = sellPrice.trim() && !/^\d+(\.\d+)?$/.test(sellPrice.trim()) ? t("Enter a valid price", "Saisissez un prix valide") : null;
+  const reorderError = reorderLevel.trim() && !/^\d+(\.\d+)?$/.test(reorderLevel.trim()) ? t("Enter a valid reorder level", "Saisissez un seuil valide") : null;
+
   function save() {
-    setError(null);
-    if (sellPrice.trim() && (!/^\d+(\.\d+)?$/.test(sellPrice.trim()))) return setError(t("Enter a valid price.", "Entrez un prix valide."));
-    if (reorderLevel.trim() && !/^\d+(\.\d+)?$/.test(reorderLevel.trim())) return setError(t("Enter a valid reorder level.", "Entrez un seuil valide."));
+    if (priceError || reorderError) return;
     const attributes = Object.fromEntries(attrs.map(([k, v]) => [k.trim(), v.trim()]).filter(([k, v]) => k && v));
     m.mutate({
       attributes,
@@ -342,11 +343,11 @@ function VariantDialog({ product, variant, onClose }: { product: Product; varian
           <div className="grid grid-cols-2 gap-3">
             <Field label={variant ? t("SKU", "Code") : t("SKU (blank = auto)", "Code (vide = auto)")}><Input value={sku} onChange={(e) => setSku(e.target.value)} /></Field>
             <Field label={t("Barcode", "Code-barres")}><Input value={barcode} onChange={(e) => setBarcode(e.target.value)} /></Field>
-            <Field label={t("Sell price (USD)", "Prix de vente (USD)")}><Input inputMode="decimal" value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} /></Field>
-            <Field label={t("Reorder level", "Seuil de réappro.")}><Input inputMode="decimal" value={reorderLevel} onChange={(e) => setReorderLevel(e.target.value)} /></Field>
+            <Field label={t("Sell price (USD)", "Prix de vente (USD)")} error={priceError}><Input inputMode="decimal" value={sellPrice} onChange={(e) => setSellPrice(e.target.value)} /></Field>
+            <Field label={t("Reorder level", "Seuil de réappro.")} error={reorderError}><Input inputMode="decimal" value={reorderLevel} onChange={(e) => setReorderLevel(e.target.value)} /></Field>
           </div>
           <label className="flex items-center gap-3 text-sm"><Switch checked={active} onCheckedChange={setActive} /> {t("Active", "Actif")}</label>
-          {(error || m.error) && <ErrorText error={error ?? m.error} />}
+          {m.error && <ErrorText error={m.error} />}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>

@@ -12,7 +12,7 @@ import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { PARTY_LABELS } from "@/components/pickers";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
+import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT, count } from "@/lib/i18n";
@@ -212,7 +212,7 @@ export function PartyDialog({ type, party, onClose }: { type: PartyType; party: 
           <DialogTitle>{party ? t(`Edit ${label[0].toLowerCase()}`, `Modifier ${label[1].toLowerCase()}`) : t(label[2], label[3])}</DialogTitle>
         </DialogHeader>
         <div className="space-y-3">
-          <Field label={t("Name", "Nom")}>
+          <Field label={t("Name", "Nom")} required>
             <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} />
           </Field>
           <Field label={t("Phone", "Téléphone")}>
@@ -242,7 +242,7 @@ export function PartyDialog({ type, party, onClose }: { type: PartyType; party: 
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <Button onClick={save} disabled={!name.trim() || busy}>{t("Save", "Enregistrer")}</Button>
+          <SubmitButton onClick={save} blocked={!name.trim() && t("Enter a name", "Saisissez un nom")} pending={busy}>{t("Save", "Enregistrer")}</SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

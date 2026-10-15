@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import { AlertTriangle, ArrowLeft, Bike, Info, Lock, PackageCheck, Pencil, Plus, Save, Trash2, Undo2, X } from "lucide-react";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
+import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
 import { MoneyAccountSelect, PartySelect, useRate, VariantSearch } from "@/components/pickers";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -306,10 +306,10 @@ function EditDetailsDialog({ c, onClose }: { c: ContainerFull; onClose: () => vo
         <div className="grid gap-3 sm:grid-cols-2">
           {!finalized && (
             <>
-              <Field label={t("Invoice currency", "Devise de la facture")}>
+              <Field label={t("Invoice currency", "Devise de la facture")} required>
                 <Input value={currency} maxLength={3} onChange={(e) => setCurrency(e.target.value.toUpperCase())} />
               </Field>
-              <Field label={t(`USD for 1 ${cur || "…"}`, `USD pour 1 ${cur || "…"}`)} hint={t("Example: 1 CNY = 0.14 USD", "Exemple\u00a0: 1 CNY = 0,14 USD")}>
+              <Field label={t(`USD for 1 ${cur || "…"}`, `USD pour 1 ${cur || "…"}`)} hint={t("Example: 1 CNY = 0.14 USD", "Exemple\u00a0: 1 CNY = 0,14 USD")} required={cur !== "USD"}>
                 <Input inputMode="decimal" disabled={cur === "USD"} value={cur === "USD" ? "1" : rate} onChange={(e) => setRate(e.target.value)} />
               </Field>
             </>
@@ -326,7 +326,13 @@ function EditDetailsDialog({ c, onClose }: { c: ContainerFull; onClose: () => vo
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <Button onClick={save} disabled={!rateOk || cur.length !== 3 || patch.isPending}>{t("Save", "Enregistrer")}</Button>
+          <SubmitButton
+            onClick={save}
+            blocked={cur.length !== 3 ? t("Enter a 3-letter currency code", "Saisissez un code de devise à 3 lettres") : !rateOk ? t("Enter the rate to USD", "Saisissez le taux en USD") : null}
+            pending={patch.isPending}
+          >
+            {t("Save", "Enregistrer")}
+          </SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -616,9 +622,13 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                 {t("Discard changes", "Annuler les modifications")}
               </Button>
             )}
-            <Button onClick={submit} disabled={!dirty || problems.some(Boolean) || save.isPending}>
+            <SubmitButton
+              onClick={submit}
+              blocked={!dirty ? t("No changes to save", "Aucune modification à enregistrer") : problems.some(Boolean) ? t("Fix the lines marked in red", "Corrigez les lignes signalées en rouge") : null}
+              pending={save.isPending}
+            >
               <Save className="mr-1 h-4 w-4" /> {t("Save lines", "Enregistrer les lignes")}
-            </Button>
+            </SubmitButton>
           </div>
         )}
       </CardContent>
@@ -850,11 +860,18 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
     success: t("Cost added", "Frais ajouté"),
     onSuccess: onClose,
   });
-  const valid =
-    amt.gt(0) &&
-    (mode === "paid" ? !!account : !!partyId) &&
-    (!isCdf || d(rate).gt(0)) &&
-    (method !== "line" || !!targetLineId);
+  const blocked =
+    mode === "paid" && !account
+      ? t("Choose the account it was paid from", "Choisissez le compte de paiement")
+      : mode === "owed" && !partyId
+        ? t("Choose who it is owed to", "Choisissez à qui c'est dû")
+        : !amt.gt(0)
+          ? t("Enter an amount above zero", "Saisissez un montant supérieur à zéro")
+          : isCdf && !d(rate).gt(0)
+            ? t("Enter the exchange rate", "Saisissez le taux de change")
+            : method === "line" && !targetLineId
+              ? t("Choose the line", "Choisissez la ligne")
+              : null;
 
   function save() {
     create.mutate({
@@ -908,12 +925,12 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
             </div>
           </div>
           {mode === "paid" ? (
-            <Field label={t("Paid from", "Payé depuis")}>
+            <Field label={t("Paid from", "Payé depuis")} required>
               <MoneyAccountSelect value={account?.id ?? null} onChange={(_, a) => setAccount(a)} />
             </Field>
           ) : (
             <>
-              <Field label={t("Owed to (agent or supplier)", "Dû à (agent ou fournisseur)")}>
+              <Field label={t("Owed to (agent or supplier)", "Dû à (agent ou fournisseur)")} required>
                 <PartySelect types={["agent", "supplier"]} value={partyId} onChange={(id) => setPartyId(id)} />
               </Field>
               <Field label={t("Currency of the bill", "Devise de la facture")}>
@@ -927,13 +944,14 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
               </Field>
             </>
           )}
-          <Field label={t(`Amount (${currency})`, `Montant (${currency})`)}>
+          <Field label={t(`Amount (${currency})`, `Montant (${currency})`)} required>
             <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
           </Field>
           {isCdf && (
             <Field
               label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 $)")}
               hint={usdValue ? `= ${usd(usdValue.toFixed(2))}` : undefined}
+              required
             >
               <Input inputMode="decimal" value={rate} onChange={(e) => { setRate(e.target.value); setRateTouched(true); }} />
             </Field>
@@ -966,7 +984,7 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
             </Select>
           </Field>
           {method === "line" && (
-            <Field label={t("Line", "Ligne")} className="sm:col-span-2">
+            <Field label={t("Line", "Ligne")} className="sm:col-span-2" required>
               <Select value={targetLineId ? String(targetLineId) : ""} onValueChange={(v) => setTargetLineId(Number(v))}>
                 <SelectTrigger><SelectValue placeholder={t("Pick the line", "Choisir la ligne")} /></SelectTrigger>
                 <SelectContent>
@@ -980,7 +998,7 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <Button onClick={save} disabled={!valid || create.isPending}>{t("Add", "Ajouter")}</Button>
+          <SubmitButton onClick={save} blocked={blocked} pending={create.isPending}>{t("Add", "Ajouter")}</SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -1125,17 +1143,16 @@ function OffloadButton({ c, disabledReason }: { c: ContainerFull; disabledReason
   const motos = c.lines.filter((l) => l.tracksSerials).reduce((s, l) => s.plus(d(l.quantity)), d(0));
   return (
     <>
-      <Button onClick={() => setOpen(true)} disabled={!!blocked} title={blocked ?? undefined}>
+      <SubmitButton onClick={() => setOpen(true)} blocked={blocked} title={blocked ?? undefined}>
         <PackageCheck className="mr-1 h-4 w-4" /> {t("Offload into stock", "Décharger en stock")}
-      </Button>
-      {blocked && <span className="self-center text-xs text-muted-foreground">{blocked}</span>}
+      </SubmitButton>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-h-[92vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{t(`Offload container ${c.number}`, `Décharger le conteneur ${c.number}`)}</DialogTitle>
             <DialogDescription>{t("Check the totals before confirming.", "Vérifiez les totaux avant de confirmer.")}</DialogDescription>
           </DialogHeader>
-          <Field label={t("Offload date", "Date de déchargement")}>
+          <Field label={t("Offload date", "Date de déchargement")} required>
             <Input type="date" value={offloadDate} onChange={(e) => setOffloadDate(e.target.value)} />
           </Field>
           {p && (
@@ -1162,9 +1179,9 @@ function OffloadButton({ c, disabledReason }: { c: ContainerFull; disabledReason
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>{t("Cancel", "Annuler")}</Button>
-            <Button onClick={() => finalize.mutate({ offloadDate })} disabled={!offloadDate || finalize.isPending}>
+            <SubmitButton onClick={() => finalize.mutate({ offloadDate })} blocked={!offloadDate && t("Choose the offload date", "Choisissez la date de déchargement")} pending={finalize.isPending}>
               <Lock className="mr-1 h-4 w-4" /> {t("Confirm offload", "Confirmer le déchargement")}
-            </Button>
+            </SubmitButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -1196,14 +1213,14 @@ function ReverseButton({ c }: { c: ContainerFull }) {
               )}
             </DialogDescription>
           </DialogHeader>
-          <Field label={t("Reversal date", "Date d'annulation")}>
+          <Field label={t("Reversal date", "Date d'annulation")} required>
             <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
           </Field>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>{t("Cancel", "Annuler")}</Button>
-            <Button variant="destructive" onClick={() => reverse.mutate({ date: day })} disabled={!day || reverse.isPending}>
+            <SubmitButton variant="destructive" onClick={() => reverse.mutate({ date: day })} blocked={!day && t("Choose the reversal date", "Choisissez la date d'annulation")} pending={reverse.isPending}>
               {t("Reverse", "Annuler le déchargement")}
-            </Button>
+            </SubmitButton>
           </DialogFooter>
         </DialogContent>
       </Dialog>

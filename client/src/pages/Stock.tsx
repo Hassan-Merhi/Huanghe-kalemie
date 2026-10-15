@@ -13,7 +13,7 @@ import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
+import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
 import { LocationSelect, useLocations, VariantSearch } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api, withQuery } from "@/lib/api";
@@ -473,14 +473,14 @@ export function AdjustForm({
       <Card>
         <CardContent className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
           <Field label={t("Date", "Date")}><Input type="date" value={dateValue} onChange={(e) => setDateValue(e.target.value)} /></Field>
-          <Field label={t("Location", "Emplacement")}><LocationSelect value={locationId} onChange={setLocationId} /></Field>
+          <Field label={t("Location", "Emplacement")} required><LocationSelect value={locationId} onChange={setLocationId} /></Field>
           <Field label={t("Kind", "Type")}>
             <Select value={kind} onValueChange={(v) => setKind(v as Kind)}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>{KINDS.map((k) => <SelectItem key={k} value={k}>{kindLabel(t, k)}</SelectItem>)}</SelectContent>
             </Select>
           </Field>
-          <Field label={t("Reason", "Motif")} className="sm:col-span-2 lg:col-span-1">
+          <Field label={t("Reason", "Motif")} className="sm:col-span-2 lg:col-span-1" required>
             <Input value={reason} onChange={(e) => setReason(e.target.value)} placeholder={kind === "opening" ? t("Stock at start", "Stock au démarrage") : t("e.g. monthly count", "ex. inventaire mensuel")} />
           </Field>
         </CardContent>
@@ -518,13 +518,14 @@ export function AdjustForm({
                   <Button variant="ghost" size="icon" onClick={() => setLines(lines.filter((x) => x.key !== l.key))}><Trash2 className="h-4 w-4" /></Button>
                 </div>
                 <div className="mt-2 grid gap-3 sm:grid-cols-3">
-                  <Field label={onlyRemove ? t("Qty removed", "Qté retirée") : onlyAdd ? t("Qty", "Qté") : t("Qty change (+/−)", "Variation (+/−)")}>
+                  <Field label={onlyRemove ? t("Qty removed", "Qté retirée") : onlyAdd ? t("Qty", "Qté") : t("Qty change (+/−)", "Variation (+/−)")} required>
                     <Input inputMode={signed ? "text" : "decimal"} value={l.qty} onChange={(e) => setQty(l, e.target.value)} />
                   </Field>
                   {c.gt(0) && (
                     <Field
                       label={t("Cost per unit (USD)", "Coût unitaire (USD)")}
                       hint={needsCost ? t("Required: no stock yet", "Obligatoire\u00a0: pas encore de stock") : t("Blank = current average cost", "Vide = coût moyen actuel")}
+                      required={needsCost}
                     >
                       <Input inputMode="decimal" value={l.unitCost} onChange={(e) => update(l.key, { unitCost: e.target.value })} className={cn(needsCost && !l.unitCost.trim() && "border-destructive")} />
                     </Field>
@@ -574,7 +575,7 @@ export function AdjustForm({
               {t("Save as optional", "Enregistrer comme facultative")}
             </Button>
           )}
-          <Button onClick={submit} disabled={m.isPending || lines.length === 0}>{t("Save adjustment", "Enregistrer l'ajustement")}</Button>
+          <SubmitButton onClick={submit} blocked={lines.length === 0 && t("Add at least one item", "Ajoutez au moins un article")} pending={m.isPending}>{t("Save adjustment", "Enregistrer l'ajustement")}</SubmitButton>
         </div>
       )}
     </div>
@@ -767,8 +768,8 @@ function TransferForm({ onDone }: { onDone: () => void }) {
       <Card>
         <CardContent className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
           <Field label={t("Date", "Date")}><Input type="date" value={dateValue} onChange={(e) => setDateValue(e.target.value)} /></Field>
-          <Field label={t("From", "De")}><LocationSelect value={fromId} onChange={setFromId} /></Field>
-          <Field label={t("To", "Vers")}>
+          <Field label={t("From", "De")} required><LocationSelect value={fromId} onChange={setFromId} /></Field>
+          <Field label={t("To", "Vers")} required>
             <Select value={toId ? String(toId) : ""} onValueChange={(v) => setToId(Number(v))}>
               <SelectTrigger><SelectValue placeholder={t("Choose…", "Choisir…")} /></SelectTrigger>
               <SelectContent>
@@ -832,7 +833,7 @@ function TransferForm({ onDone }: { onDone: () => void }) {
       </Card>
       {error && <ErrorText error={error} />}
       <div className="flex justify-end">
-        <Button onClick={submit} disabled={m.isPending || lines.length === 0}>{t("Transfer", "Transférer")}</Button>
+        <SubmitButton onClick={submit} blocked={lines.length === 0 && t("Add at least one item to move", "Ajoutez au moins un article à déplacer")} pending={m.isPending}>{t("Transfer", "Transférer")}</SubmitButton>
       </div>
     </div>
   );

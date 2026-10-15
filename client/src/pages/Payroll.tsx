@@ -20,7 +20,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
+import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
 import { AccountSelect, MoneyAccountSelect, MonthSelect, PartySelect, RateInput, useRateField } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
@@ -372,10 +372,10 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Field label={t("Expense account", "Compte de charge")}>
+              <Field label={t("Expense account", "Compte de charge")} required>
                 <AccountSelect value={effectiveAccount} onChange={setAccountId} types={["expense"]} />
               </Field>
-              <Field label={t("Date", "Date")} error={dayInMonth ? null : t("The date must be inside the month", "La date doit être dans le mois")}>
+              <Field label={t("Date", "Date")} error={dayInMonth ? null : t("The date must be inside the month", "La date doit être dans le mois")} required>
                 <Input type="date" value={effectiveDay} onChange={(e) => setDay(e.target.value)} />
               </Field>
               <Field label={t("Salaries owed in", "Salaires dus en")}>
@@ -388,7 +388,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                 </Select>
               </Field>
               {currency === "CDF" && (
-                <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")}>
+                <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} required>
                   <RateInput day={effectiveDay} value={rate} onChange={setRate} />
                 </Field>
               )}
@@ -461,12 +461,27 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
             {negative && <p className="text-sm text-destructive">{t(`${negative.e.name}: deductions are more than the salary`, `${negative.e.name} : les retenues dépassent le salaire`)}</p>}
             {canEdit && (
               <div className="flex justify-end">
-                <Button
+                <SubmitButton
                   onClick={submit}
-                  disabled={post.isPending || !effectiveAccount || !dayInMonth || included.length === 0 || !!negative || !total.gt(0) || (currency === "CDF" && !d(rate).gt(0))}
+                  blocked={
+                    !effectiveAccount
+                      ? t("Choose the expense account", "Choisissez le compte de charge")
+                      : !dayInMonth
+                        ? t("Choose a date inside the month", "Choisissez une date dans le mois")
+                        : currency === "CDF" && !d(rate).gt(0)
+                          ? t("Enter the exchange rate", "Saisissez le taux de change")
+                          : included.length === 0
+                            ? t("Include at least one employee", "Incluez au moins un employé")
+                            : negative
+                              ? t("Fix the deductions that are more than the salary", "Corrigez les retenues qui dépassent le salaire")
+                              : !total.gt(0)
+                                ? t("The total must be above zero", "Le total doit être supérieur à zéro")
+                                : null
+                  }
+                  pending={post.isPending}
                 >
                   {t("Book salaries", "Comptabiliser les salaires")}
-                </Button>
+                </SubmitButton>
               </div>
             )}
           </CardContent>
@@ -660,14 +675,14 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
         ) : (
           <div className="space-y-4">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <Field label={t("Pay from", "Payer depuis")} className="sm:col-span-1">
+              <Field label={t("Pay from", "Payer depuis")} className="sm:col-span-1" required>
                 <MoneyAccountSelect value={account?.id ?? null} onChange={(_, a) => setAccount(a)} />
               </Field>
               <Field label={t("Date", "Date")}>
                 <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
               </Field>
               {isCdf && (
-                <Field label={t("Rate (CDF per USD)", "Taux (FC pour 1 USD)")}>
+                <Field label={t("Rate (CDF per USD)", "Taux (FC pour 1 USD)")} required>
                   <RateInput day={day} value={rate} onChange={setRate} />
                 </Field>
               )}
@@ -705,9 +720,19 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{doneId ? t("Close", "Fermer") : t("Cancel", "Annuler")}</Button>
           {!doneId && (
-            <Button onClick={submit} disabled={pay.isPending || !account || lines.length === 0 || (isCdf && !r.gt(0))}>
+            <SubmitButton
+              onClick={submit}
+              blocked={
+                !account
+                  ? t("Choose the account to pay from", "Choisissez le compte de paiement")
+                  : isCdf && !r.gt(0)
+                    ? t("Enter the exchange rate", "Saisissez le taux de change")
+                    : lines.length === 0 && t("Enter at least one amount above zero", "Saisissez au moins un montant supérieur à zéro")
+              }
+              pending={pay.isPending}
+            >
               {t("Pay", "Payer")} {isCdf ? cdf(total.toFixed(0)) : usd(total.toFixed(2))}
-            </Button>
+            </SubmitButton>
           )}
         </DialogFooter>
       </DialogContent>
@@ -765,11 +790,11 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
             </p>
           </CardHeader>
           <CardContent className="space-y-3">
-            <Field label={t("Employee", "Employé")}>
+            <Field label={t("Employee", "Employé")} required>
               <PartySelect types={["employee"]} value={partyId} onChange={(id) => setPartyId(id)} allowCreate={false} />
             </Field>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Field label={t("Paid from", "Payé depuis")}>
+              <Field label={t("Paid from", "Payé depuis")} required>
                 <MoneyAccountSelect value={account?.id ?? null} onChange={(_, acc) => setAccount(acc)} />
               </Field>
               <Field label={t("Date", "Date")}>
@@ -778,11 +803,12 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
               <Field
                 label={`${t("Amount", "Montant")}${account ? ` (${account.currency})` : ""}`}
                 hint={isCdf && a.gt(0) && r.gt(0) ? `≈ ${usd(a.div(r).toFixed(2))}` : undefined}
+                required
               >
                 <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0.00" />
               </Field>
               {isCdf && (
-                <Field label={t("Rate (CDF per USD)", "Taux (FC pour 1 USD)")}>
+                <Field label={t("Rate (CDF per USD)", "Taux (FC pour 1 USD)")} required>
                   <RateInput day={day} value={rate} onChange={setRate} />
                 </Field>
               )}
@@ -796,9 +822,21 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
                   <Link href={`/vouchers/${doneId}`}><Printer className="mr-1 h-4 w-4" /> {t("Print voucher", "Imprimer la pièce")}</Link>
                 </Button>
               )}
-              <Button onClick={submit} disabled={give.isPending || !partyId || !account || !a.gt(0) || (isCdf && !r.gt(0))}>
+              <SubmitButton
+                onClick={submit}
+                blocked={
+                  !partyId
+                    ? t("Choose an employee", "Choisissez un employé")
+                    : !account
+                      ? t("Choose the account to pay from", "Choisissez le compte de paiement")
+                      : !a.gt(0)
+                        ? t("Enter an amount above zero", "Saisissez un montant supérieur à zéro")
+                        : isCdf && !r.gt(0) && t("Enter the exchange rate", "Saisissez le taux de change")
+                }
+                pending={give.isPending}
+              >
                 {t("Give the advance", "Donner l'avance")}
-              </Button>
+              </SubmitButton>
             </div>
           </CardContent>
         </Card>

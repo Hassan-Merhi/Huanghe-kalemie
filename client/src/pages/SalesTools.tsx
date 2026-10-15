@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
+import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
 import { useToast } from "@/hooks/use-toast";
 import { api, invalidateAll } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -306,7 +306,10 @@ function BulkPriceDialog({ rows, onClose }: { rows: Row[]; onClose: () => void }
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label={t("Change (%)", "Variation (%)")} hint={t("e.g. 10 to raise, -5 to lower", "ex. 10 pour augmenter, -5 pour baisser")}>
+          <Field label={t("Change (%)", "Variation (%)")} hint={t("e.g. 10 to raise, -5 to lower", "ex. 10 pour augmenter, -5 pour baisser")}
+            error={pct.trim() && !valid ? t("Enter a number other than 0, above -100", "Saisissez un nombre différent de 0 et supérieur à -100") : null}
+            required
+          >
             <Input inputMode="decimal" value={pct} onChange={(e) => setPct(e.target.value)} disabled={running} placeholder="10" />
           </Field>
           <Field label={t("Round to", "Arrondir à")}>
@@ -360,9 +363,13 @@ function BulkPriceDialog({ rows, onClose }: { rows: Row[]; onClose: () => void }
         )}
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onClose} disabled={running}>{t("Cancel", "Annuler")}</Button>
-          <Button onClick={apply} disabled={!valid || !changes.length || running}>
+          <SubmitButton
+            onClick={apply}
+            blocked={!pct.trim() ? t("Enter a percentage", "Saisissez un pourcentage") : !valid ? t("Fix the percentage", "Corrigez le pourcentage") : !changes.length && t("No price would change", "Aucun prix ne changerait")}
+            pending={running}
+          >
             {t("Apply to", "Appliquer à")} {count(t, changes.length, ["item", "items"], ["article", "articles"])}
-          </Button>
+          </SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

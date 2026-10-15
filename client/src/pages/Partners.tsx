@@ -19,7 +19,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader } from "@/components/common";
+import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
 import { MonthSelect } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
@@ -212,9 +212,9 @@ function MonthSection() {
                 </Badge>
               )}
               {can() && p?.status === "open" && (
-                <Button onClick={() => setConfirm("close")} disabled={!ended} title={!ended ? t("Only months that have ended", "Seulement les mois terminés") : undefined}>
+                <SubmitButton onClick={() => setConfirm("close")} blocked={!ended && t("Only a month that has ended can be closed", "Seul un mois terminé peut être clôturé")}>
                   <Lock className="mr-1 h-4 w-4" /> {t("Close month", "Clôturer le mois")}
-                </Button>
+                </SubmitButton>
               )}
               {can() && p?.status === "closed" && latestClosed === month && (
                 <Button variant="outline" onClick={() => setConfirm("reopen")}>
@@ -547,10 +547,10 @@ function EditPartnersDialog({ partners, onClose }: { partners: Partner[]; onClos
         <div className="space-y-4">
           {rows.map((r, i) => (
             <div key={r.id} className="grid grid-cols-[1fr_6rem] gap-3 rounded-lg border p-3">
-              <Field label={t("Name", "Nom")}>
+              <Field label={t("Name", "Nom")} required>
                 <Input value={r.name} onChange={(e) => set(i, { name: e.target.value })} />
               </Field>
-              <Field label={t("Share %", "Part %")}>
+              <Field label={t("Share %", "Part %")} required>
                 <Input inputMode="decimal" value={r.sharePct} onChange={(e) => set(i, { sharePct: e.target.value })} />
               </Field>
               <label className="col-span-2 flex items-center gap-2 text-sm">
@@ -566,12 +566,21 @@ function EditPartnersDialog({ partners, onClose }: { partners: Partner[]; onClos
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <Button
-            disabled={!okTotal || !anyBearer || rows.some((r) => !r.name.trim()) || save.isPending}
+          <SubmitButton
+            blocked={
+              rows.some((r) => !r.name.trim())
+                ? t("Enter every partner's name", "Saisissez le nom de chaque associé")
+                : !okTotal
+                  ? t("The shares must add up to 100%", "Les parts doivent faire 100\u00a0%")
+                  : !anyBearer
+                    ? t("Choose who pays the running costs", "Choisissez qui paie les frais de fonctionnement")
+                    : null
+            }
+            pending={save.isPending}
             onClick={() => save.mutate({ partners: rows.map((r) => ({ ...r, name: r.name.trim(), sharePct: d(r.sharePct).toFixed(2) })) })}
           >
             {t("Save", "Enregistrer")}
-          </Button>
+          </SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -12,9 +12,8 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader } from "@/components/common";
+import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
 import { useApiMutation } from "@/hooks/useApiMutation";
-import { useTheme, useThemeOptions, type ThemePreference } from "@/components/ThemeProvider";
 import { useAuth, type Role } from "@/lib/auth";
 import { useI18n, useT, type Lang } from "@/lib/i18n";
 import { cdf, d, date as fmtDate, money, usd } from "@/lib/format";
@@ -33,7 +32,7 @@ export default function Settings() {
   const [tab, setTab] = useState("shop");
   return (
     <div>
-      <PageHeader title={t("Settings", "Paramètres")} description={t("Shop, users, places, categories and the chart of accounts.", "Boutique, utilisateurs, emplacements, catégories et plan comptable.")} />
+      <PageHeader title={t("Settings", "Paramètres")} description={t("Shop, users, places, categories, the chart of accounts, backups and the activity log.", "Boutique, utilisateurs, emplacements, catégories, plan comptable, sauvegardes et journal d'activité.")} />
       <Tabs value={tab} onValueChange={setTab}>
         <div className="overflow-x-auto pb-1">
           <TabsList>
@@ -42,7 +41,7 @@ export default function Settings() {
             <TabsTrigger value="locations">{t("Locations", "Emplacements")}</TabsTrigger>
             <TabsTrigger value="categories">{t("Categories", "Catégories")}</TabsTrigger>
             <TabsTrigger value="accounts">{t("Chart of accounts", "Plan comptable")}</TabsTrigger>
-            <TabsTrigger value="me">{t("My account", "Mon compte")}</TabsTrigger>
+            <TabsTrigger value="backup">{t("Backup", "Sauvegarde")}</TabsTrigger>
             <TabsTrigger value="audit">{t("Activity log", "Journal d'activité")}</TabsTrigger>
           </TabsList>
         </div>
@@ -51,7 +50,7 @@ export default function Settings() {
         <TabsContent value="locations"><NamedListTab kind="locations" /></TabsContent>
         <TabsContent value="categories"><NamedListTab kind="categories" /></TabsContent>
         <TabsContent value="accounts"><AccountsTab /></TabsContent>
-        <TabsContent value="me"><MeTab /></TabsContent>
+        <TabsContent value="backup"><BackupTab /></TabsContent>
         <TabsContent value="audit"><AuditTab /></TabsContent>
       </Tabs>
     </div>
@@ -82,6 +81,17 @@ function ShopTab() {
   }, [q.data]);
   const pctOk = (v: string) => /^\d{1,3}(\.\d{1,2})?$/.test(v.trim()) && Number(v) <= 100;
   const m = useApiMutation("PATCH", "/api/settings", { success: t("Settings saved", "Paramètres enregistrés") });
+  const toleranceOk = /^\d{1,2}(\.\d{1,2})?$/.test(tolerance.trim());
+  const pctError = (v: string) => (v.trim() && !pctOk(v) ? t("Enter a percentage from 0 to 100", "Saisissez un pourcentage de 0 à 100") : null);
+  const blocked = !shopName.trim()
+    ? t("Enter the shop name", "Saisissez le nom de la boutique")
+    : !d(rate).gt(0)
+      ? t("Enter a default rate above zero", "Saisissez un taux par défaut supérieur à zéro")
+      : !toleranceOk
+        ? t("Enter the allowed gap (0 to 99 %)", "Saisissez l'écart permis (0 à 99\u00a0%)")
+        : !pctOk(cashierPct) || !pctOk(managerPct)
+          ? t("Enter the biggest discounts (0 to 100 %)", "Saisissez les remises maximales (0 à 100\u00a0%)")
+          : null;
   if (q.isLoading) return <Loading />;
   return (
     <Card className="max-w-xl">
@@ -91,24 +101,28 @@ function ShopTab() {
       </CardHeader>
       <CardContent className="space-y-3">
         <ErrorText error={q.error} />
-        <Field label={t("Shop name", "Nom de la boutique")}><Input value={shopName} onChange={(e) => setShopName(e.target.value)} /></Field>
+        <Field label={t("Shop name", "Nom de la boutique")} required><Input value={shopName} onChange={(e) => setShopName(e.target.value)} /></Field>
         <Field
           label={t("Default CDF rate (CDF per 1 USD)", "Taux par défaut (FC pour 1 $)")}
           hint={q.data?.latestRate ? t(`Latest daily rate: ${cdf(q.data.latestRate.cdfPerUsd)} on ${fmtDate(q.data.latestRate.date)}. The default is used only for days before any daily rate.`, `Dernier taux du jour : ${cdf(q.data.latestRate.cdfPerUsd)} le ${fmtDate(q.data.latestRate.date)}. Le taux par défaut sert seulement s'il n'y a aucun taux du jour.`) : undefined}
+          error={rate.trim() && !d(rate).gt(0) ? t("Enter a rate above zero", "Saisissez un taux supérieur à zéro") : null}
+          required
         >
           <Input inputMode="decimal" value={rate} onChange={(e) => setRate(e.target.value)} />
         </Field>
         <Field
           label={t("Allowed gap from the day's rate (%)", "Écart permis avec le taux du jour (%)")}
           hint={t("A franc amount typed with a rate further from the day's rate than this is refused.", "Un montant en francs saisi avec un taux plus éloigné du taux du jour est refusé.")}
+          error={tolerance.trim() && !toleranceOk ? t("Enter a number from 0 to 99", "Saisissez un nombre de 0 à 99") : null}
+          required
         >
           <Input inputMode="decimal" value={tolerance} onChange={(e) => setTolerance(e.target.value)} />
         </Field>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label={t("Cashier: biggest discount (%)", "Caissier : remise maximale (%)")}>
+          <Field label={t("Cashier: biggest discount (%)", "Caissier\u00a0: remise maximale (%)")} error={pctError(cashierPct)} required>
             <Input inputMode="decimal" value={cashierPct} onChange={(e) => setCashierPct(e.target.value)} />
           </Field>
-          <Field label={t("Manager: biggest discount (%)", "Gérant : remise maximale (%)")}>
+          <Field label={t("Manager: biggest discount (%)", "Gérant\u00a0: remise maximale (%)")} error={pctError(managerPct)} required>
             <Input inputMode="decimal" value={managerPct} onChange={(e) => setManagerPct(e.target.value)} />
           </Field>
         </div>
@@ -123,8 +137,9 @@ function ShopTab() {
         </label>
         <Field label={t("Receipt footer", "Pied de reçu")}><Textarea rows={3} maxLength={300} value={footer} onChange={(e) => setFooter(e.target.value)} /></Field>
         <div className="flex justify-end">
-          <Button
-            disabled={!shopName.trim() || !d(rate).gt(0) || !/^\d{1,2}(\.\d{1,2})?$/.test(tolerance.trim()) || !pctOk(cashierPct) || !pctOk(managerPct) || m.isPending}
+          <SubmitButton
+            blocked={blocked}
+            pending={m.isPending}
             onClick={() =>
               m.mutate({
                 shopName: shopName.trim(),
@@ -138,7 +153,7 @@ function ShopTab() {
             }
           >
             {t("Save", "Enregistrer")}
-          </Button>
+          </SubmitButton>
         </div>
       </CardContent>
     </Card>
@@ -217,7 +232,18 @@ function UserDialog({ user, partners, onClose }: { user: UserRow | null; partner
   const isSelf = !!user && user.id === me?.id;
 
   const pwOk = user ? password === "" || password.length >= 8 : password.length >= 8;
-  const valid = /^[a-zA-Z0-9._-]{3,60}$/.test(username) && fullName.trim() && pwOk && (role !== "partner" || partnerId);
+  const usernameOk = /^[a-zA-Z0-9._-]{3,60}$/.test(username);
+  const blocked = !username
+    ? t("Enter a username", "Saisissez un identifiant")
+    : !usernameOk
+      ? t("Fix the username", "Corrigez l'identifiant")
+      : !fullName.trim()
+        ? t("Enter the full name", "Saisissez le nom complet")
+        : role === "partner" && !partnerId
+          ? t("Choose the partner", "Choisissez l'associé")
+          : !pwOk
+            ? password ? t("The password needs at least 8 characters", "Le mot de passe doit faire au moins 8 caractères") : t("Enter a password", "Saisissez un mot de passe")
+            : null;
 
   function save() {
     const body = {
@@ -239,10 +265,15 @@ function UserDialog({ user, partners, onClose }: { user: UserRow | null; partner
           <DialogTitle>{user ? t("Edit user", "Modifier l'utilisateur") : t("New user", "Nouvel utilisateur")}</DialogTitle>
         </DialogHeader>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-          <Field label={t("Username", "Identifiant")} hint={t("Letters, numbers, dot, dash", "Lettres, chiffres, point, tiret")}>
+          <Field
+            label={t("Username", "Identifiant")}
+            hint={t("Letters, numbers, dot, dash", "Lettres, chiffres, point, tiret")}
+            error={username && !usernameOk ? t("3 to 60 letters, numbers, dots or dashes", "3 à 60 lettres, chiffres, points ou tirets") : null}
+            required
+          >
             <Input value={username} onChange={(e) => setUsername(e.target.value.trim())} autoCapitalize="none" />
           </Field>
-          <Field label={t("Full name", "Nom complet")}><Input value={fullName} onChange={(e) => setFullName(e.target.value)} /></Field>
+          <Field label={t("Full name", "Nom complet")} required><Input value={fullName} onChange={(e) => setFullName(e.target.value)} /></Field>
           <Field label={t("Role", "Rôle")}>
             <Select value={role} onValueChange={(v) => setRole(v as Role)} disabled={isSelf}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -261,7 +292,7 @@ function UserDialog({ user, partners, onClose }: { user: UserRow | null; partner
             </Select>
           </Field>
           {role === "partner" && (
-            <Field label={t("Partner", "Associé")} className="sm:col-span-2" hint={t("Read-only access to the whole business, linked to this partner.", "Accès en lecture seule à toute l'activité, rattaché à cet associé.")}>
+            <Field label={t("Partner", "Associé")} className="sm:col-span-2" required hint={t("Read-only access to the whole business, linked to this partner.", "Accès en lecture seule à toute l'activité, rattaché à cet associé.")}>
               <Select value={partnerId ? String(partnerId) : ""} onValueChange={(v) => setPartnerId(Number(v))}>
                 <SelectTrigger><SelectValue placeholder={t("Choose partner", "Choisir l'associé")} /></SelectTrigger>
                 <SelectContent>
@@ -274,6 +305,7 @@ function UserDialog({ user, partners, onClose }: { user: UserRow | null; partner
             label={user ? t("New password (leave empty to keep)", "Nouveau mot de passe (vide = inchangé)") : t("Password", "Mot de passe")}
             className="sm:col-span-2"
             error={password && password.length < 8 ? t("At least 8 characters", "Au moins 8 caractères") : null}
+            required={!user}
           >
             <Input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
           </Field>
@@ -285,7 +317,7 @@ function UserDialog({ user, partners, onClose }: { user: UserRow | null; partner
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <Button disabled={!valid || create.isPending || update.isPending} onClick={save}>{t("Save", "Enregistrer")}</Button>
+          <SubmitButton blocked={blocked} pending={create.isPending || update.isPending} onClick={save}>{t("Save", "Enregistrer")}</SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -355,10 +387,10 @@ function NameDialog({ url, row, onClose }: { url: string; row: Location | Catego
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[92vh] overflow-y-auto">
         <DialogHeader><DialogTitle>{row ? t("Rename", "Renommer") : t("Add", "Ajouter")}</DialogTitle></DialogHeader>
-        <Field label={t("Name", "Nom")}><Input autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && name.trim() && save()} /></Field>
+        <Field label={t("Name", "Nom")} required><Input autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && name.trim() && save()} /></Field>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <Button disabled={!name.trim() || create.isPending || update.isPending} onClick={save}>{t("Save", "Enregistrer")}</Button>
+          <SubmitButton blocked={!name.trim() && t("Enter a name", "Saisissez un nom")} pending={create.isPending || update.isPending} onClick={save}>{t("Save", "Enregistrer")}</SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -465,8 +497,8 @@ function AccountDialog({ account, onClose }: { account: Account | null; onClose:
           )}
         </DialogHeader>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-[8rem_1fr]">
-          <Field label={t("Code", "Code")}><Input value={code} onChange={(e) => setCode(e.target.value)} disabled={!!account} placeholder="6150" /></Field>
-          <Field label={t("Name", "Nom")}><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
+          <Field label={t("Code", "Code")} required={!account}><Input value={code} onChange={(e) => setCode(e.target.value)} disabled={!!account} placeholder="6150" /></Field>
+          <Field label={t("Name", "Nom")} required><Input value={name} onChange={(e) => setName(e.target.value)} /></Field>
           <Field label={t("Type", "Type")} className="sm:col-span-2">
             <Select value={type} onValueChange={(v) => setType(v as Account["type"])} disabled={!!account}>
               <SelectTrigger><SelectValue /></SelectTrigger>
@@ -507,89 +539,42 @@ function AccountDialog({ account, onClose }: { account: Account | null; onClose:
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <Button disabled={!name.trim() || (!account && !code.trim()) || create.isPending || update.isPending} onClick={save}>{t("Save", "Enregistrer")}</Button>
+          <SubmitButton
+            blocked={!account && !code.trim() ? t("Enter a code", "Saisissez un code") : !name.trim() && t("Enter a name", "Saisissez un nom")}
+            pending={create.isPending || update.isPending}
+            onClick={save}
+          >
+            {t("Save", "Enregistrer")}
+          </SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>
   );
 }
 
-// ---------------------------------------------------------------- My account
+// ---------------------------------------------------------------- Backup
 
-function MeTab() {
+function BackupTab() {
   const t = useT();
-  const { lang, setLang } = useI18n();
-  const { user, refresh } = useAuth();
-  const { preference, setPreference } = useTheme();
-  const themeOptions = useThemeOptions();
-  const [password, setPassword] = useState("");
-  const [confirm, setConfirm] = useState("");
-  const langM = useApiMutation<{ language: Lang }>("PATCH", "/api/me", { success: t("Language saved", "Langue enregistrée"), onSuccess: (_r, b) => { setLang(b.language); refresh(); } });
-  const pwM = useApiMutation("PATCH", "/api/me", { success: t("Password changed", "Mot de passe changé"), onSuccess: () => { setPassword(""); setConfirm(""); } });
   return (
-    <div className="grid max-w-3xl grid-cols-1 gap-4 md:grid-cols-2">
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">{user?.fullName}</CardTitle>
-          <CardDescription>{user?.username} · {user ? roleLabel(user.role, t) : ""}</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <Field label={t("Language", "Langue")}>
-            <Select value={lang} onValueChange={(v) => langM.mutate({ language: v as Lang })}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                <SelectItem value="fr">Français</SelectItem>
-                <SelectItem value="en">English</SelectItem>
-              </SelectContent>
-            </Select>
-          </Field>
-          <Field label={t("Theme", "Thème")}>
-            <Select value={preference} onValueChange={(v) => setPreference(v as ThemePreference)}>
-              <SelectTrigger><SelectValue /></SelectTrigger>
-              <SelectContent>
-                {themeOptions.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>{o.label}</SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </Field>
-        </CardContent>
-      </Card>
-      <Card>
-        <CardHeader><CardTitle className="text-base">{t("Change password", "Changer le mot de passe")}</CardTitle></CardHeader>
-        <CardContent className="space-y-3">
-          <Field label={t("New password", "Nouveau mot de passe")} error={password && password.length < 8 ? t("At least 8 characters", "Au moins 8 caractères") : null}>
-            <Input type="password" autoComplete="new-password" value={password} onChange={(e) => setPassword(e.target.value)} />
-          </Field>
-          <Field label={t("Repeat it", "Répétez-le")} error={confirm && confirm !== password ? t("The two do not match", "Les deux ne correspondent pas") : null}>
-            <Input type="password" autoComplete="new-password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
-          </Field>
-          <div className="flex justify-end">
-            <Button disabled={password.length < 8 || password !== confirm || pwM.isPending} onClick={() => pwM.mutate({ password })}>{t("Change password", "Changer le mot de passe")}</Button>
-          </div>
-        </CardContent>
-      </Card>
-      {user?.role === "owner" && (
-        <Card className="md:col-span-2">
-          <CardHeader>
-            <CardTitle className="text-base">{t("Backup", "Sauvegarde")}</CardTitle>
-            <CardDescription>
-              {t(
-                "Download a file with all the data. Keep a copy every week on a USB key or a phone.",
-                "Téléchargez un fichier avec toutes les données. Gardez-en une copie chaque semaine sur une clé USB ou un téléphone.",
-              )}
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <Button asChild variant="outline">
-              <a href="/api/backup" download>
-                <Download className="mr-1 h-4 w-4" /> {t("Download a backup", "Télécharger une sauvegarde")}
-              </a>
-            </Button>
-          </CardContent>
-        </Card>
-      )}
-    </div>
+    <Card className="max-w-3xl">
+      <CardHeader>
+        <CardTitle className="text-base">{t("Backup", "Sauvegarde")}</CardTitle>
+        <CardDescription>
+          {t(
+            "Download a file with all the data. Keep a copy every week on a USB key or a phone.",
+            "Téléchargez un fichier avec toutes les données. Gardez-en une copie chaque semaine sur une clé USB ou un téléphone.",
+          )}
+        </CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Button asChild variant="outline">
+          <a href="/api/backup" download>
+            <Download className="mr-1 h-4 w-4" /> {t("Download a backup", "Télécharger une sauvegarde")}
+          </a>
+        </Button>
+      </CardContent>
+    </Card>
   );
 }
 

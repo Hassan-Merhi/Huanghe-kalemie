@@ -11,7 +11,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
+import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
 import { AccountSelect, PartySelect } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
@@ -877,12 +877,12 @@ function ReverseDialog({ journal, onClose }: { journal: Journal; onClose: () => 
             {t("An opposite entry is posted on the date you choose. The original stays visible.", "Une écriture inverse est passée à la date choisie. L'originale reste visible.")}
           </DialogDescription>
         </DialogHeader>
-        <Field label={t("Date", "Date")}>
+        <Field label={t("Date", "Date")} required>
           <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
         </Field>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <Button variant="destructive" disabled={!validDate(day) || m.isPending} onClick={() => m.mutate({ date: day })}>{t("Reverse", "Annuler l'écriture")}</Button>
+          <SubmitButton variant="destructive" blocked={!validDate(day) && t("Choose a valid date", "Choisissez une date valide")} pending={m.isPending} onClick={() => m.mutate({ date: day })}>{t("Reverse", "Annuler l'écriture")}</SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -956,7 +956,7 @@ function ManualJournalDialog({ onClose }: { onClose: () => void }) {
         </DialogHeader>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-[10rem_1fr]">
           <Field label={t("Date", "Date")}><Input type="date" value={day} onChange={(e) => setDay(e.target.value)} /></Field>
-          <Field label={t("Description", "Description")}><Input value={memo} onChange={(e) => setMemo(e.target.value)} /></Field>
+          <Field label={t("Description", "Description")} required><Input value={memo} onChange={(e) => setMemo(e.target.value)} /></Field>
         </div>
         <label className="flex items-center gap-2 text-sm">
           <Switch checked={opening} onCheckedChange={setOpening} />
@@ -969,7 +969,7 @@ function ManualJournalDialog({ onClose }: { onClose: () => void }) {
             return (
               <div key={l.key} className="rounded-lg border p-3">
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_7rem_7rem_auto]">
-                  <Field label={`${t("Account", "Compte")} ${i + 1}`}>
+                  <Field label={`${t("Account", "Compte")} ${i + 1}`} required>
                     <AccountSelect value={l.accountId} onChange={(id) => set(l.key, { accountId: id, partyId: null, native: "", rate: "" })} />
                   </Field>
                   <Field label={t("Debit USD", "Débit USD")}>
@@ -986,17 +986,17 @@ function ManualJournalDialog({ onClose }: { onClose: () => void }) {
                 </div>
                 {pt && (
                   <div className="mt-2">
-                    <Field label={pt[0] === "customer" ? t("Customer", "Client") : t("Supplier or agent", "Fournisseur ou agent")}>
+                    <Field label={pt[0] === "customer" ? t("Customer", "Client") : t("Supplier or agent", "Fournisseur ou agent")} required>
                       <PartySelect types={pt} value={l.partyId} onChange={(id) => set(l.key, { partyId: id })} allowCreate={false} />
                     </Field>
                   </div>
                 )}
                 {isCdf(a) && (
                   <div className="mt-2 grid grid-cols-2 gap-2">
-                    <Field label={t("Amount in CDF", "Montant en FC")}>
+                    <Field label={t("Amount in CDF", "Montant en FC")} required>
                       <Input inputMode="decimal" value={l.native} onChange={(e) => setNative(l, e.target.value, l.rate)} />
                     </Field>
-                    <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 USD)")}>
+                    <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 USD)")} required>
                       <Input inputMode="decimal" value={l.rate} onChange={(e) => setNative(l, l.native, e.target.value)} />
                     </Field>
                   </div>
@@ -1015,10 +1015,9 @@ function ManualJournalDialog({ onClose }: { onClose: () => void }) {
             {t("Difference", "Écart")}: <Num>{usd(diff.toFixed(2))}</Num>
           </span>
         </div>
-        {problems.length > 0 && <p className="text-xs text-muted-foreground">{problems[0]}</p>}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <Button disabled={problems.length > 0 || m.isPending} onClick={save}>{t("Save entry", "Enregistrer l'écriture")}</Button>
+          <SubmitButton blocked={problems[0]} pending={m.isPending} onClick={save}>{t("Save entry", "Enregistrer l'écriture")}</SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

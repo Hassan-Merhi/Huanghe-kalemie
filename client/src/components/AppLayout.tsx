@@ -18,9 +18,6 @@ import {
   PieChart,
   BookOpen,
   FileText,
-  FilePen,
-  Layers,
-  FileUp,
   LayoutGrid,
   Landmark,
   UserCheck,
@@ -47,6 +44,8 @@ import { useAuth, type Role } from "@/lib/auth";
 import { useI18n } from "@/lib/i18n";
 import { ThemeToggle } from "@/components/ThemeProvider";
 import { api, queryClient } from "@/lib/api";
+import { cn } from "@/lib/utils";
+import { MyAccountButton } from "@/components/MyAccount";
 
 interface NavItem {
   href: string;
@@ -56,6 +55,8 @@ interface NavItem {
   roles: Role[];
   /** Only highlight on this exact path (not its sub-pages). */
   exact?: boolean;
+  /** Other pages that belong to this entry (shown as tabs on the page). */
+  also?: string[];
 }
 
 const NAV: { en: string; fr: string; items: NavItem[] }[] = [
@@ -64,46 +65,43 @@ const NAV: { en: string; fr: string; items: NavItem[] }[] = [
     fr: "Boutique",
     items: [
       { href: "/", en: "Dashboard", fr: "Tableau de bord", icon: LayoutDashboard, roles: ["manager", "partner"] },
-      { href: "/daybook", en: "Daybook", fr: "Journal du jour", icon: BookOpen, roles: ["manager", "partner"] },
-      { href: "/vouchers", en: "Vouchers", fr: "Pièces", icon: FileText, roles: ["manager", "partner"] },
-      { href: "/optional-vouchers", en: "Optional vouchers", fr: "Pièces facultatives", icon: FilePen, roles: ["manager", "partner"] },
-    ],
-  },
-  {
-    en: "Inventory",
-    fr: "Inventaire",
-    items: [
-      { href: "/inventory", en: "Inventory", fr: "Inventaire", icon: Layers, roles: ["manager", "partner"] },
-      { href: "/stock", en: "Stock", fr: "Stock", icon: Boxes, roles: ["manager", "partner"], exact: true },
-      { href: "/products", en: "Items", fr: "Articles", icon: Package, roles: ["manager", "cashier", "partner"] },
-      { href: "/motorcycles", en: "Motorcycles", fr: "Motos", icon: Bike, roles: ["manager", "cashier", "partner"] },
-      { href: "/containers", en: "Containers", fr: "Conteneurs", icon: Container, roles: ["manager", "partner"] },
-      { href: "/stock/import", en: "Stock import", fr: "Import de stock", icon: FileUp, roles: ["manager"] },
-    ],
-  },
-  {
-    en: "Sales & POS",
-    fr: "Ventes et caisse",
-    items: [
       { href: "/pos", en: "Point of sale", fr: "Caisse", icon: ShoppingCart, roles: ["manager", "cashier"] },
       { href: "/sales", en: "Sales", fr: "Ventes", icon: Receipt, roles: ["manager", "cashier", "partner"] },
       { href: "/sales-tools", en: "Sales tools", fr: "Outils de vente", icon: LayoutGrid, roles: ["manager", "cashier", "partner"] },
+      { href: "/contacts", en: "Customers and suppliers", fr: "Clients et fournisseurs", icon: Users, roles: ["manager", "cashier", "partner"] },
+    ],
+  },
+  {
+    en: "Stock",
+    fr: "Stock",
+    items: [
+      { href: "/stock", en: "Stock", fr: "Stock", icon: Boxes, roles: ["manager", "partner"], also: ["/inventory"] },
+      { href: "/products", en: "Items", fr: "Articles", icon: Package, roles: ["manager", "cashier", "partner"] },
+      { href: "/motorcycles", en: "Motorcycles", fr: "Motos", icon: Bike, roles: ["manager", "cashier", "partner"] },
+      { href: "/containers", en: "Containers", fr: "Conteneurs", icon: Container, roles: ["manager", "partner"] },
+    ],
+  },
+  {
+    en: "Money",
+    fr: "Argent",
+    items: [
+      { href: "/money", en: "Treasury", fr: "Trésorerie", icon: HandCoins, roles: ["manager", "partner"] },
+      { href: "/expenses", en: "Expenses", fr: "Dépenses", icon: Wallet, roles: ["manager", "partner"] },
+      { href: "/payroll", en: "Payroll", fr: "Paie", icon: UserCheck, roles: ["manager", "partner"] },
     ],
   },
   {
     en: "Accounting",
     fr: "Comptabilité",
     items: [
+      { href: "/daybook", en: "Daybook", fr: "Journal du jour", icon: BookOpen, roles: ["manager", "partner"] },
+      { href: "/vouchers", en: "Vouchers", fr: "Pièces", icon: FileText, roles: ["manager", "partner"], also: ["/optional-vouchers"] },
       { href: "/accounts", en: "Accounts", fr: "Comptes", icon: Landmark, roles: ["manager", "partner"] },
-      { href: "/money", en: "Cash and accounts", fr: "Caisse et comptes", icon: HandCoins, roles: ["manager", "partner"] },
-      { href: "/expenses", en: "Expenses", fr: "Dépenses", icon: Wallet, roles: ["manager", "partner"] },
-      { href: "/contacts", en: "Customers and suppliers", fr: "Clients et fournisseurs", icon: Users, roles: ["manager", "cashier", "partner"] },
-      { href: "/payroll", en: "Payroll", fr: "Paie", icon: UserCheck, roles: ["manager", "partner"] },
       { href: "/partners", en: "Partners and months", fr: "Associés et mois", icon: PieChart, roles: ["manager", "partner"] },
     ],
   },
   {
-    en: "Analytics",
+    en: "Analysis",
     fr: "Analyses",
     items: [
       { href: "/analytics", en: "Analytics", fr: "Analyses", icon: TrendingUp, roles: ["manager", "partner"] },
@@ -116,6 +114,50 @@ const NAV: { en: string; fr: string; items: NavItem[] }[] = [
     items: [{ href: "/settings", en: "Settings", fr: "Paramètres", icon: SettingsIcon, roles: [] }],
   },
 ];
+
+const under = (location: string, href: string) => location === href || location.startsWith(href + "/");
+
+/** Pages that share one menu entry, shown as tabs above the page. */
+const SECTIONS: { href: string; en: string; fr: string; roles: Role[] }[][] = [
+  [
+    { href: "/stock", en: "Stock", fr: "Stock", roles: ["manager", "partner"] },
+    { href: "/inventory", en: "Stock count", fr: "Inventaire", roles: ["manager", "partner"] },
+    { href: "/stock/import", en: "Import", fr: "Import", roles: ["manager"] },
+  ],
+  [
+    { href: "/vouchers", en: "Vouchers", fr: "Pièces", roles: ["manager", "partner"] },
+    { href: "/optional-vouchers", en: "Optional vouchers", fr: "Pièces facultatives", roles: ["manager", "partner"] },
+  ],
+];
+
+function SectionTabs() {
+  const { can } = useAuth();
+  const { lang } = useI18n();
+  const [location] = useLocation();
+  const section = SECTIONS.find((tabs) => tabs.some((tab) => tab.href === location));
+  const tabs = section?.filter((tab) => can(...tab.roles)) ?? [];
+  if (tabs.length < 2) return null;
+  return (
+    <nav className="-mt-1 mb-5 flex max-w-full flex-wrap gap-x-5 border-b text-muted-foreground" aria-label={lang === "fr" ? "Onglets" : "Tabs"}>
+      {tabs.map((tab) => {
+        const active = tab.href === location;
+        return (
+          <Link
+            key={tab.href}
+            href={tab.href}
+            aria-current={active ? "page" : undefined}
+            className={cn(
+              "-mb-px border-b-2 py-2 text-sm font-medium transition-colors",
+              active ? "border-primary text-foreground" : "border-transparent hover:text-foreground",
+            )}
+          >
+            {lang === "fr" ? tab.fr : tab.en}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
 
 function NavLinks() {
   const { can } = useAuth();
@@ -133,7 +175,8 @@ function NavLinks() {
             <SidebarGroupContent>
               <SidebarMenu>
                 {items.map((item) => {
-                  const active = item.href === "/" || item.exact ? location === item.href : location === item.href || location.startsWith(item.href + "/");
+                  const active =
+                    item.href === "/" || item.exact ? location === item.href : under(location, item.href) || !!item.also?.some((h) => under(location, h));
                   return (
                     <SidebarMenuItem key={item.href}>
                       <SidebarMenuButton asChild isActive={active}>
@@ -190,11 +233,15 @@ export function AppLayout({ children }: { children: ReactNode }) {
             {lang === "fr" ? "EN" : "FR"}
           </Button>
           <ThemeToggle />
-          <Button variant="ghost" size="sm" onClick={logout}>
-            <LogOut className="mr-1 h-4 w-4" /> {t("Sign out", "Déconnexion")}
+          <MyAccountButton />
+          <Button variant="ghost" size="sm" onClick={logout} aria-label={t("Sign out", "Déconnexion")}>
+            <LogOut className="h-4 w-4 sm:mr-1" /> <span className="hidden sm:inline">{t("Sign out", "Déconnexion")}</span>
           </Button>
         </header>
-        <main className="mx-auto w-full max-w-7xl flex-1 p-4 md:p-6">{children}</main>
+        <main className="mx-auto w-full max-w-7xl flex-1 p-4 md:p-6">
+          <SectionTabs />
+          {children}
+        </main>
       </SidebarInset>
     </SidebarProvider>
   );

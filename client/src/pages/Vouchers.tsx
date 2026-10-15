@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ErrorText, Field, Loading, Num, PageHeader } from "@/components/common";
+import { ErrorText, Field, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
 import { AccountSelect, MoneyAccountSelect, PartySelect, RateInput, useMoneyAccounts, useRate, useRateField } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api, invalidateAll } from "@/lib/api";
@@ -145,12 +145,7 @@ export default function Vouchers() {
           "Record payments, receipts, entries, transfers and stock adjustments. Each one appears in the day book.",
           "Enregistrez paiements, recettes, écritures, transferts et ajustements de stock. Chacun apparaît dans le journal du jour.",
         )}
-        actions={
-          <>
-            <Button variant="outline" asChild><Link href="/optional-vouchers"><FileClock className="mr-1 h-4 w-4" /> {t("Optional vouchers", "Pièces facultatives")}</Link></Button>
-            <Button variant="outline" asChild><Link href="/daybook">{t("Day book", "Journal du jour")}</Link></Button>
-          </>
-        }
+        actions={<Button variant="outline" asChild><Link href="/daybook">{t("Day book", "Journal du jour")}</Link></Button>}
       />
       {!canSave && (
         <Alert className="mb-4">
@@ -366,11 +361,12 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted 
                 : undefined
             }
             error={after && after.lt(0) && kind === "payment" ? t(`Not enough money: the balance would be ${money(after.toFixed(2), currency)}`, `Fonds insuffisants : le solde serait de ${money(after.toFixed(2), currency)}`) : null}
+            required
           >
             <MoneyAccountSelect value={accountId} onChange={(id) => setAccountId(id)} />
           </Field>
           {isCdf && (
-            <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 $)")} hint={totalUsd ? `= ${usd(totalUsd.toFixed(2))}` : undefined}>
+            <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 $)")} hint={totalUsd ? `= ${usd(totalUsd.toFixed(2))}` : undefined} required>
               <RateInput day={day} value={rateField.rate} onChange={rateField.setRate} />
             </Field>
           )}
@@ -452,7 +448,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted 
         <Button variant="outline" disabled={savingDraft} onClick={() => onSaveDraft({ kind, date: day, memo: memo.trim() || null, payload: payload(false)! })}>
           {t("Save as optional", "Enregistrer comme facultative")}
         </Button>
-        <Button onClick={save} disabled={m.isPending}>{t("Save", "Enregistrer")}</Button>
+        <SubmitButton onClick={save} pending={m.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
       </ActionBar>
     </div>
   );
@@ -560,7 +556,7 @@ function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: For
         <CardContent className="space-y-3 p-4">
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-[10rem_1fr]">
             <Field label={t("Date", "Date")}><Input type="date" value={day} onChange={(e) => setDay(e.target.value)} /></Field>
-            <Field label={t("Description", "Libellé")}><Input value={memo} onChange={(e) => setMemo(e.target.value)} /></Field>
+            <Field label={t("Description", "Libellé")} required><Input value={memo} onChange={(e) => setMemo(e.target.value)} /></Field>
           </div>
           <label className="flex items-center gap-2 text-sm">
             <Switch checked={opening} onCheckedChange={setOpening} />
@@ -610,17 +606,17 @@ function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: For
                 </div>
                 {pt && (
                   <div className="mt-2 md:max-w-md">
-                    <Field label={pt[0] === "customer" ? t("Customer", "Client") : t("Supplier, agent or employee", "Fournisseur, agent ou employé")}>
+                    <Field label={pt[0] === "customer" ? t("Customer", "Client") : t("Supplier, agent or employee", "Fournisseur, agent ou employé")} required>
                       <PartySelect types={pt} value={l.partyId} onChange={(id) => set(l.key, { partyId: id })} allowCreate={false} />
                     </Field>
                   </div>
                 )}
                 {isCdf(a) && (
                   <div className="mt-2 grid grid-cols-2 gap-2 md:max-w-md">
-                    <Field label={t("Amount in CDF", "Montant en FC")}>
+                    <Field label={t("Amount in CDF", "Montant en FC")} required>
                       <Input inputMode="decimal" value={l.native} onChange={(e) => setNative(l, e.target.value, l.rate)} />
                     </Field>
-                    <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 USD)")}>
+                    <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 USD)")} required>
                       <Input inputMode="decimal" value={l.rate} onChange={(e) => setNative(l, l.native, e.target.value)} />
                     </Field>
                   </div>
@@ -643,12 +639,11 @@ function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: For
         </CardContent>
       </Card>
 
-      {canSave && problems.length > 0 && <p className="text-right text-xs text-muted-foreground">{problems[0]}</p>}
       <ActionBar canSave={canSave}>
         <Button variant="outline" disabled={savingDraft} onClick={() => onSaveDraft({ kind: "journal", date: day, memo: memo.trim() || null, payload: payload() })}>
           {t("Save as optional", "Enregistrer comme facultative")}
         </Button>
-        <Button disabled={problems.length > 0 || m.isPending} onClick={() => m.mutate({ date: day, ...payload() })}>{t("Save", "Enregistrer")}</Button>
+        <SubmitButton blocked={problems[0]} pending={m.isPending} onClick={() => m.mutate({ date: day, ...payload() })}>{t("Save", "Enregistrer")}</SubmitButton>
       </ActionBar>
     </div>
   );
@@ -715,7 +710,17 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
       onPosted(res.id);
     },
   });
-  const valid = from && to && from.id !== to.id && fa.gt(0) && ta.gt(0);
+  const blocked = !from
+    ? t("Choose the account the money leaves", "Choisissez le compte de départ")
+    : !fa.gt(0)
+      ? t("Enter the amount out", "Saisissez le montant sorti")
+      : !to
+        ? t("Choose the account the money goes to", "Choisissez le compte d'arrivée")
+        : from.id === to.id
+          ? t("Pick two different accounts", "Choisissez deux comptes différents")
+          : !ta.gt(0)
+            ? t("Enter the amount in", "Saisissez le montant reçu")
+            : null;
 
   function payload(): Record<string, unknown> {
     return {
@@ -743,20 +748,21 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
           <Field label={t("Date", "Date")} className="sm:col-span-2 sm:max-w-[12rem]">
             <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
           </Field>
-          <Field label={t("From account", "Du compte")} hint={balOf(from) ? `${t("Balance", "Solde")} ${balOf(from)}` : undefined}>
+          <Field label={t("From account", "Du compte")} required hint={balOf(from) ? `${t("Balance", "Solde")} ${balOf(from)}` : undefined}>
             <MoneyAccountSelect value={fromId} onChange={(id) => setFromId(id)} />
           </Field>
-          <Field label={t(`Amount out${from ? ` (${from.currency})` : ""}`, `Montant sorti${from ? ` (${from.currency})` : ""}`)}>
+          <Field label={t(`Amount out${from ? ` (${from.currency})` : ""}`, `Montant sorti${from ? ` (${from.currency})` : ""}`)} required>
             <Input inputMode="decimal" value={fromAmount} onChange={(e) => setFromAmount(e.target.value)} placeholder="0" />
           </Field>
           <Field
             label={t("To account", "Vers le compte")}
             hint={balOf(to) ? `${t("Balance", "Solde")} ${balOf(to)}` : undefined}
             error={from && to && from.id === to.id ? t("Pick two different accounts", "Choisissez deux comptes différents") : null}
+            required
           >
             <MoneyAccountSelect value={toId} onChange={(id) => setToId(id)} />
           </Field>
-          <Field label={t(`Amount in${to ? ` (${to.currency})` : ""}`, `Montant reçu${to ? ` (${to.currency})` : ""}`)}>
+          <Field label={t(`Amount in${to ? ` (${to.currency})` : ""}`, `Montant reçu${to ? ` (${to.currency})` : ""}`)} required>
             <Input inputMode="decimal" value={toAmount} onChange={(e) => { setToAmount(e.target.value); setToTouched(true); }} placeholder="0" />
           </Field>
           <Field label={t("Note (optional)", "Note (facultatif)")} className="sm:col-span-2">
@@ -789,7 +795,7 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
         <Button variant="outline" disabled={savingDraft} onClick={() => onSaveDraft({ kind: "transfer", date: day, memo: memo.trim() || null, payload: payload() })}>
           {t("Save as optional", "Enregistrer comme facultative")}
         </Button>
-        <Button onClick={() => m.mutate({ date: day, ...payload() })} disabled={!valid || m.isPending}>{t("Save", "Enregistrer")}</Button>
+        <SubmitButton onClick={() => m.mutate({ date: day, ...payload() })} blocked={blocked} pending={m.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
       </ActionBar>
     </div>
   );

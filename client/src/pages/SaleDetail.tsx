@@ -10,7 +10,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader } from "@/components/common";
+import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
 import { MoneyAccountSelect, useMoneyAccounts, useRate } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
@@ -40,7 +40,18 @@ function ReturnDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }
   const tooMany = chosen.some((x) => x.q.gt(x.max));
   const refund = chosen.reduce((s, x) => s.plus(d(x.line.lineTotal).times(x.q).dividedBy(x.line.qty).toDecimalPlaces(2)), d(0));
   const isCdf = mode === "account" && account?.currency === "CDF";
-  const valid = chosen.length > 0 && !tooMany && reason.trim() && (mode === "credit" ? !!sale.customerId : !!accountId && (!isCdf || d(effRate).gt(0)));
+  const blocked =
+    chosen.length === 0
+      ? t("Enter the quantity coming back", "Saisissez la quantité retournée")
+      : tooMany
+        ? t("You cannot return more than was sold", "Impossible de retourner plus que la quantité vendue")
+        : !reason.trim()
+          ? t("Enter the reason", "Saisissez le motif")
+          : mode === "credit"
+            ? !sale.customerId && t("This sale has no customer", "Cette vente n'a pas de client")
+            : !accountId
+              ? t("Choose the account to pay back from", "Choisissez le compte de remboursement")
+              : isCdf && !d(effRate).gt(0) && t("Enter the exchange rate", "Saisissez le taux de change");
 
   function save() {
     m.mutate({
@@ -99,7 +110,7 @@ function ReturnDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }
           {tooMany && <p className="text-sm text-destructive">{t("You cannot return more than was sold.", "Impossible de retourner plus que la quantité vendue.")}</p>}
           <div className="grid gap-3 sm:grid-cols-2">
             <Field label={t("Date", "Date")}><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
-            <Field label={t("Reason", "Motif")}><Input value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
+            <Field label={t("Reason", "Motif")} required><Input value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
           </div>
           <div className="space-y-2">
             <p className="text-sm font-medium">{t("Refund", "Remboursement")}</p>
@@ -111,11 +122,11 @@ function ReturnDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }
             </div>
             {mode === "account" ? (
               <div className="grid gap-3 sm:grid-cols-2">
-                <Field label={t("Paid from", "Payé depuis")}>
+                <Field label={t("Paid from", "Payé depuis")} required>
                   <MoneyAccountSelect value={accountId} onChange={(id, a) => { setAccountId(id); setAccount(a); }} />
                 </Field>
                 {isCdf && (
-                  <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 $)")} hint={`${t("Pay out", "À rendre")}: ${cdf(refund.times(d(effRate)).toDecimalPlaces(0).toString())}`}>
+                  <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 $)")} hint={`${t("Pay out", "À rendre")}: ${cdf(refund.times(d(effRate)).toDecimalPlaces(0).toString())}`} required>
                     <Input inputMode="decimal" value={effRate} onChange={(e) => setRate(e.target.value)} />
                   </Field>
                 )}
@@ -132,7 +143,7 @@ function ReturnDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <Button onClick={save} disabled={!valid || m.isPending}>{t("Record return", "Enregistrer le retour")}</Button>
+          <SubmitButton onClick={save} blocked={blocked} pending={m.isPending}>{t("Record return", "Enregistrer le retour")}</SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -162,13 +173,13 @@ function VoidDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }) 
           </p>
         )}
         <div className="space-y-3">
-          <Field label={t("Reason", "Motif")}><Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
+          <Field label={t("Reason", "Motif")} required><Textarea rows={2} value={reason} onChange={(e) => setReason(e.target.value)} /></Field>
           <Field label={t("Date", "Date")}><Input type="date" value={date} onChange={(e) => setDate(e.target.value)} /></Field>
           <ErrorText error={m.error} />
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Keep the sale", "Garder la vente")}</Button>
-          <Button variant="destructive" disabled={!reason.trim() || m.isPending} onClick={() => m.mutate({ reason: reason.trim(), date })}>{t("Cancel sale", "Annuler la vente")}</Button>
+          <SubmitButton variant="destructive" blocked={!reason.trim() && t("Enter the reason", "Saisissez le motif")} pending={m.isPending} onClick={() => m.mutate({ reason: reason.trim(), date })}>{t("Cancel sale", "Annuler la vente")}</SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation } from "wouter";
 import { Plus } from "lucide-react";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader } from "@/components/common";
+import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
 import { LocationSelect, PartySelect } from "@/components/pickers";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -165,7 +165,15 @@ function NewContainerDialog({ onClose, onCreated }: { onClose: () => void; onCre
   });
   const foreign = currency !== "USD";
   const rateOk = !foreign || d(rateToUsd).gt(0);
-  const valid = number.trim() && supplierId && locationId && rateOk;
+  const blocked = !number.trim()
+    ? t("Enter the container number", "Saisissez le numéro du conteneur")
+    : !supplierId
+      ? t("Choose a supplier", "Choisissez un fournisseur")
+      : !locationId
+        ? t("Choose where to unload", "Choisissez le lieu de déchargement")
+        : !rateOk
+          ? t("Enter the rate to USD", "Saisissez le taux en USD")
+          : null;
 
   function save() {
     create.mutate({
@@ -189,13 +197,13 @@ function NewContainerDialog({ onClose, onCreated }: { onClose: () => void; onCre
           <DialogDescription>{t("You can add the items and costs on the next screen.", "Vous ajouterez les articles et les frais à l'écran suivant.")}</DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label={t("Container number", "Numéro du conteneur")}>
+          <Field label={t("Container number", "Numéro du conteneur")} required>
             <Input autoFocus value={number} onChange={(e) => setNumber(e.target.value)} placeholder="MSKU1234567" />
           </Field>
-          <Field label={t("Supplier", "Fournisseur")}>
+          <Field label={t("Supplier", "Fournisseur")} required>
             <PartySelect types={["supplier"]} value={supplierId} onChange={(id) => setSupplierId(id)} />
           </Field>
-          <Field label={t("Unload into", "Décharger à")}>
+          <Field label={t("Unload into", "Décharger à")} required>
             <LocationSelect value={locationId} onChange={setLocationId} />
           </Field>
           <Field label={t("Status", "Statut")}>
@@ -222,7 +230,8 @@ function NewContainerDialog({ onClose, onCreated }: { onClose: () => void; onCre
             <Field
               label={t(`USD for 1 ${currency}`, `USD pour 1 ${currency}`)}
               hint={t(`Example: 1 CNY = 0.14 USD`, `Exemple : 1 CNY = 0,14 USD`)}
-              error={rateToUsd && !rateOk ? t("Enter a rate above zero", "Entrez un taux supérieur à zéro") : null}
+              error={rateToUsd && !rateOk ? t("Enter a rate above zero", "Saisissez un taux supérieur à zéro") : null}
+              required
             >
               <Input inputMode="decimal" value={rateToUsd} onChange={(e) => setRateToUsd(e.target.value)} placeholder="0.14" />
             </Field>
@@ -241,7 +250,7 @@ function NewContainerDialog({ onClose, onCreated }: { onClose: () => void; onCre
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <Button onClick={save} disabled={!valid || create.isPending}>{t("Create", "Créer")}</Button>
+          <SubmitButton onClick={save} blocked={blocked} pending={create.isPending}>{t("Create", "Créer")}</SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>

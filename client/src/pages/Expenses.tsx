@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Ban, Info, Plus } from "lucide-react";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
+import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
 import { AccountSelect, MoneyAccountSelect, PartySelect, useRate } from "@/components/pickers";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -195,14 +195,14 @@ function CancelDialog({ row, onClose }: { row: ExpenseRow; onClose: () => void }
             "Une écriture d'annulation est passée à la date ci-dessous : l'argent revient au compte qui a payé (ou la dette est annulée). La dépense reste dans la liste, marquée annulée.",
           )}
         </p>
-        <Field label={t("Cancellation date", "Date d'annulation")}>
+        <Field label={t("Cancellation date", "Date d'annulation")} required>
           <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
         </Field>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Keep", "Garder")}</Button>
-          <Button variant="destructive" onClick={() => voidM.mutate({ date: day })} disabled={!day || voidM.isPending}>
+          <SubmitButton variant="destructive" onClick={() => voidM.mutate({ date: day })} blocked={!day && t("Choose the cancellation date", "Choisissez la date d'annulation")} pending={voidM.isPending}>
             {t("Cancel expense", "Annuler la dépense")}
-          </Button>
+          </SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>
@@ -231,7 +231,19 @@ function AddExpenseDialog({ onClose }: { onClose: () => void }) {
   const amt = d(amount);
   const usdValue = isCdf && d(rate).gt(0) ? amt.dividedBy(d(rate)) : null;
   const create = useApiMutation<Record<string, unknown>>("POST", "/api/expenses", { success: t("Expense recorded", "Dépense enregistrée"), onSuccess: onClose });
-  const valid = !!accountId && description.trim() && amt.gt(0) && (mode === "paid" ? !!payFrom : !!partyId) && (!isCdf || d(rate).gt(0));
+  const blocked = !accountId
+    ? t("Choose a category", "Choisissez une catégorie")
+    : !description.trim()
+      ? t("Enter a description", "Saisissez une description")
+      : mode === "paid" && !payFrom
+        ? t("Choose the account it was paid from", "Choisissez le compte de paiement")
+        : mode === "owed" && !partyId
+          ? t("Choose who it is owed to", "Choisissez à qui c'est dû")
+          : !amt.gt(0)
+            ? t("Enter an amount above zero", "Saisissez un montant supérieur à zéro")
+            : isCdf && !d(rate).gt(0)
+              ? t("Enter the exchange rate", "Saisissez le taux de change")
+              : null;
 
   function save() {
     create.mutate({
@@ -258,10 +270,10 @@ function AddExpenseDialog({ onClose }: { onClose: () => void }) {
           <Field label={t("Date", "Date")}>
             <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
           </Field>
-          <Field label={t("Category", "Catégorie")}>
+          <Field label={t("Category", "Catégorie")} required>
             <AccountSelect types={["expense"]} value={accountId} onChange={setAccountId} placeholder={t("Choose category", "Choisir la catégorie")} />
           </Field>
-          <Field label={t("Description", "Description")} className="sm:col-span-2">
+          <Field label={t("Description", "Description")} className="sm:col-span-2" required>
             <Input value={description} onChange={(e) => setDescription(e.target.value)} placeholder={t("e.g. October rent", "ex. loyer d'octobre")} />
           </Field>
           <div className="sm:col-span-2">
@@ -275,12 +287,12 @@ function AddExpenseDialog({ onClose }: { onClose: () => void }) {
             </div>
           </div>
           {mode === "paid" ? (
-            <Field label={t("Paid from", "Payée depuis")} className="sm:col-span-2">
+            <Field label={t("Paid from", "Payée depuis")} className="sm:col-span-2" required>
               <MoneyAccountSelect value={payFrom?.id ?? null} onChange={(_, a) => setPayFrom(a)} />
             </Field>
           ) : (
             <>
-              <Field label={t("Owed to (employee, supplier or agent)", "Dû à (employé, fournisseur ou agent)")}>
+              <Field label={t("Owed to (employee, supplier or agent)", "Dû à (employé, fournisseur ou agent)")} required>
                 <PartySelect types={["employee", "supplier", "agent"]} value={partyId} onChange={(id) => setPartyId(id)} />
               </Field>
               <Field label={t("Currency", "Devise")}>
@@ -294,18 +306,18 @@ function AddExpenseDialog({ onClose }: { onClose: () => void }) {
               </Field>
             </>
           )}
-          <Field label={t(`Amount (${currency})`, `Montant (${currency})`)}>
+          <Field label={t(`Amount (${currency})`, `Montant (${currency})`)} required>
             <Input inputMode="decimal" value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
           </Field>
           {isCdf && (
-            <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 $)")} hint={usdValue ? `= ${usd(usdValue.toFixed(2))}` : undefined}>
+            <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 $)")} hint={usdValue ? `= ${usd(usdValue.toFixed(2))}` : undefined} required>
               <Input inputMode="decimal" value={rate} onChange={(e) => { setRate(e.target.value); setRateTouched(true); }} />
             </Field>
           )}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <Button onClick={save} disabled={!valid || create.isPending}>{t("Save", "Enregistrer")}</Button>
+          <SubmitButton onClick={save} blocked={blocked} pending={create.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
         </DialogFooter>
       </DialogContent>
     </Dialog>
