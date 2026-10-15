@@ -705,7 +705,13 @@ export function registerRoutes(app: Express) {
       .where(conds.length ? and(...conds) : undefined)
       .orderBy(desc(expenses.date), desc(expenses.id))
       .limit(500);
-    res.json(rows.map((r) => ({ ...r.expense, accountName: r.accountName })));
+    // A partner doesn't see the note of an expense paid on the same voucher as another partner's movement.
+    const hidden = req.user!.role === "partner" ? await reports.otherPartnerAccountIds(db, req.user!.partnerId) : new Set<number>();
+    const ids = rows.map((r) => r.expense.journalId).filter((x): x is number => !!x);
+    const touched = hidden.size && ids.length
+      ? new Set((await db.select({ id: journalLines.journalId }).from(journalLines).where(and(inArray(journalLines.journalId, ids), inArray(journalLines.accountId, Array.from(hidden))))).map((r) => r.id))
+      : new Set<number>();
+    res.json(rows.map((r) => ({ ...r.expense, ...(r.expense.journalId && touched.has(r.expense.journalId) ? { description: r.accountName } : {}), accountName: r.accountName })));
   }));
   app.post("/api/expenses", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = z

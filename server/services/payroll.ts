@@ -1,5 +1,5 @@
-import { and, asc, eq } from "drizzle-orm";
-import { accounts, journals, parties, payrollRuns, type PayrollLine } from "@shared/schema";
+import { and, asc, eq, sql } from "drizzle-orm";
+import { accounts, journalLines, journals, parties, payrollRuns, type PayrollLine } from "@shared/schema";
 import { cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, francDecimalsError, notFound } from "../errors";
@@ -146,6 +146,24 @@ export async function runPayroll(tx: Tx, input: PayrollRunInput, userId: number)
 export async function cancelRun(tx: Tx, month: string, date: string | null | undefined, userId: number) {
   const [run] = await tx.select().from(payrollRuns).where(and(eq(payrollRuns.month, month), eq(payrollRuns.status, "posted"))).for("update");
   if (!run) throw notFound("Payroll run", "Passage de paie introuvable");
+  if (run.journalId) {
+    // Withholdings already paid over would leave 2100 owed back by whoever received them.
+    const withheldId = await systemAccountId(tx, SYSTEM_ACCOUNTS.payrollWithheld);
+    const sumOn = async (journalId?: number) => {
+      const [r] = await tx
+        .select({ v: sql<string>`coalesce(sum(${journalLines.credit} - ${journalLines.debit}), 0)` })
+        .from(journalLines)
+        .where(and(eq(journalLines.accountId, withheldId), journalId ? eq(journalLines.journalId, journalId) : sql`true`));
+      return dec(r?.v ?? 0);
+    };
+    const withheld = await sumOn(run.journalId);
+    if (withheld.gt(0) && (await sumOn()).minus(withheld).lt(-0.005)) {
+      throw conflict(
+        "This run's withholdings were already paid over. Cancel that payment first.",
+        "Les retenues de ce passage de paie ont déjà été versées. Annulez d'abord ce versement.",
+      );
+    }
+  }
   const cancelJournalId = run.journalId
     ? await reverseJournal(tx, run.journalId, { date: date || run.date, userId, memo: `Annulation des salaires ${monthText(month)}` })
     : null;
