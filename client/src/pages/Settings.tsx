@@ -16,6 +16,7 @@ import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton } 
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth, type Role } from "@/lib/auth";
 import { useI18n, useT, type Lang } from "@/lib/i18n";
+import { useSystemText } from "@/lib/systemText";
 import { cdf, d, date as fmtDate, money, usd } from "@/lib/format";
 import type { Account, Category, Location, Partner, Settings as ShopSettings } from "@/lib/types";
 import { accountTypeLabel } from "@/pages/Reports";
@@ -401,6 +402,7 @@ const ACCOUNT_TYPES: Account["type"][] = ["asset", "liability", "equity", "incom
 
 function AccountsTab() {
   const t = useT();
+  const sys = useSystemText();
   const q = useQuery<Account[]>({ queryKey: ["/api/accounts"] });
   const [editing, setEditing] = useState<Account | "new" | null>(null);
   const [showInactive, setShowInactive] = useState(false);
@@ -438,7 +440,7 @@ function AccountsTab() {
                     <TableRow key={a.id}>
                       <TableCell className="font-mono text-xs">{a.code}</TableCell>
                       <TableCell className="min-w-[180px]">
-                        {a.name}
+                        {sys.account(a.name)}
                         {a.systemKey && <Badge variant="outline" className="ml-2">{t("System", "Système")}</Badge>}
                         {!a.active && <Badge variant="secondary" className="ml-2">{t("Inactive", "Inactif")}</Badge>}
                       </TableCell>

@@ -9,6 +9,7 @@ import { EmptyState, ErrorText, Loading, Num, PageHeader, StatCard } from "@/com
 import { RatesCard } from "@/components/RatesCard";
 import { useAuth } from "@/lib/auth";
 import { count, useT } from "@/lib/i18n";
+import { useSystemText } from "@/lib/systemText";
 import { cdf, d, pct, date as fmtDate, usd } from "@/lib/format";
 
 interface DashboardData {
@@ -40,6 +41,7 @@ const STATUS_LABEL: Record<string, [string, string]> = {
 
 export default function Dashboard() {
   const t = useT();
+  const sys = useSystemText();
   const { can } = useAuth();
   const q = useQuery<DashboardData>({ queryKey: ["/api/reports/dashboard"] });
   const data = q.data;
@@ -125,7 +127,7 @@ export default function Dashboard() {
                   <div className="divide-y text-sm">
                     {data.money.map((m) => (
                       <div key={m.id} className="flex items-center justify-between gap-2 py-2">
-                        <span>{m.name}</span>
+                        <span>{sys.account(m.name)}</span>
                         <span className="text-right">
                           {m.currency === "CDF" ? (
                             <>

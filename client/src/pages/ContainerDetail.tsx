@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import { AlertTriangle, ArrowLeft, Bike, Info, Lock, PackageCheck, Pencil, Plus, Save, Trash2, Undo2, X } from "lucide-react";
 import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, StatCard, SubmitButton, unclearAmount } from "@/components/common";
-import { ContainerRateField, MoneyAccountSelect, PartySelect, perUsdText, useRate, VariantSearch } from "@/components/pickers";
+import { ContainerRateField, MoneyAccountSelect, PartySelect, perUsdText, useAccounts, useRate, VariantSearch } from "@/components/pickers";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Textarea } from "@/components/ui/textarea";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
-import { curLabel, d, date, money, pct, qty, todayLocal, typedNumberOk, unitCost, usd, variantText } from "@/lib/format";
+import { curLabel, d, date, money, pct, qty, todayLocal, typedNumberOk, unitCost, usd, variantText, unclearQty } from "@/lib/format";
 import { unitLabel, wholeUnit } from "@/lib/units";
 import { useT, count } from "@/lib/i18n";
 import type { Account, Party, VariantRow } from "@/lib/types";
@@ -455,6 +455,8 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
   const rate = d(c.rateToUsd);
   const problems = draft.map((r) => {
     const q = d(r.quantity);
+    // "1.000" pieces is asked about by its field (1 000 or 1?), never read as 1.
+    if (!typedNumberOk(r.quantity)) return unclearQty(t, r.quantity) ?? t("Correct the quantity", "Corrigez la quantité");
     if (!r.quantity.trim() || q.lte(0)) return t("Quantity must be above zero", "La quantité doit être supérieure à zéro");
     if (r.tracksSerials && !q.isInteger()) return t("Motorcycles must be whole units", "Les motos se comptent en unités entières");
     if (!q.isInteger() && wholeUnit(r.unit)) return t(`Counted by the ${unitLabel(t, r.unit, 1)}: enter a whole number`, `Se compte à l'unité (${unitLabel(t, r.unit, 1)})\u00a0: saisissez un nombre entier`);
@@ -534,7 +536,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                   {editable ? (
                     <div className="mt-2 grid grid-cols-2 items-end gap-2">
                       <Field label={t("Quantity", "Quantité")}>
-                        <Input className="text-right" inputMode="decimal" value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
+                        <Input className="text-right" inputMode={wholeUnit(r.unit) ? "numeric" : "decimal"} whole={wholeUnit(r.unit)} inlineAlert value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
                       </Field>
                       <Field label={t(`Price each (${curLabel(c.currency)})`, `Prix/unité (${curLabel(c.currency)})`)}>
                         <Input className="text-right" inputMode="decimal" currency={c.currency} value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
@@ -598,7 +600,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                       {editable ? (
                         <>
                           <TableCell className="text-right">
-                            <Input className="ml-auto w-20 text-right" inputMode="decimal" aria-label={t(`Quantity of ${itemLabel(r)}`, `Quantité ${de(itemLabel(r))}`)} value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
+                            <Input className="ml-auto w-20 text-right" inputMode={wholeUnit(r.unit) ? "numeric" : "decimal"} whole={wholeUnit(r.unit)} inlineAlert aria-label={t(`Quantity of ${itemLabel(r)}`, `Quantité ${de(itemLabel(r))}`)} value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
                           </TableCell>
                           <TableCell className="text-right">
                             <Input className="ml-auto w-28 text-right" inputMode="decimal" currency={c.currency} inlineAlert aria-label={t(`Unit price of ${itemLabel(r)}`, `Prix unitaire ${de(itemLabel(r))}`)} value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
@@ -677,7 +679,7 @@ function ExpensesSection({ c, editable }: { c: ContainerFull; editable: boolean 
   const L = useLabels();
   const [adding, setAdding] = useState(false);
   const [deleting, setDeleting] = useState<ContainerExpense | null>(null);
-  const accountsQ = useQuery<Account[]>({ queryKey: ["/api/accounts"] });
+  const accountsQ = useAccounts();
   const partiesQ = useQuery<Party[]>({ queryKey: ["/api/parties"] });
   const accountName = (id: number | null) => accountsQ.data?.find((a) => a.id === id)?.name ?? `#${id}`;
   const partyName = (id: number | null) => partiesQ.data?.find((p) => p.id === id)?.name ?? `#${id}`;
@@ -712,9 +714,10 @@ function ExpensesSection({ c, editable }: { c: ContainerFull; editable: boolean 
                   <TableHead>{t("Date", "Date")}</TableHead>
                   <TableHead>{t("Type", "Type")}</TableHead>
                   <TableHead className="text-right">{t("Amount", "Montant")}</TableHead>
-                  <TableHead className="text-right">$</TableHead>
+                  {/* Named in full: on a phone each heading labels its value on the card. */}
+                  <TableHead className="text-right">{t("In $", "En $")}</TableHead>
                   <TableHead>{t("Split", "Répartition")}</TableHead>
-                  <TableHead>{t("Paid from / owed to", "Payé par / dû à")}</TableHead>
+                  <TableHead>{t("Payment", "Règlement")}</TableHead>
                   {editable && <TableHead className="w-10" />}
                 </TableRow>
               </TableHeader>

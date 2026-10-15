@@ -283,3 +283,14 @@ export function usdPerUnit(perUsd: string | null | undefined): string {
   const x = d(perUsd);
   return x.gt(0) ? d(1).dividedBy(x).toDecimalPlaces(12).toString() : "";
 }
+
+/**
+ * What to say when a quantity counted in whole units was refused by its field as ambiguous ("1.000" pieces):
+ * "Précisez la quantité : 1 000 ou 1".
+ */
+export function unclearQty(t: (en: string, fr: string) => string, value: string | null | undefined): string | null {
+  const r = ambiguousReadings(value);
+  if (!r) return null;
+  const [big, small] = r.map((x) => qty(x));
+  return t(`Say which quantity: ${big} or ${small}`, `Précisez la quantité\u00a0: ${big} ou ${small}`);
+}

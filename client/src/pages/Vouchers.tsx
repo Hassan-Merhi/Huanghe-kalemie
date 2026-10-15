@@ -11,7 +11,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
-import { AccountSelect, MoneyAccountSelect, PartySelect, RateInput, useMoneyAccounts, useRate, useRateField } from "@/components/pickers";
+import { AccountSelect, MoneyAccountSelect, PartySelect, RateInput, useAccounts, useMoneyAccounts, useRate, useRateField } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api, invalidateAll } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -234,7 +234,7 @@ const asArray = (v: unknown): Record<string, unknown>[] => (Array.isArray(v) ? (
 const isAmount = (s: string) => /^\d+(\.\d+)?$/.test(s.trim());
 
 function useBalances() {
-  return useQuery<Account[]>({ queryKey: ["/api/accounts/balances"] });
+  return useAccounts("/api/accounts/balances");
 }
 
 /** Account picker for voucher lines: only the account types the voucher allows, without blocked accounts. */
@@ -471,7 +471,7 @@ const blankJLine = (): JLine => ({ key: rowKey++, accountId: null, partyId: null
 function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: FormProps) {
   const t = useT();
   const p = draft?.payload ?? {};
-  const accountsQ = useQuery<Account[]>({ queryKey: ["/api/accounts"] });
+  const accountsQ = useAccounts();
   const accounts = accountsQ.data ?? [];
   const [day, setDay] = useState(draft?.date ?? todayLocal());
   const dayRate = useRate(day);

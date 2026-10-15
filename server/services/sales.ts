@@ -157,10 +157,15 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
   const tolerance = francLegs.length
     ? Decimal.max(...francLegs.map((l) => FRANC_ROUNDING.dividedBy(l.rate!).toDecimalPlaces(2, Decimal.ROUND_UP)))
     : new Decimal(0);
+  // The tolerance in dollars rounds up (0,04 $ at 2 808 FC is 112 FC): the francs over or under, counted
+  // in francs at the sale's one rate, must also be 100 FC at most.
+  const francRate = francLegs[0]?.rate ? dec(francLegs[0].rate) : null;
+  const inFrancs = (l: { currency: string; usd: string; nativeAmount: string | null }) => (l.currency === "CDF" ? dec(l.nativeAmount!) : dec(l.usd).times(francRate!));
+  const francGap = francRate ? total.times(francRate).minus(sum(legs.map(inFrancs))).plus(changeLeg ? inFrancs(changeLeg) : 0) : new Decimal(0);
   // Positive: the customer paid a few cents short (a loss); negative: a few cents over (a gain).
   let rounding = new Decimal(0);
   let credit = total.minus(paid);
-  if (!credit.isZero() && credit.abs().lte(tolerance)) {
+  if (!credit.isZero() && credit.abs().lte(tolerance) && francGap.abs().lte(FRANC_ROUNDING)) {
     rounding = credit;
     credit = new Decimal(0);
   } else if (credit.isNegative()) {
@@ -296,6 +301,7 @@ export async function getSale(tx: Tx, id: number) {
       sku: variants.sku,
       attributes: variants.attributes,
       productName: products.name,
+      unit: products.unit,
       chassisNo: motorcycleUnits.chassisNo,
       engineNo: motorcycleUnits.engineNo,
     })
@@ -358,6 +364,8 @@ export async function getSale(tx: Tx, id: number) {
       sku: l.sku,
       attributes: l.attributes,
       productName: l.productName,
+      // So a return of "1.000" pieces is asked about (1 000 or 1?) rather than read as 1.
+      unit: l.unit,
       chassisNo: l.chassisNo,
       engineNo: l.engineNo,
     })),

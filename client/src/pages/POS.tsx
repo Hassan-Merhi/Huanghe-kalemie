@@ -13,7 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { EmptyState, Field, Num, PageHeader, SubmitButton } from "@/components/common";
-import { LocationSelect, MoneyAccountSelect, PartySelect, RateInput, VariantSearch, useMoneyAccounts, useRate } from "@/components/pickers";
+import { LocationSelect, MoneyAccountSelect, PartySelect, RateInput, VariantSearch, useAccounts, useMoneyAccounts, useRate } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
@@ -38,6 +38,7 @@ export interface SaleLineFull {
   sku: string;
   attributes: Record<string, string>;
   productName: string;
+  unit?: string;
   chassisNo: string | null;
   engineNo: string | null;
 }
@@ -95,6 +96,8 @@ export interface SaleFull {
 }
 
 const ROUND = Decimal.ROUND_HALF_UP;
+/** Francs over or under a sale that count as its rounding (as on the server). */
+const FRANC_ROUNDING = new Decimal(100);
 const c2 = (x: Decimal) => x.toDecimalPlaces(2, ROUND);
 
 // ---------------------------------------------------------------- Receipt (80mm thermal)
@@ -112,7 +115,7 @@ function ReceiptRow({ left, right, bold }: { left: React.ReactNode; right: React
 export function SaleReceipt({ sale }: { sale: SaleFull }) {
   const t = useT();
   const settings = useQuery<Settings>({ queryKey: ["/api/settings"] }).data;
-  const accounts = useQuery<Account[]>({ queryKey: ["/api/accounts"] }).data ?? [];
+  const accounts = useAccounts().data ?? [];
   // The customer reads "Cash", not the shop's account names.
   const accName = (id: number, currency: string) => {
     const a = accounts.find((x) => x.id === id);
@@ -381,7 +384,15 @@ export default function POS() {
   const francs = pays.some((p) => accById(p.accountId)?.currency === "CDF" && d(p.amount).gt(0));
   const payTolerance = francs ? francTolerance : d(0);
   const excess = received.minus(total);
-  const changeAcc = accById(changeAccId) ?? (excess.gt(payTolerance) ? findCash(payCurrency) ?? findCash("USD") : undefined);
+  /**
+   * The francs over or under, counted in francs as the server does: 75 700 FC on a 75 816 FC sale is 116 FC
+   * short, not rounding, though the tolerance in dollars (0,04 $ at 2 808) would let it through.
+   */
+  const francGap = (exact: Decimal) => (rateNum.gt(0) ? total.minus(exact).times(rateNum) : d(0));
+  const withinFrancs = (exact: Decimal) => francGap(exact).abs().lte(FRANC_ROUNDING);
+  // More than 100 FC handed over too much: change is due, even if under the tolerance in dollars.
+  const francsOver = francs && francGap(receivedExact).lt(FRANC_ROUNDING.negated());
+  const changeAcc = accById(changeAccId) ?? (excess.gt(payTolerance) || francsOver ? findCash(payCurrency) ?? findCash("USD") : undefined);
   // Francs go back in 100 FC steps (no smaller notes); the few francs over or under are the sale's rounding,
   // which the server accepts up to 100 FC. Dollars go back to the cent.
   const exactExcess = receivedExact.minus(total);
@@ -390,7 +401,7 @@ export default function POS() {
       ? Decimal.max(exactExcess.times(rateNum).dividedBy(100).toDecimalPlaces(0, ROUND).times(100), 0)
       : Decimal.max(c2(exactExcess), 0)
     : d(0);
-  const showChange = excess.gt(payTolerance) || !!changeAmt;
+  const showChange = excess.gt(payTolerance) || francsOver || !!changeAmt;
   const changeNative = showChange && changeAcc ? (changeAmt ? c2(d(changeAmt)) : autoChange) : d(0);
   // Change handed back in francs is rounded too, so it counts like a franc payment (the server does the same).
   const tolerance = francs || (changeAcc?.currency === "CDF" && changeNative.gt(0)) ? francTolerance : d(0);
@@ -406,17 +417,19 @@ export default function POS() {
   const changeUsd = changeAcc?.currency === "CDF" ? (rateNum.gt(0) ? c2(changeNative.dividedBy(rateNum)) : d(0)) : changeNative;
   const paid = received.minus(changeUsd);
   const remaining = total.minus(paid);
-  const overpaid = remaining.lt(tolerance.negated());
-  const credit = remaining.gt(tolerance) ? remaining : d(0);
-  /** A few francs over or under, taken as the sale's rounding: shown in francs, not as cents left to pay. */
   // Worked out before rounding to the cent, so it is the francs actually over or under (25 FC, not 0,01 $ = 28 FC).
   const changeExact = changeAcc?.currency === "CDF" ? (rateNum.gt(0) ? changeNative.dividedBy(rateNum) : d(0)) : changeNative;
-  const francRounding =
-    !remaining.isZero() && remaining.abs().lte(tolerance) && rateNum.gt(0) ? total.minus(receivedExact.minus(changeExact)).times(rateNum).toDecimalPlaces(0, ROUND) : null;
+  /** Within the rounding: under the tolerance in dollars and, when francs are involved, 100 FC at most. */
+  const rounded = remaining.abs().lte(tolerance) && (!tolerance.gt(0) || withinFrancs(receivedExact.minus(changeExact)));
+  const overpaid = remaining.lt(0) && !rounded;
+  const credit = remaining.gt(0) && !rounded ? remaining : d(0);
+  /** A few francs over or under, taken as the sale's rounding: shown in francs, not as cents left to pay. */
+  const francRounding = !remaining.isZero() && rounded && rateNum.gt(0) ? francGap(receivedExact.minus(changeExact)).toDecimalPlaces(0, ROUND) : null;
 
   /** A short franc payment: what is still to pay in francs too, in the 100 FC notes the customer can hand over. */
-  const remainingFc = francs && !francRounding && remaining.gt(tolerance) && paid.gt(0) && rateNum.gt(0)
-    ? remaining.times(rateNum).dividedBy(100).toDecimalPlaces(0, Decimal.ROUND_UP).times(100)
+  const remainingFc = francs && !francRounding && credit.gt(0) && paid.gt(0) && rateNum.gt(0)
+    // The nearest 100 FC to the francs actually short leaves the sale within its rounding: 116 FC short asks for 100 FC.
+    ? Decimal.max(francGap(receivedExact.minus(changeExact)).dividedBy(100).toDecimalPlaces(0, ROUND).times(100), FRANC_ROUNDING)
     : null;
 
   const takenUnitIds = useMemo(() => new Set(lines.map((l) => l.unitId).filter((x): x is number => !!x)), [lines]);
@@ -425,6 +438,13 @@ export default function POS() {
   // `problems` are mistakes to fix (listed in red); `todo` is what is simply not done yet (said once, in grey).
   const problems: string[] = [];
   const todo: string[] = [];
+  // A rate typed far from the day's comes first: every total below is worked out with it.
+  const rateTolerance = d(shop?.rateTolerancePct ?? "3");
+  const dayRateNum = d(dayRate);
+  const rateOff = dayRateNum.gt(0) && pays.some((p) => accById(p.accountId)?.currency === "CDF" && p.rate && d(p.rate).gt(0) && d(p.rate).minus(dayRateNum).abs().dividedBy(dayRateNum).times(100).gt(rateTolerance));
+  if (rateOff) {
+    problems.push(t(`The rate is more than ${rateTolerance.toString()}% from the day's rate (${fmtQty(dayRate)}): correct it`, `Le taux s'écarte de plus de ${rateTolerance.toString()}\u00a0% du taux du jour (${fmtQty(dayRate)})\u00a0: corrigez-le`));
+  }
   if (!locationId) todo.push(t("Choose the location", "Choisissez le lieu"));
   if (lines.length === 0) todo.push(t("Add at least one item", "Ajoutez au moins un article"));
   for (const l of lines) {
@@ -671,9 +691,9 @@ export default function POS() {
                             {l.variant.tracksSerials ? (
                               <Input value="1" disabled className="h-9" aria-label={t(`Quantity of ${l.variant.productName}`, `Quantité ${de(l.variant.productName)}`)} />
                             ) : (
-                              <div className="flex items-center gap-1">
+                              <div className="flex items-start gap-1">
                                 <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" aria-label={t(`Lower the quantity of ${l.variant.productName}`, `Diminuer la quantité ${de(l.variant.productName)}`)} onClick={() => updateLine(l.key, { qty: Decimal.max(d(l.qty).minus(1), 1).toString() })}><Minus className="h-3 w-3" /></Button>
-                                <Input className="h-9 min-w-0 text-center" inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} aria-label={t(`Quantity of ${l.variant.productName}`, `Quantité ${de(l.variant.productName)}`)} aria-invalid={(!d(l.qty).isInteger() && wholeUnit(l.variant.unit)) || undefined} value={l.qty} onChange={(e) => updateLine(l.key, { qty: e.target.value })} />
+                                <Input className="h-9 min-w-0 text-center" inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} inlineAlert alertClassName="relative -left-10 w-[calc(100%+5rem)]" aria-label={t(`Quantity of ${l.variant.productName}`, `Quantité ${de(l.variant.productName)}`)} aria-invalid={(!d(l.qty).isInteger() && wholeUnit(l.variant.unit)) || undefined} value={l.qty} onChange={(e) => updateLine(l.key, { qty: e.target.value })} />
                                 <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" aria-label={t(`Raise the quantity of ${l.variant.productName}`, `Augmenter la quantité ${de(l.variant.productName)}`)} onClick={() => updateLine(l.key, { qty: d(l.qty).plus(1).toString() })}><Plus className="h-3 w-3" /></Button>
                               </div>
                             )}
@@ -909,7 +929,7 @@ export default function POS() {
                   : t(`Finish sale ${usd(total.toFixed(2))}`, `Valider la vente ${usd(total.toFixed(2))}`)}
               </SubmitButton>
               {blockedReason && (lines.length > 0 || tried) && <p className="text-center text-xs text-muted-foreground lg:hidden" role="status">{blockedReason}</p>}
-              <p className="hidden text-center text-xs text-muted-foreground lg:block [@media(pointer:coarse)]:hidden">F9 / Ctrl+Entrée</p>
+              <p className="hidden text-center text-xs text-muted-foreground lg:block [@media(pointer:coarse)]:hidden">{t("F9 / Ctrl+Enter", "F9 / Ctrl+Entrée")}</p>
             </CardContent>
           </Card>
         </div>

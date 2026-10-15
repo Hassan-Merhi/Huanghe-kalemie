@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Check, ChevronsUpDown, Plus, Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -13,11 +13,23 @@ import { api, invalidateAll, withQuery } from "@/lib/api";
 import type { Account, Category, Location, Party, Settings, VariantRow } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
+import { accountText } from "@/lib/systemText";
 import { capitalize, monthText } from "@shared/french";
+
+/**
+ * The chart of accounts (or `/api/accounts/balances`), with the default accounts named in the language
+ * shown ("Caisse FC" reads "Cash FC" in English, as on the Accounts page). Only for display and picking:
+ * a form that renames an account starts from the name as stored.
+ */
+export function useAccounts(path: "/api/accounts" | "/api/accounts/balances" = "/api/accounts", opts: { enabled?: boolean } = {}) {
+  const { lang } = useI18n();
+  const select = useCallback((rows: Account[]) => (lang === "en" ? rows.map((a) => ({ ...a, name: accountText(a.name, lang) })) : rows), [lang]);
+  return useQuery<Account[], Error, Account[]>({ queryKey: [path], select, enabled: opts.enabled });
+}
 
 /** Cash boxes, bank and mobile money accounts. */
 export function useMoneyAccounts() {
-  const q = useQuery<Account[]>({ queryKey: ["/api/accounts"] });
+  const q = useAccounts();
   return { ...q, data: (q.data ?? []).filter((a) => a.isMoney && a.active) };
 }
 
@@ -42,7 +54,7 @@ export function MoneyAccountSelect({
   const { can } = useAuth();
   const { data } = useMoneyAccounts();
   const withBalance = showBalance && can("manager", "partner");
-  const balances = useQuery<Account[]>({ queryKey: ["/api/accounts/balances"], enabled: withBalance }).data;
+  const balances = useAccounts("/api/accounts/balances", { enabled: withBalance }).data;
   const balanceOf = (a: Account) => {
     const b = withBalance ? balances?.find((x) => x.id === a.id) : undefined;
     return b ? money(a.currency === "CDF" ? b.nativeBalance : b.balance, a.currency) : null;
@@ -108,7 +120,7 @@ export function AccountSelect({
   "aria-label"?: string;
 }) {
   const t = useT();
-  const q = useQuery<Account[]>({ queryKey: ["/api/accounts"] });
+  const q = useAccounts();
   const rows = (q.data ?? []).filter((a) => a.active && (!types || types.includes(a.type)) && (!filter || filter(a)));
   const selected = (q.data ?? []).find((a) => a.id === value);
   const [open, setOpen] = useState(false);

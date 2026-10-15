@@ -110,13 +110,12 @@ export default function VoucherPrint() {
   const totalCredit = rows.reduce((s, r) => s.plus(r.credit), d(0));
   const title = journalTypeLabel(v.type, t);
   const amountUsd = v.amount ?? v.total;
-  // Francs paid out or taken in: the amount in francs first, its dollar value beside it.
+  // Francs paid out or taken in: the amount in francs first, its dollar value at the voucher's rate beside it.
+  // A franc refund prints what the customer received (61 700 FC, 21,97 $), not the goods' 22,00 $.
   const cashFc = v.lines.filter((l) => l.isMoney && l.currency === "CDF" && l.nativeAmount && !d(l.nativeAmount).isZero());
-  // Only when those francs are the amount (a return's amount is the goods', the francs being a rounded refund).
-  const cashFcTotal = cashFc.length && cashFc.every((l) => d(l.nativeAmount).isNegative() === d(cashFc[0].nativeAmount).isNegative()) && v.lines.every((l) => !l.isMoney || cashFc.includes(l))
-    && cashFc.reduce((s, l) => s.plus(docValue(l, d(l.debit).gt(0) ? l.debit : l.credit)), d(0)).equals(d(amountUsd))
-    ? cashFc.reduce((s, l) => s.plus(d(l.nativeAmount).abs()), d(0))
-    : null;
+  const onlyFrancs = cashFc.length > 0 && cashFc.every((l) => d(l.nativeAmount).isNegative() === d(cashFc[0].nativeAmount).isNegative()) && v.lines.every((l) => !l.isMoney || cashFc.includes(l));
+  const cashFcTotal = onlyFrancs ? cashFc.reduce((s, l) => s.plus(d(l.nativeAmount).abs()), d(0)) : null;
+  const cashFcUsd = onlyFrancs ? cashFc.reduce((s, l) => s.plus(docValue(l, d(l.debit).gt(0) ? l.debit : l.credit)), d(0)).toFixed(2) : amountUsd;
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
@@ -239,7 +238,7 @@ export default function VoucherPrint() {
               {cashFcTotal ? (
                 <>
                   <span className="text-base font-semibold">{cdf(cashFcTotal.toString())}</span>{" "}
-                  <span className="text-muted-foreground">({usd(amountUsd)})</span>
+                  <span className="text-muted-foreground">({usd(cashFcUsd)})</span>
                 </>
               ) : (
                 <span className="text-base font-semibold">{usd(amountUsd)}</span>

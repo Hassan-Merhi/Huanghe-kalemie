@@ -88,6 +88,12 @@ export interface ExpenseInput {
   payablePartyId?: number | null;
 }
 
+/** Same words, whatever the case, accents or spacing ("carburant du groupe electrogene " = "Carburant du groupe électrogène"). */
+const sameText = (a: string, b: string) => {
+  const fold = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/\s+/g, " ").trim().toLowerCase();
+  return fold(a) === fold(b);
+};
+
 /** Rent, salaries, electricity… Dr the expense account, Cr the money account (or what is owed). */
 export async function createExpense(tx: Tx, input: ExpenseInput, userId: number) {
   const [account] = await tx.select().from(accounts).where(eq(accounts.id, input.accountId));
@@ -141,7 +147,8 @@ export async function createExpense(tx: Tx, input: ExpenseInput, userId: number)
   const journalId = await postJournal(tx, {
     date: input.date,
     type: "expense",
-    memo: `${account.name}\u00a0: ${input.description}`,
+    // "Loyer : Loyer de mars", but not "Carburant : Carburant" when the description is the category's name.
+    memo: sameText(input.description, account.name) ? account.name : `${account.name}\u00a0: ${input.description}`,
     sourceType: "expense",
     sourceId: expense.id,
     userId,
