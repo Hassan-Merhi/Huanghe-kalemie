@@ -19,7 +19,7 @@ import { LocationSelect, useLocations, VariantSearch } from "@/components/picker
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api, withQuery } from "@/lib/api";
 import { d, date, monthStart, qty, qtyTotal, todayLocal, unitCost, usd, variantText } from "@/lib/format";
-import { qtyWithUnit } from "@/lib/units";
+import { qtyWithUnit, wholeUnit } from "@/lib/units";
 import { useAuth } from "@/lib/auth";
 import { useT, count } from "@/lib/i18n";
 import type { MotorcycleUnit, VariantRow } from "@/lib/types";
@@ -165,7 +165,7 @@ function Valuation() {
       </div>
 
       {data.reconciled ? (
-        <p className="flex items-center gap-2 text-sm text-green-700 dark:text-green-400">
+        <p className="flex items-center gap-2 text-sm text-green-800 dark:text-green-400">
           <CheckCircle2 className="h-4 w-4" /> {t("Stock value matches the ledger", "La valeur du stock correspond à la comptabilité")} ({usd(data.ledgerInventory)})
         </p>
       ) : (
@@ -248,6 +248,8 @@ interface AdjLine {
   key: number;
   variant: VariantRow;
   qty: string;
+  /** Count mode: the quantity counted on the shelf; qty is then counted − what the system holds here. */
+  counted?: string;
   unitCost: string;
   serials: Serial[];
   unitIds: number[];
@@ -296,6 +298,9 @@ export function AdjustForm({
   const onlyRemove = kind === "damage" || kind === "loss";
   const onlyAdd = kind === "opening";
   const signed = !onlyRemove && !onlyAdd;
+  // A count is typed as what is on the shelf; the difference with the system is worked out.
+  const [countMode, setCountMode] = useState<"counted" | "change">("counted");
+  const byCount = kind === "count" && countMode === "counted";
 
   const m = useApiMutation<unknown, { id: number; number: string; journalId: number | null }>("POST", "/api/stock/adjustments", {
     success: t("Stock adjusted", "Stock ajusté"),
@@ -332,6 +337,8 @@ export function AdjustForm({
       if (cancelled) return;
       if (initial.date) setDateValue(initial.date);
       setKind(k);
+      // A pending voucher holds the change itself, not what was counted.
+      setCountMode("change");
       setReason(p.reason ?? "");
       if (p.locationId && p.locationId !== prevLocation.current) {
         hydrating.current = true;
@@ -404,6 +411,12 @@ export function AdjustForm({
     update(l.key, patch);
   }
 
+  function setCounted(l: AdjLine, value: string) {
+    const diff = isQty(value) ? d(value).minus(d(l.variant.locationQty)) : null;
+    setLines((ls) => ls.map((x) => (x.key === l.key ? { ...x, counted: value } : x)));
+    setQty({ ...l, counted: value }, diff ? diff.toString() : "");
+  }
+
   function addVariant(v: VariantRow) {
     if (lines.some((l) => l.variant.id === v.id)) return;
     const cost = d(v.stockQty).gt(0) ? d(v.avgCost).toDecimalPlaces(4).toString() : "";
@@ -419,9 +432,11 @@ export function AdjustForm({
     const payload = [];
     for (const l of lines) {
       const name = `${l.variant.productName} (${l.variant.sku})`;
+      if (byCount && isQty(l.counted ?? "") && d(l.qty).isZero()) return setError(t(`${name}: the count matches the stock, nothing to adjust. Remove the line.`, `${name}\u00a0: le comptage correspond au stock, rien à ajuster. Retirez la ligne.`));
       if (!isQty(l.qty) || d(l.qty).isZero()) return setError(t(`Enter a quantity for ${name} or remove the line.`, `Saisissez une quantité pour ${name} ou retirez la ligne.`));
       const c = change(l);
       if (l.variant.tracksSerials && !c.isInteger()) return setError(t("Motorcycles must be whole units.", "Les motos doivent être en unités entières."));
+      if (!c.isInteger() && wholeUnit(l.variant.unit)) return setError(t(`${name} is counted in whole units: use a whole number.`, `${name} se compte à l'unité\u00a0: saisissez un nombre entier.`));
       const line: { variantId: number; qtyChange: string; unitCost?: string; unitIds?: number[]; serials?: { chassisNo: string; engineNo: string | null; color: string | null }[] } = {
         variantId: l.variant.id,
         qtyChange: c.toString(),
@@ -431,7 +446,7 @@ export function AdjustForm({
           if (!/^\d+(\.\d+)?$/.test(l.unitCost.trim())) return setError(t(`Invalid cost for ${name}.`, `Coût invalide pour ${name}.`));
           line.unitCost = d(l.unitCost).toString();
         } else if (d(l.variant.stockQty).lte(0)) {
-          return setError(t(`Give a cost per unit for ${name}: it has no stock to take an average from.`, `Indiquez un coût unitaire pour ${name} : il n'a pas de stock pour calculer une moyenne.`));
+          return setError(t(`Give a cost per unit for ${name}: it has no stock to take an average from.`, `Indiquez un coût unitaire pour ${name}\u00a0: il n'a pas de stock pour calculer une moyenne.`));
         }
         if (l.variant.tracksSerials) {
           const chassis = l.serials.map((s) => s.chassisNo.trim().toUpperCase()).filter(Boolean);
@@ -491,8 +506,30 @@ export function AdjustForm({
       <Card>
         <CardHeader className="pb-2">
           <CardTitle className="text-base">{t("Items", "Articles")}</CardTitle>
+          {kind === "count" && (
+            <div className="flex flex-wrap items-center gap-2 pt-1" role="radiogroup" aria-label={t("How to type the count", "Comment saisir le comptage")}>
+              {(["counted", "change"] as const).map((m) => (
+                <Button
+                  key={m}
+                  type="button"
+                  size="sm"
+                  role="radio"
+                  aria-checked={countMode === m}
+                  variant={countMode === m ? "default" : "outline"}
+                  onClick={() => {
+                    setCountMode(m);
+                    setLines((ls) => ls.map((l) => ({ ...l, qty: "", counted: "", serials: [], unitIds: [] })));
+                  }}
+                >
+                  {m === "counted" ? t("Quantity counted", "Quantité comptée") : t("Change (+/−)", "Variation (+/−)")}
+                </Button>
+              ))}
+            </div>
+          )}
           <p className="text-xs text-muted-foreground">
-            {onlyRemove
+            {byCount
+              ? t("Type what is on the shelf: the difference with the stock in the system is worked out.", "Saisissez ce qui est sur l'étagère\u00a0: l'écart avec le stock du système est calculé.")
+              : onlyRemove
               ? t("Type the quantity removed.", "Saisissez la quantité retirée.")
               : onlyAdd
                 ? t("Type the quantity on hand and its cost per unit.", "Saisissez la quantité en main et son coût unitaire.")
@@ -520,22 +557,35 @@ export function AdjustForm({
                   <Button variant="ghost" size="icon" onClick={() => setLines(lines.filter((x) => x.key !== l.key))}><Trash2 className="h-4 w-4" /></Button>
                 </div>
                 <div className="mt-2 grid gap-3 sm:grid-cols-3">
-                  <Field label={onlyRemove ? t("Qty removed", "Qté retirée") : onlyAdd ? t("Qty", "Qté") : t("Qty change (+/−)", "Variation (+/−)")} required>
-                    <DecimalInput inputMode={signed ? "text" : "decimal"} value={l.qty} onChange={(e) => setQty(l, e.target.value)} />
-                  </Field>
+                  {byCount ? (
+                    <Field
+                      label={t("Quantity counted", "Quantité comptée")}
+                      hint={t(`In the system here: ${qty(l.variant.locationQty)}`, `Dans le système ici\u00a0: ${qty(l.variant.locationQty)}`)}
+                      required
+                    >
+                      <DecimalInput inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} value={l.counted ?? ""} onChange={(e) => setCounted(l, e.target.value)} />
+                    </Field>
+                  ) : (
+                    <Field label={onlyRemove ? t("Qty removed", "Qté retirée") : onlyAdd ? t("Qty", "Qté") : t("Qty change (+/−)", "Variation (+/−)")} required>
+                      <DecimalInput inputMode={signed ? "text" : "decimal"} value={l.qty} onChange={(e) => setQty(l, e.target.value)} />
+                    </Field>
+                  )}
                   {c.gt(0) && (
                     <Field
-                      label={t("Cost per unit (USD)", "Coût unitaire (USD)")}
+                      label={t("Cost per unit ($)", "Coût unitaire ($)")}
                       hint={needsCost ? t("Required: no stock yet", "Obligatoire\u00a0: pas encore de stock") : t("Blank = current average cost", "Vide = coût moyen actuel")}
                       required={needsCost}
                     >
                       <Input inputMode="decimal" value={l.unitCost} onChange={(e) => update(l.key, { unitCost: e.target.value })} className={cn(needsCost && !l.unitCost.trim() && "border-destructive")} />
                     </Field>
                   )}
+                  {byCount && isQty(l.counted ?? "") && c.isZero() && (
+                    <div className="flex items-end pb-2 text-sm text-muted-foreground">{t("Matches the stock", "Conforme au stock")}</div>
+                  )}
                   {!c.isZero() && (
                     <div className="flex items-end pb-2 text-sm">
-                      <span className={c.lt(0) ? "text-destructive" : "text-green-700 dark:text-green-400"}>
-                        {c.gt(0) ? "+" : ""}{qty(c.toString())} · ≈ {usd(c.times(c.gt(0) && l.unitCost.trim() ? d(l.unitCost) : d(l.variant.avgCost)).toFixed(2))}
+                      <span className={c.lt(0) ? "text-destructive" : "text-green-800 dark:text-green-400"}>
+                        {byCount ? `${t("Difference", "Écart")} ` : ""}{c.gt(0) ? "+" : ""}{qty(c.toString())} · ≈ {usd(c.times(c.gt(0) && l.unitCost.trim() ? d(l.unitCost) : d(l.variant.avgCost)).toFixed(2))}
                       </span>
                     </div>
                   )}
@@ -638,7 +688,7 @@ function AdjustmentHistory() {
       return next;
     });
   const signed = (v: string) => (d(v).gt(0) ? `+${usd(v)}` : d(v).lt(0) ? `−${usd(d(v).abs().toFixed(2))}` : usd(v));
-  const tone = (v: string) => (d(v).gt(0) ? "text-green-700 dark:text-green-400" : d(v).lt(0) ? "text-destructive" : "");
+  const tone = (v: string) => (d(v).gt(0) ? "text-green-800 dark:text-green-400" : d(v).lt(0) ? "text-destructive" : "");
   return (
     <Card className="overflow-x-auto">
       <Table>
@@ -751,6 +801,7 @@ function TransferForm({ onDone }: { onDone: () => void }) {
     for (const l of lines) {
       if (!isPositive(l.qty)) return setError(t(`Enter a quantity for ${l.variant.productName}.`, `Saisissez une quantité pour ${l.variant.productName}.`));
       if (d(l.qty).gt(d(l.variant.locationQty))) return setError(t(`Not enough ${l.variant.productName} at the source location.`, `Pas assez de ${l.variant.productName} à l'emplacement de départ.`));
+      if (!d(l.qty).isInteger() && wholeUnit(l.variant.unit)) return setError(t(`${l.variant.productName} is counted in whole units: use a whole number.`, `${l.variant.productName} se compte à l'unité\u00a0: saisissez un nombre entier.`));
       if (l.variant.tracksSerials) {
         if (!d(l.qty).isInteger()) return setError(t("Motorcycles must be whole units.", "Les motos doivent être en unités entières."));
         if (l.unitIds.length !== d(l.qty).toNumber()) return setError(t(`Pick exactly ${count(t, Number(l.qty), ["motorcycle", "motorcycles"], ["", ""])} of ${l.variant.productName} to move.`, `Choisissez exactement ${count(t, Number(l.qty), ["", ""], ["moto", "motos"])} de ${l.variant.productName} à déplacer.`));

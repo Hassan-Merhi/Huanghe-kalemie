@@ -12,7 +12,7 @@ const Input = React.forwardRef<HTMLInputElement, React.ComponentProps<"input">>(
     // Dates are always shown dd/mm/yyyy, whatever language the phone or browser is set to.
     if (type === "date") return <DateInput className={className} {...props} ref={ref} />;
     // Amounts and quantities accept "4,50" as well as "4.50" and read French-style.
-    if (props.inputMode === "decimal" && (!type || type === "text")) return <DecimalInput className={className} {...props} ref={ref} />;
+    if ((props.inputMode === "decimal" || props.inputMode === "numeric") && (!type || type === "text")) return <DecimalInput className={className} {...props} ref={ref} />;
     // h-9 to match icon buttons and default buttons.
     return <input type={type} className={cn(BASE, className)} ref={ref} {...props} />;
   },
