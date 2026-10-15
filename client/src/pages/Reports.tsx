@@ -14,6 +14,7 @@ import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from
 import { AccountSelect, PartySelect } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
+import { downloadCsv } from "@/lib/sheets";
 import { useT } from "@/lib/i18n";
 import { cdf, d, date as fmtDate, money, monthStart, previousMonth, qty, todayLocal, usd, variantText } from "@/lib/format";
 import type { Account } from "@/lib/types";
@@ -37,24 +38,7 @@ export function accountTypeLabel(type: string, t: T): string {
 
 // ---------------------------------------------------------------- CSV
 
-function csvCell(v: unknown): string {
-  const s = v == null ? "" : String(v);
-  return /[",;\n\r]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-function downloadCsv(filename: string, rows: unknown[][]) {
-  const text = "﻿" + rows.map((r) => r.map(csvCell).join(",")).join("\r\n");
-  const url = URL.createObjectURL(new Blob([text], { type: "text/csv;charset=utf-8" }));
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
-}
-
-function CsvButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
+export function CsvButton({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
   return (
     <Button variant="outline" size="sm" onClick={onClick} disabled={disabled}>
       <Download className="mr-1 h-4 w-4" /> CSV
@@ -69,13 +53,13 @@ function lastDay(month: string) {
   return `${month}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, "0")}`;
 }
 
-function useRange() {
+export function useRange() {
   const [from, setFrom] = useState(monthStart());
   const [to, setTo] = useState(todayLocal());
   return { from, to, setFrom, setTo };
 }
 
-function RangePicker({ range }: { range: ReturnType<typeof useRange> }) {
+export function RangePicker({ range }: { range: ReturnType<typeof useRange> }) {
   const t = useT();
   const today = todayLocal();
   const pm = previousMonth();
