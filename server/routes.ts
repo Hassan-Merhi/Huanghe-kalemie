@@ -190,9 +190,13 @@ export function registerRoutes(app: Express) {
     active: z.boolean().optional(),
   });
 
+  const assertPartnerExists = async (partnerId: number | null | undefined) => {
+    const [p] = partnerId ? await db.select({ id: partners.id }).from(partners).where(eq(partners.id, partnerId)) : [];
+    if (!p) throw badRequest("Link a partner login to its partner", "Associez ce compte de connexion à son associé");
+  };
   app.post("/api/users", requireRole(), asyncHandler(async (req, res) => {
     const body = userSchema.parse(req.body);
-    if (body.role === "partner" && !body.partnerId) throw badRequest("Link a partner login to its partner", "Associez ce compte de connexion à son associé");
+    if (body.role === "partner") await assertPartnerExists(body.partnerId);
     const [row] = await db
       .insert(users)
       .values({
@@ -213,6 +217,11 @@ export function registerRoutes(app: Express) {
     const body = userSchema.partial().parse(req.body);
     if (userId === uid(req) && (body.active === false || (body.role && body.role !== "owner"))) {
       throw badRequest("You cannot remove your own owner access", "Vous ne pouvez pas retirer votre propre accès propriétaire");
+    }
+    if (body.role !== undefined || body.partnerId !== undefined) {
+      // A partner login must stay linked to a real partner, or it sees nothing at all.
+      const [current] = await db.select({ role: users.role, partnerId: users.partnerId }).from(users).where(eq(users.id, userId));
+      if ((body.role ?? current?.role) === "partner") await assertPartnerExists(body.partnerId !== undefined ? body.partnerId : current?.partnerId);
     }
     await db
       .update(users)

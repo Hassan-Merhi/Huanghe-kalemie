@@ -4,7 +4,7 @@ import { cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, francDecimalsError, notFound } from "../errors";
 import { deMonth, monthText } from "@shared/french";
-import { postJournal, resolveRate, reverseJournal, shopToday, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
+import { postJournal, rateFor, resolveRate, reverseJournal, shopToday, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
 import { applyAdvances, reverseAdvances } from "./operations";
 import { monthRange } from "./periods";
 import { partyBalances } from "./reports";
@@ -176,5 +176,37 @@ export async function cancelRun(tx: Tx, month: string, date: string | null | und
     ? await reverseJournal(tx, run.journalId, { date: date || run.date, userId, memo: `Annulation des salaires ${monthText(month)}` })
     : null;
   await reverseAdvances(tx, { type: "payroll", id: run.id }, date || run.date, userId);
+  if (run.journalId) await clearFrancResidue(tx, run.journalId, date || run.date, userId);
   await tx.update(payrollRuns).set({ status: "cancelled", cancelledAt: new Date(), cancelledBy: userId, cancelJournalId }).where(eq(payrollRuns.id, run.id));
+}
+
+/**
+ * A cancel reverses the run at its own rate. When a month-end revaluation restated those francs in
+ * between, an account or employee can be left with no francs but a few cents of dollars; they are
+ * moved to the exchange account, as the next revaluation would have done.
+ */
+async function clearFrancResidue(tx: Tx, journalId: number, date: string, userId: number) {
+  const touched = await tx
+    .selectDistinct({ accountId: journalLines.accountId, partyId: journalLines.partyId })
+    .from(journalLines)
+    .where(and(eq(journalLines.journalId, journalId), eq(journalLines.currency, "CDF")));
+  const lines: PostLine[] = [];
+  let gain = new Decimal(0);
+  const { rate } = await rateFor(tx, date);
+  for (const t of touched) {
+    const [r] = await tx
+      .select({
+        native: sql<string>`coalesce(sum(${journalLines.nativeAmount}), 0)`,
+        usd: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)`,
+      })
+      .from(journalLines)
+      .where(and(eq(journalLines.accountId, t.accountId), t.partyId ? eq(journalLines.partyId, t.partyId) : sql`${journalLines.partyId} is null`, eq(journalLines.currency, "CDF")));
+    const usd = dec(r?.usd ?? 0);
+    if (!dec(r?.native ?? 0).isZero() || usd.isZero()) continue;
+    gain = gain.plus(usd);
+    lines.push({ accountId: t.accountId, partyId: t.partyId, debit: usd.isNegative() ? usd.abs() : 0, credit: usd.isPositive() ? usd : 0, currency: "CDF", nativeAmount: "0", rate, memo: "Écart de change à l'annulation" });
+  }
+  if (!lines.length) return;
+  lines.push({ accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.fx), debit: gain.isPositive() ? gain : 0, credit: gain.isNegative() ? gain.abs() : 0, memo: "Écart de change à l'annulation" });
+  await postJournal(tx, { date, type: "payroll", memo: "Écart de change à l'annulation des salaires", sourceType: "payroll_fx", userId, lines });
 }

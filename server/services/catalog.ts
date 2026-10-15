@@ -136,6 +136,10 @@ export async function updateProduct(tx: Tx, id: number, input: Partial<ProductIn
       .where(eq(variants.productId, id));
     if (!dec(stock.qty).isZero() || !dec(stock.value).isZero()) throw conflictStock();
   }
+  if (input.categoryId) {
+    const [c] = await tx.select().from(categories).where(eq(categories.id, input.categoryId));
+    if (!c) throw badRequest("Category not found", "Catégorie introuvable");
+  }
   await tx
     .update(products)
     .set({
