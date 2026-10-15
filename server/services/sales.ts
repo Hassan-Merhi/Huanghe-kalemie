@@ -295,7 +295,16 @@ export async function getSale(tx: Tx, id: number) {
     .where(eq(saleLines.saleId, id))
     .orderBy(asc(saleLines.id));
   const payments = await tx.select().from(salePayments).where(eq(salePayments.saleId, id));
-  const returns = await tx.select().from(saleReturns).where(eq(saleReturns.saleId, id));
+  const returnRows = await tx.select().from(saleReturns).where(eq(saleReturns.saleId, id));
+  // What came back on each return, for the return slip (no cost: cashiers read this too).
+  const returnLines = returnRows.length
+    ? await tx
+        .select({ returnId: saleReturnLines.returnId, saleLineId: saleReturnLines.saleLineId, qty: saleReturnLines.qty, amount: saleReturnLines.amount })
+        .from(saleReturnLines)
+        .where(inArray(saleReturnLines.returnId, returnRows.map((r) => r.id)))
+        .orderBy(asc(saleReturnLines.id))
+    : [];
+  const returns = returnRows.map((r) => ({ ...r, lines: returnLines.filter((l) => l.returnId === r.id).map(({ returnId: _r, ...l }) => l) }));
   const [customer] = sale.customerId ? await tx.select().from(parties).where(eq(parties.id, sale.customerId)) : [];
   const [cashier] = sale.createdBy ? await tx.select({ fullName: users.fullName, username: users.username }).from(users).where(eq(users.id, sale.createdBy)) : [];
   return {
