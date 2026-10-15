@@ -119,8 +119,9 @@ export async function updateProduct(tx: Tx, id: number, input: Partial<ProductIn
     // Pieces are counted whole: a part of a litre on hand could then never be sold or counted.
     const [part] = await tx
       .select({ n: sql<number>`count(*)::int` })
-      .from(variants)
-      .where(and(eq(variants.productId, id), sql`${variants.stockQty} <> trunc(${variants.stockQty})`));
+      .from(stockLevels)
+      .innerJoin(variants, eq(variants.id, stockLevels.variantId))
+      .where(and(eq(variants.productId, id), sql`${stockLevels.qty} <> trunc(${stockLevels.qty})`));
     if (part.n > 0) {
       throw conflict(
         "Some variants hold part of a unit. Adjust the stock to whole numbers before switching to a unit counted in whole pieces.",
