@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, lte, sql } from "drizzle-orm";
 import {
   accounts,
   auditLog,
@@ -437,6 +437,17 @@ export async function rateFor(tx: Tx, date: string): Promise<{ rate: Decimal; so
   return { rate: dec((setting?.value as string | undefined) ?? "2800"), source: "default" };
 }
 
+/** CNY per 1 USD on file for a date (that day's, else the latest before it), or null when none was entered. */
+export async function cnyRateFor(tx: Tx, date: string): Promise<Decimal | null> {
+  const [row] = await tx
+    .select({ rate: exchangeRates.cnyPerUsd })
+    .from(exchangeRates)
+    .where(and(lte(exchangeRates.date, date), sql`${exchangeRates.cnyPerUsd} is not null`))
+    .orderBy(desc(exchangeRates.date))
+    .limit(1);
+  return row?.rate ? dec(row.rate) : null;
+}
+
 /** Set the rate of a day. A closed month's balances were valued at its rates, so they cannot change after. */
 export async function setExchangeRate(
   tx: Tx,
@@ -449,8 +460,9 @@ export async function setExchangeRate(
   if (!opts.owner) {
     // Every franc check compares with the day's rate, so only the owner may move it far in one step.
     const limit = Decimal.max(await rateTolerancePct(tx), 5);
-    const [prevRow] = await tx.select().from(exchangeRates).where(lte(exchangeRates.date, input.date)).orderBy(desc(exchangeRates.date)).limit(1);
-    const prev = prevRow ? dec(prevRow.cdfPerUsd) : (await rateFor(tx, input.date)).rate;
+    // Compare with the last rate before this day, so overwriting a day in small steps cannot walk it far.
+    const [prevRow] = await tx.select().from(exchangeRates).where(lt(exchangeRates.date, input.date)).orderBy(desc(exchangeRates.date)).limit(1);
+    const prev = prevRow ? dec(prevRow.cdfPerUsd) : (await rateFor(tx, "0000-01-01")).rate;
     const next = dec(input.cdfPerUsd);
     if (next.minus(prev).abs().dividedBy(prev).times(100).gt(limit)) {
       throw new AppError(
@@ -464,10 +476,13 @@ export async function setExchangeRate(
       const [cnyRow] = await tx
         .select({ rate: exchangeRates.cnyPerUsd })
         .from(exchangeRates)
-        .where(and(lte(exchangeRates.date, input.date), sql`${exchangeRates.cnyPerUsd} is not null`))
+        .where(and(lt(exchangeRates.date, input.date), sql`${exchangeRates.cnyPerUsd} is not null`))
         .orderBy(desc(exchangeRates.date))
         .limit(1);
-      if (cnyRow?.rate && dec(input.cnyPerUsd).minus(cnyRow.rate).abs().dividedBy(cnyRow.rate).times(100).gt(limit)) {
+      if (!cnyRow?.rate) {
+        throw new AppError(403, "Only the owner can set the first yuan rate", "FORBIDDEN", "Seul le propriétaire peut saisir le premier taux du yuan");
+      }
+      if (dec(input.cnyPerUsd).minus(cnyRow.rate).abs().dividedBy(cnyRow.rate).times(100).gt(limit)) {
         throw new AppError(403, "Only the owner can move the yuan rate that far", "FORBIDDEN", "Seul le propriétaire peut modifier autant le taux du yuan");
       }
     }

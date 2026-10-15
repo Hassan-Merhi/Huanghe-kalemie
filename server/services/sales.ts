@@ -132,12 +132,18 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
     });
   }
 
+  // Every franc leg of a sale uses one rate, so francs taken at one rate cannot go back as change at
+  // another. Staff take the day's rate; the owner may type one within the tolerance.
+  const staffRate = !!rules && rules.role !== "owner";
+  let saleRate: string | null | undefined = staffRate ? null : undefined;
   const legs = [];
   for (const p of input.payments) {
-    legs.push(await moneyLeg(tx, { accountId: p.accountId, amount: p.amount, rate: p.rate, date: input.date }));
+    const leg = await moneyLeg(tx, { accountId: p.accountId, amount: p.amount, rate: saleRate === undefined ? p.rate : saleRate, date: input.date });
+    if (leg.rate && saleRate === undefined) saleRate = leg.rate;
+    legs.push(leg);
   }
   const changeLeg = input.change && dec(input.change.amount).gt(0)
-    ? await moneyLeg(tx, { accountId: input.change.accountId, amount: input.change.amount, rate: input.change.rate, date: input.date })
+    ? await moneyLeg(tx, { accountId: input.change.accountId, amount: input.change.amount, rate: saleRate === undefined ? input.change.rate : saleRate, date: input.date })
     : null;
   const received = sum(legs.map((l) => l.usd));
   if (changeLeg && dec(changeLeg.usd).gte(received)) {

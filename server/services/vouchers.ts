@@ -50,8 +50,35 @@ export interface PostingRights {
   owner: boolean;
 }
 
+/**
+ * Lines settling the same contact, or the same balance sheet account, become one: each line reads
+ * the balance before the voucher, so two of them would both settle the same francs.
+ */
+async function mergeSettlingLines(tx: Tx, lines: VoucherLineInput[]): Promise<VoucherLineInput[]> {
+  const ids = lines.map((l) => l.accountId).filter((x): x is number => !!x);
+  const rows = ids.length ? await tx.select({ id: accounts.id, type: accounts.type }).from(accounts).where(inArray(accounts.id, ids)) : [];
+  const settles = new Set(rows.filter((a) => a.type === "asset" || a.type === "liability").map((a) => a.id));
+  const out: VoucherLineInput[] = [];
+  const byKey = new Map<string, VoucherLineInput>();
+  for (const [i, l] of lines.entries()) {
+    if (cents(l.amount).lte(0)) throw badRequest(`Line ${i + 1}: the amount must be greater than zero`, `Ligne ${i + 1} : le montant doit être supérieur à zéro`);
+    const key = l.partyId && !l.accountId ? `p${l.partyId}` : l.accountId && !l.partyId && settles.has(l.accountId) ? `a${l.accountId}` : null;
+    const seen = key ? byKey.get(key) : undefined;
+    if (seen) {
+      seen.amount = cents(seen.amount).plus(cents(l.amount)).toFixed(2);
+      if (l.memo && l.memo !== seen.memo) seen.memo = seen.memo ? `${seen.memo} ; ${l.memo}` : l.memo;
+      continue;
+    }
+    const copy = { ...l };
+    if (key) byKey.set(key, copy);
+    out.push(copy);
+  }
+  return out;
+}
+
 async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherInput, rights: PostingRights) {
   if (input.lines.length === 0) throw badRequest("Add at least one line", "Ajoutez au moins une ligne");
+  input = { ...input, lines: await mergeSettlingLines(tx, input.lines) };
   const money = await moneyLeg(tx, { accountId: input.accountId, amount: sum(input.lines.map((l) => cents(l.amount))), rate: input.rate, date: input.date });
   const receivables = await systemAccountId(tx, SYSTEM_ACCOUNTS.receivables);
   const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
@@ -72,15 +99,20 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
     if (l.partyId) {
       const p = partyRows.find((x) => x.id === l.partyId);
       if (!p) throw badRequest(`Line ${n}: that contact does not exist`, `Ligne ${n} : ce contact n'existe pas`);
-      const split = await contactLines(tx, {
-        accountId: p.type === "customer" ? receivables : payables,
-        partyId: p.id,
-        side: kind === "payment" ? "debit" : "credit",
-        usd,
-        money: { currency: money.currency, nativeAmount: money.currency === "CDF" ? amount.toFixed(2) : null, rate: money.rate },
-        memo: l.memo || p.name,
-        date: input.date,
-      });
+      const lineMoney = { currency: money.currency, nativeAmount: money.currency === "CDF" ? amount.toFixed(2) : null, rate: money.rate };
+      const split =
+        kind === "payment" && p.type !== "customer"
+          ? // Paid like a payment to the contact: what is owed in yuan is settled too.
+            await ops.payablesLines(tx, { payables, partyId: p.id, usd, money: lineMoney, date: input.date, memo: l.memo || p.name })
+          : await contactLines(tx, {
+              accountId: p.type === "customer" ? receivables : payables,
+              partyId: p.id,
+              side: kind === "payment" ? "debit" : "credit",
+              usd,
+              money: lineMoney,
+              memo: l.memo || p.name,
+              date: input.date,
+            });
       split.forEach((line, k) => lines.push({ ...line, usd: k === 0 ? usd : "0" }));
     } else {
       const a = accountRows.find((x) => x.id === l.accountId);
