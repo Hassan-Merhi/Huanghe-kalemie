@@ -62,6 +62,11 @@ export interface SaleReturnRow {
   reason: string | null;
   createdAt: string;
   lines?: { saleLineId: number; qty: string; amount: string }[];
+  /** Money actually handed back: in the drawer's currency (francs for a franc drawer) and in dollars. */
+  refundNative?: string | null;
+  refundUsd?: string | null;
+  refundCurrency?: "USD" | "CDF" | null;
+  refundToBalanceUsd?: string;
 }
 
 export interface SaleFull {
@@ -577,7 +582,7 @@ export default function POS() {
             {can("manager") && (
               <Input
                 type="date"
-                className={cn("w-40", backDated && "border-amber-500 text-amber-700 dark:text-amber-400")}
+                className={cn("w-40", backDated && "border-amber-500 text-amber-800 dark:text-amber-400")}
                 value={saleDate}
                 max={today}
                 onChange={(e) => setSaleDate(e.target.value || today)}
@@ -667,7 +672,7 @@ export default function POS() {
                           </p>
                         )}
                         {belowCost(l) && (
-                          <p className="flex items-center gap-1 text-xs font-medium text-amber-700 dark:text-amber-400">
+                          <p className="flex items-center gap-1 text-xs font-medium text-amber-800 dark:text-amber-400">
                             <AlertTriangle className="h-3 w-3 shrink-0" />
                             {t(`Sold below cost (cost ${usd(d(l.variant.avgCost).toFixed(2))} each)`, `Vente à perte (coût ${usd(d(l.variant.avgCost).toFixed(2))} l'unité)`)}
                           </p>
@@ -685,7 +690,7 @@ export default function POS() {
               <Field label={t("Customer (optional, required for credit)", "Client (facultatif, obligatoire pour le crédit)")}>
                 <PartySelect types={["customer"]} value={customerId} onChange={(id, p) => { setCustomerId(id); setCustomer(p ?? null); }} placeholder={t("Walk-in customer", "Client de passage")} />
                 {customer && d(customer.balance).gt(0) && (
-                  <p className="text-xs text-amber-700 dark:text-amber-400">{t("Already owes", "Doit déjà")} {usd(customer.balance)}</p>
+                  <p className="text-xs text-amber-800 dark:text-amber-400">{t("Already owes", "Doit déjà")} {usd(customer.balance)}</p>
                 )}
               </Field>
               <Field label={t("Sale discount $", "Remise sur la vente $")}>
@@ -801,7 +806,7 @@ export default function POS() {
                     </Button>
                   )}
                   {crossChange && changeAcc && (
-                    <p className="flex items-start gap-1 text-xs font-medium text-amber-700 dark:text-amber-400">
+                    <p className="flex items-start gap-1 text-xs font-medium text-amber-800 dark:text-amber-400">
                       <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0" />
                       {t(
                         `The customer paid in ${[...payCurrencies].map(curLabel).join(" and ")} but the change comes out of ${changeAcc.name}: you will be asked to confirm.`,
@@ -819,7 +824,7 @@ export default function POS() {
                 <div className="flex justify-between"><span>{t("Paid ($)", "Payé ($)")}</span><Num className="font-medium">{usd(paid.toFixed(2))}</Num></div>
                 <div className="flex justify-between">
                   <span>{credit.gt(0) && customerId ? t("Remaining → on credit", "Reste → à crédit") : t("Left to pay", "Reste à payer")}</span>
-                  <Num className={cn("font-semibold", credit.gt(0) && customerId && "text-amber-700 dark:text-amber-400", overpaid && "text-destructive")}>{usd(remaining.toFixed(2))}</Num>
+                  <Num className={cn("font-semibold", credit.gt(0) && customerId && "text-amber-800 dark:text-amber-400", overpaid && "text-destructive")}>{usd(remaining.toFixed(2))}</Num>
                 </div>
               </div>
 
@@ -880,7 +885,7 @@ export default function POS() {
             {changeAcc && changeNative.gt(0) ? (
               <p className="truncate text-sm font-bold" data-testid="change-due-bar">{t("Give back", "Rendre")}{t(":", "\u00a0:")} {changeText}</p>
             ) : credit.gt(0) && customerId ? (
-              <p className="truncate text-xs font-semibold text-amber-700 dark:text-amber-400">{t(`${usd(credit.toFixed(2))} on credit`, `dont ${usd(credit.toFixed(2))} à crédit`)}</p>
+              <p className="truncate text-xs font-semibold text-amber-800 dark:text-amber-400">{t(`${usd(credit.toFixed(2))} on credit`, `dont ${usd(credit.toFixed(2))} à crédit`)}</p>
             ) : (
               rateNum.gt(0) && total.gt(0) && <p className="truncate text-xs text-muted-foreground">≈ {cdf(total.times(rateNum).toDecimalPlaces(0, ROUND).toString())}</p>
             )}

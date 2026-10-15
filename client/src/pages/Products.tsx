@@ -357,7 +357,7 @@ function NewProductDialog({ onClose, onCreated }: { onClose: () => void; onCreat
 
           {mode === "none" ? (
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
-              <Field label={t("Sell price (USD)", "Prix de vente (USD)")}><Input inputMode="decimal" value={single.sellPrice} onChange={(e) => setSingle({ ...single, sellPrice: e.target.value })} /></Field>
+              <Field label={t("Sell price ($)", "Prix de vente ($)")}><Input inputMode="decimal" value={single.sellPrice} onChange={(e) => setSingle({ ...single, sellPrice: e.target.value })} /></Field>
               <Field label={t("Reorder level", "Seuil de réappro.")}><Input inputMode="decimal" value={single.reorderLevel} onChange={(e) => setSingle({ ...single, reorderLevel: e.target.value })} /></Field>
               <Field label={t("SKU (blank = auto)", "Code (vide = auto)")}><Input value={single.sku} onChange={(e) => setSingle({ ...single, sku: e.target.value })} /></Field>
               <Field label={t("Barcode", "Code-barres")}><Input value={single.barcode} onChange={(e) => setSingle({ ...single, barcode: e.target.value })} /></Field>
@@ -400,7 +400,7 @@ function NewProductDialog({ onClose, onCreated }: { onClose: () => void; onCreat
                         {attrNames.map((n) => <TableHead key={n}>{n}</TableHead>)}
                         <TableHead>{t("SKU (blank = auto)", "Code (vide = auto)")}</TableHead>
                         <TableHead>{t("Barcode", "Code-barres")}</TableHead>
-                        <TableHead>{t("Price USD", "Prix USD")}</TableHead>
+                        <TableHead>{t("Price ($)", "Prix ($)")}</TableHead>
                         <TableHead>{t("Reorder", "Seuil")}</TableHead>
                         <TableHead />
                       </TableRow>

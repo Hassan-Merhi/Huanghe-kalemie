@@ -313,7 +313,7 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
             </Field>
           )}
           {isCdf && (
-            <Field label={t("Rate (CDF per 1 USD)", "Taux (FC pour 1 USD)")} hint={usdEquivalent ? `= ${usd(usdEquivalent)}` : undefined} required>
+            <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} hint={usdEquivalent ? `= ${usd(usdEquivalent)}` : undefined} required>
               <RateInput day={day} value={rate} onChange={setRate} />
             </Field>
           )}

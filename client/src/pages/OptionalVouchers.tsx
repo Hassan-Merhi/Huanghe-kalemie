@@ -29,10 +29,10 @@ import { VOUCHER_KINDS, voucherKindLabel, type VoucherDraft, type VoucherKind } 
 
 const KIND_TONE: Record<VoucherKind, string> = {
   payment: "border-red-500/40 text-red-700 dark:text-red-400",
-  receipt: "border-emerald-500/40 text-emerald-700 dark:text-emerald-400",
+  receipt: "border-emerald-500/40 text-emerald-800 dark:text-emerald-400",
   journal: "border-violet-500/40 text-violet-700 dark:text-violet-400",
   transfer: "border-sky-500/40 text-sky-700 dark:text-sky-400",
-  adjustment: "border-amber-500/40 text-amber-700 dark:text-amber-400",
+  adjustment: "border-amber-500/40 text-amber-800 dark:text-amber-400",
 };
 
 interface FinalizeResult {
@@ -105,7 +105,7 @@ export default function OptionalVouchers() {
           <Button
             size="sm"
             variant="ghost"
-            className="text-emerald-700 dark:text-emerald-400"
+            className="text-emerald-800 dark:text-emerald-400"
             disabled={!canFinalize(r) || finalize.isPending}
             title={!canFinalize(r) ? t("Only the owner can post a journal entry", "Seul le propriétaire peut passer une écriture") : undefined}
             onClick={() => setConfirm({ action: "finalize", draft: r })}
@@ -143,7 +143,7 @@ export default function OptionalVouchers() {
 
       <div className="mb-4 grid grid-cols-2 gap-3 sm:max-w-md">
         <StatCard label={filtered ? t("Shown", "Affichées") : t("Pending vouchers", "Pièces en attente")} value={rows.length} />
-        <StatCard label={t("Total (USD)", "Total (USD)")} value={usd(total.toFixed(2))} sub={t("Stock adjustments have no total", "Les ajustements de stock n'ont pas de total")} />
+        <StatCard label={t("Total ($)", "Total ($)")} value={usd(total.toFixed(2))} sub={t("Stock adjustments have no total", "Les ajustements de stock n'ont pas de total")} />
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-2">

@@ -82,7 +82,7 @@ export default function Motorcycles() {
               <div className="text-xs text-muted-foreground">{u.label !== "Standard" ? `${u.label} · ` : ""}{u.sku}</div>
             </TableCell>
             <TableCell className="whitespace-nowrap font-mono text-xs">
-              {u.chassisNo ?? <span className="font-sans text-amber-700 dark:text-amber-400">{t("Not registered", "Non saisi")}</span>}
+              {u.chassisNo ?? <span className="font-sans text-amber-800 dark:text-amber-400">{t("Not registered", "Non saisi")}</span>}
             </TableCell>
             <TableCell className="whitespace-nowrap font-mono text-xs">{u.engineNo ?? "—"}</TableCell>
             <TableCell>{u.color ?? "—"}</TableCell>

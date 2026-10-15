@@ -127,7 +127,7 @@ function PriceList() {
       .sort((a, b) => (a.categoryName ?? "").localeCompare(b.categoryName ?? "") || a.productName.localeCompare(b.productName) || a.sku.localeCompare(b.sku));
   }, [rows, category, search, serverSearch]);
 
-  const header = [t("Category", "Catégorie"), t("Item", "Article"), t("Variant", "Variante"), t("SKU", "Code"), t("Price USD", "Prix USD"), t("Stock", "Stock")];
+  const header = [t("Category", "Catégorie"), t("Item", "Article"), t("Variant", "Variante"), t("SKU", "Code"), t("Price ($)", "Prix ($)"), t("Stock", "Stock")];
   const table = () => [header, ...filtered.map((r) => [r.categoryName ?? "", r.productName, variantText(r.attributes), r.sku, Number(r.sellPrice), Number(r.qty)])];
   const catLabel = (c: string) => (c === NO_CAT ? t("No category", "Sans catégorie") : c);
 
@@ -202,7 +202,7 @@ function PriceList() {
                         {canEdit ? <PriceCell row={r} /> : <Num className="font-medium">{usd(r.sellPrice)}</Num>}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Num className={cn(d(r.qty).lte(0) && "text-destructive", r.low && d(r.qty).gt(0) && "text-amber-700 dark:text-amber-400")}>{fmtQty(r.qty)}</Num>
+                        <Num className={cn(d(r.qty).lte(0) && "text-destructive", r.low && d(r.qty).gt(0) && "text-amber-800 dark:text-amber-400")}>{fmtQty(r.qty)}</Num>
                       </TableCell>
                     </TableRow>
                   ))}
@@ -452,7 +452,7 @@ function Reorder() {
                         <div className="text-xs text-muted-foreground">{[variantText(r.attributes), r.sku].filter(Boolean).join(" · ")}</div>
                       </TableCell>
                       <TableCell className="text-right">
-                        {d(r.qty).lte(0) ? <Badge variant="destructive">{fmtQty(r.qty)}</Badge> : <Num className="text-amber-700 dark:text-amber-400">{fmtQty(r.qty)}</Num>}
+                        {d(r.qty).lte(0) ? <Badge variant="destructive">{fmtQty(r.qty)}</Badge> : <Num className="text-amber-800 dark:text-amber-400">{fmtQty(r.qty)}</Num>}
                       </TableCell>
                       <TableCell className="text-right"><Num>{fmtQty(r.reorderLevel)}</Num></TableCell>
                       <TableCell className="text-right"><Num className="font-semibold">{fmtQty(r.suggested.toString())}</Num></TableCell>
@@ -528,7 +528,7 @@ function TodaySales() {
                   {s.status === "voided" ? (
                     <Badge variant="destructive">{t("Cancelled", "Annulée")}</Badge>
                   ) : d(s.creditUsd).gt(0) ? (
-                    <span className="text-xs text-amber-700 dark:text-amber-400">{t("credit", "crédit")} {usd(s.creditUsd)}</span>
+                    <span className="text-xs text-amber-800 dark:text-amber-400">{t("credit", "crédit")} {usd(s.creditUsd)}</span>
                   ) : null}
                 </span>
               </Link>

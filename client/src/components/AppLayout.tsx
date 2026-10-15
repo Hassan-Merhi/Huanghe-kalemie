@@ -72,8 +72,9 @@ const NAV: { en: string; fr: string; items: NavItem[] }[] = [
     ],
   },
   {
-    en: "Stock",
-    fr: "Stock",
+    // Not "Stock": the group holds a "Stock" page of its own.
+    en: "Goods",
+    fr: "Marchandises",
     items: [
       { href: "/stock", en: "Stock", fr: "Stock", icon: Boxes, roles: ["manager", "partner"], also: ["/inventory"] },
       { href: "/products", en: "Items", fr: "Articles", icon: Package, roles: ["manager", "cashier", "partner"] },
@@ -147,7 +148,7 @@ export function SectionLinks() {
         <Link
           key={tab.href}
           href={tab.href}
-          className="inline-flex items-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium text-primary hover:underline dark:text-orange-400"
+          className="inline-flex items-center whitespace-nowrap rounded-sm px-3 py-1.5 text-sm font-medium text-orange-800 hover:underline dark:text-orange-400"
         >
           {lang === "fr" ? tab.fr : tab.en} →
         </Link>
@@ -252,7 +253,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
         </SidebarContent>
         <SidebarFooter className="border-t border-sidebar-border">
           <div className="truncate px-2 py-1 text-xs text-sidebar-foreground/70">
-            {user?.fullName} · {user ? roleLabel(user.role, t) : ""}
+            {user ? (user.fullName === roleLabel(user.role, t) ? user.fullName : `${user.fullName} · ${roleLabel(user.role, t)}`) : ""}
           </div>
         </SidebarFooter>
       </Sidebar>

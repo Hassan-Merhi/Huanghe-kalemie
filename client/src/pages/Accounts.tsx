@@ -71,7 +71,7 @@ function Side({ value, t, type, currency = "USD", className }: { value: unknown;
   const n = CREDIT_NORMAL.has(type) ? -raw : raw;
   const amount = currency === "CDF" ? cdf(n) : usd(n);
   return (
-    <Num className={cn(n < 0 && "text-amber-700 dark:text-amber-400", className)}>
+    <Num className={cn(n < 0 && "text-amber-800 dark:text-amber-400", className)}>
       <span title={n < 0 ? t("The balance is the other way round from usual for this account", "Le solde est à l'inverse de l'habitude pour ce compte") : undefined}>{amount}</span>
     </Num>
   );
@@ -220,7 +220,7 @@ function Chart({ onOpen }: { onOpen: (id: number) => void }) {
         <p className="mt-3 text-xs text-muted-foreground">
           {t(
             "Balances in USD, each read the usual way: what the shop has (assets), what it owes (debts), what belongs to the partners, what it earned and what it spent. A minus sign means the balance is the other way round.",
-            "Soldes en USD, chacun lu dans son sens habituel\u00a0: ce que la boutique a (actifs), ce qu'elle doit (dettes), ce qui revient aux associés, ce qu'elle a gagné et ce qu'elle a dépensé. Un signe moins veut dire que le solde est à l'inverse.",
+            "Soldes en dollars, chacun lu dans son sens habituel\u00a0: ce que la boutique a (actifs), ce qu'elle doit (dettes), ce qui revient aux associés, ce qu'elle a gagné et ce qu'elle a dépensé. Un signe moins veut dire que le solde est à l'inverse.",
           )}
         </p>
       )}
@@ -297,7 +297,7 @@ function Statement({ id, range, type }: { id: number; range: ReturnType<typeof u
 
   function exportCsv() {
     if (!L) return;
-    const head = [t("Date", "Date"), t("No.", "N°"), t("Type", "Type"), t("Details", "Libellé"), t("Contact", "Tiers"), t("Debit USD", "Débit USD"), t("Credit USD", "Crédit USD"), t("Balance USD", "Solde USD"), t("Side", "Sens")];
+    const head = [t("Date", "Date"), t("No.", "N°"), t("Type", "Type"), t("Details", "Libellé"), t("Contact", "Tiers"), t("Debit ($)", "Débit ($)"), t("Credit ($)", "Crédit ($)"), t("Balance ($)", "Solde ($)"), t("Side", "Sens")];
     if (cdfAcc) head.push("CDF", t("CDF balance", "Solde en FC"));
     const side = (v: string) => (num(v) > 0 ? t("Dr", "D") : num(v) < 0 ? t("Cr", "C") : "");
     downloadCsv(`releve_${L.account.code}_${range.from}_${range.to}.csv`, [
@@ -443,7 +443,7 @@ function Monthly({ id, year, setYear, onMonth, type }: { id: number; year: numbe
     if (!M) return;
     downloadCsv(`mensuel_${M.account.code}_${year}.csv`, [
       [`${M.account.code} · ${M.account.name}`, String(year)],
-      [t("Month", "Mois"), t("Debit USD", "Débit USD"), t("Credit USD", "Crédit USD"), t("Lines", "Lignes"), t("Closing USD", "Solde de clôture USD")],
+      [t("Month", "Mois"), t("Debit ($)", "Débit ($)"), t("Credit ($)", "Crédit ($)"), t("Lines", "Lignes"), t("Closing ($)", "Solde de clôture ($)")],
       [t("Opening balance", "Solde d'ouverture"), "", "", "", M.opening],
       ...M.months.map((m) => [m.month, m.debit, m.credit, m.count, m.closing]),
       [t("Total", "Total"), M.totalDebit, M.totalCredit, M.months.reduce((s, m) => s + m.count, 0), M.closing],
