@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { roleLabel } from "@/lib/labels";
 import { Link, useLocation } from "wouter";
 import {
@@ -191,10 +191,11 @@ function NavLinks() {
         const items = group.items.filter((i) => can(...i.roles));
         if (!items.length) return null;
         return (
-          <SidebarGroup key={group.en}>
-            <SidebarGroupLabel>{lang === "fr" ? group.fr : group.en}</SidebarGroupLabel>
+          // Tight spacing (one link every 32 px) so a manager's whole menu fits a 768 px tall screen.
+          <SidebarGroup key={group.en} className="py-0.5">
+            <SidebarGroupLabel className="h-6">{lang === "fr" ? group.fr : group.en}</SidebarGroupLabel>
             <SidebarGroupContent>
-              <SidebarMenu>
+              <SidebarMenu className="gap-0">
                 {items.map((item) => {
                   const active =
                     item.href === "/" || item.exact ? location === item.href : under(location, item.href) || !!item.also?.some((h) => under(location, h));
@@ -218,6 +219,36 @@ function NavLinks() {
   );
 }
 
+/** A fade at the foot of the menu while more entries are hidden below it, so a short screen shows it scrolls. */
+function MoreBelow() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [more, setMore] = useState(false);
+  useEffect(() => {
+    const box = ref.current?.parentElement;
+    if (!box) return;
+    const check = () => setMore(box.scrollHeight - box.scrollTop - box.clientHeight > 4);
+    check();
+    box.addEventListener("scroll", check, { passive: true });
+    window.addEventListener("resize", check);
+    const ro = typeof ResizeObserver !== "undefined" ? new ResizeObserver(check) : null;
+    ro?.observe(box);
+    return () => {
+      box.removeEventListener("scroll", check);
+      window.removeEventListener("resize", check);
+      ro?.disconnect();
+    };
+  }, []);
+  return (
+    <div
+      ref={ref}
+      aria-hidden
+      data-testid="menu-more-below"
+      data-more={more || undefined}
+      className={cn("pointer-events-none sticky bottom-0 -mt-10 h-10 shrink-0 bg-gradient-to-t from-sidebar via-sidebar/80 to-transparent transition-opacity", more ? "opacity-100" : "opacity-0")}
+    />
+  );
+}
+
 export function AppLayout({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const { lang, setLang, t } = useI18n();
@@ -232,14 +263,15 @@ export function AppLayout({ children }: { children: ReactNode }) {
     <SidebarProvider>
       <Sidebar>
         <SidebarHeader>
-          <div className="px-2 py-3">
+          <div className="px-2 py-1">
             <p className="text-lg font-bold text-sidebar-primary">HUANGHE</p>
             <p className="text-xs text-sidebar-foreground/70">Kalemie</p>
           </div>
         </SidebarHeader>
         {/* The menu scrolls on its own above the footer, so a short screen never hides an entry under it. */}
-        <SidebarContent className="[scrollbar-color:hsl(var(--sidebar-border))_transparent] [scrollbar-width:thin]">
+        <SidebarContent className="gap-0 [scrollbar-color:hsl(var(--sidebar-border))_transparent] [scrollbar-width:thin]">
           <NavLinks />
+          <MoreBelow />
         </SidebarContent>
         <SidebarFooter className="border-t border-sidebar-border">
           {/* The name, then the role on its own line: "Associé(e) (lecture seule)" is too long to cut. */}

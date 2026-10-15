@@ -36,7 +36,7 @@ import {
 } from "./ledger";
 import { issueStock, linkMovementsToJournal, receiveStock } from "./stock";
 import { variantColour } from "./catalog";
-import { de, frMoney } from "@shared/french";
+import { de, frMoney, frNumber } from "@shared/french";
 
 async function requireParty(tx: Tx, id: number | null | undefined, types: string[]) {
   if (!id) throw badRequest("Choose who this is for", "Choisissez le bénéficiaire");
@@ -71,7 +71,7 @@ async function assertImpliedRate(tx: Tx, date: string, implied: Decimal, referen
   if (gap.gt(tolerance)) {
     throw badRequest(
       `These amounts mean 1 USD = ${implied.toDecimalPlaces(2).toString()} ${label}, more than ${tolerance.toString()}% away from ${reference.toDecimalPlaces(2).toString()}. Check both amounts.`,
-      `Ces montants donnent 1 USD = ${implied.toDecimalPlaces(2).toString()} ${label === "CDF" ? "FC" : label}, soit plus de ${tolerance.toString()} % d'écart avec ${reference.toDecimalPlaces(2).toString()}. Vérifiez les deux montants.`,
+      `Ces montants donnent 1 $ = ${frNumber(implied.toDecimalPlaces(2).toString())} ${label === "CDF" ? "FC" : label === "CNY" ? "¥" : label}, soit plus de ${frNumber(tolerance.toString())} % d'écart avec ${frNumber(reference.toDecimalPlaces(2).toString())}. Vérifiez les deux montants.`,
     );
   }
 }
@@ -424,7 +424,7 @@ export async function payParty(tx: Tx, input: PartyPaymentInput, userId: number)
     const owed = cny.native.negated().minus(sum(advanceLines.filter((l) => l.currency === "CNY").map((l) => dec(l.nativeAmount!))));
     const settle = cents(input.settleNative);
     if (owed.lte(0)) throw badRequest(`${party.name} is not owed anything in yuan${advanceLines.length ? " once their advance is counted" : ""}`, `${party.name} n'a rien à recevoir en yuans${advanceLines.length ? " une fois son avance déduite" : ""}`);
-    if (settle.gt(owed)) throw badRequest(`${party.name} is owed only ${owed.toFixed(2)} CNY`, `${party.name} n'attend que ${owed.toFixed(2)} CNY`);
+    if (settle.gt(owed)) throw badRequest(`${party.name} is owed only ${owed.toFixed(2)} CNY`, `${party.name} n'attend que ${frMoney(owed, "CNY")}`);
     if (leg.currency !== "USD") throw badRequest("Pay a yuan invoice from a dollar account", "Payez une facture en yuans depuis un compte en dollars");
     // The yuan settled must be worth roughly what the dollars paid: compare with the yuan rate of the
     // day when one is on file, else with what those yuan cost.

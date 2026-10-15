@@ -15,8 +15,9 @@ const ToastViewport = React.forwardRef<
     ref={ref}
     className={cn(
       // Phones: at the bottom, above the till's pay bar, so a message never hides the top of the form being filled.
+      // While a dialog is open on a phone its Save button is at the bottom: the message goes to the top instead.
       // Wider screens: top right, just under the header bar, never over the buttons at the bottom of a page or dialog.
-      "pointer-events-none fixed bottom-20 right-0 z-[100] flex max-h-screen w-full flex-col-reverse p-4 md:bottom-auto md:top-12 md:max-w-[360px] md:flex-col",
+      "pointer-events-none fixed bottom-20 right-0 z-[100] flex max-h-screen w-full flex-col-reverse p-4 max-md:[body:has([role=dialog])_&]:bottom-auto max-md:[body:has([role=dialog])_&]:top-0 md:bottom-auto md:top-12 md:max-w-[360px] md:flex-col",
       className
     )}
     {...props}

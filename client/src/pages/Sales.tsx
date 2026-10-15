@@ -30,6 +30,8 @@ interface SaleListRow {
   /** Amount and cost of the goods brought back (all returns on the sale). */
   returnedTotal?: string;
   returnedCogs?: string;
+  /** Cash handed back on those returns (part of a return may instead come off what the customer owes). */
+  refundedUsd?: string;
   lineCount?: number;
   firstItem?: string | null;
 }
@@ -119,7 +121,7 @@ function Profit({ value, muted }: { value: string; muted?: boolean }) {
   return (
     <Num
       className={cn(
-        "rounded px-2 py-0.5 font-medium",
+        "rounded px-2 py-0.5 font-medium max-[1100px]:px-1.5",
         !muted && v.gt(0) && "bg-green-500/15 text-green-800 dark:text-green-400",
         !muted && v.lt(0) && "bg-red-500/15 text-red-700 dark:text-red-400",
       )}
@@ -129,11 +131,23 @@ function Profit({ value, muted }: { value: string; muted?: boolean }) {
   );
 }
 
-/** A sale as the list shows it: net of the goods brought back. */
+/** A sale as the list shows it: net of the goods brought back, and paid net of the cash refunded. */
 function netOf(r: SaleListRow) {
   const total = d(r.total).minus(d(r.returnedTotal));
   const cogs = r.cogs !== undefined ? d(r.cogs).minus(d(r.returnedCogs)) : undefined;
-  return { total, cogs, profit: cogs !== undefined ? total.minus(cogs) : undefined, returned: d(r.returnedTotal) };
+  const refunded = d(r.refundedUsd);
+  return { total, cogs, profit: cogs !== undefined ? total.minus(cogs) : undefined, returned: d(r.returnedTotal), paid: d(r.paidUsd).minus(refunded), refunded };
+}
+
+/** "remboursé −22,00 $" under a paid amount; the amount itself never breaks. */
+function Refunded({ value }: { value: { toFixed(n: number): string; gt(n: number): boolean } }) {
+  const t = useT();
+  if (!value.gt(0)) return null;
+  return (
+    <div className="text-xs text-muted-foreground">
+      {t("refunded", "remboursé")} <span className="whitespace-nowrap tabular">−{usd(value.toFixed(2))}</span>
+    </div>
+  );
 }
 
 function Items({ r }: { r: SaleListRow }) {
@@ -175,17 +189,21 @@ function SaleCard({ r, showCost }: { r: SaleListRow; showCost: boolean }) {
         </div>
         <Num className={cn("shrink-0 text-lg font-semibold", voided && "line-through")}>{usd((voided ? d(r.total) : n.total).toFixed(2))}</Num>
       </div>
-      <div className="mt-0.5 flex items-baseline justify-between gap-2 text-sm">
-        <p className="min-w-0 truncate">
-          <Customer r={r} />
-          {r.firstItem && <span className="text-muted-foreground"> · <Items r={r} /></span>}
-        </p>
-        {!voided && n.returned.gt(0) && <span className="shrink-0 whitespace-nowrap text-xs text-muted-foreground">{t("returns", "retours")} −{usd(n.returned.toFixed(2))}</span>}
-      </div>
+      <p className="mt-0.5 min-w-0 truncate text-sm">
+        <Customer r={r} />
+        {r.firstItem && <span className="text-muted-foreground"> · <Items r={r} /></span>}
+      </p>
       <div className="mt-1.5 flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <p className="min-w-0 tabular">
-          {t("Qty", "Qté")} {fmtQty(d(r.qty).minus(d(r.returnedQty)).toString())} · {t("Paid", "Payé")} {usd(r.paidUsd)}
+          {t("Qty", "Qté")} {fmtQty(d(r.qty).minus(d(r.returnedQty)).toString())} · {t("Paid", "Payé")} {usd((voided ? d(r.paidUsd) : n.paid).toFixed(2))}
           {d(r.creditUsd).gt(0) && !voided && <span className="text-amber-800 dark:text-amber-400"> · {t("Credit", "Crédit")} {usd(r.creditUsd)}</span>}
+          {/* What came back, under the figures so the items above keep their line. */}
+          {!voided && n.returned.gt(0) && (
+            <span className="block">
+              {t("returns", "retours")} −{usd(n.returned.toFixed(2))}
+              {n.refunded.gt(0) && ` · ${t("refunded", "remboursé")} −${usd(n.refunded.toFixed(2))}`}
+            </span>
+          )}
         </p>
         {showCost && n.profit !== undefined && <Profit value={n.profit.toFixed(2)} muted={voided} />}
       </div>
@@ -212,7 +230,8 @@ export default function Sales() {
   const totals = {
     total: sumOf((r) => netOf(r).total),
     returned: sumOf((r) => r.returnedTotal),
-    paid: sumOf((r) => r.paidUsd),
+    paid: sumOf((r) => netOf(r).paid),
+    refunded: sumOf((r) => r.refundedUsd),
     credit: sumOf((r) => r.creditUsd),
     cogs: sumOf((r) => netOf(r).cogs),
     qty: sumOf((r) => d(r.qty).minus(d(r.returnedQty))),
@@ -246,7 +265,7 @@ export default function Sales() {
       {live.length > 0 && (
         <div className={cn("mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3", showCost ? "xl:grid-cols-5" : "xl:grid-cols-4")}>
           <StatCard label={t("Sales", "Ventes")} value={live.length} sub={`${fmtQty(totals.qty.toString())} ${t("units sold", "unités vendues")}`} />
-          <StatCard label={t("Paid", "Payé")} value={usd(totals.paid.toFixed(2))} />
+          <StatCard label={t("Paid", "Payé")} value={usd(totals.paid.toFixed(2))} sub={totals.refunded.gt(0) ? `${t("refunded", "remboursé")} −${usd(totals.refunded.toFixed(2))}` : undefined} />
           <StatCard label={t("Total", "Total")} value={usd(totals.total.toFixed(2))} sub={totals.returned.gt(0) ? `${t("returns", "retours")} −${usd(totals.returned.toFixed(2))}` : undefined} />
           <StatCard label={t("On credit", "À crédit")} value={usd(totals.credit.toFixed(2))} tone={totals.credit.gt(0) ? "warn" : "neutral"} />
           {showCost && (
@@ -273,8 +292,9 @@ export default function Sales() {
           </div>
           <Card className="hidden sm:block">
             <div className="overflow-x-auto [contain:inline-size]">
-              {/* The cost of each sale is on the sale's own page; here the list stays narrow enough for 1024 px. */}
-              <Table cards={false} className="[&_td]:px-3 [&_td]:py-2.5 [&_th]:px-3">
+              {/* The cost of each sale is on the sale's own page; here the list stays narrow enough for 1024 px
+                  with the menu open (tighter cells below 1100 px). */}
+              <Table cards={false} className="[&_td]:px-3 [&_td]:py-2.5 [&_th]:px-3 max-[1100px]:[&_td]:px-2 max-[1100px]:[&_th]:px-2">
                 <TableHeader>
                   <TableRow>
                     <TableHead>{t("No. · date", "N° · date")}</TableHead>
@@ -301,14 +321,15 @@ export default function Sales() {
                         </TableCell>
                         <TableCell className="min-w-[140px]">
                           <div><Customer r={r} /></div>
-                          {r.firstItem && <div className="max-w-[220px] truncate text-xs text-muted-foreground"><Items r={r} /></div>}
+                          {r.firstItem && <div className="max-w-[220px] truncate text-xs text-muted-foreground max-[1100px]:max-w-[150px]"><Items r={r} /></div>}
                         </TableCell>
                         <TableCell className="text-right">
                           <Num>{r.qty !== undefined ? fmtQty(d(r.qty).minus(d(r.returnedQty)).toString()) : ""}</Num>
                           {d(r.returnedQty).gt(0) && <div className="whitespace-nowrap text-xs text-muted-foreground">{fmtQty(r.returnedQty)} {t("returned", "retourné")}</div>}
                         </TableCell>
                         <TableCell className="text-right">
-                          <Num>{usd(r.paidUsd)}</Num>
+                          <Num>{usd((voided ? d(r.paidUsd) : n.paid).toFixed(2))}</Num>
+                          {!voided && <Refunded value={n.refunded} />}
                           {/* What was not paid: owed by the customer. */}
                           {d(r.creditUsd).gt(0) && <div className={cn("whitespace-nowrap text-xs", !voided && "text-amber-800 dark:text-amber-400")}>{t("credit", "crédit")} {usd(r.creditUsd)}</div>}
                         </TableCell>
@@ -327,6 +348,7 @@ export default function Sales() {
                     <TableCell className="text-right"><Num>{fmtQty(totals.qty.toString())}</Num></TableCell>
                     <TableCell className="text-right">
                       <Num>{usd(totals.paid.toFixed(2))}</Num>
+                      <Refunded value={totals.refunded} />
                       {totals.credit.gt(0) && <div className="whitespace-nowrap text-xs font-normal text-amber-800 dark:text-amber-400">{t("credit", "crédit")} {usd(totals.credit.toFixed(2))}</div>}
                     </TableCell>
                     <TableCell className="text-right"><Num>{usd(totals.total.toFixed(2))}</Num></TableCell>

@@ -639,6 +639,17 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
     if (!owed.gt(0)) return "0";
     return Decimal.max(owed.dividedBy(100).toDecimalPlaces(0, Decimal.ROUND_HALF_UP), 1).times(100).toFixed(0);
   };
+  /** What is owed, in francs first when it is paid in francs or was earned in francs: "On lui doit 702 000 FC (250,00 $)". */
+  const owedText = (e: Party) => {
+    const owed = owedOf(e);
+    if (!owed.gt(0)) return null;
+    const fc = owedFc(e);
+    const dollars = owed.minus(fc.usd);
+    const francs = isCdf && r.gt(0) ? fc.native.plus(dollars.gt(0) ? dollars.times(r) : 0) : !dollars.gt(0) ? fc.native : null;
+    if (!francs || !francs.gt(0)) return null;
+    const x = `${cdf(francs.toFixed(0))} (${usd(owed.toFixed(2))})`;
+    return <span className="font-medium text-blue-700 dark:text-blue-400">{t(`We owe them ${x}`, `On lui doit ${x}`)}</span>;
+  };
   const keyOf = (e: Party) => `${e.id}:${isCdf ? "CDF" : "USD"}`;
   const amountOf = (e: Party) => amounts[keyOf(e)] ?? suggested(e);
 
@@ -715,7 +726,7 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
                     <div key={e.id} className="flex flex-wrap items-center justify-between gap-2 p-3">
                       <div className="min-w-0">
                         <p className="truncate font-medium">{e.name}</p>
-                        <p className="text-xs"><EmployeeBalance balance={e.balance} /></p>
+                        <p className="text-xs">{owedText(e) ?? <EmployeeBalance balance={e.balance} />}</p>
                       </div>
                       <div className="text-right">
                         <div className="flex items-center justify-end gap-1">

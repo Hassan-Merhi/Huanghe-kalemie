@@ -300,6 +300,20 @@ function CreditRows({ credit, creditedReturns, creditLeft }: { credit: Decimal; 
   );
 }
 
+/** A line's margin on what the customer kept, green or red; a returned line says so under it. */
+function LineProfit({ l, returned }: { l: SaleFull["lines"][number]; returned: { amount: Decimal; cogs: Decimal } }) {
+  const t = useT();
+  if (l.cogs === undefined) return null;
+  const profit = d(l.lineTotal).minus(returned.amount).minus(d(l.cogs).minus(returned.cogs));
+  const allBack = d(l.returnedQty).gte(d(l.qty));
+  return (
+    <>
+      <Num className={cn("font-medium", !allBack && profit.gt(0) && "text-green-800 dark:text-green-400", !allBack && profit.lt(0) && "text-destructive")}>{usd(profit.toFixed(2))}</Num>
+      {d(l.returnedQty).gt(0) && <span className="block whitespace-nowrap text-xs text-muted-foreground">{allBack ? t("all returned", "tout retourné") : t("after return", "après retour")}</span>}
+    </>
+  );
+}
+
 export default function SaleDetail() {
   const t = useT();
   const { id } = useParams<{ id: string }>();
@@ -325,6 +339,19 @@ export default function SaleDetail() {
   const credit = d(sale.creditUsd);
   const creditLeft = Decimal.max(credit.minus(creditedReturns), 0);
   const creditReduced = credit.gt(0) && creditedReturns.gt(0);
+  // Cash handed back on returns: "Payé" reads net of it, as on the Sales list.
+  const refunded = sale.returns.reduce((s, r) => s.plus(d(r.refundUsd)), d(0));
+  const paidNet = voided ? d(sale.paidUsd) : d(sale.paidUsd).minus(refunded);
+  // Columns only when a line uses them, so the margin stays in view at 1024 px.
+  const hasChassis = sale.lines.some((l) => l.chassisNo || l.engineNo);
+  const hasDiscount = sale.lines.some((l) => d(l.lineDiscount).gt(0));
+  /** What came back of one line: its amount from the return slips, its cost the share the server took. */
+  const returnedOf = (l: SaleFull["lines"][number]) => {
+    const rq = d(l.returnedQty);
+    const amount = sale.returns.reduce((s, r) => s.plus((r.lines ?? []).filter((x) => x.saleLineId === l.id).reduce((a, x) => a.plus(d(x.amount)), d(0))), d(0));
+    const cogs = l.cogs === undefined || rq.isZero() ? d(0) : rq.gte(d(l.qty)) ? d(l.cogs) : d(l.cogs).times(rq).dividedBy(d(l.qty)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP);
+    return { amount, cogs };
+  };
 
   return (
     <div>
@@ -379,7 +406,7 @@ export default function SaleDetail() {
 
       <div className="mb-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
         <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Total", "Total")}</p><p className="text-xl font-semibold tabular">{usd(sale.total)}</p>{d(sale.discount).gt(0) && <p className="text-xs text-muted-foreground">{t("Sale discount", "Remise")} {usd(sale.discount)}</p>}{returnedTotal.gt(0) && <p className="text-xs text-muted-foreground">{t("Returned", "Retourné")} −{usd(returnedTotal.toFixed(2))} · {t("net", "net")} {usd(d(sale.total).minus(returnedTotal).toFixed(2))}</p>}</CardContent></Card>
-        <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Paid", "Payé")}</p><p className="text-xl font-semibold tabular">{usd(sale.paidUsd)}</p><p className="text-xs text-muted-foreground">{t("Credit", "Crédit")} {usd(sale.creditUsd)}{creditReduced ? ` · ${t("after returns", "après retours")} ${usd(creditLeft.toFixed(2))}` : ""}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Paid", "Payé")}</p><p className="text-xl font-semibold tabular">{usd(paidNet.toFixed(2))}</p>{!voided && refunded.gt(0) && <p className="text-xs text-muted-foreground">{t("refunded", "remboursé")} −{usd(refunded.toFixed(2))} · {t("of", "sur")} {usd(sale.paidUsd)}</p>}<p className="text-xs text-muted-foreground">{t("Credit", "Crédit")} {usd(sale.creditUsd)}{creditReduced ? ` · ${t("after returns", "après retours")} ${usd(creditLeft.toFixed(2))}` : ""}</p></CardContent></Card>
         <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Customer", "Client")}</p>{sale.customer ? <p className="font-medium">{sale.customer.name}</p> : <p className="text-muted-foreground">{t("Walk-in", "De passage")}</p>}{sale.customer?.phone && <p className="text-xs text-muted-foreground">{sale.customer.phone}</p>}</CardContent></Card>
         {showCost && sale.cogs !== undefined && !voided && (
           <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Cost / profit", "Coût / marge")}</p><p className="text-xl font-semibold tabular">{usd(profit.toFixed(2))}</p><p className="text-xs text-muted-foreground">{t("Cost of goods", "Coût des articles")} {usd(d(sale.cogs).minus(returnedCost).toFixed(2))}{returnedTotal.gt(0) ? ` · ${t("after returns", "après retours")}` : ""}</p></CardContent></Card>
@@ -395,11 +422,11 @@ export default function SaleDetail() {
                 <TableRow>
                   <TableHead>{t("Item", "Article")}</TableHead>
                   <TableHead>{t("SKU", "Code")}</TableHead>
-                  <TableHead>{t("Chassis / engine", "Châssis / moteur")}</TableHead>
+                  {hasChassis && <TableHead>{t("Chassis / engine", "Châssis / moteur")}</TableHead>}
                   <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
                   <TableHead className="text-right">{t("Returned", "Retourné")}</TableHead>
                   <TableHead className="text-right">{t("Price", "Prix")}</TableHead>
-                  <TableHead className="text-right">{t("Discount", "Remise")}</TableHead>
+                  {hasDiscount && <TableHead className="text-right">{t("Discount", "Remise")}</TableHead>}
                   <TableHead className="text-right">{t("Total", "Total")}</TableHead>
                   {showCost && <TableHead className="text-right">{t("Cost", "Coût")}</TableHead>}
                   {showCost && <TableHead className="text-right">{t("Profit", "Marge")}</TableHead>}
@@ -410,14 +437,14 @@ export default function SaleDetail() {
                   <TableRow key={l.id}>
                     <TableCell><span className="font-medium">{l.productName}</span> <span className="text-muted-foreground">{variantText(l.attributes)}</span></TableCell>
                     <TableCell className="font-mono text-xs">{l.sku}</TableCell>
-                    <TableCell className="text-xs">{l.chassisNo ?? ""}{l.engineNo ? <span className="block text-muted-foreground">{l.engineNo}</span> : null}</TableCell>
+                    {hasChassis && <TableCell className="text-xs">{l.chassisNo ?? ""}{l.engineNo ? <span className="block text-muted-foreground">{l.engineNo}</span> : null}</TableCell>}
                     <TableCell className="text-right"><Num>{fmtQty(l.qty)}</Num></TableCell>
                     <TableCell className="text-right"><Num className={cn(d(l.returnedQty).gt(0) ? "text-amber-800 dark:text-amber-400" : "text-muted-foreground")}>{fmtQty(l.returnedQty)}</Num></TableCell>
                     <TableCell className="text-right"><Num>{usd(l.unitPrice)}</Num></TableCell>
-                    <TableCell className="text-right"><Num>{d(l.lineDiscount).gt(0) ? usd(l.lineDiscount) : ""}</Num></TableCell>
+                    {hasDiscount && <TableCell className="text-right"><Num>{d(l.lineDiscount).gt(0) ? usd(l.lineDiscount) : ""}</Num></TableCell>}
                     <TableCell className="text-right"><Num className="font-medium">{usd(l.lineTotal)}</Num></TableCell>
                     {showCost && <TableCell className="text-right"><Num>{l.cogs !== undefined ? usd(l.cogs) : ""}</Num></TableCell>}
-                    {showCost && <TableCell className="text-right"><Num>{l.cogs !== undefined ? usd(d(l.lineTotal).minus(l.cogs).toFixed(2)) : ""}</Num></TableCell>}
+                    {showCost && <TableCell className="text-right"><LineProfit l={l} returned={returnedOf(l)} /></TableCell>}
                   </TableRow>
                 ))}
               </TableBody>

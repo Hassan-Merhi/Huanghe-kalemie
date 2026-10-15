@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, lt, lte, sql } from "drizzle-orm";
-import { deMonth, frDate, frMoney } from "@shared/french";
+import { deMonth, frDate, frMoney, frNumber } from "@shared/french";
 import {
   accounts,
   auditLog,
@@ -515,7 +515,7 @@ export async function setExchangeRate(
           403,
           `${nextCny.toString()} CNY is more than ${limit.toString()}% away from the last yuan rate (${ref.toString()}). Only the owner can make that change.`,
           "FORBIDDEN",
-          `${nextCny.toString()} CNY s'écarte de plus de ${limit.toString()} % du dernier taux du yuan (${ref.toString()}). Seul le propriétaire peut faire ce changement.`,
+          `${frNumber(nextCny.toString())} ¥ s'écarte de plus de ${frNumber(limit.toString())} % du dernier taux du yuan (${frNumber(ref.toString())}). Seul le propriétaire peut faire ce changement.`,
         );
       }
     }
