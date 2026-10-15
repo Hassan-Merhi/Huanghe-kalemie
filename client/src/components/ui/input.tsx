@@ -2,7 +2,7 @@ import * as React from "react";
 import { CalendarDays } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { ambiguousDollars, formatLang, inputText, money, parseNumberInput, qty, unusableText } from "@/lib/format";
+import { ambiguousDollars, ambiguousMeasure, formatLang, inputText, money, parseNumberInput, qty, unusableText } from "@/lib/format";
 
 const BASE =
   "flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 aria-[invalid=true]:border-destructive aria-[invalid=true]:ring-destructive/20 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none md:text-sm";
@@ -19,6 +19,8 @@ type InputProps = React.ComponentProps<"input"> & {
   currency?: string | null;
   /** A quantity counted in whole units (pcs, set…): "1.000" is asked about (1 000 or 1?) instead of read as 1. */
   whole?: boolean;
+  /** A quantity in a unit that splits (litres, metres, kilos): only "1.000" is asked about (1 000 or 1?); "1.250" is 1,25. */
+  measured?: boolean;
   /** The "did you mean" question sits in the flow below the field, for fields stacked in a table (no overlap with the next row). */
   inlineAlert?: boolean;
   /** Extra classes for that question, e.g. to run it under the buttons beside a narrow field. */
@@ -26,11 +28,11 @@ type InputProps = React.ComponentProps<"input"> & {
 };
 
 const Input = React.forwardRef<HTMLInputElement, InputProps>(
-  ({ className, type, thousands, usd, currency, whole, inlineAlert, alertClassName, ...props }, ref) => {
+  ({ className, type, thousands, usd, currency, whole, measured, inlineAlert, alertClassName, ...props }, ref) => {
     // Dates are always shown dd/mm/yyyy, whatever language the phone or browser is set to.
     if (type === "date") return <DateInput className={className} {...props} ref={ref} />;
     // Amounts and quantities accept "4,50" as well as "4.50" and read French-style.
-    if ((props.inputMode === "decimal" || props.inputMode === "numeric") && (!type || type === "text")) return <DecimalInput className={className} thousands={thousands} usd={usd} currency={currency} whole={whole} inlineAlert={inlineAlert} alertClassName={alertClassName} {...props} ref={ref} />;
+    if ((props.inputMode === "decimal" || props.inputMode === "numeric") && (!type || type === "text")) return <DecimalInput className={className} thousands={thousands} usd={usd} currency={currency} whole={whole} measured={measured} inlineAlert={inlineAlert} alertClassName={alertClassName} {...props} ref={ref} />;
     // h-9 to match icon buttons and default buttons.
     return <input type={type} className={cn(BASE, className)} ref={ref} {...props} />;
   },
@@ -125,7 +127,7 @@ const LAYOUT = /^(?:[a-z0-9[\]-]+:)*!?(?:-?m[trblxy]?-|w-|min-w-|max-w-|flex-|ba
  * Text that is not a number is passed on as typed so the page can say what is wrong; in a dollar field an
  * ambiguous "1.200" is passed on as "1.200?" (see unusableText) so that no page saves it as 1,20 $.
  */
-const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className, value, onChange, onBlur, onFocus, thousands: thousandsProp, usd: usdProp, currency, whole, inlineAlert, alertClassName, ...props }, ref) => {
+const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className, value, onChange, onBlur, onFocus, thousands: thousandsProp, usd: usdProp, currency, whole, measured: measuredProp, inlineAlert, alertClassName, ...props }, ref) => {
   const thousands = thousandsProp || currency === "CDF";
   const usd = usdProp || (!!currency && currency !== "CDF");
   const cur = usdProp || !currency || currency === "CDF" ? "USD" : currency;
@@ -143,8 +145,10 @@ const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className
   const [focused, setFocused] = React.useState(false);
   // Whole quantities are asked about like dollars: "1.000" may be 1 000 pieces or 1.
   const strict = usd || !!whole;
-  const read = parseNumberInput(text, { thousands, usd: strict });
-  const ambiguous = strict ? ambiguousDollars(text) : null;
+  // Litres and the like: "1.000" only (see ambiguousMeasure).
+  const measured = !strict && !!measuredProp;
+  const read = parseNumberInput(text, { thousands, usd: strict, measured });
+  const ambiguous = strict ? ambiguousDollars(text) : measured ? ambiguousMeasure(text) : null;
   const fmtAmbiguous = (v: unknown) => (usd ? fmtUsd(v) : qty(v));
   const unreadable = text.trim() !== "" && read === null;
   const fr = formatLang() === "fr";
@@ -169,7 +173,7 @@ const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className
         onChange={(e) => {
           const typed = e.target.value;
           setText(typed);
-          const parsed = parseNumberInput(typed, { thousands, usd: strict });
+          const parsed = parseNumberInput(typed, { thousands, usd: strict, measured });
           const out = parsed === null ? unusableText(typed) : parsed;
           sent.current = out;
           if (out === plain) sent.current = null;

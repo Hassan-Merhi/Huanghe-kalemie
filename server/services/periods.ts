@@ -4,7 +4,7 @@ import { splitProfit, type PartnerSplitResult } from "@shared/partnerSplit";
 import { dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict } from "../errors";
-import { deMonth, monthText } from "@shared/french";
+import { deMonth, frDate, frNumber, monthText } from "@shared/french";
 import { cents } from "@shared/money";
 import { postJournal, rateFor, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
 import { todayIso } from "../http";
@@ -117,7 +117,7 @@ export async function revaluationLines(
         currency,
         nativeAmount: "0",
         rate: r,
-        memo: `Réévaluation au taux de fin de mois (1 $ = ${r.toString()} ${currency === "CDF" ? "FC" : "CNY"})`,
+        memo: `Réévaluation au taux de fin de mois (1\u00a0$ = ${frNumber(r.toString())}\u00a0${currency === "CDF" ? "FC" : "¥"})`,
       });
     }
   }
@@ -235,7 +235,7 @@ export async function closePeriod(tx: Tx, month: string, userId: number) {
     ? await postJournal(tx, {
         date: to,
         type: "revaluation",
-        memo: `Réévaluation des devises au ${to} (1 $ = ${reval.rate.toString()} FC${reval.cnyRate ? ` ; ${reval.cnyRate.toString()} CNY` : ""})`,
+        memo: `Réévaluation des devises au ${frDate(to)} (1\u00a0$ = ${frNumber(reval.rate.toString())}\u00a0FC${reval.cnyRate ? `\u00a0; ${frNumber(reval.cnyRate.toString())}\u00a0¥` : ""})`,
         sourceType: "period",
         sourceId: period.id,
         userId,

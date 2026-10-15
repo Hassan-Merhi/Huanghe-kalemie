@@ -17,7 +17,7 @@ import { LocationSelect, MoneyAccountSelect, PartySelect, RateInput, VariantSear
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
-import { cdf, curLabel, d, date as fmtDate, frenchPunctuation, money, qty as fmtQty, todayLocal, typedNumberOk, usd, variantText } from "@/lib/format";
+import { cdf, curLabel, d, date as fmtDate, frenchPunctuation, money, qty as fmtQty, todayLocal, typedNumberOk, unclearQty, usd, variantText } from "@/lib/format";
 import { unitLabel, wholeUnit } from "@/lib/units";
 import type { Account, MotorcycleUnit, Party, Settings, VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -148,7 +148,7 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
           <div key={l.id} className="mb-1">
             <p className="font-semibold">{l.productName}{label ? ` ${label}` : ""}</p>
             {l.chassisNo && <p>{t("Chassis:", "Châssis\u00a0:")} {l.chassisNo}{l.engineNo ? ` · ${t("Engine:", "Moteur\u00a0:")} ${l.engineNo}` : ""}</p>}
-            <ReceiptRow left={`${fmtQty(l.qty)} x ${usd(l.unitPrice)}`} right={usd(c2(d(l.qty).times(l.unitPrice)).toFixed(2))} />
+            <ReceiptRow left={`${fmtQty(l.qty)}\u00a0×\u00a0${usd(l.unitPrice)}`} right={usd(c2(d(l.qty).times(l.unitPrice)).toFixed(2))} />
           </div>
         );
       })}
@@ -423,8 +423,12 @@ export default function POS() {
   const rounded = remaining.abs().lte(tolerance) && (!tolerance.gt(0) || withinFrancs(receivedExact.minus(changeExact)));
   const overpaid = remaining.lt(0) && !rounded;
   const credit = remaining.gt(0) && !rounded ? remaining : d(0);
-  /** A few francs over or under, taken as the sale's rounding: shown in francs, not as cents left to pay. */
-  const francRounding = !remaining.isZero() && rounded && rateNum.gt(0) ? francGap(receivedExact.minus(changeExact)).toDecimalPlaces(0, ROUND) : null;
+  /**
+   * A few francs over or under, taken as the sale's rounding: shown in francs, not as cents left to pay.
+   * Counted in francs even when the dollars round to 0,00 $ (76 000 FC less 200 FC change on 75 816 FC is
+   * 16 FC, like 80 000 FC less 4 200 FC), so the line shows the same way for both.
+   */
+  const francRounding = rounded && tolerance.gt(0) && rateNum.gt(0) ? francGap(receivedExact.minus(changeExact)).toDecimalPlaces(0, ROUND) : null;
 
   /** A short franc payment: what is still to pay in francs too, in the 100 FC notes the customer can hand over. */
   const remainingFc = francs && !francRounding && credit.gt(0) && paid.gt(0) && rateNum.gt(0)
@@ -452,7 +456,7 @@ export default function POS() {
     if (!typedNumberOk(l.unitPrice)) problems.push(t(`Correct the price of ${l.variant.productName}`, `Corrigez le prix ${de(l.variant.productName)}`));
     else if (!l.unitPrice.trim() || d(l.unitPrice).lte(0)) problems.push(t(`Enter the price of ${l.variant.productName} (it is 0 $)`, `Saisissez le prix ${de(l.variant.productName)} (il est à 0\u00a0$)`));
     // "1.000" for a whole-unit item is asked about by its field (1 000 or 1?), never read as 1.
-    if (!typedNumberOk(l.qty)) problems.push(t(`Correct the quantity of ${l.variant.productName}`, `Corrigez la quantité ${de(l.variant.productName)}`));
+    if (!typedNumberOk(l.qty)) problems.push(unclearQty(t, l.qty) ? `${unclearQty(t, l.qty)} (${l.variant.productName})` : t(`Correct the quantity of ${l.variant.productName}`, `Corrigez la quantité ${de(l.variant.productName)}`));
     else if (d(l.qty).lte(0)) problems.push(t(`Quantity of ${l.variant.productName} must be more than zero`, `La quantité ${de(l.variant.productName)} doit être supérieure à zéro`));
     else if (!d(l.qty).isInteger() && wholeUnit(l.variant.unit)) {
       problems.push(t(`${l.variant.productName} is sold by the ${unitLabel(t, l.variant.unit, 1)}: enter a whole number`, `${l.variant.productName} se vend à l'unité (${unitLabel(t, l.variant.unit, 1)}) : saisissez un nombre entier`));
@@ -693,7 +697,7 @@ export default function POS() {
                             ) : (
                               <div className="flex items-start gap-1">
                                 <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" aria-label={t(`Lower the quantity of ${l.variant.productName}`, `Diminuer la quantité ${de(l.variant.productName)}`)} onClick={() => updateLine(l.key, { qty: Decimal.max(d(l.qty).minus(1), 1).toString() })}><Minus className="h-3 w-3" /></Button>
-                                <Input className="h-9 min-w-0 text-center" inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} inlineAlert alertClassName="relative -left-10 w-[calc(100%+5rem)]" aria-label={t(`Quantity of ${l.variant.productName}`, `Quantité ${de(l.variant.productName)}`)} aria-invalid={(!d(l.qty).isInteger() && wholeUnit(l.variant.unit)) || undefined} value={l.qty} onChange={(e) => updateLine(l.key, { qty: e.target.value })} />
+                                <Input className="h-9 min-w-0 text-center" inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} measured={!wholeUnit(l.variant.unit)} inlineAlert alertClassName="relative -left-10 w-[calc(100%+5rem)]" aria-label={t(`Quantity of ${l.variant.productName}`, `Quantité ${de(l.variant.productName)}`)} aria-invalid={(!d(l.qty).isInteger() && wholeUnit(l.variant.unit)) || undefined} value={l.qty} onChange={(e) => updateLine(l.key, { qty: e.target.value })} />
                                 <Button variant="outline" size="icon" className="h-9 w-9 shrink-0" aria-label={t(`Raise the quantity of ${l.variant.productName}`, `Augmenter la quantité ${de(l.variant.productName)}`)} onClick={() => updateLine(l.key, { qty: d(l.qty).plus(1).toString() })}><Plus className="h-3 w-3" /></Button>
                               </div>
                             )}

@@ -494,7 +494,7 @@ export async function setExchangeRate(
         403,
         `${next.toString()} is more than ${limit.toString()}% away from the last rate (${prev.toString()}). Only the owner can make that change.`,
         "FORBIDDEN",
-        `${next.toString()} s'écarte de plus de ${limit.toString()} % du dernier taux (${prev.toString()}). Seul le propriétaire peut faire ce changement.`,
+        `${frNumber(next.toString())}\u00a0FC pour 1\u00a0$ s'écarte de plus de ${frNumber(limit.toString())} % du dernier taux (${frNumber(prev.toString())}\u00a0FC). Seul le propriétaire peut faire ce changement.`,
       );
     }
     if (input.cnyPerUsd && !unchanged(existing?.cnyPerUsd, input.cnyPerUsd)) {
@@ -515,7 +515,7 @@ export async function setExchangeRate(
           403,
           `${nextCny.toString()} CNY is more than ${limit.toString()}% away from the last yuan rate (${ref.toString()}). Only the owner can make that change.`,
           "FORBIDDEN",
-          `${frNumber(nextCny.toString())} ¥ s'écarte de plus de ${frNumber(limit.toString())} % du dernier taux du yuan (${frNumber(ref.toString())}). Seul le propriétaire peut faire ce changement.`,
+          `${frNumber(nextCny.toString())}\u00a0¥ pour 1\u00a0$ s'écarte de plus de ${frNumber(limit.toString())} % du dernier taux du yuan (${frNumber(ref.toString())}\u00a0¥). Seul le propriétaire peut faire ce changement.`,
         );
       }
     }
@@ -555,7 +555,7 @@ export async function resolveRate(tx: Tx, date: string, given?: DecimalInput | n
   if (gap.gt(tolerance)) {
     throw badRequest(
       `The rate ${r.toString()} is more than ${tolerance.toString()}% away from the rate of the day (${day.rate.toString()}). Change the day's rate first if it moved.`,
-      `Le taux ${r.toString()} s'écarte de plus de ${tolerance.toString()} % du taux du jour (${day.rate.toString()}). Modifiez d'abord le taux du jour s'il a changé.`,
+      `Le taux ${frNumber(r.toString())}\u00a0FC pour 1\u00a0$ s'écarte de plus de ${frNumber(tolerance.toString())} % du taux du jour (${frNumber(day.rate.toString())}\u00a0FC). Modifiez d'abord le taux du jour s'il a changé.`,
     );
   }
   return r.toFixed(4);

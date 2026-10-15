@@ -9,14 +9,16 @@ import Decimal from "decimal.js";
  * With `thousands` (franc amounts and franc rates, which have no decimals worth typing), a single "." or ","
  * before exactly three digits groups thousands: "50.000" FC is 50 000 FC and a rate of "2.850" is 2 850.
  * With `usd` (dollar or yuan amounts), "1.200" or "1,200" is refused (null): see ambiguousDollars.
+ * With `measured` (litres, metres, kilos), only "1.000" (digits, a dot, three zeros) is refused: see ambiguousMeasure.
  * Returns the plain number text ("4.5"), "" for an empty field, or null when it is not a number.
  */
-export function parseNumberInput(value: unknown, opts: { thousands?: boolean; usd?: boolean } = {}): string | null {
+export function parseNumberInput(value: unknown, opts: { thousands?: boolean; usd?: boolean; measured?: boolean } = {}): string | null {
   if (value === null || value === undefined) return "";
   if (typeof value === "number") return Number.isFinite(value) ? String(value) : null;
   let s = String(value).replace(/[\s\u00a0\u202f]/g, "").replace(/\$|FC|CDF|USD|CNY|RMB|¥|%/gi, "");
   if (s === "") return "";
   if (opts.usd && ambiguousDollars(s) !== null) return null;
+  if (opts.measured && ambiguousMeasure(s) !== null) return null;
   // A sign typed with the phone keyboard: "+12", "-12" or the true minus "−12" (U+2212).
   let neg = false;
   if (/^[-+\u2212]/.test(s)) {
@@ -56,6 +58,17 @@ export function ambiguousDollars(value: string): string | null {
   const m = /^([-+\u2212]?)([1-9]\d{0,2})([.,])(\d{3})$/.exec(s);
   if (!m || (m[3] === "," && lang === "en")) return null;
   return `${m[1] && m[1] !== "+" ? "-" : ""}${m[2]}${m[4]}`;
+}
+
+/**
+ * In a quantity of litres, metres or kilos, "1.000" may be 1 000 L (thousands, French-style) or 1 L written
+ * with three decimals; read as 1, a supplier's debt and the stock come out a thousand times too small. Only
+ * that exact shape is in doubt (one to three digits, a dot, "000"): "1,5", "2.5", "12.75" and "1.250" (1,25)
+ * stay decimals. Returns the thousands reading ("1000") when in doubt, else null.
+ */
+export function ambiguousMeasure(value: string): string | null {
+  const s = value.replace(/[\s\u00a0\u202f]/g, "");
+  return /^[-+\u2212]?[1-9]\d{0,2}\.000$/.test(s) ? ambiguousDollars(s) : null;
 }
 
 /**

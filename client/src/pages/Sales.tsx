@@ -32,6 +32,8 @@ interface SaleListRow {
   returnedCogs?: string;
   /** Cash handed back on those returns (part of a return may instead come off what the customer owes). */
   refundedUsd?: string;
+  /** Credit still owed on the sale once returns came off the customer's balance. */
+  creditLeftUsd?: string;
   lineCount?: number;
   firstItem?: string | null;
 }
@@ -139,6 +141,11 @@ function netOf(r: SaleListRow) {
   return { total, cogs, profit: cogs !== undefined ? total.minus(cogs) : undefined, returned: d(r.returnedTotal), paid: d(r.paidUsd).minus(refunded), refunded };
 }
 
+/** What is still on credit after returns took it off the customer's balance (the sale page's "Reste à crédit"). */
+function creditOf(r: SaleListRow): string {
+  return r.creditLeftUsd ?? r.creditUsd;
+}
+
 /** "remboursé −22,00 $" under a paid amount; the amount itself never breaks. */
 function Refunded({ value }: { value: { toFixed(n: number): string; gt(n: number): boolean } }) {
   const t = useT();
@@ -196,7 +203,7 @@ function SaleCard({ r, showCost }: { r: SaleListRow; showCost: boolean }) {
       <div className="mt-1.5 flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <p className="min-w-0 tabular">
           {t("Qty", "Qté")} {fmtQty(d(r.qty).minus(d(r.returnedQty)).toString())} · {t("Paid", "Payé")} {usd((voided ? d(r.paidUsd) : n.paid).toFixed(2))}
-          {d(r.creditUsd).gt(0) && !voided && <span className="text-amber-800 dark:text-amber-400"> · {t("Credit", "Crédit")} {usd(r.creditUsd)}</span>}
+          {d(creditOf(r)).gt(0) && !voided && <span className="text-amber-800 dark:text-amber-400"> · {t("Credit", "Crédit")} {usd(creditOf(r))}</span>}
           {/* What came back, under the figures so the items above keep their line. */}
           {!voided && n.returned.gt(0) && (
             <span className="block">
@@ -232,7 +239,7 @@ export default function Sales() {
     returned: sumOf((r) => r.returnedTotal),
     paid: sumOf((r) => netOf(r).paid),
     refunded: sumOf((r) => r.refundedUsd),
-    credit: sumOf((r) => r.creditUsd),
+    credit: sumOf(creditOf),
     cogs: sumOf((r) => netOf(r).cogs),
     qty: sumOf((r) => d(r.qty).minus(d(r.returnedQty))),
   };
@@ -331,7 +338,7 @@ export default function Sales() {
                           <Num>{usd((voided ? d(r.paidUsd) : n.paid).toFixed(2))}</Num>
                           {!voided && <Refunded value={n.refunded} />}
                           {/* What was not paid: owed by the customer. */}
-                          {d(r.creditUsd).gt(0) && <div className={cn("whitespace-nowrap text-xs", !voided && "text-amber-800 dark:text-amber-400")}>{t("credit", "crédit")} {usd(r.creditUsd)}</div>}
+                          {d(voided ? r.creditUsd : creditOf(r)).gt(0) && <div className={cn("whitespace-nowrap text-xs", !voided && "text-amber-800 dark:text-amber-400")}>{t("credit", "crédit")} {usd(voided ? r.creditUsd : creditOf(r))}</div>}
                         </TableCell>
                         <TableCell className="text-right">
                           <Num className={cn("font-medium", voided && "line-through")}>{usd((voided ? d(r.total) : n.total).toFixed(2))}</Num>

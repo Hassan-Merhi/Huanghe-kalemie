@@ -390,7 +390,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="hidden gap-2 px-1 text-xs font-medium text-muted-foreground md:grid md:grid-cols-[9.5rem_minmax(0,1.4fr)_8rem_minmax(0,1fr)_2.5rem]">
+          <div className="hidden gap-2 px-1 text-xs font-medium text-muted-foreground md:grid md:grid-cols-[8rem_minmax(0,1.6fr)_8rem_minmax(0,1fr)_2.5rem]">
             <span>{t("Type", "Type")}</span>
             <span>{t("Contact or account", "Contact ou compte")}</span>
             <span className="text-right">{t(`Amount (${curLabel(currency)})`, `Montant (${curLabel(currency)})`)}</span>
@@ -398,7 +398,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
             <span />
           </div>
           {lines.map((l, i) => (
-            <div key={l.key} className="grid grid-cols-1 gap-2 rounded-lg border p-3 md:grid-cols-[9.5rem_minmax(0,1.4fr)_8rem_minmax(0,1fr)_2.5rem] md:items-center md:border-0 md:p-1">
+            <div key={l.key} className="grid grid-cols-1 gap-2 rounded-lg border p-3 md:grid-cols-[8rem_minmax(0,1.6fr)_8rem_minmax(0,1fr)_2.5rem] md:items-center md:border-0 md:p-1">
               <div className="flex items-center justify-between gap-2">
                 <div className="inline-flex rounded-md border p-0.5">
                   {(["party", "account"] as const).map((mode) => (

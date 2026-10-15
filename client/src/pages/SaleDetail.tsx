@@ -45,6 +45,8 @@ function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () =
     .map((l) => ({ line: l, q: d(qtys[l.id]), max: d(l.qty).minus(l.returnedQty) }))
     .filter((x) => x.q.gt(0));
   const tooMany = chosen.some((x) => x.q.gt(x.max));
+  // Half a tyre cannot come back: said at the field, before the server refuses it.
+  const fractional = chosen.find((x) => wholeUnit(x.line.unit) && !x.q.isInteger());
   const refund = chosen.reduce((s, x) => s.plus(d(x.line.lineTotal).times(x.q).dividedBy(x.line.qty).toDecimalPlaces(2)), d(0));
   const isCdf = mode === "account" && account?.currency === "CDF";
   // Francs go back rounded down to 100 FC: the customer gets these, worth a few cents less than the goods.
@@ -55,6 +57,8 @@ function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () =
     ? unclear
     : chosen.length === 0
       ? t("Enter the quantity coming back", "Saisissez la quantité retournée")
+      : fractional
+        ? t(`${fractional.line.productName} is counted in whole units: use a whole number`, `${fractional.line.productName} se compte à l'unité\u00a0: saisissez un nombre entier`)
       : tooMany
         ? t("You cannot return more than was sold", "Impossible de retourner plus que la quantité vendue")
         : !reason.trim()
@@ -96,6 +100,7 @@ function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () =
                 {sale.lines.map((l) => {
                   const max = d(l.qty).minus(l.returnedQty);
                   const over = d(qtys[l.id]).gt(max);
+                  const split = wholeUnit(l.unit) && !d(qtys[l.id]).isInteger();
                   return (
                     <TableRow key={l.id}>
                       <TableCell>
@@ -105,9 +110,10 @@ function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () =
                       <TableCell className="text-right"><Num>{fmtQty(max.toString())}</Num></TableCell>
                       <TableCell className="text-right">
                         <Input
-                          className={cn("h-8 text-right", over && "border-destructive")}
+                          className={cn("h-8 text-right", (over || split) && "border-destructive")}
+                          aria-invalid={split || undefined}
                           inputMode={wholeUnit(l.unit) ? "numeric" : "decimal"}
-                          whole={wholeUnit(l.unit)}
+                          whole={wholeUnit(l.unit)} measured={!wholeUnit(l.unit)}
                           inlineAlert
                           disabled={max.lte(0)}
                           aria-label={t(`Quantity of ${l.productName} to return`, `Quantité ${de(l.productName)} à retourner`)}
@@ -115,6 +121,7 @@ function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () =
                           value={qtys[l.id] ?? ""}
                           onChange={(e) => setQtys((q) => ({ ...q, [l.id]: e.target.value }))}
                         />
+                        {split && <p className="mt-1 text-xs text-destructive">{t("Whole units only", "Unités entières seulement")}</p>}
                       </TableCell>
                     </TableRow>
                   );
@@ -194,10 +201,12 @@ function ReturnSlip({ sale, ret, accName }: { sale: SaleFull; ret: SaleFull["ret
       {dash}
       {(ret.lines ?? []).map((rl) => {
         const l = sale.lines.find((x) => x.id === rl.saleLineId);
+        // "2 × 22,00 $" as on the sale receipt, when the line's price gives the amount (no discount shared in).
+        const each = l && d(rl.qty).times(l.unitPrice).toDecimalPlaces(2).equals(d(rl.amount)) ? usd(l.unitPrice) : null;
         return (
           <div key={rl.saleLineId} className="mb-1">
             <p className="font-semibold">{l ? `${l.productName} ${variantText(l.attributes)}` : `#${rl.saleLineId}`}</p>
-            <div className="flex justify-between gap-2"><span>{fmtQty(rl.qty)} x</span><span className="tabular">{usd(rl.amount)}</span></div>
+            <div className="flex justify-between gap-2"><span>{each ? `${fmtQty(rl.qty)}\u00a0×\u00a0${each}` : fmtQty(rl.qty)}</span><span className="tabular">{usd(rl.amount)}</span></div>
           </div>
         );
       })}
@@ -362,8 +371,9 @@ export default function SaleDetail() {
   const returnedCost = sale.returns.reduce((s, r) => s.plus(d(r.cogs)), d(0));
   // Margin on what the customer kept: returned items come off both the price and the cost.
   const profit = d(sale.total).minus(returnedTotal).minus(d(sale.cogs ?? 0).minus(returnedCost));
-  // Returns with no refund account were taken off what the customer owes, so they reduce this sale's credit.
-  const creditedReturns = sale.returns.filter((r) => !r.refundAccountId).reduce((s, r) => s.plus(r.total), d(0));
+  // What returns took off what the customer owes (all of a return with no refund account, and the unpaid
+  // part first of one paid back from a drawer), read from their journals: it reduces this sale's credit.
+  const creditedReturns = sale.returns.reduce((s, r) => s.plus(d(r.refundToBalanceUsd ?? (r.refundAccountId ? 0 : r.total))), d(0));
   const credit = d(sale.creditUsd);
   const creditLeft = Decimal.max(credit.minus(creditedReturns), 0);
   const creditReduced = credit.gt(0) && creditedReturns.gt(0);

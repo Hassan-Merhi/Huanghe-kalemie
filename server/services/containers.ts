@@ -13,6 +13,7 @@ import {
 } from "@shared/schema";
 import { computeLandedCost, type AllocationMethod, type LandedCostResult } from "@shared/landedCost";
 import { cents, dec, sum, Decimal } from "@shared/money";
+import { frNumber } from "@shared/french";
 import type { Tx } from "../db";
 import { badRequest, conflict, notFound, wholeUnitError, francDecimalsError } from "../errors";
 import { wholeUnit } from "@shared/units";
@@ -306,12 +307,12 @@ export async function assertContainerRate(tx: Tx, currency: string, rateToUsd: s
     if (!rate.equals(1)) throw badRequest("A container invoiced in USD has a rate of 1", "Un conteneur facturé en USD a un taux de 1");
     return;
   }
-  let reference: Decimal | null = null;
-  let label = "";
+  // Rates are typed and shown as "how many for 1 $" (2 808 FC, 7,1 ¥), so the messages say them that way too.
+  const sign = cur === "CDF" ? "FC" : "¥";
+  const perUsd = (r: Decimal) => (r.gt(0) ? new Decimal(1).dividedBy(r).toSignificantDigits(8).toDecimalPlaces(4) : r);
+  let onFile: Decimal | null = null;
   if (cur === "CDF") {
-    const r = (await rateFor(tx, date)).rate;
-    reference = new Decimal(1).dividedBy(r);
-    label = `1 FC = ${reference.toSignificantDigits(4).toString()} USD (1 $ = ${r.toString()} FC)`;
+    onFile = (await rateFor(tx, date)).rate;
   } else if (cur === "CNY") {
     const [row] = await tx
       .select({ rate: exchangeRates.cnyPerUsd })
@@ -320,21 +321,21 @@ export async function assertContainerRate(tx: Tx, currency: string, rateToUsd: s
       .orderBy(desc(exchangeRates.date))
       .limit(1);
     if (row?.rate) {
-      reference = new Decimal(1).dividedBy(row.rate);
-      label = `1 CNY = ${reference.toSignificantDigits(4).toString()} USD (1 $ = ${dec(row.rate).toString()} CNY)`;
+      onFile = dec(row.rate);
     } else if (rate.lt(0.08) || rate.gt(0.25)) {
       throw badRequest(
-        `1 CNY = ${rate.toString()} USD looks wrong: a yuan is worth about 0.14 USD. Give USD per 1 CNY.`,
-        `1 CNY = ${rate.toString()} USD semble faux : un yuan vaut environ 0,14 USD. Indiquez combien de USD vaut 1 CNY.`,
+        `${perUsd(rate).toString()} CNY for $1 looks wrong: one dollar buys about 7.1 CNY. Give how many yuan one dollar buys.`,
+        `${frNumber(perUsd(rate).toString())}\u00a0¥ pour 1\u00a0$ semble faux : un dollar vaut environ 7,1\u00a0¥. Indiquez combien de yuans vaut 1\u00a0$.`,
       );
     }
   }
-  if (!reference) return;
+  if (!onFile) return;
+  const reference = new Decimal(1).dividedBy(onFile);
   const limit = Decimal.max(await rateTolerancePct(tx), 5);
   if (rate.minus(reference).abs().dividedBy(reference).times(100).gt(limit)) {
     throw badRequest(
-      `The container rate ${rate.toString()} is more than ${limit.toString()}% away from the rate on file (${label}). Check it, or update the day's rate first.`,
-      `Le taux du conteneur ${rate.toString()} s'écarte de plus de ${limit.toString()} % du taux enregistré (${label}). Vérifiez-le, ou mettez d'abord à jour le taux du jour.`,
+      `The container rate (${perUsd(rate).toString()} ${sign} for $1) is more than ${limit.toString()}% away from the rate on file (${onFile.toString()} ${sign} for $1). Check it, or update the day's rate first.`,
+      `Le taux du conteneur (${frNumber(perUsd(rate).toString())}\u00a0${sign} pour 1\u00a0$) s'écarte de plus de ${frNumber(limit.toString())} % du taux enregistré (${frNumber(onFile.toString())}\u00a0${sign} pour 1\u00a0$). Vérifiez-le, ou mettez d'abord à jour le taux du jour.`,
     );
   }
 }

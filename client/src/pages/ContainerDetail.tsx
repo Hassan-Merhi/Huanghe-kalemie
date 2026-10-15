@@ -17,7 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { curLabel, d, date, money, pct, qty, todayLocal, typedNumberOk, unitCost, usd, variantText, unclearQty } from "@/lib/format";
-import { unitLabel, wholeUnit } from "@/lib/units";
+import { qtyWithUnit, unitKey, unitLabel, wholeUnit } from "@/lib/units";
 import { useT, count } from "@/lib/i18n";
 import type { Account, Party, VariantRow } from "@/lib/types";
 import { ContainerStatusBadge, useStatusLabel, type ContainerRow, type ContainerStatus } from "./Containers";
@@ -468,7 +468,9 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
   });
   const shown = problems.map((p) => (p === PENDING ? null : p));
   const totalNative = draft.reduce((s, r) => s.plus(d(r.quantity).times(d(r.unitPrice))), d(0));
-  const totalQty = draft.reduce((s, r) => s.plus(d(r.quantity)), d(0));
+  // Ten motorcycles and two hundred tyres make no total: quantities add up only within one product.
+  const oneProduct = draft.length > 0 && draft.every((r) => r.productName === draft[0].productName && unitKey(r.unit) === unitKey(draft[0].unit));
+  const totalQty = oneProduct ? qtyWithUnit(t, draft.reduce((s, r) => s.plus(d(r.quantity)), d(0)).toString(), draft[0].unit) : null;
 
   function submit() {
     save.mutate({
@@ -520,7 +522,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
             {draft.map((r, i) => {
               const value = d(r.quantity).times(d(r.unitPrice));
               return (
-                <div key={r.key} className="rounded-md border p-3">
+                <div key={r.key} className="rounded-md border p-3" role="group" aria-label={itemLabel(r)}>
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
                       <div className="font-medium">{itemLabel(r)}</div>
@@ -536,16 +538,16 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                   {editable ? (
                     <div className="mt-2 grid grid-cols-2 items-end gap-2">
                       <Field label={t("Quantity", "Quantité")}>
-                        <Input className="text-right" inputMode={wholeUnit(r.unit) ? "numeric" : "decimal"} whole={wholeUnit(r.unit)} inlineAlert value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
+                        <Input className="text-right" inputMode={wholeUnit(r.unit) ? "numeric" : "decimal"} whole={wholeUnit(r.unit)} measured={!wholeUnit(r.unit)} inlineAlert aria-label={t(`Quantity of ${itemLabel(r)}`, `Quantité ${de(itemLabel(r))}`)} value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
                       </Field>
                       <Field label={t(`Price each (${curLabel(c.currency)})`, `Prix/unité (${curLabel(c.currency)})`)}>
-                        <Input className="text-right" inputMode="decimal" currency={c.currency} value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
+                        <Input className="text-right" inputMode="decimal" currency={c.currency} aria-label={t(`Price each of ${itemLabel(r)}`, `Prix unitaire ${de(itemLabel(r))}`)} value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
                       </Field>
                       <Field label={t("Total weight (kg)", "Poids total (kg)")}>
-                        <Input className="text-right" inputMode="decimal" placeholder={t("total kg", "kg total")} value={r.weightKg} onChange={(e) => update(r.key, { weightKg: e.target.value })} />
+                        <Input className="text-right" inputMode="decimal" placeholder={t("total kg", "kg total")} aria-label={t(`Total weight of ${itemLabel(r)} (kg)`, `Poids total ${de(itemLabel(r))} (kg)`)} value={r.weightKg} onChange={(e) => update(r.key, { weightKg: e.target.value })} />
                       </Field>
                       <Field label={t("Total volume (m³)", "Volume total (m³)")}>
-                        <Input className="text-right" inputMode="decimal" placeholder={t("total m³", "m³ total")} value={r.volumeCbm} onChange={(e) => update(r.key, { volumeCbm: e.target.value })} />
+                        <Input className="text-right" inputMode="decimal" placeholder={t("total m³", "m³ total")} aria-label={t(`Total volume of ${itemLabel(r)} (m³)`, `Volume total ${de(itemLabel(r))} (m³)`)} value={r.volumeCbm} onChange={(e) => update(r.key, { volumeCbm: e.target.value })} />
                       </Field>
                     </div>
                   ) : (
@@ -567,7 +569,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
               );
             })}
             <div className="flex items-baseline justify-between rounded-md bg-muted/50 px-3 py-2 text-sm font-medium">
-              <span>{t("Total", "Total")} ({count(t, draft.length, ["line", "lines"], ["ligne", "lignes"])}) · {qty(totalQty.toString())}</span>
+              <span>{t("Total", "Total")} ({count(t, draft.length, ["line", "lines"], ["ligne", "lignes"])}){totalQty ? ` · ${totalQty}` : ""}</span>
               <span className="text-right">
                 <Num className="font-semibold">{fmtCur(totalNative.toFixed(2), c.currency)}</Num>
                 {foreign && <span className="block text-xs font-normal text-muted-foreground"><Num>{usd(totalNative.times(rate).toFixed(2))}</Num></span>}
@@ -600,7 +602,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                       {editable ? (
                         <>
                           <TableCell className="text-right">
-                            <Input className="ml-auto w-20 text-right" inputMode={wholeUnit(r.unit) ? "numeric" : "decimal"} whole={wholeUnit(r.unit)} inlineAlert aria-label={t(`Quantity of ${itemLabel(r)}`, `Quantité ${de(itemLabel(r))}`)} value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
+                            <Input className="ml-auto w-20 text-right" inputMode={wholeUnit(r.unit) ? "numeric" : "decimal"} whole={wholeUnit(r.unit)} measured={!wholeUnit(r.unit)} inlineAlert aria-label={t(`Quantity of ${itemLabel(r)}`, `Quantité ${de(itemLabel(r))}`)} value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
                           </TableCell>
                           <TableCell className="text-right">
                             <Input className="ml-auto w-28 text-right" inputMode="decimal" currency={c.currency} inlineAlert aria-label={t(`Unit price of ${itemLabel(r)}`, `Prix unitaire ${de(itemLabel(r))}`)} value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
@@ -638,7 +640,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
               <TableFooter>
                 <TableRow>
                   <TableCell className="font-medium">{t("Total", "Total")} ({count(t, draft.length, ["line", "lines"], ["ligne", "lignes"])})</TableCell>
-                  <TableCell className="text-right"><Num>{qty(totalQty.toString())}</Num></TableCell>
+                  <TableCell className="text-right"><Num>{totalQty ?? ""}</Num></TableCell>
                   <TableCell colSpan={3} />
                   <TableCell className="text-right">
                     <Num className="font-semibold">{fmtCur(totalNative.toFixed(2), c.currency)}</Num>
@@ -894,7 +896,7 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
   const usdValue = isCdf ? (d(rate).gt(0) ? amt.dividedBy(d(rate)) : null) : amt;
 
   const create = useApiMutation<Record<string, unknown>>("POST", `/api/containers/${c.id}/expenses`, {
-    success: t("Cost added", "Frais ajouté"),
+    success: t("Cost added", "Frais ajoutés"),
     onSuccess: onClose,
   });
   const blocked =
@@ -1092,7 +1094,7 @@ function PreviewSection({ c, priceOf }: { c: ContainerFull; priceOf: Map<number,
                     <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
                     <TableHead className="text-right">{t("Purchase ($)", "Achat ($)")}</TableHead>
                     {c.expenses.map((e) => (
-                      <TableHead key={e.id} className="hidden text-right md:table-cell">
+                      <TableHead key={e.id} className="hidden text-right md:table-cell" data-card-label={`${L.type(e.type)} · ${L.method(e.method)}`}>
                         <span className="block whitespace-nowrap">{L.type(e.type)}</span>
                         <span className="block text-[10px] font-normal">{L.method(e.method)}</span>
                       </TableHead>

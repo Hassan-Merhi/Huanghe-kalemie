@@ -22,12 +22,12 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
+import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
 import { AccountSelect, MoneyAccountSelect, MonthSelect, PartySelect, RateInput, useRateField } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useI18n, useT, count } from "@/lib/i18n";
-import { curLabel, cdf, d, date as fmtDate, money, todayLocal, typedNumberOk, usd } from "@/lib/format";
+import { curLabel, cdf, d, date as fmtDate, money, number, todayLocal, typedNumberOk, usd } from "@/lib/format";
 import type { Account, Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { PartyDialog } from "@/pages/Contacts";
@@ -252,7 +252,10 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
   const today = todayLocal();
   const effectiveDay = day || (month === today.slice(0, 7) ? today : lastDayOfMonth(month));
   const { rate, setRate } = useRateField(effectiveDay);
-  const fmt = (v: unknown) => money(v, currency);
+  // Francs with centimes (a slip the server refuses) are shown as typed, not rounded to "416 200 FC".
+  const fmt = (v: unknown) => (currency === "CDF" && !d(v).isInteger() ? `${number(v, 2)}\u00a0FC` : money(v, currency));
+  /** "Les montants en FC sont des nombres entiers" for a franc field typed with centimes ("5000,5"). */
+  const centsError = (v: string) => francDecimalsError(t, currency, v);
 
   const grid = active.map((e) => {
     const ed = edits[e.id] ?? {};
@@ -271,6 +274,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
   const negative = included.find((g) => g.net.isNegative());
   /** Francs are paid in 100 FC notes: only a warning, the amount stays as typed. */
   const notRound = currency === "CDF" ? included.find((g) => g.net.gt(0) && !g.net.mod(100).isZero()) : undefined;
+  const withCents = included.find((g) => [g.salary, g.bonus, g.withheld, g.penalty].some((v) => centsError(v)));
   const dayInMonth = effectiveDay.slice(0, 7) === month;
 
   /** Switching currency converts what was typed at the rate, so 250 $ does not become 250 FC. */
@@ -437,16 +441,16 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                         {g.e.position && <span className="block text-xs text-muted-foreground">{g.e.position}</span>}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Input className="ml-auto w-24 text-right" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Salary of ${g.e.name}`, `Salaire ${de(g.e.name)}`)} value={g.salary} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { salary: ev.target.value })} />
+                        <Input className="ml-auto w-24 text-right" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Salary of ${g.e.name}`, `Salaire ${de(g.e.name)}`)} aria-invalid={!!centsError(g.salary) || undefined} value={g.salary} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { salary: ev.target.value })} />
                       </TableCell>
                       <TableCell className="text-right">
-                        <Input className="ml-auto w-20 text-right" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Bonus for ${g.e.name}`, `Prime ${de(g.e.name)}`)} placeholder="—" value={g.bonus} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { bonus: ev.target.value })} />
+                        <Input className="ml-auto w-20 text-right" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Bonus for ${g.e.name}`, `Prime ${de(g.e.name)}`)} placeholder="—" aria-invalid={!!centsError(g.bonus) || undefined} value={g.bonus} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { bonus: ev.target.value })} />
                       </TableCell>
                       <TableCell className="text-right">
-                        <Input className="ml-auto w-20 text-right" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Withheld for ${g.e.name}`, `Retenue ${de(g.e.name)}`)} placeholder="—" value={g.withheld} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { withheld: ev.target.value })} />
+                        <Input className="ml-auto w-20 text-right" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Withheld for ${g.e.name}`, `Retenue ${de(g.e.name)}`)} placeholder="—" aria-invalid={!!centsError(g.withheld) || undefined} value={g.withheld} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { withheld: ev.target.value })} />
                       </TableCell>
                       <TableCell className="text-right">
-                        <Input className="ml-auto w-20 text-right" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Penalty for ${g.e.name}`, `Pénalité ${de(g.e.name)}`)} placeholder="—" value={g.penalty} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { penalty: ev.target.value })} />
+                        <Input className="ml-auto w-20 text-right" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Penalty for ${g.e.name}`, `Pénalité ${de(g.e.name)}`)} placeholder="—" aria-invalid={!!centsError(g.penalty) || undefined} value={g.penalty} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { penalty: ev.target.value })} />
                       </TableCell>
                       <TableCell className="text-right">
                         <Num className={cn("font-medium", g.net.isNegative() && "text-destructive")}>{fmt(g.net.toFixed(2))}</Num>
@@ -467,11 +471,12 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
             {currency === "CDF" && notRound && (
               <p className="text-sm text-amber-800 dark:text-amber-400">
                 {t(
-                  `${notRound.e.name}: ${fmt(notRound.net.toFixed(0))} is not a multiple of 100 FC, which is hard to pay in notes`,
-                  `${notRound.e.name} : ${fmt(notRound.net.toFixed(0))} n'est pas un multiple de 100 FC, difficile à payer en billets`,
+                  `${notRound.e.name}: ${fmt(notRound.net.toString())} is not a multiple of 100 FC, which is hard to pay in notes`,
+                  `${notRound.e.name} : ${fmt(notRound.net.toString())} n'est pas un multiple de 100 FC, difficile à payer en billets`,
                 )}
               </p>
             )}
+            {withCents && <p className="text-sm text-destructive">{t(`${withCents.e.name}: franc amounts are whole numbers (no centimes)`, `${withCents.e.name}\u00a0: les montants en FC sont des nombres entiers (sans centimes)`)}</p>}
             {negative && <p className="text-sm text-destructive">{t(`${negative.e.name}: deductions are more than the salary`, `${negative.e.name}\u00a0: les retenues dépassent le salaire`)}</p>}
             {canEdit && (
               <div className="flex justify-end">
@@ -488,6 +493,8 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                             ? t("Include at least one employee", "Incluez au moins un employé")
                             : included.some((g) => ![g.salary, g.bonus, g.withheld, g.penalty].every(typedNumberOk))
                               ? t("Correct the amounts that cannot be read", "Corrigez les montants illisibles")
+                              : withCents
+                                ? t("Remove the centimes from the franc amounts", "Retirez les centimes des montants en FC")
                               : negative
                                 ? t("Fix the deductions that are more than the salary", "Corrigez les retenues qui dépassent le salaire")
                                 : !total.gt(0)
@@ -730,10 +737,12 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
                       </div>
                       <div className="text-right">
                         <div className="flex items-center justify-end gap-1">
-                          <Input className="w-28 text-right" inputMode="decimal" usd={!isCdf} thousands={isCdf} aria-label={t(`Amount paid to ${e.name}`, `Montant payé à ${e.name}`)} value={amountOf(e)} onChange={(ev) => setAmounts((p) => ({ ...p, [keyOf(e)]: ev.target.value }))} />
+                          <Input className="w-28 text-right" inputMode="decimal" usd={!isCdf} thousands={isCdf} aria-label={t(`Amount paid to ${e.name}`, `Montant payé à ${e.name}`)} aria-invalid={(isCdf && !!francDecimalsError(t, "CDF", amountOf(e))) || undefined} value={amountOf(e)} onChange={(ev) => setAmounts((p) => ({ ...p, [keyOf(e)]: ev.target.value }))} />
                           <span className="w-6 text-left text-xs text-muted-foreground">{isCdf ? "FC" : "$"}</span>
                         </div>
-                        {isCdf && d(amountOf(e)).gt(0) && !d(amountOf(e)).mod(100).isZero() && (
+                        {isCdf && francDecimalsError(t, "CDF", amountOf(e)) ? (
+                          <p className="mt-1 text-xs text-destructive">{t("No centimes in francs", "Pas de centimes en FC")}</p>
+                        ) : isCdf && d(amountOf(e)).gt(0) && !d(amountOf(e)).mod(100).isZero() && (
                           <p className="mt-1 text-xs text-amber-800 dark:text-amber-400">{t("Not a multiple of 100 FC", "Pas un multiple de 100\u00a0FC")}</p>
                         )}
                       </div>
@@ -762,6 +771,8 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
                     ? t("Enter the exchange rate", "Saisissez le taux de change")
                     : rows.some((e) => !typedNumberOk(amountOf(e)))
                       ? t("Correct the amounts that cannot be read", "Corrigez les montants illisibles")
+                      : isCdf && rows.some((e) => francDecimalsError(t, "CDF", amountOf(e)))
+                        ? t("Remove the centimes from the franc amounts", "Retirez les centimes des montants en FC")
                       : lines.length === 0 && t("Enter at least one amount above zero", "Saisissez au moins un montant supérieur à zéro")
               }
               pending={pay.isPending}

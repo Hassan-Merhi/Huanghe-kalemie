@@ -140,6 +140,11 @@ export function registerErpRoutes(
       const names = (side: "debit" | "credit") => Array.from(new Set(shown.filter((l) => l.isMoney && dec(l[side]).gt(0)).map((l) => l.accountName ?? ""))).join(", ");
       return { amount: total(money, "credit").toFixed(2), transfer: { from: names("credit"), to: names("debit") }, ...fxDiff };
     }
+    if (type === "revaluation") {
+      // Month-end revaluation moves the dollar value of franc and yuan balances, not their francs: the
+      // booked values are the document (at the voucher's rate they would read 0,00 $).
+      return { amount: ls.reduce((s, l) => s.plus(l.line.debit), dec(0)).toFixed(2) };
+    }
     if (type === "stock_adjustment") {
       // A count both finds and loses stock: the net change of the stock's value, with each side apart.
       const inv = ls.filter((l) => l.systemKey === "inventory");

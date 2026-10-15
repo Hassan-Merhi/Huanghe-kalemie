@@ -434,14 +434,17 @@ export function AdjustForm({
     setError(null);
     if (!locationId) return setError(t("Choose a location.", "Choisissez un emplacement."));
     if (!reason.trim()) return setError(t("Give a reason.", "Indiquez un motif."));
+    // "1.000" pieces (or litres) is asked about by its field (1 000 or 1?), never read as 1; asked first,
+    // since such a line reads as no quantity at all.
+    for (const l of lines) {
+      const unclear = unclearQty(t, byCount ? l.counted : l.qty);
+      if (unclear) return setError(`${unclear} (${l.variant.productName} · ${l.variant.sku})`);
+    }
     const active = lines.filter((l) => !change(l).isZero());
     if (active.length === 0) return setError(t("Add at least one item with a quantity.", "Ajoutez au moins un article avec une quantité."));
     const payload = [];
     for (const l of lines) {
       const name = `${l.variant.productName} (${l.variant.sku})`;
-      // "1.000" pieces is asked about by its field (1 000 or 1?), never read as 1.
-      const unclear = unclearQty(t, byCount ? l.counted : l.qty);
-      if (unclear) return setError(`${unclear} (${name})`);
       if (byCount && isQty(l.counted ?? "") && d(l.qty).isZero()) return setError(t(`${name}: the count matches the stock, nothing to adjust. Remove the line.`, `${name}\u00a0: le comptage correspond au stock, rien à ajuster. Retirez la ligne.`));
       if (!isQty(l.qty) || d(l.qty).isZero()) return setError(t(`Enter a quantity for ${name} or remove the line.`, `Saisissez une quantité pour ${name} ou retirez la ligne.`));
       const c = change(l);
@@ -594,11 +597,11 @@ export function AdjustForm({
                       hint={t(`In the system here: ${qty(l.variant.locationQty)}`, `Dans le système ici\u00a0: ${qty(l.variant.locationQty)}`)}
                       required
                     >
-                      <DecimalInput inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} inlineAlert value={l.counted ?? ""} onChange={(e) => setCounted(l, e.target.value)} />
+                      <DecimalInput inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} measured={!wholeUnit(l.variant.unit)} inlineAlert value={l.counted ?? ""} onChange={(e) => setCounted(l, e.target.value)} />
                     </Field>
                   ) : (
                     <Field label={onlyRemove ? t("Qty removed", "Qté retirée") : onlyAdd ? t("Qty", "Qté") : t("Qty change (+/−)", "Variation (+/−)")} required>
-                      <DecimalInput inputMode={signed ? "text" : wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} inlineAlert value={l.qty} onChange={(e) => setQty(l, e.target.value)} />
+                      <DecimalInput inputMode={signed ? "text" : wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} measured={!wholeUnit(l.variant.unit)} inlineAlert value={l.qty} onChange={(e) => setQty(l, e.target.value)} />
                     </Field>
                   )}
                   {fixedCost && (
@@ -944,7 +947,7 @@ function TransferForm({ onDone }: { onDone: () => void }) {
                         <div className="text-xs text-muted-foreground">{l.variant.sku}</div>
                       </TableCell>
                       <TableCell className="text-right"><Num>{qty(l.variant.locationQty)}</Num></TableCell>
-                      <TableCell><Input className="w-24" inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} inlineAlert value={l.qty} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} /></TableCell>
+                      <TableCell><Input className="w-24" inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} measured={!wholeUnit(l.variant.unit)} inlineAlert value={l.qty} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} /></TableCell>
                       <TableCell><Button variant="ghost" size="icon" onClick={() => setLines(lines.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></Button></TableCell>
                     </TableRow>
                     {l.variant.tracksSerials && fromId && isPositive(l.qty) && (
@@ -983,6 +986,8 @@ interface TransferRow {
   fromName: string;
   toName: string;
   username: string | null;
+  /** Full name of who moved it, the login when none is set. */
+  userName?: string | null;
 }
 
 const validDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
@@ -1033,7 +1038,7 @@ function TransferHistory() {
                   <TableCell className="text-right"><Num>{qty(r.qty)}</Num></TableCell>
                   <TableCell className="whitespace-nowrap">{r.fromName} <span className="text-muted-foreground">→</span> {r.toName}</TableCell>
                   <TableCell className="max-w-[260px] truncate" title={r.note ?? undefined}>{r.note || <span className="text-muted-foreground">—</span>}</TableCell>
-                  <TableCell className="whitespace-nowrap">{r.username ?? "—"}</TableCell>
+                  <TableCell className="whitespace-nowrap">{r.userName ?? r.username ?? "—"}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
