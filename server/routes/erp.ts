@@ -239,7 +239,7 @@ export function registerErpRoutes(
           journal.sourceType === "sale" && journal.sourceId && flags.has(journal.sourceId)
             ? { zeroPrice: !!flags.get(journal.sourceId)!.zero_price, belowCost: !!flags.get(journal.sourceId)!.below_cost }
             : undefined,
-        ...documentAmount(journal.type, ls, masked.lines),
+        ...documentAmount(journal.type, hidden.size ? ls.filter((l) => !hidden.has(l.line.accountId)) : ls, masked.lines),
         lines: masked.lines,
       };
     });
@@ -292,7 +292,10 @@ export function registerErpRoutes(
         if (kind === "journal" && req.user!.role !== "owner") {
           throw forbidden("Only the owner can post a journal entry", "Seul le propriétaire peut passer une écriture");
         }
-        return payloadSchemas[kind].parse(payload);
+        const parsed = payloadSchemas[kind].parse(payload);
+        // Staff take francs at the day's rate, as on the direct voucher routes.
+        if (req.user!.role !== "owner" && parsed && typeof parsed === "object" && "rate" in parsed) (parsed as { rate?: string | null }).rate = null;
+        return parsed;
       }),
     );
     await audit(req, "finalize", "voucher_draft", paramId(req), result);

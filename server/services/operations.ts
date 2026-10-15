@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lte, sql } from "drizzle-orm";
 import {
   accounts,
   exchangeRates,
@@ -149,7 +149,7 @@ export async function createExpense(tx: Tx, input: ExpenseInput, userId: number)
   });
   const [updated] = await tx.update(expenses).set({ journalId }).where(eq(expenses.id, expense.id)).returning();
   // A bill owed in francs is settled by any dollar advance already paid to that contact.
-  if (input.payablePartyId && currency === "CDF") await applyAdvances(tx, input.payablePartyId, input.date, `Avance imputée sur la dépense ${input.description}`, userId);
+  if (input.payablePartyId && currency === "CDF") await applyAdvances(tx, input.payablePartyId, input.date, `Avance imputée sur la dépense ${input.description}`, userId, { type: "expense", id: expense.id });
   return updated;
 }
 
@@ -162,6 +162,7 @@ export async function voidExpense(tx: Tx, id: number, date: string, userId: numb
     throw conflict(`This expense is part of payment voucher ${j.number}. Cancel the voucher from the daybook.`, `Cette dépense fait partie de la pièce de paiement ${j.number}. Annulez la pièce depuis le journal du jour.`);
   }
   const voidJournalId = await reverseJournal(tx, expense.journalId!, { date, userId, memo: `Dépense annulée\u00a0: ${expense.description}` });
+  await reverseAdvances(tx, { type: "expense", id: expense.id }, date, userId);
   await tx.update(expenses).set({ voidedAt: new Date(), voidJournalId }).where(eq(expenses.id, id));
 }
 
@@ -312,7 +313,14 @@ export async function advanceToFrancLines(tx: Tx, payables: number, partyId: num
  * Apply what was paid ahead to a contact (dollars, or francs for yuan) to what they are now owed in
  * yuan or francs, in one journal, so the same money is not paid twice. Used when a bill is booked.
  */
-export async function applyAdvances(tx: Tx, partyId: number, date: string, memo: string, userId: number): Promise<number | null> {
+export async function applyAdvances(
+  tx: Tx,
+  partyId: number,
+  date: string,
+  memo: string,
+  userId: number,
+  source: { type: AdvanceSource; id: number },
+): Promise<number | null> {
   const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
   const linesOn = async (on: string) => {
     const lines = await advanceToYuanLines(tx, payables, partyId, on);
@@ -327,7 +335,18 @@ export async function applyAdvances(tx: Tx, partyId: number, date: string, memo:
     lines = await linesOn(on);
   }
   if (!lines.length) return null;
-  return postJournal(tx, { date: on, type: "supplier_payment", memo, userId, lines });
+  return postJournal(tx, { date: on, type: "supplier_payment", memo, userId, lines, sourceType: `advance_${source.type}`, sourceId: source.id });
+}
+
+export type AdvanceSource = "expense" | "container_expense" | "container" | "payroll";
+
+/** Undo the advances a bill took when the bill itself is undone, so the advance is a dollar advance again. */
+export async function reverseAdvances(tx: Tx, source: { type: AdvanceSource; id: number }, date: string, userId: number) {
+  const rows = await tx
+    .select({ id: journals.id, date: journals.date })
+    .from(journals)
+    .where(and(eq(journals.sourceType, `advance_${source.type}`), eq(journals.sourceId, source.id), isNull(journals.reversedByJournalId), isNull(journals.reversesJournalId)));
+  for (const r of rows) await reverseJournal(tx, r.id, { date: date < r.date ? r.date : date, userId, memo: "Avance rendue : la facture est annulée" });
 }
 
 /**

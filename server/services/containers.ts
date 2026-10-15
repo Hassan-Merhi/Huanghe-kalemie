@@ -17,7 +17,7 @@ import type { Tx } from "../db";
 import { badRequest, conflict, notFound, wholeUnitError, francDecimalsError } from "../errors";
 import { wholeUnit } from "@shared/units";
 import { moneyLeg, postJournal, rateFor, rateTolerancePct, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type ForeignCurrency } from "./ledger";
-import { applyAdvances, assertSameCurrency } from "./operations";
+import { applyAdvances, assertSameCurrency, reverseAdvances } from "./operations";
 import { issueStock, linkMovementsToJournal, receiveStock, stockQty } from "./stock";
 import { variantColour } from "./catalog";
 
@@ -220,7 +220,7 @@ export async function addExpense(tx: Tx, containerId: number, input: ContainerEx
   });
   await tx.update(containerExpenses).set({ journalId }).where(eq(containerExpenses.id, expense.id));
   // Francs owed to an agent are settled by any dollar advance already paid to them.
-  if (input.payablePartyId && currency === "CDF") await applyAdvances(tx, input.payablePartyId, input.date, `Avance imputée sur les frais du conteneur ${container.number}`, userId);
+  if (input.payablePartyId && currency === "CDF") await applyAdvances(tx, input.payablePartyId, input.date, `Avance imputée sur les frais du conteneur ${container.number}`, userId, { type: "container_expense", id: expense.id });
   return expense;
 }
 
@@ -233,6 +233,7 @@ export async function removeExpense(tx: Tx, containerId: number, expenseId: numb
     .where(and(eq(containerExpenses.id, expenseId), eq(containerExpenses.containerId, containerId)));
   if (!expense) throw notFound("Expense", "Dépense introuvable");
   if (expense.journalId) await reverseJournal(tx, expense.journalId, { date, userId, memo: "Frais de conteneur supprimé" });
+  await reverseAdvances(tx, { type: "container_expense", id: expense.id }, date, userId);
   await tx.delete(containerExpenses).where(eq(containerExpenses.id, expenseId));
 }
 
@@ -338,6 +339,16 @@ export async function finalizeContainer(tx: Tx, containerId: number, offloadDate
   if (supplier?.type !== "supplier") throw badRequest("The container's supplier is not a supplier", "Le fournisseur du conteneur n'est pas un fournisseur");
   const full = await getContainer(tx, containerId);
   if (full.lines.length === 0) throw badRequest("Add the container's items before offloading", "Ajoutez les articles du conteneur avant le déchargement");
+  // An item's unit may have changed since its line was typed: pieces still arrive whole.
+  const units = await tx
+    .select({ id: variants.id, sku: variants.sku, name: products.name, unit: products.unit })
+    .from(variants)
+    .innerJoin(products, eq(products.id, variants.productId))
+    .where(inArray(variants.id, full.lines.map((l) => l.variantId)));
+  for (const l of full.lines) {
+    const u = units.find((x) => x.id === l.variantId);
+    if (u && !dec(l.quantity).isInteger() && wholeUnit(u.unit)) throw wholeUnitError(`${u.name} (${u.sku})`);
+  }
   const unpinned = full.expenses.find((e) => e.method === "line" && !e.targetLineId);
   if (unpinned) throw badRequest("An expense charged to one line has no line. Pick its line first.", "Une dépense imputée à une seule ligne n'a pas de ligne. Choisissez d'abord sa ligne.");
   const result = await previewLandedCost(tx, containerId);
@@ -436,7 +447,7 @@ export async function finalizeContainer(tx: Tx, containerId: number, offloadDate
   // A dollar deposit already paid to the supplier settles the yuan invoice now, so the yuan owed is
   // what is really left to pay.
   if (container.currency === "CNY" || container.currency === "CDF") {
-    await applyAdvances(tx, container.supplierId, offloadDate, `Avance imputée sur le conteneur ${container.number}`, userId);
+    await applyAdvances(tx, container.supplierId, offloadDate, `Avance imputée sur le conteneur ${container.number}`, userId, { type: "container", id: containerId });
   }
   return result;
 }
@@ -501,6 +512,7 @@ export async function reverseContainer(tx: Tx, containerId: number, date: string
     }
   }
 
+  await reverseAdvances(tx, { type: "container", id: containerId }, date, userId);
   let removed = dec(0);
   for (const line of full.lines) {
     const value = await issueStock(tx, {
