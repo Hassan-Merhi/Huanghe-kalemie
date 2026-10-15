@@ -314,7 +314,36 @@ export async function getSale(tx: Tx, id: number) {
         .where(inArray(saleReturnLines.returnId, returnRows.map((r) => r.id)))
         .orderBy(asc(saleReturnLines.id))
     : [];
-  const returns = returnRows.map((r) => ({ ...r, lines: returnLines.filter((l) => l.returnId === r.id).map(({ returnId: _r, ...l }) => l) }));
+  // The money actually handed back on each return, in the drawer's own currency (francs for Caisse FC).
+  const refundRows = returnRows.some((r) => r.journalId && r.refundAccountId)
+    ? await tx
+        .select({ journalId: journalLines.journalId, accountId: journalLines.accountId, credit: journalLines.credit, nativeAmount: journalLines.nativeAmount, currency: accounts.currency })
+        .from(journalLines)
+        .innerJoin(accounts, eq(accounts.id, journalLines.accountId))
+        .where(and(inArray(journalLines.journalId, returnRows.map((r) => r.journalId).filter((x): x is number => !!x)), eq(accounts.isMoney, true)))
+    : [];
+  const receivables = await systemAccountId(tx, SYSTEM_ACCOUNTS.receivables);
+  const toBalanceRows = returnRows.some((r) => r.journalId)
+    ? await tx
+        .select({ journalId: journalLines.journalId, credit: journalLines.credit })
+        .from(journalLines)
+        .where(and(inArray(journalLines.journalId, returnRows.map((r) => r.journalId).filter((x): x is number => !!x)), eq(journalLines.accountId, receivables)))
+    : [];
+  const returns = returnRows.map((r) => {
+    const refund = refundRows.filter((x) => x.journalId === r.journalId && x.accountId === r.refundAccountId);
+    const refundUsd = sum(refund.map((x) => x.credit));
+    const refundCurrency = refund[0]?.currency ?? null;
+    const refundNative = refundCurrency === "CDF" ? sum(refund.map((x) => dec(x.nativeAmount ?? 0).abs())) : refundUsd;
+    return {
+      ...r,
+      lines: returnLines.filter((l) => l.returnId === r.id).map(({ returnId: _r, ...l }) => l),
+      refundUsd: refund.length ? refundUsd.toFixed(2) : null,
+      refundNative: refund.length ? refundNative.toFixed(2) : null,
+      refundCurrency,
+      /** The part taken off what the customer owes instead of paid out. */
+      refundToBalanceUsd: sum(toBalanceRows.filter((x) => x.journalId === r.journalId).map((x) => x.credit)).toFixed(2),
+    };
+  });
   const [customer] = sale.customerId ? await tx.select().from(parties).where(eq(parties.id, sale.customerId)) : [];
   const [cashier] = sale.createdBy ? await tx.select({ fullName: users.fullName, username: users.username }).from(users).where(eq(users.id, sale.createdBy)) : [];
   return {
@@ -344,7 +373,7 @@ export async function voidSale(tx: Tx, id: number, date: string, reason: string,
   const lines = await tx.select().from(saleLines).where(eq(saleLines.saleId, id));
 
   const voidJournalId = sale.journalId
-    ? await reverseJournal(tx, sale.journalId, { date, type: "sale_void", memo: `Vente ${sale.number} annulée : ${reason}`, userId })
+    ? await reverseJournal(tx, sale.journalId, { date, type: "sale_void", memo: `Vente ${sale.number} annulée\u00a0: ${reason}`, userId })
     : null;
   for (const line of lines) {
     await receiveStock(tx, {
@@ -483,7 +512,7 @@ export async function returnSale(tx: Tx, saleId: number, input: ReturnInput, use
   const journalId = await postJournal(tx, {
     date: input.date,
     type: "sale_return",
-    memo: `Retour ${number} sur la vente ${sale.number} : ${input.reason}`,
+    memo: `Retour ${number} sur la vente ${sale.number}\u00a0: ${input.reason}`,
     sourceType: "sale_return",
     sourceId: ret.id,
     userId,

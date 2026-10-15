@@ -83,6 +83,33 @@ export function registerErpRoutes(
   // ---------------------------------------------------------------- Daybook
 
   const SALE_JOURNALS = new Set<string>(["sale", "sale_void", "sale_return"]);
+  /** Journals where a franc rounding or exchange difference is a side effect, not part of the document. */
+  const FX_SIDE = new Set<string>(["sale", "sale_void", "sale_return", "transfer", "payment", "receipt", "customer_receipt", "supplier_payment", "expense"]);
+  type DayLine = { line: { debit: string; credit: string }; isMoney: boolean; systemKey: string | null };
+  /**
+   * What a daybook row shows: the document's own amount (a sale's total, a transfer's amount sent),
+   * with the money received and the change handed back for a sale as secondary detail, and the two
+   * boxes of a transfer.
+   */
+  const documentAmount = (type: string, ls: DayLine[], shown: { debit: string; credit: string; isMoney?: boolean; accountName?: string | null }[]) => {
+    const total = (rows: DayLine[], side: "debit" | "credit") => rows.reduce((s, l) => s.plus(l.line[side]), dec(0));
+    const money = ls.filter((l) => l.isMoney);
+    if (type === "sale") {
+      return {
+        amount: total(ls.filter((l) => l.systemKey === "sales"), "credit").toFixed(2),
+        received: total(money, "debit").toFixed(2),
+        changeGiven: total(money, "credit").toFixed(2),
+      };
+    }
+    if (type === "sale_void" || type === "sale_return") return { amount: total(ls.filter((l) => l.systemKey === "sales"), "debit").toFixed(2) };
+    if (type === "transfer") {
+      const names = (side: "debit" | "credit") => Array.from(new Set(shown.filter((l) => l.isMoney && dec(l[side]).gt(0)).map((l) => l.accountName ?? ""))).join(", ");
+      return { amount: total(money, "credit").toFixed(2), transfer: { from: names("credit"), to: names("debit") } };
+    }
+    // Otherwise every debit, without the cost-of-goods pair of a sale or an exchange difference beside the document.
+    const kept = ls.filter((l) => !(SALE_JOURNALS.has(type) && (l.systemKey === "cogs" || l.systemKey === "inventory")) && !(FX_SIDE.has(type) && l.systemKey === "fx"));
+    return { amount: total(kept, "debit").toFixed(2) };
+  };
   /** The nearest day before (or after) the given one that has postings, for the daybook's jump buttons. */
   app.get("/api/daybook/active-day", requireRole(...READERS), asyncHandler(async (req, res) => {
     const q = z.object({ date: isoDate, dir: z.enum(["before", "after"]).default("before") }).parse(req.query);
@@ -171,11 +198,7 @@ export function registerErpRoutes(
           journal.sourceType === "sale" && journal.sourceId && flags.has(journal.sourceId)
             ? { zeroPrice: !!flags.get(journal.sourceId)!.zero_price, belowCost: !!flags.get(journal.sourceId)!.below_cost }
             : undefined,
-        // A sale's amount is what the customer pays, not that plus the cost of the goods (cost of sales / stock lines).
-        amount: ls
-          .filter((l) => !(SALE_JOURNALS.has(journal.type) && (l.systemKey === "cogs" || l.systemKey === "inventory")))
-          .reduce((s, l) => s.plus(l.line.debit), dec(0))
-          .toFixed(2),
+        ...documentAmount(journal.type, ls, masked.lines),
         lines: masked.lines,
       };
     });

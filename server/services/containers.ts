@@ -30,6 +30,7 @@ export async function getContainer(tx: Tx, id: number) {
       attributes: variants.attributes,
       productName: products.name,
       tracksSerials: products.tracksSerials,
+      unit: products.unit,
     })
     .from(containerLines)
     .innerJoin(variants, eq(variants.id, containerLines.variantId))
@@ -43,7 +44,7 @@ export async function getContainer(tx: Tx, id: number) {
     .orderBy(asc(containerExpenses.id));
   return {
     ...container,
-    lines: lines.map((l) => ({ ...l.line, sku: l.sku, attributes: l.attributes, productName: l.productName, tracksSerials: l.tracksSerials })),
+    lines: lines.map((l) => ({ ...l.line, sku: l.sku, attributes: l.attributes, productName: l.productName, tracksSerials: l.tracksSerials, unit: l.unit })),
     expenses: expenseRows,
   };
 }
@@ -204,7 +205,7 @@ export async function addExpense(tx: Tx, containerId: number, input: ContainerEx
   const journalId = await postJournal(tx, {
     date: input.date,
     type: "container_expense",
-    memo: `${container.number} : ${EXPENSE_TYPE_FR[input.type] ?? input.type}${input.description ? ` (${input.description})` : ""}`,
+    memo: `${container.number}\u00a0: ${EXPENSE_TYPE_FR[input.type] ?? input.type}${input.description ? ` (${input.description})` : ""}`,
     sourceType: "container_expense",
     sourceId: expense.id,
     userId,

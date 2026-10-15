@@ -34,6 +34,7 @@ import {
 } from "./ledger";
 import { issueStock, linkMovementsToJournal, receiveStock } from "./stock";
 import { variantColour } from "./catalog";
+import { de } from "@shared/french";
 
 async function requireParty(tx: Tx, id: number | null | undefined, types: string[]) {
   if (!id) throw badRequest("Choose who this is for", "Choisissez le bénéficiaire");
@@ -138,7 +139,7 @@ export async function createExpense(tx: Tx, input: ExpenseInput, userId: number)
   const journalId = await postJournal(tx, {
     date: input.date,
     type: "expense",
-    memo: `${account.name}: ${input.description}`,
+    memo: `${account.name}\u00a0: ${input.description}`,
     sourceType: "expense",
     sourceId: expense.id,
     userId,
@@ -156,7 +157,7 @@ export async function voidExpense(tx: Tx, id: number, date: string, userId: numb
   if (j?.type === "payment") {
     throw conflict(`This expense is part of payment voucher ${j.number}. Cancel the voucher from the daybook.`, `Cette dépense fait partie de la pièce de paiement ${j.number}. Annulez la pièce depuis le journal du jour.`);
   }
-  const voidJournalId = await reverseJournal(tx, expense.journalId!, { date, userId, memo: `Dépense annulée : ${expense.description}` });
+  const voidJournalId = await reverseJournal(tx, expense.journalId!, { date, userId, memo: `Dépense annulée\u00a0: ${expense.description}` });
   await tx.update(expenses).set({ voidedAt: new Date(), voidJournalId }).where(eq(expenses.id, id));
 }
 
@@ -350,7 +351,7 @@ export async function partnerContribution(tx: Tx, input: PartnerMoneyInput, user
   return postJournal(tx, {
     date: input.date,
     type: "partner_contribution",
-    memo: input.memo ?? `Apport en capital de ${partner.name}`,
+    memo: input.memo ?? `Apport en capital ${de(partner.name)}`,
     userId,
     lines: [
       { accountId: leg.accountId, debit: leg.usd, nativeAmount: leg.nativeAmount, rate: leg.rate },
@@ -366,7 +367,7 @@ export async function partnerWithdrawal(tx: Tx, input: PartnerMoneyInput, userId
   return postJournal(tx, {
     date: input.date,
     type: "partner_withdrawal",
-    memo: input.memo ?? `Retrait de ${partner.name}`,
+    memo: input.memo ?? `Retrait ${de(partner.name)}`,
     userId,
     lines: [
       { accountId: partner.currentAccountId, debit: leg.usd },
@@ -590,7 +591,7 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
   const journalId = await postJournal(tx, {
     date: input.date,
     type: input.kind === "opening" ? "opening" : "stock_adjustment",
-    memo: `${number}: ${input.reason}`,
+    memo: `${number}\u00a0: ${input.reason}`,
     sourceType: "adjustment",
     sourceId: adj.id,
     userId,
