@@ -52,9 +52,10 @@ describe.skipIf(!hasDb)("Guards against moving value between partners", async ()
   });
 
   it("lets only the owner move the day's rate far", async () => {
-    await expect(db.transaction((tx) => ledger.setExchangeRate(tx, { date: "2026-08-02", cdfPerUsd: "1000" }, userId, staff))).rejects.toThrow(/Only the owner/);
-    await db.transaction((tx) => ledger.setExchangeRate(tx, { date: "2026-08-02", cdfPerUsd: "2850" }, userId, staff));
-    await db.transaction((tx) => ledger.setExchangeRate(tx, { date: "2026-08-02", cdfPerUsd: "2800" }, userId));
+    const today = ledger.shopToday();
+    await expect(db.transaction((tx) => ledger.setExchangeRate(tx, { date: today, cdfPerUsd: "1000" }, 999, staff))).rejects.toThrow(/Only the owner/);
+    await db.transaction((tx) => ledger.setExchangeRate(tx, { date: today, cdfPerUsd: "2850" }, 999, staff));
+    await db.transaction((tx) => ledger.setExchangeRate(tx, { date: today, cdfPerUsd: "2800" }, userId));
   });
 
   it("refuses a container rate that cannot be right", async () => {
@@ -81,7 +82,7 @@ describe.skipIf(!hasDb)("Guards against moving value between partners", async ()
   it("lets staff value found stock only near its cost, and records a count with no change", async () => {
     await expect(
       db.transaction((tx) => ops.adjustStock(tx, { date: "2026-08-05", locationId, kind: "found", reason: "Trouvé", lines: [{ variantId: oil, qtyChange: "1", unitCost: "5000" }] }, userId, staff)),
-    ).rejects.toThrow(/far from its cost/);
+    ).rejects.toThrow(/average cost/);
     await db.transaction((tx) => ops.adjustStock(tx, { date: "2026-08-05", locationId, kind: "found", reason: "Trouvé", lines: [{ variantId: oil, qtyChange: "1" }] }, userId, staff));
     const count = await db.transaction((tx) => ops.adjustStock(tx, { date: "2026-08-05", locationId, kind: "count", reason: "Comptage", lines: [{ variantId: oil, qtyChange: "0" }] }, userId, staff));
     expect(count.journalId).toBeNull();

@@ -32,7 +32,7 @@ import {
 import { ALLOCATION_METHODS } from "@shared/landedCost";
 import { validatePartnerShares } from "@shared/partnerSplit";
 import { dec } from "@shared/money";
-import { db } from "./db";
+import { db, type Tx } from "./db";
 import { AppError, badRequest, conflict, forbidden, notFound } from "./errors";
 import { checkPassword, hashPassword, requireAuth, requireRole } from "./auth";
 import {
@@ -540,6 +540,7 @@ export function registerRoutes(app: Express) {
   }));
   app.patch("/api/parties/:id", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = partySchema.omit({ type: true }).partial().parse(req.body);
+    if (Object.keys(body).length === 0) throw badRequest("Nothing to change (a contact's type cannot change)", "Rien à modifier (le type d'un contact ne change pas)");
     const [row] = await db.update(parties).set(body).where(eq(parties.id, paramId(req))).returning();
     if (!row) throw notFound("Contact", "Contact introuvable");
     await audit(req, "update", "contact", row.id, body);
@@ -730,6 +731,11 @@ export function registerRoutes(app: Express) {
     res.json(rows.map((r) => ({ ...r.container, supplierName: r.supplierName, lineCount: r.lineCount, expensesUsd: r.expensesUsd })));
   }));
 
+  async function assertActiveLocation(tx: Tx, locationId: number) {
+    const [loc] = await tx.select().from(locations).where(eq(locations.id, locationId));
+    if (!loc) throw badRequest("That location does not exist", "Cet emplacement n'existe pas");
+    if (!loc.active) throw badRequest(`${loc.name} is switched off: switch it back on first`, `${loc.name} est désactivé : réactivez-le d'abord`);
+  }
   const containerSchema = z.object({
     number: z.string().min(1).max(60),
     supplierId: id,
@@ -745,6 +751,7 @@ export function registerRoutes(app: Express) {
     const body = containerSchema.parse(req.body);
     const [supplier] = await db.select().from(parties).where(eq(parties.id, body.supplierId));
     if (!supplier || supplier.type !== "supplier") throw badRequest("Pick a supplier", "Choisissez un fournisseur");
+    await assertActiveLocation(db, body.locationId);
     if (body.rateToUsd) await containerSvc.assertContainerRate(db, body.currency ?? "USD", body.rateToUsd, todayIso());
     const [row] = await db.insert(containers).values({ ...body, number: body.number.trim().toUpperCase(), currency: (body.currency ?? "USD").toUpperCase() }).returning();
     await audit(req, "create", "container", row.id);
@@ -774,6 +781,11 @@ export function registerRoutes(app: Express) {
         if (!allowed) throw conflict("This container is finalized. Only dates and notes can change.", "Ce conteneur est finalisé. Seules les dates et les notes peuvent être modifiées.");
       }
       if (body.rateToUsd) await containerSvc.assertContainerRate(tx, body.currency ?? c.currency, body.rateToUsd, todayIso());
+      if (body.supplierId !== undefined) {
+        const [supplier] = await tx.select().from(parties).where(eq(parties.id, body.supplierId));
+        if (!supplier || supplier.type !== "supplier") throw badRequest("Pick a supplier", "Choisissez un fournisseur");
+      }
+      if (body.locationId !== undefined) await assertActiveLocation(tx, body.locationId);
       const [row] = await tx
         .update(containers)
         .set({ ...body, ...(body.number && { number: body.number.trim().toUpperCase() }), ...(body.currency && { currency: body.currency.toUpperCase() }) })

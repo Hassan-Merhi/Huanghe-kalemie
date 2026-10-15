@@ -8,6 +8,7 @@ import {
   journals,
   periods,
   settings,
+  users,
   type Currency,
   type LineCurrency,
   type JournalType,
@@ -457,14 +458,34 @@ export async function setExchangeRate(
 ) {
   await assertPeriodOpen(tx, input.date);
   assertNotFuture(input.date);
+  if (!opts.owner && input.date < shopToday()) {
+    // A past day's rate values entries already made; rewriting back days one by one would also
+    // walk today's rate anywhere, so only the owner changes them.
+    throw new AppError(403, "Only the owner can change a past day's rate", "FORBIDDEN", "Seul le propriétaire peut modifier le taux d'un jour passé");
+  }
   if (!opts.owner) {
     // Every franc check compares with the day's rate, so only the owner may move it far in one step.
     const limit = Decimal.max(await rateTolerancePct(tx), 5);
-    // Compare with the last rate before this day, so overwriting a day in small steps cannot walk it far.
-    const [prevRow] = await tx.select().from(exchangeRates).where(lt(exchangeRates.date, input.date)).orderBy(desc(exchangeRates.date)).limit(1);
-    const prev = prevRow ? dec(prevRow.cdfPerUsd) : (await rateFor(tx, "0000-01-01")).rate;
+    // Compare with the last rate before today (for today and tomorrow alike), so neither overwriting
+    // a day in small steps nor stacking tomorrow on today can walk it far. Keeping a day's rate as
+    // it is needs no check.
+    const today = shopToday();
+    const [existing] = await tx.select().from(exchangeRates).where(eq(exchangeRates.date, input.date));
+    const [prevRow] = await tx.select().from(exchangeRates).where(lt(exchangeRates.date, today)).orderBy(desc(exchangeRates.date)).limit(1);
+    // A rate the owner set today (or for this day) is also a fair starting point.
+    const ownerRows = (
+      await tx
+        .select({ cdf: exchangeRates.cdfPerUsd, cny: exchangeRates.cnyPerUsd })
+        .from(exchangeRates)
+        .innerJoin(users, eq(users.id, exchangeRates.createdBy))
+        .where(and(inArray(exchangeRates.date, [today, input.date]), eq(users.role, "owner")))
+    );
+    const prevs = [prevRow ? dec(prevRow.cdfPerUsd) : (await rateFor(tx, "0000-01-01")).rate, ...ownerRows.map((r) => dec(r.cdf))];
     const next = dec(input.cdfPerUsd);
-    if (next.minus(prev).abs().dividedBy(prev).times(100).gt(limit)) {
+    const near = (ref: Decimal, value: Decimal) => value.minus(ref).abs().dividedBy(ref).times(100).lte(limit);
+    const prev = prevs.reduce((best, r) => (r.minus(next).abs().lt(best.minus(next).abs()) ? r : best));
+    const unchanged = (stored: string | null | undefined, given: string) => stored != null && dec(stored).equals(dec(given));
+    if (!unchanged(existing?.cdfPerUsd, input.cdfPerUsd) && !near(prev, next) && next.minus(prev).abs().dividedBy(prev).times(100).gt(limit)) {
       throw new AppError(
         403,
         `${next.toString()} is more than ${limit.toString()}% away from the last rate (${prev.toString()}). Only the owner can make that change.`,
@@ -472,17 +493,18 @@ export async function setExchangeRate(
         `${next.toString()} s'écarte de plus de ${limit.toString()} % du dernier taux (${prev.toString()}). Seul le propriétaire peut faire ce changement.`,
       );
     }
-    if (input.cnyPerUsd) {
+    if (input.cnyPerUsd && !unchanged(existing?.cnyPerUsd, input.cnyPerUsd)) {
       const [cnyRow] = await tx
         .select({ rate: exchangeRates.cnyPerUsd })
         .from(exchangeRates)
-        .where(and(lt(exchangeRates.date, input.date), sql`${exchangeRates.cnyPerUsd} is not null`))
+        .where(and(lt(exchangeRates.date, today), sql`${exchangeRates.cnyPerUsd} is not null`))
         .orderBy(desc(exchangeRates.date))
         .limit(1);
-      if (!cnyRow?.rate) {
+      const cnyRefs = [...(cnyRow?.rate ? [dec(cnyRow.rate)] : []), ...ownerRows.filter((r) => r.cny).map((r) => dec(r.cny!))];
+      if (!cnyRefs.length) {
         throw new AppError(403, "Only the owner can set the first yuan rate", "FORBIDDEN", "Seul le propriétaire peut saisir le premier taux du yuan");
       }
-      if (dec(input.cnyPerUsd).minus(cnyRow.rate).abs().dividedBy(cnyRow.rate).times(100).gt(limit)) {
+      if (!cnyRefs.some((r) => near(r, dec(input.cnyPerUsd!)))) {
         throw new AppError(403, "Only the owner can move the yuan rate that far", "FORBIDDEN", "Seul le propriétaire peut modifier autant le taux du yuan");
       }
     }
