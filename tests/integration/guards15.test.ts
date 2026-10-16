@@ -134,7 +134,8 @@ describe.skipIf(!hasDb)("Guards found by the fifteenth audit", async () => {
     for (const typed of ["4.125", "4,125"]) {
       const unsure = await call("POST", `/api/containers/${c.body.id}/import-lines`, { mode: "append", rows: [{ name: "Écrou M8", unit: "pcs", quantity: "200", unitPrice: typed }] });
       expect(unsure.status, typed).toBe(422);
-      expect(unsure.body.messageFr).toBe(`«${NB}${typed}${NB}»${NB}: 4${NB}125 ou 4,125${NB}? Écrivez 4125 sans séparateur, ou mettez un nombre dans la cellule.`);
+      // Both readings say what to do: 4125 without the separator, or 4,125 as a number cell.
+      expect(unsure.body.messageFr).toBe(`«${NB}${typed}${NB}»${NB}: 4${NB}125 ou 4,125${NB}? Pour 4${NB}125, écrivez 4125 sans séparateur${NB}; pour 4,125, mettez 4,125 dans la cellule comme nombre, pas comme texte.`);
     }
     expect((await call("POST", "/api/import/prices", { rows: [{ sku: "X", sellPrice: "1.200" }] })).status).toBe(422);
     // "1,000" kilos or pieces sent as it is (1 000 or 1?) is refused like "1.000".

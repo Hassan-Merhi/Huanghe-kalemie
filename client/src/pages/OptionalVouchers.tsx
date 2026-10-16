@@ -22,11 +22,40 @@ import { EmptyState, ErrorText, Loading, Num, PageHeader, StatCard } from "@/com
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
-import { d, date, usd } from "@/lib/format";
+import { useAccounts } from "@/components/pickers";
+import { cdf, d, date, usd } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { useVoucherChecks } from "@/lib/voucherChecks";
 import { VOUCHER_KINDS, voucherKindLabel, type VoucherDraft, type VoucherKind } from "@/pages/Vouchers";
+
+/**
+ * A franc payment or receipt is shown in the francs it was typed in, with its dollars beside them
+ * ("14 000 000 FC (≈ 4 985,75 $)"), so whoever validates it sees the notes that will leave the drawer.
+ */
+function useDraftFrancs() {
+  const accounts = useAccounts();
+  return (r: VoucherDraft): string | null => {
+    if (r.kind !== "payment" && r.kind !== "receipt") return null;
+    const account = accounts.data?.find((a) => a.id === Number(r.payload.accountId));
+    if (account?.currency !== "CDF") return null;
+    const lines = Array.isArray(r.payload.lines) ? (r.payload.lines as Record<string, unknown>[]) : [];
+    const amounts = lines.map((l) => String(l.amount ?? "").trim()).filter((x) => /^\d+(\.\d+)?$/.test(x));
+    if (!amounts.length) return null;
+    return cdf(amounts.reduce((s, x) => s.plus(d(x)), d(0)).toFixed(0));
+  };
+}
+
+/** "14 000 000 FC" over "≈ 4 985,75 $" for a franc voucher, else its dollars. */
+function DraftAmount({ r, francs, className }: { r: VoucherDraft; francs: string | null; className?: string }) {
+  if (!francs) return <Num className={className}>{r.totalUsd ? usd(r.totalUsd) : "—"}</Num>;
+  return (
+    <span className="inline-block text-right">
+      <Num className={cn("whitespace-nowrap", className)}>{francs}</Num>
+      {r.totalUsd && <span className="block whitespace-nowrap text-xs font-normal text-muted-foreground tabular">≈ {usd(r.totalUsd)}</span>}
+    </span>
+  );
+}
 
 const KIND_TONE: Record<VoucherKind, string> = {
   payment: "border-red-500/40 text-red-700 dark:text-red-400",
@@ -47,6 +76,7 @@ export default function OptionalVouchers() {
   const { toast } = useToast();
   const canSave = can("manager");
   const isOwner = user?.role === "owner";
+  const francsOf = useDraftFrancs();
   const q = useQuery<VoucherDraft[]>({ queryKey: ["/api/voucher-drafts"] });
   const [kind, setKind] = useState<"all" | VoucherKind>("all");
   const [from, setFrom] = useState("");
@@ -204,7 +234,7 @@ export default function OptionalVouchers() {
                       <TableCell className="whitespace-nowrap">{date(r.date)}</TableCell>
                       <TableCell>{kindBadge(r.kind)}</TableCell>
                       <TableCell className="max-w-xs truncate">{r.memo || <span className="text-muted-foreground">—</span>}</TableCell>
-                      <TableCell className="text-right"><Num>{r.totalUsd ? usd(r.totalUsd) : "—"}</Num></TableCell>
+                      <TableCell className="text-right"><DraftAmount r={r} francs={francsOf(r)} /></TableCell>
                       <TableCell className="whitespace-nowrap text-muted-foreground">{r.createdByName ?? "—"}</TableCell>
                       <TableCell>{actions(r)}</TableCell>
                     </TableRow>
@@ -228,7 +258,7 @@ export default function OptionalVouchers() {
                       <p className="mt-1 truncate text-sm font-medium">{r.memo || "—"}</p>
                       <p className="text-xs text-muted-foreground">{r.createdByName ?? "—"}</p>
                     </div>
-                    <Num className="font-semibold">{r.totalUsd ? usd(r.totalUsd) : "—"}</Num>
+                    <DraftAmount r={r} francs={francsOf(r)} className="font-semibold" />
                   </div>
                   {actions(r, true)}
                 </CardContent>
@@ -298,11 +328,15 @@ function DraftSummary({ draft, check, onShort }: { draft: VoucherDraft; check: b
     return () => onShort?.(null);
   }, [short, onShort]);
   const memo = draft.memo || checks.fallbackMemo || t("no description", "sans libellé");
+  // Francs as typed, then their dollars: the francs are what leave (or come into) the drawer.
+  const amount = checks.currency === "CDF" && checks.total.gt(0)
+    ? `${cdf(checks.total.toFixed(0))}${draft.totalUsd ? ` (≈\u00a0${usd(draft.totalUsd)})` : ""}`
+    : draft.totalUsd ? usd(draft.totalUsd) : null;
   return (
     <div className="space-y-2 text-sm">
       <p className="font-medium text-foreground">
         {voucherKindLabel(draft.kind, t)} · {date(draft.date)} · <span className={cn(!draft.memo && "italic")}>{memo}</span>
-        {draft.totalUsd ? ` · ${usd(draft.totalUsd)}` : ""}
+        {amount ? <> · <span className="whitespace-nowrap">{amount}</span></> : ""}
       </p>
       {short && (
         <p role="alert" className="font-medium text-destructive" data-testid="draft-short">{short}.</p>

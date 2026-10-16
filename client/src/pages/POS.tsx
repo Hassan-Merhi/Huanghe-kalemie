@@ -96,6 +96,8 @@ export interface SaleFull {
   /** The franc rounding of the till alone and with the returns' refunds, + when the shop kept a few cents. */
   saleFcRoundingUsd?: string;
   fcRoundingUsd?: string;
+  /** "Payé": the cash really kept, payments and refunds at their own rates; Payé − total = fcRoundingUsd. */
+  paidKeptUsd?: string;
   /** The part of the credit the customer's avoir covered when the sale was made, and the avoir left then. */
   avoirUsedUsd?: string | null;
   avoirLeftUsd?: string | null;
@@ -490,6 +492,9 @@ export default function POS() {
   /** What the customer's avoir (paid ahead) covers of the credit: nothing new is owed up to it. */
   const avoirAvailable = customer && d(customer.balance).lt(0) ? d(customer.balance).negated() : null;
   const avoirCovers = avoirAvailable && credit.gt(0) ? Decimal.min(credit, avoirAvailable) : null;
+  /** Only what the avoir does not cover is new credit: the till, the bar and the button say "à crédit" for that part. */
+  const onCredit = customerId ? credit.minus(avoirCovers ?? 0) : d(0);
+  const allOnAvoir = !!customerId && !!avoirCovers && !onCredit.gt(0);
 
   /** A short franc payment: what is still to pay in francs too, in the 100 FC notes the customer can hand over. */
   const remainingFc = francs && !francRounding && credit.gt(0) && paid.gt(0) && rateNum.gt(0)
@@ -964,16 +969,24 @@ export default function POS() {
                   </div>
                 ) : (
                   <div className="flex justify-between">
-                    <span>{credit.gt(0) && customerId ? t("Remaining → on credit", "Reste → à crédit") : t("Left to pay", "Reste à payer")}</span>
+                    <span>
+                      {allOnAvoir
+                        ? t("Remaining → settled from the customer's credit", "Reste → réglé sur l'avoir")
+                        : credit.gt(0) && customerId
+                          ? t("Remaining → on credit", "Reste → à crédit")
+                          : t("Left to pay", "Reste à payer")}
+                    </span>
                     <span data-testid="left-to-pay">
-                      <Num className={cn("font-semibold", credit.gt(0) && customerId && "text-amber-800 dark:text-amber-400", overpaid && "text-destructive")}>{usd((francRounding ? d(0) : remaining).toFixed(2))}</Num>
+                      {/* Part of it on the avoir: only the rest is new credit, the line below says the other part. */}
+                      <Num className={cn("font-semibold", allOnAvoir ? "text-emerald-800 dark:text-emerald-400" : credit.gt(0) && customerId && "text-amber-800 dark:text-amber-400", overpaid && "text-destructive")}>{usd((francRounding ? d(0) : avoirCovers && !allOnAvoir ? onCredit : remaining).toFixed(2))}</Num>
                       {remainingFc && <Num className="text-muted-foreground"> ≈ {cdf(remainingFc.toString())}</Num>}
                     </span>
                   </div>
                 )}
                 {avoirCovers && customerId && (
                   <p className="text-right text-xs text-emerald-800 dark:text-emerald-400" data-testid="avoir-covers">
-                    {t("Settled from the customer's credit", "Réglé sur l'avoir")} {usd(avoirCovers.toFixed(2))} · {t("credit left", "avoir restant")} {usd(avoirAvailable!.minus(avoirCovers).toFixed(2))}
+                    {!allOnAvoir && <>+ {t("settled from the customer's credit", "réglé sur l'avoir")} {usd(avoirCovers.toFixed(2))} · </>}
+                    {allOnAvoir ? t("Credit left", "Avoir restant") : t("credit left", "avoir restant")} {usd(avoirAvailable!.minus(avoirCovers).toFixed(2))}
                   </p>
                 )}
               </div>
@@ -1015,9 +1028,11 @@ export default function POS() {
                 pending={mutation.isPending}
                 onClick={() => submit()}
               >
-                {credit.gt(0) && customerId
-                  ? t(`Finish · ${usd(credit.toFixed(2))} on credit`, `Valider · ${usd(credit.toFixed(2))} à crédit`)
-                  : t(`Finish sale ${usd(total.toFixed(2))}`, `Valider la vente ${usd(total.toFixed(2))}`)}
+                {allOnAvoir
+                  ? t("Finish · from the customer's credit", "Valider · sur l'avoir")
+                  : credit.gt(0) && customerId
+                    ? t(`Finish · ${usd(onCredit.toFixed(2))} on credit`, `Valider · ${usd(onCredit.toFixed(2))} à crédit`)
+                    : t(`Finish sale ${usd(total.toFixed(2))}`, `Valider la vente ${usd(total.toFixed(2))}`)}
               </SubmitButton>
               {blockedReason && (lines.length > 0 || tried) && <p className="text-center text-xs text-muted-foreground lg:hidden" role="status">{blockedReason}</p>}
               <p className="hidden text-center text-xs text-muted-foreground lg:block [@media(pointer:coarse)]:hidden">{t("F9 / Ctrl+Enter", "F9 / Ctrl+Entrée")}</p>
@@ -1039,8 +1054,10 @@ export default function POS() {
               <p className="truncate text-sm font-bold" data-testid="change-due-bar">{t("Give back", "Rendre")}{t(":", "\u00a0:")} {changeText}</p>
             ) : remainingFc && !(credit.gt(0) && customerId) ? (
               <p className="truncate text-xs font-semibold" data-testid="left-to-pay-bar">{t("Left to pay", "Reste à payer")}{t(":", "\u00a0:")} {usd(remaining.toFixed(2))} ≈ {cdf(remainingFc.toString())}</p>
+            ) : allOnAvoir ? (
+              <p className="truncate text-xs font-semibold text-emerald-800 dark:text-emerald-400">{t(`${usd(credit.toFixed(2))} from the customer's credit`, `${usd(credit.toFixed(2))} réglé sur l'avoir`)}</p>
             ) : credit.gt(0) && customerId ? (
-              <p className="truncate text-xs font-semibold text-amber-800 dark:text-amber-400">{t(`${usd(credit.toFixed(2))} on credit`, `dont ${usd(credit.toFixed(2))} à crédit`)}</p>
+              <p className="truncate text-xs font-semibold text-amber-800 dark:text-amber-400">{t(`${usd(onCredit.toFixed(2))} on credit`, `dont ${usd(onCredit.toFixed(2))} à crédit`)}</p>
             ) : (
               rateNum.gt(0) && total.gt(0) && <p className="truncate text-xs text-muted-foreground">≈ {cdf(total.times(rateNum).toDecimalPlaces(0, ROUND).toString())}</p>
             )}
@@ -1051,7 +1068,7 @@ export default function POS() {
             pending={mutation.isPending}
             onClick={mobilePay}
           >
-            {valid ? (credit.gt(0) && customerId ? t("Finish on credit", "Valider à crédit") : t("Finish", "Valider")) : t("Pay", "Payer")}
+            {valid ? (allOnAvoir ? t("Finish · from credit", "Valider · sur l'avoir") : credit.gt(0) && customerId ? t("Finish on credit", "Valider à crédit") : t("Finish", "Valider")) : t("Pay", "Payer")}
           </SubmitButton>
         </div>
       )}

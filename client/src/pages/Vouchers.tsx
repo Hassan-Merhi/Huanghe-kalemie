@@ -333,7 +333,8 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
     enabled: canSave,
   });
   const unusual = [...checks.unusual, ...checks.overDebt];
-  const [confirmUnusual, setConfirmUnusual] = useState(false);
+  // The same question before "Mettre en attente": the owner validating it later should not be the first to see it.
+  const [confirmUnusual, setConfirmUnusual] = useState<null | "save" | "draft">(null);
 
   const m = useApiMutation<Record<string, unknown>, { id: number; total: string }>("POST", `/api/vouchers/${kind}`, {
     success: kind === "payment" ? t("Payment recorded", "Paiement enregistré") : t("Receipt recorded", "Recette enregistrée"),
@@ -371,8 +372,13 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
     }
     if (francSlip >= 0) return setError(francSlipText);
     if (short) return;
-    if (unusual.length && !confirmed) return setConfirmUnusual(true);
+    if (unusual.length && !confirmed) return setConfirmUnusual("save");
     m.mutate({ date: day, ...payload(true) });
+  }
+
+  function saveDraft(confirmed = false) {
+    if (unusual.length && !confirmed) return setConfirmUnusual("draft");
+    onSaveDraft({ kind, date: day, memo: memo.trim() || null, payload: payload(false)! });
   }
 
   return (
@@ -486,12 +492,12 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
       )}
       {error && <ErrorText error={error} />}
       <ActionBar canSave={canSave}>
-        <Button variant="outline" disabled={savingDraft} onClick={() => onSaveDraft({ kind, date: day, memo: memo.trim() || null, payload: payload(false)! })}>
+        <Button variant="outline" disabled={savingDraft} onClick={() => saveDraft()}>
           {t("Save as pending", "Mettre en attente")}
         </Button>
         <SubmitButton onClick={() => save()} blocked={short} pending={m.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
       </ActionBar>
-      <AlertDialog open={confirmUnusual} onOpenChange={setConfirmUnusual}>
+      <AlertDialog open={!!confirmUnusual} onOpenChange={(o) => !o && setConfirmUnusual(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
@@ -508,6 +514,9 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
                   <p>{t("What is over stays on the contact's account and is deducted next time.", "Le surplus reste au compte du contact et sera déduit la prochaine fois.")}</p>
                 )}
                 <p>{t("Check for an extra zero before saving.", "Vérifiez qu'il n'y a pas un zéro de trop avant d'enregistrer.")}</p>
+                {confirmUnusual === "draft" && (
+                  <p>{t("Nothing is posted yet: the same question comes back when it is validated.", "Rien n'est encore passé : la même question reviendra à la validation.")}</p>
+                )}
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>
@@ -515,13 +524,17 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
             <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
-                setConfirmUnusual(false);
-                save(true);
+                const what = confirmUnusual;
+                setConfirmUnusual(null);
+                if (what === "draft") saveDraft(true);
+                else save(true);
               }}
             >
-              {kind === "payment"
-                ? t(`Pay ${money(total.toFixed(2), currency)}`, `Payer ${money(total.toFixed(2), currency)}`)
-                : t(`Save ${money(total.toFixed(2), currency)}`, `Enregistrer ${money(total.toFixed(2), currency)}`)}
+              {confirmUnusual === "draft"
+                ? t(`Save as pending · ${money(total.toFixed(2), currency)}`, `Mettre en attente · ${money(total.toFixed(2), currency)}`)
+                : kind === "payment"
+                  ? t(`Pay ${money(total.toFixed(2), currency)}`, `Payer ${money(total.toFixed(2), currency)}`)
+                  : t(`Save ${money(total.toFixed(2), currency)}`, `Enregistrer ${money(total.toFixed(2), currency)}`)}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

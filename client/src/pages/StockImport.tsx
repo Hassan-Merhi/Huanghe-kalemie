@@ -213,8 +213,10 @@ function amountQuestion(t: T, cells: Cells | undefined, fields: { key: string; e
     if (!u) continue;
     const text = String(raw).trim();
     return t(
-      `${f.en} "${text}": ${number(u[0], 6)} or ${number(u[1], 6)}? Write ${u[0]} without the separator, or put a number in the cell`,
-      `${f.fr} «\u00a0${text}\u00a0»\u00a0: ${number(u[0], 6)} ou ${number(u[1], 6)}\u00a0? Écrivez ${u[0]} sans séparateur, ou mettez un nombre dans la cellule`,
+      // Both readings get their own way out: typed text with three digits after the mark stays in doubt, so the
+      // decimals go in as a number cell.
+      `${f.en} "${text}": ${number(u[0], 6)} or ${number(u[1], 6)}? For ${number(u[0], 6)}, write ${u[0]} without the separator; for ${number(u[1], 6)}, enter ${number(u[1], 6)} in the cell as a number, not as text`,
+      `${f.fr} «\u00a0${text}\u00a0»\u00a0: ${number(u[0], 6)} ou ${number(u[1], 6)}\u00a0? Pour ${number(u[0], 6)}, écrivez ${u[0]} sans séparateur\u00a0; pour ${number(u[1], 6)}, mettez ${number(u[1], 6)} dans la cellule comme nombre, pas comme texte`,
     );
   }
   return null;

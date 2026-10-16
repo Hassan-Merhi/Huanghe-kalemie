@@ -409,8 +409,8 @@ export function registerErpRoutes(
       if (unsure) {
         const text = String(v).trim();
         throw new MoneyError(
-          `"${text}" could be ${unsure[0]} or ${unsure[1]}: write ${unsure[0]} without the separator, or put a number in the cell`,
-          `«\u00a0${text}\u00a0» : ${frNumber(unsure[0])} ou ${frNumber(unsure[1])} ? Écrivez ${unsure[0]} sans séparateur, ou mettez un nombre dans la cellule.`,
+          `"${text}" could be ${unsure[0]} or ${unsure[1]}: for ${unsure[0]}, write ${unsure[0]} without the separator; for ${unsure[1]}, enter ${unsure[1]} in the cell as a number, not as text`,
+          `«\u00a0${text}\u00a0» : ${frNumber(unsure[0])} ou ${frNumber(unsure[1])} ? Pour ${frNumber(unsure[0])}, écrivez ${unsure[0]} sans séparateur ; pour ${frNumber(unsure[1])}, mettez ${frNumber(unsure[1])} dans la cellule comme nombre, pas comme texte.`,
         );
       }
       return importNumber(v, ctx, { currency, where });
