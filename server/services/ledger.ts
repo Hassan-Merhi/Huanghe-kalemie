@@ -463,6 +463,9 @@ type PendingLine = { accountId: number; debit: Decimal; credit: Decimal; partyId
  */
 async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string) {
   const running = new Map<string, { native: Decimal; usd: Decimal }>();
+  // Francs this journal itself put into a drawer: a part of them given back in the same journal (a sale's
+  // change from the drawer it was paid into) leaves at the journal's own value, as one amount with them.
+  const cameIn = new Map<string, Decimal>();
   let fxDebit = new Decimal(0);
   // One posting at a time per balance, so two payments cannot both spend the same francs. All of the
   // journal's balances at once, in key order, so two journals touching the same two cannot cross.
@@ -479,7 +482,10 @@ async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string) 
     const native = dec(v.nativeAmount);
     const given = v.debit.minus(v.credit);
     const reduces = !bal.native.isZero() && !native.isZero() && bal.native.isNegative() !== native.isNegative();
-    if (reduces) {
+    const own = cameIn.get(key);
+    if (v.partyId === null && reduces && own && !own.isZero() && own.isNegative() !== native.isNegative() && native.abs().lte(own.abs())) {
+      cameIn.set(key, own.plus(native));
+    } else if (reduces) {
       const value = bookValue(bal, native.abs(), given.abs());
       if (v.credit.gt(0)) {
         fxDebit = fxDebit.plus(value.minus(v.credit));
@@ -488,7 +494,7 @@ async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string) 
         fxDebit = fxDebit.minus(value.minus(v.debit));
         v.debit = value;
       }
-    }
+    } else if (v.partyId === null) cameIn.set(key, (cameIn.get(key) ?? new Decimal(0)).plus(native));
     bal.native = bal.native.plus(native);
     bal.usd = bal.usd.plus(v.debit.minus(v.credit));
   }
@@ -781,9 +787,11 @@ export async function contactLines(
   const nativeUsd = Decimal.max(usd.minus(dollarsOwed), 0);
   if (nativeUsd.isZero()) return plain;
   const rate = await resolveRate(tx, input.date);
-  const native = cents(nativeUsd.times(rate));
+  // Whole francs (down, so the dollars never settle more than they buy), and the dollars they are worth:
+  // a part of a franc left owed could never be paid off.
+  const native = nativeUsd.times(rate).toDecimalPlaces(0, Decimal.ROUND_FLOOR);
   const portion = Decimal.min(native, fc);
-  const portionUsd = portion.equals(native) ? nativeUsd : cents(nativeUsd.times(portion).dividedBy(native));
+  const portionUsd = portion.equals(native) ? Decimal.min(cents(native.dividedBy(rate)), nativeUsd) : cents(nativeUsd.times(portion).dividedBy(native));
   if (portionUsd.isZero()) return plain;
   fcLine(portionUsd, portion, rate);
   if (usd.gt(portionUsd)) lines.push({ ...base, [input.side]: usd.minus(portionUsd) });

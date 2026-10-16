@@ -299,7 +299,9 @@ export async function advanceToYuanLines(tx: Tx, payables: number, partyId: numb
     const leftUsd = usdOf(left);
     const applyUsd = Decimal.min(fcUsd, leftUsd);
     const applyNative = applyUsd.equals(leftUsd) ? left : nativeOf(applyUsd);
-    const francs = applyUsd.equals(fcUsd) ? fc.native : cents(applyUsd.times(fcRate));
+    // Whole francs leave the deposit (down, so it never gives more than the yuan take): a part of a franc
+    // left on it could never be used. The francs are valued at their cost when posted, so the dollars stand.
+    const francs = applyUsd.equals(fcUsd) ? fc.native : applyUsd.times(fcRate).toDecimalPlaces(0, Decimal.ROUND_FLOOR);
     if (applyUsd.gt(0) && applyNative.gt(0) && francs.gt(0)) {
       lines.push(yuanLine(applyUsd, applyNative), { accountId: payables, partyId, credit: applyUsd, currency: "CDF", nativeAmount: francs, rate: fcRate.toFixed(4), memo: "Avance imputée" });
     }
@@ -317,8 +319,14 @@ export async function advanceToFrancLines(tx: Tx, payables: number, partyId: num
   const fcRate = (await rateFor(tx, date)).rate;
   const owedNative = fc.native.abs();
   const owedUsd = cents(owedNative.dividedBy(fcRate));
-  const applyUsd = Decimal.min(advance, owedUsd);
-  const francs = applyUsd.equals(owedUsd) ? owedNative : cents(applyUsd.times(fcRate));
+  let applyUsd = Decimal.min(advance, owedUsd);
+  let francs = owedNative;
+  if (!applyUsd.equals(owedUsd)) {
+    // Part of what is owed: whole francs (down, so the advance never settles more than it is worth), and
+    // the dollars they are worth. A part of a franc left owed could never be paid off.
+    francs = applyUsd.times(fcRate).toDecimalPlaces(0, Decimal.ROUND_FLOOR);
+    applyUsd = Decimal.min(cents(francs.dividedBy(fcRate)), applyUsd);
+  }
   if (applyUsd.lte(0) || francs.lte(0)) return [];
   return [
     { accountId: payables, partyId, debit: applyUsd, currency: "CDF", nativeAmount: francs, rate: fcRate.toFixed(4), memo: "Avance imputée" },
@@ -415,7 +423,10 @@ export async function payablesLines(
   const rest = total.minus(cnyUsd);
   if (rest.gt(0)) {
     const restNative = input.money.nativeAmount
-      ? cnyUsd.isZero() ? dec(input.money.nativeAmount) : cents(dec(input.money.nativeAmount).times(rest).dividedBy(total))
+      ? cnyUsd.isZero()
+        ? dec(input.money.nativeAmount)
+        : // Whole francs on what is left (an advance in francs), so no part of a franc is left on it.
+          dec(input.money.nativeAmount).times(rest).dividedBy(total).toDecimalPlaces(0, Decimal.ROUND_FLOOR)
       : null;
     lines.push(
       ...(await contactLines(tx, {
