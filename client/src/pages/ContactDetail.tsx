@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton, unclearAmount } from "@/components/common";
-import { MoneyAccountSelect, PARTY_LABELS, RateInput, useRate, useRateField } from "@/components/pickers";
+import { MoneyAccountSelect, PARTY_LABELS, RateInput, useAccounts, useRate, useRateField } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
@@ -48,6 +48,8 @@ interface StatementRow {
   paid?: string;
   /** What the booked amount adds to `paid`: the exchange difference. */
   fxDiff?: string;
+  /** Francs handed over for a dollar line paid out of (or into) a franc box. */
+  tendered?: string;
 }
 interface Statement {
   party: Omit<Party, "balance">;
@@ -221,6 +223,11 @@ export default function ContactDetail() {
                             {money(d(r.nativeAmount).abs().toString(), r.currency)}
                           </span>
                         )}
+                        {r.tendered && (
+                          <span className="block text-xs text-muted-foreground tabular" data-testid="tendered">
+                            {t(`paid ${cdf(r.tendered)}`, `payé ${cdf(r.tendered)}`)}
+                          </span>
+                        )}
                       </TableCell>
                       {(["debit", "credit"] as const).map((side) => (
                         <TableCell key={side} className="text-right">
@@ -267,6 +274,16 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
     success: t("Payment saved", "Paiement enregistré"),
     onSuccess: onClose,
   });
+  // The drawer's balance before and after, as on the vouchers form; a payment it cannot cover is stopped here.
+  const { can } = useAuth();
+  const balances = useAccounts("/api/accounts/balances", { enabled: can("manager", "partner") }).data;
+  const drawer = account ? balances?.find((a) => a.id === account.id) : undefined;
+  const drawerNow = drawer ? d(isCdf ? drawer.nativeBalance : drawer.balance) : null;
+  const typedOk = d(amount).gt(0) && !unclearAmount(t, amount, account?.currency ?? "USD");
+  const drawerAfter = drawerNow ? (isCustomer ? drawerNow.plus(typedOk ? d(amount) : 0) : drawerNow.minus(typedOk ? d(amount) : 0)) : null;
+  const drawerShort = !isCustomer && drawerAfter?.lt(0)
+    ? t(`Not enough money: the balance would be ${money(drawerAfter.toFixed(2), account!.currency)}`, `Fonds insuffisants\u00a0: le solde serait de ${money(drawerAfter.toFixed(2), account!.currency)}`)
+    : null;
   const b = d(balance);
   const outstanding = isCustomer ? (b.gt(0) ? b : null) : b.isNegative() ? b.abs() : null;
   // What is owed in francs (or yuan) in the direction of this payment.
@@ -353,7 +370,7 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
         ? t("Enter the exchange rate", "Saisissez le taux de change")
         : cnyOwed && settleCny && !d(settleCny).lte(cnyOwed)
           ? t("The yuan settled are more than what is owed", "Les yuans réglés dépassent ce qui est dû")
-          : null);
+          : drawerShort);
 
   function save() {
     if (!account) return;
@@ -382,9 +399,14 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
         </DialogHeader>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
           <Field label={t("Date", "Date")}>
-            <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
+            <Input type="date" aria-label={t("Payment date", "Date du paiement")} value={day} onChange={(e) => setDay(e.target.value)} />
           </Field>
-          <Field label={isCustomer ? t("Received into", "Reçu dans") : t("Paid from", "Payé depuis")} required>
+          <Field
+            label={isCustomer ? t("Received into", "Reçu dans") : t("Paid from", "Payé depuis")}
+            hint={drawerNow && drawerAfter ? `${t("Balance", "Solde")} ${money(drawerNow.toFixed(2), account!.currency)} → ${t("after", "après")} ${money(drawerAfter.toFixed(2), account!.currency)}` : undefined}
+            error={drawerShort}
+            required
+          >
             <MoneyAccountSelect value={account?.id ?? null} onChange={(_, a) => setAccount(a)} />
           </Field>
           <Field

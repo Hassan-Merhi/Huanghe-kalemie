@@ -331,6 +331,26 @@ export async function partyStatement(tx: Tx, partyId: number, hidden?: Set<numbe
     }
     return cents(dec(own.nativeAmount).abs().dividedBy(dec(own.rate!)));
   };
+  // A dollar line paid out of (or into) a franc box shows the francs handed over for it: the box's francs,
+  // less the francs of the contact's franc lines on the same side (10 000 000 FC, of which 84 000 FC settle
+  // the francs owed: 9 916 000 FC for the 3 531,34 $). Only when those francs are worth the line at the
+  // payment's rate, so a voucher with other lines never shows the francs of someone else's part.
+  const tenderedOf = (journalId: number, lineId: number) => {
+    const ls = others.filter((l) => l.journalId === journalId);
+    const theirs = ls.filter((l) => l.partyId !== null);
+    const own = theirs.find((l) => l.id === lineId);
+    if (!own || own.currency !== "USD" || new Set(theirs.map((l) => l.partyId)).size !== 1) return null;
+    const side = dec(own.debit).gt(0) ? "debit" : "credit";
+    const sameSide = theirs.filter((l) => dec(l[side]).gt(0));
+    const foreign = sameSide.filter((l) => l.id !== own.id);
+    if (foreign.some((l) => l.currency !== "CDF" || !l.nativeAmount)) return null;
+    const money = ls.filter((l) => l.isMoney);
+    const box = money[0];
+    if (money.length !== 1 || box.currency !== "CDF" || !box.nativeAmount || !dec(box.rate ?? 0).gt(0) || !dec(box[side === "debit" ? "credit" : "debit"]).gt(0)) return null;
+    const rest = dec(box.nativeAmount).abs().minus(foreign.reduce((s, l) => s.plus(dec(l.nativeAmount!).abs()), dec(0)));
+    if (!rest.gt(0) || cents(rest.dividedBy(dec(box.rate!))).minus(dec(own[side])).abs().gt(0.01)) return null;
+    return rest.toFixed(2);
+  };
   const typedIds = rows.filter((r) => PARTNER_MEMO_TYPES.has(r.type)).map((r) => r.journalId);
   const masked =
     hidden?.size && typedIds.length
@@ -345,7 +365,8 @@ export async function partyStatement(tx: Tx, partyId: number, hidden?: Set<numbe
       const booked = dec(r.debit).minus(r.credit).abs();
       const paid = paidOf(r.journalId, r.lineId);
       const doc = paid && !paid.equals(booked) ? { paid: paid.toFixed(2), fxDiff: booked.minus(paid).toFixed(2) } : {};
-      return { ...r, ...doc, balance: running.toFixed(2) };
+      const tendered = r.currency === "USD" ? tenderedOf(r.journalId, r.lineId) : null;
+      return { ...r, ...doc, ...(tendered ? { tendered } : {}), balance: running.toFixed(2) };
     }),
     balance: running.toFixed(2),
     foreign: await contactForeignBalances(tx, partyId),

@@ -146,6 +146,22 @@ function creditOf(r: SaleListRow): string {
   return r.creditLeftUsd ?? r.creditUsd;
 }
 
+/**
+ * "+5,00 $ sur le compte client" under a paid amount above the sale's total: a credit sale returned after a
+ * payment keeps the money paid, and what is over the total went on the customer's balance.
+ */
+function OnAccount({ r }: { r: SaleListRow }) {
+  const t = useT();
+  const n = netOf(r);
+  const over = n.paid.minus(n.total);
+  if (r.status === "voided" || !over.gt(0)) return null;
+  return (
+    <span className="block whitespace-nowrap text-xs text-muted-foreground" data-testid="paid-on-account">
+      +{usd(over.toFixed(2))} {t("to the customer's account", "sur le compte client")}
+    </span>
+  );
+}
+
 /** "remboursé −22,00 $" under a paid amount; the amount itself never breaks. */
 function Refunded({ value }: { value: { toFixed(n: number): string; gt(n: number): boolean } }) {
   const t = useT();
@@ -204,6 +220,7 @@ function SaleCard({ r, showCost }: { r: SaleListRow; showCost: boolean }) {
         <p className="min-w-0 tabular">
           {t("Qty", "Qté")} {fmtQty(d(r.qty).minus(d(r.returnedQty)).toString())} · {t("Paid", "Payé")} {usd((voided ? d(r.paidUsd) : n.paid).toFixed(2))}
           {d(creditOf(r)).gt(0) && !voided && <span className="text-amber-800 dark:text-amber-400"> · {t("Credit", "Crédit")} {usd(creditOf(r))}</span>}
+          <OnAccount r={r} />
           {/* What came back, under the figures so the items above keep their line. */}
           {!voided && n.returned.gt(0) && (
             <span className="block">
@@ -337,6 +354,7 @@ export default function Sales() {
                         <TableCell className="text-right">
                           <Num>{usd((voided ? d(r.paidUsd) : n.paid).toFixed(2))}</Num>
                           {!voided && <Refunded value={n.refunded} />}
+                          <OnAccount r={r} />
                           {/* What was not paid: owed by the customer. */}
                           {d(voided ? r.creditUsd : creditOf(r)).gt(0) && <div className={cn("whitespace-nowrap text-xs", !voided && "text-amber-800 dark:text-amber-400")}>{t("credit", "crédit")} {usd(voided ? r.creditUsd : creditOf(r))}</div>}
                         </TableCell>
