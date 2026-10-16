@@ -34,6 +34,8 @@ interface SaleListRow {
   refundedUsd?: string;
   /** Credit still owed on the sale once returns came off the customer's balance. */
   creditLeftUsd?: string;
+  /** Franc rounding of the till and the refunds, + when the shop kept a few cents. */
+  fcRoundingUsd?: string;
   lineCount?: number;
   firstItem?: string | null;
 }
@@ -148,17 +150,29 @@ function creditOf(r: SaleListRow): string {
 
 /**
  * "+5,00 $ sur le compte client" under a paid amount above the sale's total: a credit sale returned after a
- * payment keeps the money paid, and what is over the total went on the customer's balance.
+ * payment keeps the money paid, and what is over the total went on the customer's balance. The few cents of
+ * franc rounding (change and refunds in 100 FC steps) read "arrondi FC +0,03 $" instead, as on the sale page:
+ * they are on no account, and a walk-in customer has none.
  */
 function OnAccount({ r }: { r: SaleListRow }) {
   const t = useT();
+  if (r.status === "voided") return null;
   const n = netOf(r);
-  const over = n.paid.minus(n.total);
-  if (r.status === "voided" || !over.gt(0)) return null;
+  const rounding = d(r.fcRoundingUsd ?? 0);
+  const over = n.paid.minus(n.total).minus(rounding);
   return (
-    <span className="block whitespace-nowrap text-xs text-muted-foreground" data-testid="paid-on-account">
-      +{usd(over.toFixed(2))} {t("to the customer's account", "sur le compte client")}
-    </span>
+    <>
+      {over.gt(0) && r.customerName && (
+        <span className="block whitespace-nowrap text-xs text-muted-foreground" data-testid="paid-on-account">
+          +{usd(over.toFixed(2))} {t("to the customer's account", "sur le compte client")}
+        </span>
+      )}
+      {!rounding.isZero() && (
+        <span className="block whitespace-nowrap text-xs text-muted-foreground" data-testid="paid-rounding">
+          {t("FC rounding", "arrondi FC")} {rounding.isNegative() ? "−" : "+"}{usd(rounding.abs().toFixed(2))}
+        </span>
+      )}
+    </>
   );
 }
 

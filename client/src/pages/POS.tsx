@@ -194,7 +194,8 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
       {sale.payments.map((p) => (
         <ReceiptRow
           key={p.id}
-          left={d(p.amountUsd).isNegative() ? `${t("Change given", "Monnaie rendue")} (${accName(p.accountId, p.currency)})` : accName(p.accountId, p.currency)}
+          // On a narrow receipt the drawer goes under "Monnaie rendue" whole, never "FC)" alone under the amount.
+          left={d(p.amountUsd).isNegative() ? <>{t("Change given", "Monnaie rendue")} <span className="whitespace-nowrap">({accName(p.accountId, p.currency)})</span></> : accName(p.accountId, p.currency)}
           right={p.currency === "CDF" ? `${cdf(p.amountNative)} (${usd(p.amountUsd)})` : usd(p.amountUsd)}
         />
       ))}
@@ -553,8 +554,15 @@ export default function POS() {
     const kept = pays.filter((p) => p.accountId && d(p.amount).gt(0));
     const rest = total.minus(kept.reduce((s, p) => s.plus(payUsd(p)), d(0)));
     if (rest.lte(0)) return setPays(kept);
-    const amount = currency === "CDF" ? rest.times(rateNum).toDecimalPlaces(0, ROUND).toFixed(2) : rest.toFixed(2);
+    // The rest of a mixed payment in francs is asked in 100 FC notes (7 $ at 2 808: 19 700 FC, not 19 656 FC),
+    // like the change and "Reste à payer"; the few francs over are the sale's "Arrondi FC".
+    const amount = currency === "CDF" ? francsFor(rest, kept.length > 0).toFixed(2) : rest.toFixed(2);
     setPays([...kept, { key: keyRef.current++, accountId: acc.id, amount, rate: null }]);
+  }
+  /** Dollars in francs at the day's rate; in 100 FC steps for part of a mixed payment. */
+  function francsFor(value: Decimal, mixed: boolean) {
+    const exact = value.times(rateNum);
+    return mixed ? Decimal.max(exact.dividedBy(FRANC_ROUNDING).toDecimalPlaces(0, ROUND).times(FRANC_ROUNDING), FRANC_ROUNDING) : exact.toDecimalPlaces(0, ROUND);
   }
   const updatePay = (key: number, patch: Partial<PayRow>) => setPays((ps) => ps.map((p) => (p.key === key ? { ...p, ...patch } : p)));
   /** Changing a line to an account in another currency converts what was typed at the day's rate. */
@@ -563,7 +571,7 @@ export default function POS() {
     let amount = p.amount;
     if (prev && prev.currency !== acc.currency && d(p.amount).gt(0)) {
       const value = payUsd(p);
-      if (acc.currency === "CDF") amount = rateNum.gt(0) ? value.times(rateNum).toDecimalPlaces(0, ROUND).toFixed(0) : "";
+      if (acc.currency === "CDF") amount = rateNum.gt(0) ? francsFor(value, pays.some((x) => x.key !== p.key && x.accountId && d(x.amount).gt(0))).toFixed(0) : "";
       else amount = value.gt(0) ? c2(value).toFixed(2) : "";
     }
     updatePay(p.key, { accountId: acc.id, amount, rate: null });

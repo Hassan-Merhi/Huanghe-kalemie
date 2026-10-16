@@ -1,6 +1,6 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { frMoney } from "@shared/french";
-import { accounts, expenses, journalLines, journals, parties, voucherDrafts, type DraftKind } from "@shared/schema";
+import { accounts, auditLog, expenses, journalLines, journals, parties, voucherDrafts, type DraftKind } from "@shared/schema";
 import { cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, forbidden, notFound } from "../errors";
@@ -411,6 +411,22 @@ export async function finalizeDraft(
     default:
       throw conflict("Unknown voucher type", "Type de pièce inconnu");
   }
+  // The journal is the validator's (posted with their rights); who prepared the draft is kept in the
+  // activity log against that journal, so the voucher and the daybook can name both.
+  const journalId = (result as { id?: number; journalId?: number | null }).journalId ?? (result as { id?: number }).id;
+  if (draft.createdBy && draft.createdBy !== userId && typeof journalId === "number") {
+    await tx.insert(auditLog).values({ userId: draft.createdBy, action: "prepare", entity: "journal", entityId: journalId, data: { draftId: id, validatedBy: userId } });
+  }
   await tx.delete(voucherDrafts).where(and(eq(voucherDrafts.id, id)));
   return { kind: draft.kind, result };
+}
+
+/** Who prepared each journal posted from someone else's pending voucher (see finalizeDraft). */
+export async function preparedBy(tx: Tx, journalIds: number[]): Promise<Map<number, number>> {
+  if (!journalIds.length) return new Map();
+  const rows = await tx
+    .select({ journalId: auditLog.entityId, userId: auditLog.userId })
+    .from(auditLog)
+    .where(and(eq(auditLog.action, "prepare"), eq(auditLog.entity, "journal"), inArray(auditLog.entityId, journalIds)));
+  return new Map(rows.filter((r) => r.journalId != null && r.userId != null).map((r) => [r.journalId!, r.userId!]));
 }

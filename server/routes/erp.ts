@@ -78,9 +78,13 @@ export function registerErpRoutes(
     );
     // The printed amount is the daybook's: francs at the voucher's rate, the exchange difference apart.
     const doc = documentAmount(j.journal.type, hidden.size ? lines.filter((l) => !hidden.has(l.line.accountId)) : lines, m.lines);
+    // Posted from someone else's pending voucher: they prepared it, the journal's author validated it.
+    const preparer = (await vouchers.preparedBy(db, [j.journal.id])).get(j.journal.id);
+    const [prep] = preparer ? await db.select({ fullName: users.fullName }).from(users).where(eq(users.id, preparer)) : [];
     res.json({
       ...m.journal,
-      createdByName: j.createdByName,
+      createdByName: prep ? prep.fullName : j.createdByName,
+      validatedByName: prep ? j.createdByName : null,
       total: m.lines.reduce((s, l) => s.plus(l.debit), dec(0)).toFixed(2),
       amount: doc.amount,
       fxDiff: "fxDiff" in doc ? doc.fxDiff ?? null : null,
@@ -222,7 +226,10 @@ export function registerErpRoutes(
     const searchable = q.q?.trim() && hidden.size
       ? js.filter(({ journal }) => !(byJournal.get(journal.id) ?? []).some((l) => hidden.has(l.line.accountId)))
       : js;
+    const prepared = await vouchers.preparedBy(db, searchable.map((j) => j.journal.id));
+    const names = prepared.size ? await db.select({ id: users.id, fullName: users.fullName }).from(users).where(inArray(users.id, Array.from(new Set(prepared.values())))) : [];
     const rows = searchable.map(({ journal: raw, createdByName }) => {
+      const preparer = prepared.has(raw.id) ? names.find((n) => n.id === prepared.get(raw.id)) : undefined;
       const ls = byJournal.get(raw.id) ?? [];
       const masked = reports.maskPartnerJournal(
         raw,
@@ -237,7 +244,9 @@ export function registerErpRoutes(
       }
       return {
         ...journal,
-        createdByName,
+        // Who entered it; for a pending voucher validated by someone else, its author, with the validator apart.
+        createdByName: preparer ? preparer.fullName : createdByName,
+        validatedByName: preparer ? createdByName : null,
         /** The sale behind a sale, cancellation or return, for the "open" link. */
         saleId:
           journal.sourceType === "sale" || journal.sourceType === "sale_void"
