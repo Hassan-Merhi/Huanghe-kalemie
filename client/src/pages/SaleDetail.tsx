@@ -35,6 +35,11 @@ function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () =
   const { data: moneyAccounts } = useMoneyAccounts();
   const paidInto = [...sale.payments].sort((a, b) => d(b.amountUsd).comparedTo(d(a.amountUsd)))[0]?.accountId ?? null;
   const [accountId, setAccountId] = useState<number | null>(paidInto);
+  // A sale paid in two drawers says so next to the refund account: "Payée 20,00 $ en Caisse USD + 19 700 FC en Caisse FC".
+  const paidIn = Array.from(netByAccount(sale)).filter(([, x]) => x.native.gt(0));
+  const paidInText = paidIn.length > 1
+    ? t(`Paid ${paidIn.map(([id, x]) => `${drawerAmount(x)} into ${moneyAccounts.find((a) => a.id === id)?.name ?? `#${id}`}`).join(" + ")}`, `Payée ${paidIn.map(([id, x]) => `${drawerAmount(x)} en ${moneyAccounts.find((a) => a.id === id)?.name ?? `#${id}`}`).join(" + ")}`)
+    : null;
   const account: Account | null = moneyAccounts.find((a) => a.id === accountId) ?? null;
   const [rate, setRate] = useState<string | null>(null);
   const rateQ = useRate(date);
@@ -144,7 +149,7 @@ function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () =
             </div>
             {mode === "account" ? (
               <div className="grid gap-3 sm:grid-cols-2">
-                <Field label={t("Refund from", "Rembourser depuis")} required hint={accountId && accountId === paidInto ? t("The account the customer paid into", "Le compte où le client a payé") : undefined}>
+                <Field label={t("Refund from", "Rembourser depuis")} required hint={paidInText ?? (accountId && accountId === paidInto ? t("The account the customer paid into", "Le compte où le client a payé") : undefined)}>
                   <MoneyAccountSelect value={accountId} onChange={(id) => setAccountId(id)} />
                 </Field>
                 {isCdf && (
@@ -260,8 +265,35 @@ function ReturnSlipDialog({ sale, ret, accName, onClose }: { sale: SaleFull; ret
   );
 }
 
-function VoidDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }) {
+/** What each drawer kept of the sale, change taken off: + money in, − money given back from it. */
+function netByAccount(sale: SaleFull) {
+  const byAccount = new Map<number, { currency: "USD" | "CDF"; native: Decimal }>();
+  for (const p of sale.payments) {
+    const cur = byAccount.get(p.accountId) ?? { currency: p.currency, native: d(0) };
+    byAccount.set(p.accountId, { ...cur, native: cur.native.plus(d(p.amountNative)) });
+  }
+  return byAccount;
+}
+const drawerAmount = (x: { currency: "USD" | "CDF"; native: Decimal }) => (x.currency === "CDF" ? cdf(x.native.abs().toFixed(0)) : usd(x.native.abs().toFixed(2)));
+
+/**
+ * The cash to swap back when a sale is cancelled, from its payments and change, per drawer: "Rendez 50,00 $
+ * (Caisse USD) et reprenez 65 300 FC (Caisse FC)". Null when nothing was paid.
+ */
+function voidCashText(t: ReturnType<typeof useT>, sale: SaleFull, accName: (id: number | null) => string) {
+  const text = (id: number, x: { currency: "USD" | "CDF"; native: Decimal }) => `${drawerAmount(x)} (${accName(id)})`;
+  const entries = Array.from(netByAccount(sale));
+  const give = entries.filter(([, x]) => x.native.gt(0)).map(([id, x]) => text(id, x));
+  const take = entries.filter(([, x]) => x.native.lt(0)).map(([id, x]) => text(id, x));
+  if (!give.length) return null;
+  return take.length
+    ? t(`Give back ${give.join(" + ")} and take back ${take.join(" + ")}.`, `Rendez ${give.join(" + ")} et reprenez ${take.join(" + ")}.`)
+    : t(`Give back ${give.join(" + ")} to the customer.`, `Rendez ${give.join(" + ")} au client.`);
+}
+
+function VoidDialog({ sale, accName, onClose }: { sale: SaleFull; accName: (id: number | null) => string; onClose: () => void }) {
   const t = useT();
+  const cash = voidCashText(t, sale, accName);
   const [reason, setReason] = useState("");
   const [date, setDate] = useState(todayLocal());
   const m = useApiMutation<unknown, SaleFull>("POST", `/api/sales/${sale.id}/void`, { success: t("Sale cancelled", "Vente annulée"), onSuccess: onClose });
@@ -277,6 +309,8 @@ function VoidDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }) 
             )}
           </DialogDescription>
         </DialogHeader>
+        {/* The books are reversed by the cancellation; the notes in the drawers are swapped back by hand. */}
+        {cash && sale.returns.length === 0 && <p className="rounded-md border p-3 text-sm font-medium" data-testid="void-cash">{cash}</p>}
         {sale.returns.length > 0 && (
           <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
             {t("This sale already has returns, so it cannot be cancelled. Return the remaining items instead.", "Cette vente a déjà des retours, elle ne peut pas être annulée. Retournez plutôt les articles restants.")}
@@ -475,7 +509,7 @@ export default function SaleDetail() {
       </div>
       {voided && (
         <p className="mb-4 rounded-md border border-destructive/40 bg-destructive/10 p-3 text-sm">
-          {t("Cancelled", "Annulée")}{sale.voidedAt ? ` ${fmtDate(String(sale.voidedAt))}` : ""}: {sale.voidReason}
+          {t("Cancelled", "Annulée")}{sale.voidedAt ? ` ${fmtDate(String(sale.voidedAt))}` : ""}{t(": ", "\u00a0: ")}{sale.voidReason}
         </p>
       )}
 
@@ -612,7 +646,7 @@ export default function SaleDetail() {
       {slipId && sale.returns.find((r) => r.id === slipId) && (
         <ReturnSlipDialog sale={sale} ret={sale.returns.find((r) => r.id === slipId)!} accName={accName} onClose={() => setSlipId(null)} />
       )}
-      {dialog === "void" && <VoidDialog sale={sale} onClose={() => setDialog(null)} />}
+      {dialog === "void" && <VoidDialog sale={sale} accName={accName} onClose={() => setDialog(null)} />}
     </div>
   );
 }

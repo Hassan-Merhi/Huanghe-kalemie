@@ -663,7 +663,7 @@ function ExportItems() {
 
 type ContainerRowIn = Record<keyof typeof CONTAINER_FIELDS, string | null>;
 
-export function ContainerImportButton({ containerId, currency, linesDirty, onImported }: { containerId: number; currency: string; linesDirty: boolean; onImported: () => void }) {
+export function ContainerImportButton({ containerId, currency, linesDirty, onContainer = [], onImported }: { containerId: number; currency: string; linesDirty: boolean; onContainer?: number[]; onImported: () => void }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   return (
@@ -676,6 +676,7 @@ export function ContainerImportButton({ containerId, currency, linesDirty, onImp
           containerId={containerId}
           currency={currency}
           linesDirty={linesDirty}
+          onContainer={onContainer}
           onClose={() => setOpen(false)}
           onImported={() => { setOpen(false); onImported(); }}
         />
@@ -684,7 +685,7 @@ export function ContainerImportButton({ containerId, currency, linesDirty, onImp
   );
 }
 
-function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onImported }: { containerId: number; currency: string; linesDirty: boolean; onClose: () => void; onImported: () => void }) {
+function ContainerImportDialog({ containerId, currency, linesDirty, onContainer, onClose, onImported }: { containerId: number; currency: string; linesDirty: boolean; onContainer: number[]; onClose: () => void; onImported: () => void }) {
   const t = useT();
   const { lang } = useI18n();
   const [fileRows, setRows] = useState<ContainerRowIn[]>([]);
@@ -750,6 +751,10 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
     return { r, p, err, unsure: unsure[i], status: (err ? "error" : p?.status ?? "existing") as PreviewRow["status"] };
   });
   const errors = merged.filter((m) => m.err).length;
+  // "Ajouter aux lignes" never merges: an item already on the container gets a second line, said before importing.
+  const already = new Set(onContainer);
+  const twice = mode === "append" ? merged.filter((m) => !m.err && m.p?.variantId && already.has(m.p.variantId)) : [];
+  const twiceSkus = Array.from(new Set(twice.map((m) => m.p?.sku ?? m.r.name ?? "")));
   // Rows with an error are not imported, so they are not in the total either.
   const total = merged.filter((m) => !m.err).reduce((s, { r }) => s.plus(d(r.quantity).times(d(r.unitPrice))), d(0));
 
@@ -816,7 +821,10 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
                         <TableCell className="text-right"><Num>{amountCell(r.unitPrice, cells[i]?.unitPrice, 4)}</Num></TableCell>
                         <TableCell className="text-right"><Num>{measureCell(r.weightKg, asked && cells[i]?.weightKg)}</Num></TableCell>
                         <TableCell className="text-right"><Num>{measureCell(r.volumeCbm, asked && cells[i]?.volumeCbm)}</Num></TableCell>
-                        <TableCell><StatusBadge status={status} /></TableCell>
+                        <TableCell>
+                          <StatusBadge status={status} />
+                          {twice.some((x) => x.p === p) && <div className="text-xs text-amber-800 dark:text-amber-400">{t("already on the container", "déjà sur le conteneur")}</div>}
+                        </TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -831,6 +839,13 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
                   <input type="radio" name="import-mode" checked={mode === "replace"} onChange={() => setMode("replace")} /> {t("Replace the lines", "Remplacer les lignes")}
                 </label>
               </div>
+              {twiceSkus.length > 0 && (
+                <p className="text-sm text-amber-800 dark:text-amber-400" data-testid="import-twice">
+                  {twiceSkus.length === 1
+                    ? t(`${twiceSkus[0]} is already on the container: a second line will be added. Choose "Replace the lines" to start from the file.`, `${twiceSkus[0]} est déjà sur le conteneur\u00a0: une ligne sera ajoutée en plus. Choisissez «\u00a0Remplacer les lignes\u00a0» pour repartir du fichier.`)
+                    : t(`${twiceSkus.join(", ")} are already on the container: a second line will be added for each. Choose "Replace the lines" to start from the file.`, `${twiceSkus.join(", ")} sont déjà sur le conteneur\u00a0: une ligne sera ajoutée en plus pour chacun. Choisissez «\u00a0Remplacer les lignes\u00a0» pour repartir du fichier.`)}
+                </p>
+              )}
             </>
           )}
         </div>

@@ -610,7 +610,10 @@ export default function POS() {
   // ---- change calculator (helper only)
   // What is paid now (part of a credit sale), never above the total: francs rounded to 100 FC make "paid"
   // 27,01 $ on a 27,00 $ sale, which must still read 75 870 FC like the total.
-  const toPay = paid.gt(0) && paid.lt(total) && !withinFrancs(receivedExact.minus(changeUsd)) ? paid : total;
+  // With nothing paid, the customer's avoir takes its part first: a 5 $ sale fully on the avoir leaves nothing to pay.
+  const dueAfterAvoir = customerId && avoirCovers ? Decimal.max(total.minus(avoirCovers), 0) : total;
+  const toPay = paid.gt(0) && paid.lt(total) && !withinFrancs(receivedExact.minus(changeUsd)) ? paid : dueAfterAvoir;
+  const nothingToPay = !toPay.gt(0) && allOnAvoir;
   // A part payment typed in francs only is that many francs, not its dollars at the rate (70 000 FC, not 70 003 FC).
   const typedFc = toPay === paid && !changeUsd.gt(0) && paidRows.length > 0 && paidRows.every((p) => accById(p.accountId)!.currency === "CDF")
     ? paidRows.reduce((s, p) => s.plus(d(p.amount).toDecimalPlaces(0, ROUND)), d(0))
@@ -1005,7 +1008,11 @@ export default function POS() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="flex justify-between"><span>{t("To pay", "À payer")}</span><Num>{usd(toPay.toFixed(2))}{toPayFc ? ` · ${cdf(toPayFc.toString())}` : ""}</Num></div>
+                  {nothingToPay ? (
+                    <p className="text-emerald-800 dark:text-emerald-400" data-testid="calc-on-avoir">{t("Nothing to pay: settled from the customer's credit", "Rien à payer\u00a0: réglé sur l'avoir")}</p>
+                  ) : (
+                    <div className="flex justify-between"><span>{t("To pay", "À payer")}</span><Num>{usd(toPay.toFixed(2))}{toPayFc ? ` · ${cdf(toPayFc.toString())}` : ""}</Num></div>
+                  )}
                   {handed && (
                     <div className={cn("flex justify-between font-semibold", change.lt(0) && "text-destructive")}>
                       <span>{change.lt(0) ? t("Still missing", "Il manque") : t("Change to give", "Monnaie à rendre")}</span>

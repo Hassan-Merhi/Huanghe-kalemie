@@ -6,6 +6,16 @@ import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Field } from "@/components/common";
 import { useI18n, useT } from "@/lib/i18n";
 import { accountLabel, d, money, perUsdText, todayLocal, usd, usdPerUnit, qty as fmtQty } from "@/lib/format";
@@ -14,6 +24,7 @@ import type { Account, Category, Location, Party, Settings, VariantRow } from "@
 import { useAuth } from "@/lib/auth";
 import { cn } from "@/lib/utils";
 import { accountText } from "@/lib/systemText";
+import { duplicateParty } from "@/lib/labels";
 import { capitalize, monthText } from "@shared/french";
 
 /**
@@ -252,6 +263,43 @@ export const PARTY_LABELS: Record<Party["type"], readonly [string, string, strin
   employee: ["Employee", "Employé", "New employee", "Nouvel employé"],
 };
 
+/**
+ * "Un client Garage Mwamba existe déjà": a contact typed again under the same name (case, accents and spaces aside)
+ * or phone. Only a question: two people can share a name, so saving stays possible once confirmed.
+ */
+export function useDuplicateParty(name: string, phone: string | null | undefined, selfId?: number | null) {
+  const t = useT();
+  const q = useQuery<Party[]>({ queryKey: ["/api/parties"] });
+  const found = q.data ? duplicateParty(q.data, { name, phone, selfId }) : null;
+  if (!found) return null;
+  const en = PARTY_LABELS[found.party.type][0].toLowerCase();
+  const article = t(`${/^[aeiou]/.test(en) ? "An" : "A"} ${en}`, `Un ${PARTY_LABELS[found.party.type][1].toLowerCase()}`);
+  return found.by === "name"
+    ? t(`${article} ${found.party.name} already exists`, `${article} ${found.party.name} existe déjà`)
+    : t(`${article} ${found.party.name} already has this phone number (${found.party.phone})`, `${article} ${found.party.name} a déjà ce numéro (${found.party.phone})`);
+}
+
+/** Asks before saving a contact that looks like one already there. */
+export function DuplicatePartyAlert({ text, open, onCancel, onConfirm }: { text: string | null; open: boolean; onCancel: () => void; onConfirm: () => void }) {
+  const t = useT();
+  return (
+    <AlertDialog open={open && !!text} onOpenChange={(o) => !o && onCancel()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t("Same contact twice?", "Même contact en double\u00a0?")}</AlertDialogTitle>
+          <AlertDialogDescription>
+            {text}. {t("Use the existing one, unless this really is someone else.", "Utilisez celui qui existe, sauf s'il s'agit vraiment d'une autre personne.")}
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{t("Go back", "Revenir")}</AlertDialogCancel>
+          <AlertDialogAction onClick={onConfirm}>{t("Save anyway", "Enregistrer quand même")}</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
+  );
+}
+
 /** Searchable customer / supplier / agent / employee picker with quick add. */
 export function PartySelect({
   types,
@@ -379,7 +427,11 @@ function QuickPartyDialog({ type, initialName, onClose, onCreated }: { type: Par
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const label = PARTY_LABELS[type];
-  async function save() {
+  const duplicate = useDuplicateParty(name, phone);
+  const [askDuplicate, setAskDuplicate] = useState(false);
+  async function save(confirmed = false) {
+    if (duplicate && !confirmed) return setAskDuplicate(true);
+    setAskDuplicate(false);
     setSaving(true);
     setError(null);
     try {
@@ -399,12 +451,14 @@ function QuickPartyDialog({ type, initialName, onClose, onCreated }: { type: Par
         <div className="space-y-3">
           <Field label={t("Name", "Nom")} error={error}><Input autoFocus value={name} onChange={(e) => setName(e.target.value)} /></Field>
           <Field label={t("Phone", "Téléphone")}><Input value={phone} onChange={(e) => setPhone(e.target.value)} inputMode="tel" /></Field>
+          {duplicate && <p className="text-sm text-amber-800 dark:text-amber-400" data-testid="party-duplicate">{duplicate}</p>}
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <Button onClick={save} disabled={!name.trim() || saving}>{t("Save", "Enregistrer")}</Button>
+          <Button onClick={() => save()} disabled={!name.trim() || saving}>{t("Save", "Enregistrer")}</Button>
         </DialogFooter>
       </DialogContent>
+      <DuplicatePartyAlert text={duplicate} open={askDuplicate} onCancel={() => setAskDuplicate(false)} onConfirm={() => save(true)} />
     </Dialog>
   );
 }
