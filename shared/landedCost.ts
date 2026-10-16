@@ -1,4 +1,5 @@
 import { Decimal, MoneyError, allocateCents, cents, dec, sum, type DecimalInput } from "./money";
+import { frNumber } from "./french";
 
 /**
  * Landed cost allocation for a container offload.
@@ -99,7 +100,15 @@ export function computeLandedCost(
     if (q.lte(0)) throw new MoneyError("Every line needs a quantity greater than zero", "Chaque ligne doit avoir une quantité supérieure à zéro");
     const p = dec(line.unitPrice, "unit price");
     if (p.isNegative()) throw new MoneyError("Unit price cannot be negative", "Le prix unitaire ne peut pas être négatif");
-    return cents(q.times(p).times(rate));
+    const value = cents(q.times(p).times(rate));
+    // A priced line worth less than half a cent would go into stock at nothing.
+    if (p.gt(0) && value.isZero()) {
+      throw new MoneyError(
+        `A line of ${q.toFixed()} at ${p.toFixed()} is worth less than one cent: enter 0 for a free item, or the real price`,
+        `Une ligne de ${frNumber(q.toFixed())} à ${frNumber(p.toFixed())} vaut moins d'un centime : saisissez 0 pour un article gratuit, ou le vrai prix`,
+      );
+    }
+    return value;
   });
 
   const allocated: Decimal[][] = expenses.map((expense) => {

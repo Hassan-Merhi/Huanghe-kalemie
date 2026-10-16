@@ -44,8 +44,10 @@ import {
   nonNegativeDecimal,
   optionalDecimal,
   optionalId,
+  optionalRate,
   paramId,
   positiveDecimal,
+  positiveRate,
   todayIso,
 } from "./http";
 import * as catalog from "./services/catalog";
@@ -57,9 +59,9 @@ import * as reports from "./services/reports";
 import * as checks from "./services/checks";
 import * as backup from "./services/backup";
 import { getSetting } from "./setup";
-import { cnyRateFor, reverseJournal, setExchangeRate } from "./services/ledger";
+import { assertPeriodOpen, cnyRateFor, reverseJournal, setExchangeRate } from "./services/ledger";
 import { containerNumberKey } from "@shared/containerNumber";
-import { transferStock } from "./services/stock";
+import { lockVariants, transferStock } from "./services/stock";
 import * as vouchers from "./services/vouchers";
 import { registerErpRoutes } from "./routes/erp";
 
@@ -111,7 +113,7 @@ const productSchema = z.object({
   active: z.boolean().optional(),
 });
 
-const paymentSchema = z.object({ accountId: id, amount: positiveDecimal, rate: optionalDecimal });
+const paymentSchema = z.object({ accountId: id, amount: positiveDecimal, rate: optionalRate });
 
 export function registerRoutes(app: Express) {
   app.use("/api", (req, res, next) => {
@@ -136,7 +138,7 @@ export function registerRoutes(app: Express) {
     const body = z
       .object({
         shopName: z.string().min(1).max(120).optional(),
-        defaultCdfRate: positiveDecimal.optional(),
+        defaultCdfRate: positiveRate.optional(),
         receiptFooter: z.string().max(300).optional(),
         rateTolerancePct: z.string().regex(/^\d{1,2}(\.\d{1,2})?$/, "Tolerance must be a percentage like 3").optional(),
         cashierDiscountPct: z.string().regex(/^\d{1,3}(\.\d{1,2})?$/, "Give a percentage like 10").refine((v) => Number(v) <= 100, "At most 100%").optional(),
@@ -167,7 +169,7 @@ export function registerRoutes(app: Express) {
   }));
 
   app.post("/api/exchange-rates", requireRole(...STAFF), asyncHandler(async (req, res) => {
-    const body = z.object({ date: isoDate, cdfPerUsd: positiveDecimal, cnyPerUsd: positiveDecimal.nullish() }).parse(req.body);
+    const body = z.object({ date: isoDate, cdfPerUsd: positiveRate, cnyPerUsd: positiveRate.nullish() }).parse(req.body);
     const row = await db.transaction((tx) => setExchangeRate(tx, body, uid(req), { owner: req.user!.role === "owner" }));
     await audit(req, "set_rate", "exchange_rate", null, body);
     res.json(row);
@@ -511,6 +513,9 @@ export function registerRoutes(app: Express) {
   app.post("/api/stock/transfers", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = z.object({ date: isoDate, fromLocationId: id, toLocationId: id, note: z.string().max(300).optional(), lines: z.array(z.object({ variantId: id, qty: positiveDecimal, unitIds: z.array(id).optional() })).min(1) }).parse(req.body);
     await db.transaction(async (tx) => {
+      // A transfer posts no journal, but it changes the stock of its date, so a closed month refuses it like any posting.
+      await assertPeriodOpen(tx, body.date);
+      await lockVariants(tx, body.lines.map((l) => l.variantId));
       for (const l of body.lines) {
         await transferStock(tx, { date: body.date, type: "transfer_out", variantId: l.variantId, fromLocationId: body.fromLocationId, toLocationId: body.toLocationId, qty: l.qty, unitIds: l.unitIds, note: body.note, userId: uid(req) });
       }
@@ -646,7 +651,7 @@ export function registerRoutes(app: Express) {
     );
   }));
 
-  const manualLine = z.object({ accountId: id, debit: optionalDecimal, credit: optionalDecimal, partyId: optionalId, nativeAmount: optionalDecimal, rate: optionalDecimal, memo: z.string().max(300).optional().nullable() });
+  const manualLine = z.object({ accountId: id, debit: optionalDecimal, credit: optionalDecimal, partyId: optionalId, nativeAmount: optionalDecimal, rate: optionalRate, memo: z.string().max(300).optional().nullable() });
   const journalSchema = z.object({ date: isoDate, memo: z.string().min(1).max(300), type: z.enum(["manual", "opening"]).optional(), lines: z.array(manualLine).min(2) });
   app.post("/api/journals", requireRole(), asyncHandler(async (req, res) => {
     const body = journalSchema.parse(req.body);
@@ -670,7 +675,7 @@ export function registerRoutes(app: Express) {
 
   // ---------------------------------------------------------------- Money movements
 
-  const partyPayment = z.object({ date: isoDate, partyId: id, accountId: id, amount: positiveDecimal, rate: optionalDecimal, memo: z.string().max(300).optional().nullable(), settleNative: optionalDecimal });
+  const partyPayment = z.object({ date: isoDate, partyId: id, accountId: id, amount: positiveDecimal, rate: optionalRate, memo: z.string().max(300).optional().nullable(), settleNative: optionalDecimal });
   app.post("/api/money/customer-receipt", requireRole(...SELLERS), asyncHandler(async (req, res) => {
     const body = partyPayment.parse(req.body);
     // Staff take francs at the day's rate; cashiers also record today's money only.
@@ -682,12 +687,12 @@ export function registerRoutes(app: Express) {
     const body = partyPayment.parse(req.body);
     res.status(201).json({ id: await db.transaction((tx) => ops.payParty(tx, body, uid(req))) });
   }));
-  const transferSchema = z.object({ date: isoDate, fromAccountId: id, fromAmount: positiveDecimal, toAccountId: id, toAmount: positiveDecimal, rate: optionalDecimal, memo: z.string().max(300).optional().nullable() });
+  const transferSchema = z.object({ date: isoDate, fromAccountId: id, fromAmount: positiveDecimal, toAccountId: id, toAmount: positiveDecimal, rate: optionalRate, memo: z.string().max(300).optional().nullable() });
   app.post("/api/money/transfer", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = transferSchema.parse(req.body);
     res.status(201).json({ id: await db.transaction((tx) => ops.transferMoney(tx, body, uid(req))) });
   }));
-  const partnerMoney = z.object({ date: isoDate, partnerId: id, accountId: id, amount: positiveDecimal, rate: optionalDecimal, memo: z.string().max(300).optional().nullable() });
+  const partnerMoney = z.object({ date: isoDate, partnerId: id, accountId: id, amount: positiveDecimal, rate: optionalRate, memo: z.string().max(300).optional().nullable() });
   app.post("/api/money/partner-contribution", requireRole(), asyncHandler(async (req, res) => {
     const body = partnerMoney.parse(req.body);
     const journalId = await db.transaction((tx) => ops.partnerContribution(tx, body, uid(req)));
@@ -725,7 +730,7 @@ export function registerRoutes(app: Express) {
   }));
   app.post("/api/expenses", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = z
-      .object({ date: isoDate, accountId: id, description: z.string().min(1).max(300), amount: positiveDecimal, currency: z.enum(["USD", "CDF"]).optional(), rate: optionalDecimal, paidFromAccountId: optionalId, payablePartyId: optionalId })
+      .object({ date: isoDate, accountId: id, description: z.string().min(1).max(300), amount: positiveDecimal, currency: z.enum(["USD", "CDF"]).optional(), rate: optionalRate, paidFromAccountId: optionalId, payablePartyId: optionalId })
       .parse(req.body);
     res.status(201).json(await db.transaction((tx) => ops.createExpense(tx, body, uid(req))));
   }));
@@ -762,7 +767,7 @@ export function registerRoutes(app: Express) {
     supplierId: id,
     status: z.enum(CONTAINER_STATUSES).exclude(["finalized"]).optional(),
     currency: z.string().transform((c) => c.toUpperCase()).pipe(z.enum(["USD", "CDF", "CNY"])).optional(),
-    rateToUsd: positiveDecimal.optional(),
+    rateToUsd: positiveRate.optional(),
     locationId: id,
     shipDate: isoDate.optional().nullable(),
     arrivalDate: isoDate.optional().nullable(),
@@ -771,15 +776,17 @@ export function registerRoutes(app: Express) {
   /**
    * Container numbers are unique (as stored, in capitals), spaces and dashes aside: "HHU 2026 010" is
    * HHU-2026-010. Say which number, not "this value is already used".
+   * The key is computed in JS (shared/containerNumber.ts) for every stored number, and creates and
+   * renames wait for each other on a lock of the key, so two variants typed at once cannot both pass.
+   * Older rows that already share a key stay as they are; only new numbers are checked.
    */
   async function assertContainerNumberFree(tx: Tx, number: string, exceptId?: number) {
     const wanted = number.trim().toUpperCase();
     const key = containerNumberKey(wanted);
-    const [other] = await tx
-      .select({ id: containers.id, number: containers.number })
-      .from(containers)
-      .where(and(sql`regexp_replace(upper(${containers.number}), '[[:space:]_./-]', '', 'g') = ${key}`, exceptId ? ne(containers.id, exceptId) : undefined))
-      .limit(1);
+    if (!key) throw badRequest("Enter a container number", "Saisissez un numéro de conteneur");
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`container-number:${key}`}))`);
+    const rows = await tx.select({ id: containers.id, number: containers.number }).from(containers);
+    const other = rows.find((r) => r.id !== exceptId && containerNumberKey(r.number) === key);
     if (other) {
       const same = other.number === wanted ? "" : ` (${other.number})`;
       throw new AppError(409, `Container number ${wanted} already exists${same}`, "DUPLICATE_NUMBER", `Le numéro de conteneur ${wanted} existe déjà${same}`);
@@ -791,8 +798,11 @@ export function registerRoutes(app: Express) {
     if (!supplier || supplier.type !== "supplier") throw badRequest("Pick a supplier", "Choisissez un fournisseur");
     await assertActiveLocation(db, body.locationId);
     if (body.rateToUsd) await containerSvc.assertContainerRate(db, body.currency ?? "USD", body.rateToUsd, todayIso());
-    await assertContainerNumberFree(db, body.number);
-    const [row] = await db.insert(containers).values({ ...body, number: body.number.trim().toUpperCase(), currency: (body.currency ?? "USD").toUpperCase() }).returning();
+    const row = await db.transaction(async (tx) => {
+      await assertContainerNumberFree(tx, body.number);
+      const [created] = await tx.insert(containers).values({ ...body, number: body.number.trim().toUpperCase(), currency: (body.currency ?? "USD").toUpperCase() }).returning();
+      return created;
+    });
     await audit(req, "create", "container", row.id);
     res.status(201).json(row);
   }));
@@ -850,7 +860,7 @@ export function registerRoutes(app: Express) {
         description: z.string().max(300).optional().nullable(),
         amount: positiveDecimal,
         currency: z.enum(["USD", "CDF"]).default("USD"),
-        rate: optionalDecimal,
+        rate: optionalRate,
         method: z.enum(ALLOCATION_METHODS).default("value"),
         targetLineId: optionalId,
         paidFromAccountId: optionalId,
@@ -967,7 +977,7 @@ export function registerRoutes(app: Express) {
   }));
   app.post("/api/sales/:id/returns", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = z
-      .object({ date: isoDate.optional(), reason: z.string().min(1).max(300), refundAccountId: optionalId, rate: optionalDecimal, lines: z.array(z.object({ saleLineId: id, qty: positiveDecimal })).min(1) })
+      .object({ date: isoDate.optional(), reason: z.string().min(1).max(300), refundAccountId: optionalId, rate: optionalRate, lines: z.array(z.object({ saleLineId: id, qty: positiveDecimal })).min(1) })
       .parse(req.body);
     // Staff hand francs back at the day's rate.
     if (req.user!.role !== "owner") body.rate = null;

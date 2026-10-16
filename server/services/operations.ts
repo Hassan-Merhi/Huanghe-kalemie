@@ -13,7 +13,7 @@ import {
   stockMovements,
   variants,
 } from "@shared/schema";
-import { cents, dec, sum, Decimal, type DecimalInput } from "@shared/money";
+import { cents, dec, sum, Decimal, MoneyError, type DecimalInput } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, forbidden, notFound, wholeUnitError, francDecimalsError } from "../errors";
 import { wholeUnit } from "@shared/units";
@@ -35,7 +35,7 @@ import {
   toUsd,
   type PostLine,
 } from "./ledger";
-import { issueStock, linkMovementsToJournal, receiveStock } from "./stock";
+import { issueStock, linkMovementsToJournal, lockVariants, receiveStock } from "./stock";
 import { variantColour } from "./catalog";
 import { de, frMoney, frNumber } from "@shared/french";
 
@@ -620,6 +620,8 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
   }
   const [location] = await tx.select({ id: locations.id }).from(locations).where(eq(locations.id, input.locationId));
   if (!location) throw badRequest("That location does not exist", "Cet emplacement n'existe pas");
+  // All the items at once, in id order (see lockVariants).
+  await lockVariants(tx, input.lines.map((l) => l.variantId));
   const number = await nextNumber(tx, "adjustment", "ADJ-");
   const [adj] = await tx
     .insert(stockAdjustments)
@@ -646,6 +648,14 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
       }
       let unit = line.unitCost != null && line.unitCost !== "" ? dec(line.unitCost, "unit cost") : null;
       if (unit?.isNegative()) throw badRequest("Cost cannot be negative", "Le coût ne peut pas être négatif");
+      // A cost typed above zero must book something: below a millionth, or on a line worth under half a
+      // cent ("0.333 m at 0.01"), it would go into stock at 0.00 $.
+      if (unit?.gt(0) && (unit.toDecimalPlaces(6).isZero() || cents(unit.times(change)).isZero())) {
+        throw new MoneyError(
+          `${v.name} (${v.variant.sku}): ${change.toFixed()} at ${unit.toFixed()} $ is worth less than one cent. Enter the cost of a larger quantity, or 0.`,
+          `${v.name} (${v.variant.sku}) : ${frNumber(change.toFixed())} à ${frNumber(unit.toFixed())} $ vaut moins d'un centime. Saisissez le coût d'une plus grande quantité, ou 0.`,
+        );
+      }
       if (!opts.owner && input.kind !== "opening") unit = await staffGainCost(tx, v.variant, v.name, unit);
       if (!unit) {
         const q = dec(v.variant.stockQty);

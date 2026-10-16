@@ -291,20 +291,26 @@ export async function reverseVoucher(tx: Tx, journalId: number, date: string, us
 
 // ---------------------------------------------------------------- Optional vouchers (drafts)
 
-/** Rough USD total for the list; the real value is computed when the draft is posted. */
-async function draftTotal(tx: Tx, kind: DraftKind, payload: Record<string, unknown>): Promise<string | null> {
+/**
+ * Rough USD total for the list; the real value is computed when the draft is posted. Francs count at
+ * the draft's own rate, else the rate of its date, so the owner sees the dollar value of a franc voucher.
+ */
+async function draftTotal(tx: Tx, kind: DraftKind, payload: Record<string, unknown>, date: string): Promise<string | null> {
   try {
+    const inUsd = async (accountId: unknown, native: Decimal, rate?: unknown) => {
+      const [acc] = typeof accountId === "number" ? await tx.select({ currency: accounts.currency }).from(accounts).where(eq(accounts.id, accountId)) : [];
+      if (acc?.currency !== "CDF") return native.toFixed(2);
+      const r = typeof rate === "string" && rate && dec(rate).gt(0) ? dec(rate) : (await rateFor(tx, date)).rate;
+      return cents(native.dividedBy(r)).toFixed(2);
+    };
     if (kind === "payment" || kind === "receipt") {
       const p = payload as unknown as VoucherInput;
-      const native = sum((p.lines ?? []).map((l) => cents(l.amount || 0)));
-      const [acc] = p.accountId ? await tx.select({ currency: accounts.currency }).from(accounts).where(eq(accounts.id, p.accountId)) : [];
-      if (acc?.currency === "CDF") return p.rate && dec(p.rate).gt(0) ? cents(native.dividedBy(p.rate)).toFixed(2) : null;
-      return native.toFixed(2);
+      return await inUsd(p.accountId, sum((p.lines ?? []).map((l) => cents(l.amount || 0))), p.rate);
     }
     if (kind === "journal") {
       return sum(((payload.lines as { debit?: string }[]) ?? []).map((l) => cents(l.debit || 0))).toFixed(2);
     }
-    if (kind === "transfer") return payload.fromAmount ? cents(payload.fromAmount as string).toFixed(2) : null;
+    if (kind === "transfer") return payload.fromAmount ? await inUsd(payload.fromAccountId, cents(payload.fromAmount as string), payload.rate) : null;
   } catch {
     return null;
   }
@@ -312,7 +318,10 @@ async function draftTotal(tx: Tx, kind: DraftKind, payload: Record<string, unkno
 }
 
 export async function listDrafts(tx: Tx) {
-  return tx.select().from(voucherDrafts).orderBy(desc(voucherDrafts.date), desc(voucherDrafts.id));
+  const rows = await tx.select().from(voucherDrafts).orderBy(desc(voucherDrafts.date), desc(voucherDrafts.id));
+  // Drafts saved before a day's rate was entered (or by an older version) get their total now.
+  for (const r of rows) if (r.totalUsd == null) r.totalUsd = await draftTotal(tx, r.kind, r.payload, r.date);
+  return rows;
 }
 
 export async function saveDraft(
@@ -321,16 +330,22 @@ export async function saveDraft(
   userId: number,
   rights: PostingRights = { owner: true },
 ) {
-  const values = { kind: input.kind, date: input.date, memo: input.memo ?? null, payload: input.payload, totalUsd: await draftTotal(tx, input.kind, input.payload) };
+  const values = { kind: input.kind, date: input.date, memo: input.memo ?? null, payload: input.payload, totalUsd: await draftTotal(tx, input.kind, input.payload, input.date) };
   if (input.id) {
     // Someone else's pending voucher is theirs to change (the owner may change any): otherwise a
     // changed amount would be posted by whoever validates it, with their rights.
-    const [current] = await tx.select({ createdBy: voucherDrafts.createdBy }).from(voucherDrafts).where(eq(voucherDrafts.id, input.id)).for("update");
+    const [current] = await tx
+      .select({ createdBy: voucherDrafts.createdBy, updatedAt: voucherDrafts.updatedAt })
+      .from(voucherDrafts)
+      .where(eq(voucherDrafts.id, input.id))
+      .for("update");
     if (!current) throw notFound("Pending voucher", "Pièce en attente introuvable");
     if (!rights.owner && current.createdBy !== userId) {
       throw forbidden("Only the person who saved this pending voucher, or the owner, can change it", "Seule la personne qui a enregistré cette pièce en attente, ou le propriétaire, peut la modifier");
     }
-    const [row] = await tx.update(voucherDrafts).set({ ...values, updatedAt: new Date() }).where(eq(voucherDrafts.id, input.id)).returning();
+    // updatedAt is the draft's version (see finalizeDraft): each save moves it forward, even twice in a millisecond.
+    const updatedAt = new Date(Math.max(Date.now(), current.updatedAt.getTime() + 1));
+    const [row] = await tx.update(voucherDrafts).set({ ...values, updatedAt }).where(eq(voucherDrafts.id, input.id)).returning();
     if (!row) throw notFound("Pending voucher", "Pièce en attente introuvable");
     return row;
   }
@@ -357,10 +372,27 @@ export async function finalizeDraft(
   rights: PostingRights,
   /** Validates the stored payload with the same schema the direct endpoint uses. */
   parse: (kind: DraftKind, payload: Record<string, unknown>) => Record<string, unknown>,
+  /**
+   * The draft's updatedAt as the validator saw it. The routes always pass it: a draft changed since
+   * (by its author or anyone else) is refused rather than posted with the validator's rights.
+   */
+  seenUpdatedAt?: string | null,
 ) {
   const [draft] = await tx.select().from(voucherDrafts).where(eq(voucherDrafts.id, id)).for("update");
   if (!draft) throw notFound("Pending voucher", "Pièce en attente introuvable");
   const p = parse(draft.kind, { ...draft.payload, date: draft.date });
+  if (draft.kind === "adjustment" && !rights.owner && (p as { kind?: string }).kind === "opening") {
+    throw forbidden("Only the owner can enter opening stock", "Seul le propriétaire peut saisir le stock d'ouverture");
+  }
+  if (seenUpdatedAt !== undefined) {
+    const seen = seenUpdatedAt ? new Date(seenUpdatedAt).getTime() : NaN;
+    if (seen !== draft.updatedAt.getTime()) {
+      throw conflict(
+        "This pending voucher was changed after you opened it. Check the new version, then validate again.",
+        "Cette pièce en attente a été modifiée après son ouverture. Vérifiez la nouvelle version, puis validez à nouveau.",
+      );
+    }
+  }
   let result: unknown;
   switch (draft.kind) {
     case "payment":
@@ -374,9 +406,6 @@ export async function finalizeDraft(
       result = { id: await ops.transferMoney(tx, p as unknown as ops.TransferInput, userId) };
       break;
     case "adjustment":
-      if (!rights.owner && (p as { kind?: string }).kind === "opening") {
-        throw forbidden("Only the owner can enter opening stock", "Seul le propriétaire peut saisir le stock d'ouverture");
-      }
       result = await ops.adjustStock(tx, p as unknown as ops.AdjustmentInput, userId, rights);
       break;
     default:
