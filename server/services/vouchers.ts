@@ -4,7 +4,7 @@ import { accounts, auditLog, expenses, journalLines, journals, parties, voucherD
 import { cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, forbidden, notFound } from "../errors";
-import { contactLines, foreignBalance, moneyLeg, postJournal, rateFor, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type PostLine } from "./ledger";
+import { assertNotFuture, contactLines, foreignBalance, moneyLeg, postJournal, rateFor, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type PostLine } from "./ledger";
 import * as ops from "./operations";
 
 /*
@@ -330,6 +330,8 @@ export async function saveDraft(
   userId: number,
   rights: PostingRights = { owner: true },
 ) {
+  // Validating posts it on its date, which may not be after tomorrow: a year typed wrong is caught now, not at validation.
+  assertNotFuture(input.date);
   const values = { kind: input.kind, date: input.date, memo: input.memo ?? null, payload: input.payload, totalUsd: await draftTotal(tx, input.kind, input.payload, input.date) };
   if (input.id) {
     // Someone else's pending voucher is theirs to change (the owner may change any): otherwise a

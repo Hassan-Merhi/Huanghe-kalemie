@@ -32,7 +32,7 @@ interface MovementRef {
 
 /**
  * Every posting that touches stock takes its locks in one order: the periods lock (shared), then the
- * items' rows in id order, then the money and credit locks, then the journal counter (in postJournal).
+ * items' rows in id order, then the franc, money and credit locks (in postJournal; journal numbers take none).
  * A service calls this before its first journal, so an offload or a cancelled sale (which post first)
  * and a sale, return or adjustment of the same item (which move stock first) cannot wait on each other.
  */
