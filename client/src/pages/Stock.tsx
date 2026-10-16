@@ -589,7 +589,7 @@ export function AdjustForm({
                       {l.variant.sku} · {t("here", "ici")} {qty(l.variant.locationQty)} · {t("total", "total")} {qty(l.variant.stockQty)} · {t("avg cost", "coût moyen")} {unitCost(l.variant.avgCost)}
                     </p>
                   </div>
-                  <Button variant="ghost" size="icon" onClick={() => setLines(lines.filter((x) => x.key !== l.key))}><Trash2 className="h-4 w-4" /></Button>
+                  <Button variant="ghost" size="icon" aria-label={t("Remove", "Retirer")} onClick={() => setLines(lines.filter((x) => x.key !== l.key))}><Trash2 className="h-4 w-4" /></Button>
                 </div>
                 <div className="mt-2 grid gap-3 sm:grid-cols-3">
                   {byCount ? (
@@ -949,8 +949,8 @@ function TransferForm({ onDone }: { onDone: () => void }) {
                         <div className="text-xs text-muted-foreground">{l.variant.sku}</div>
                       </TableCell>
                       <TableCell className="text-right"><Num>{qty(l.variant.locationQty)}</Num></TableCell>
-                      <TableCell><Input className="w-24" inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} measured={!wholeUnit(l.variant.unit)} inlineAlert value={l.qty} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} /></TableCell>
-                      <TableCell><Button variant="ghost" size="icon" onClick={() => setLines(lines.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></Button></TableCell>
+                      <TableCell><Input className="w-24" aria-label={t(`Quantity to transfer: ${l.variant.productName}`, `Quantité à transférer\u00a0: ${l.variant.productName}`)} inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} measured={!wholeUnit(l.variant.unit)} inlineAlert value={l.qty} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} /></TableCell>
+                      <TableCell><Button variant="ghost" size="icon" aria-label={t("Remove", "Retirer")} onClick={() => setLines(lines.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></Button></TableCell>
                     </TableRow>
                     {l.variant.tracksSerials && fromId && isPositive(l.qty) && (
                       <TableRow>

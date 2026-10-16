@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Check, Eye, Pencil, Plus, Search, Trash2, X } from "lucide-react";
@@ -53,6 +53,8 @@ export default function OptionalVouchers() {
   const [to, setTo] = useState("");
   const [search, setSearch] = useState("");
   const [confirm, setConfirm] = useState<{ action: "finalize" | "delete"; draft: VoucherDraft } | null>(null);
+  // A payment the drawer cannot cover is refused by the server: Valider waits, with the reason, as on the voucher form.
+  const [short, setShort] = useState<string | null>(null);
 
   const rows = useMemo(() => {
     const s = search.trim().toLowerCase();
@@ -88,6 +90,7 @@ export default function OptionalVouchers() {
 
   function run() {
     if (!confirm) return;
+    if (confirm.action === "finalize" && short) return;
     if (confirm.action === "finalize") finalize.mutate({ id: confirm.draft.id, updatedAt: confirm.draft.updatedAt });
     else remove.mutate({ id: confirm.draft.id });
     setConfirm(null);
@@ -249,11 +252,20 @@ export default function OptionalVouchers() {
                   )
                 : t("Nothing was posted from it, so nothing else changes. This cannot be undone.", "Rien n'a été passé à partir d'elle, donc rien d'autre ne change. Action irréversible.")}
             </AlertDialogDescription>
-            {confirm && <DraftSummary draft={confirm.draft} check={confirm.action === "finalize"} />}
+            {confirm && <DraftSummary key={confirm.draft.id} draft={confirm.draft} check={confirm.action === "finalize"} onShort={setShort} />}
           </AlertDialogHeader>
-          <AlertDialogFooter>
+          <AlertDialogFooter className="sm:items-center">
+            {confirm?.action === "finalize" && short && (
+              <p className="order-last text-center text-xs text-muted-foreground sm:order-none sm:mr-auto sm:text-left" role="status">
+                {t("Add money to the account or lower the amount first.", "Approvisionnez le compte ou réduisez le montant d'abord.")}
+              </p>
+            )}
             <AlertDialogCancel>{t("Cancel", "Annuler")}</AlertDialogCancel>
-            <AlertDialogAction onClick={run} className={cn(confirm?.action === "delete" && "bg-destructive text-destructive-foreground hover:bg-destructive/90")}>
+            <AlertDialogAction
+              onClick={run}
+              disabled={confirm?.action === "finalize" && !!short}
+              className={cn(confirm?.action === "delete" && "bg-destructive text-destructive-foreground hover:bg-destructive/90")}
+            >
               {confirm?.action === "finalize" ? t("Validate", "Valider") : t("Delete", "Supprimer")}
             </AlertDialogAction>
           </AlertDialogFooter>
@@ -267,7 +279,7 @@ export default function OptionalVouchers() {
  * The pending voucher in the confirmation: its description (or what the day book will call it), and on
  * "Valider" the same unusual-amount and over-debt questions as the voucher form, since this posts it.
  */
-function DraftSummary({ draft, check }: { draft: VoucherDraft; check: boolean }) {
+function DraftSummary({ draft, check, onShort }: { draft: VoucherDraft; check: boolean; onShort?: (reason: string | null) => void }) {
   const t = useT();
   const p = draft.payload;
   const lines = Array.isArray(p.lines) ? (p.lines as Record<string, unknown>[]) : [];
@@ -279,7 +291,12 @@ function DraftSummary({ draft, check }: { draft: VoucherDraft; check: boolean })
     lines: lines.map((l) => ({ partyId: Number(l.partyId) || null, accountId: Number(l.accountId) || null, amount: l.amount == null ? "" : String(l.amount) })),
     enabled: check,
   });
-  const warnings = check ? [...checks.unusual, ...checks.overDebt, ...(checks.short ? [checks.short] : [])] : [];
+  const warnings = check ? [...checks.unusual, ...checks.overDebt] : [];
+  const short = check ? checks.short : null;
+  useEffect(() => {
+    onShort?.(short);
+    return () => onShort?.(null);
+  }, [short, onShort]);
   const memo = draft.memo || checks.fallbackMemo || t("no description", "sans libellé");
   return (
     <div className="space-y-2 text-sm">
@@ -287,6 +304,9 @@ function DraftSummary({ draft, check }: { draft: VoucherDraft; check: boolean })
         {voucherKindLabel(draft.kind, t)} · {date(draft.date)} · <span className={cn(!draft.memo && "italic")}>{memo}</span>
         {draft.totalUsd ? ` · ${usd(draft.totalUsd)}` : ""}
       </p>
+      {short && (
+        <p role="alert" className="font-medium text-destructive" data-testid="draft-short">{short}.</p>
+      )}
       {warnings.length > 0 && (
         <div role="alert" className="space-y-1 font-medium text-amber-800 dark:text-amber-400" data-testid="draft-warnings">
           {warnings.map((w) => <p key={w}>{w}.</p>)}

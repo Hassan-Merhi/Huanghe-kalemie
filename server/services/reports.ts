@@ -293,7 +293,28 @@ export async function partyStatement(tx: Tx, partyId: number, hidden?: Set<numbe
     .from(journalLines)
     .innerJoin(journals, eq(journals.id, journalLines.journalId))
     .where(eq(journalLines.partyId, partyId))
-    .orderBy(asc(journals.date), asc(journals.id));
+    .orderBy(asc(journals.date), asc(journals.id), asc(journalLines.id));
+  // A payment split over several of the contact's lines lists the parts that settle a debt first and an
+  // advance last (10 000 000 FC: the 84 000 FC owed, then the 3 200 $, then the advance), so no running
+  // balance reads a debt that never existed. Display only: each line keeps its own amount.
+  const ordered: typeof rows = [];
+  let before = dec(0);
+  for (let i = 0; i < rows.length; ) {
+    let end = i;
+    while (end < rows.length && rows[end].journalId === rows[i].journalId) end++;
+    const pending = rows.slice(i, end);
+    while (pending.length) {
+      const settles = pending.findIndex((r) => {
+        const move = dec(r.debit).minus(r.credit);
+        return !before.isZero() && move.isNegative() !== before.isNegative() && move.abs().lte(before.abs());
+      });
+      const [next] = pending.splice(settles >= 0 ? settles : 0, 1);
+      before = before.plus(next.debit).minus(next.credit);
+      ordered.push(next);
+    }
+    i = end;
+  }
+  rows.splice(0, rows.length, ...ordered);
   // A payment whose francs or yuan left a balance at their average cost is booked on the contact at that
   // cost: the row shows the money actually paid (`paid`) and the exchange difference apart (`fxDiff`).
   const journalIds = Array.from(new Set(rows.map((r) => r.journalId)));

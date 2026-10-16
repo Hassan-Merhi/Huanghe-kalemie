@@ -51,6 +51,8 @@ interface DaybookRow {
   reversedByJournalId: number | null;
   reversesJournalId: number | null;
   createdByName: string | null;
+  /** A pending voucher validated by someone else: createdByName prepared it, this person validated it. */
+  validatedByName?: string | null;
   /** The document's own amount: a sale's total, a transfer's amount sent. */
   amount: string;
   /** Sales: money taken in and change handed back (both in dollars). */
@@ -228,7 +230,7 @@ export default function Daybook() {
       downloadCsv(name, [
         [t("Date", "Date"), t("No.", "N°"), t("Type", "Type"), t("Details", "Libellé"), t("Contacts", "Tiers"), t("Amount ($)", "Montant ($)"), t("Created by", "Créé par"), t("Status", "Statut")],
         ...rows.map((r) => [
-          r.date, r.number, journalTypeLabel(r.type, t), r.memo ?? "", contactsOf(r), r.amount, r.createdByName ?? "",
+          r.date, r.number, journalTypeLabel(r.type, t), r.memo ?? "", contactsOf(r), r.amount, [r.createdByName ?? "", r.validatedByName ? t(`validated by ${r.validatedByName}`, `validé par ${r.validatedByName}`) : ""].filter(Boolean).join(" ; "),
           r.reversedByJournalId ? t("Reversed", "Annulée") : r.reversesJournalId ? t("Reversal entry", "Contre-passation") : "",
         ]),
       ]);
@@ -452,7 +454,10 @@ export default function Daybook() {
                               <Num>{usd(r.amount)}</Num>
                               {cashDetail(r, t) && <span className="block max-w-[16rem] text-xs font-normal text-muted-foreground ml-auto">{cashDetail(r, t)}</span>}
                             </TableCell>
-                            <TableCell className="whitespace-nowrap text-xs text-muted-foreground">{r.createdByName ?? ""}</TableCell>
+                            <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                              {r.createdByName ?? ""}
+                              {r.validatedByName && <span className="block">{t("Validated by", "Validé par")} {r.validatedByName}</span>}
+                            </TableCell>
                             <TableCell className="w-12 pl-0 text-right" onClick={(e) => e.stopPropagation()}>
                               <RowActionsMenu r={r} t={t} isOwner={isOwner} onReverse={() => setReversing(r)} />
                             </TableCell>
@@ -501,7 +506,9 @@ export default function Daybook() {
                       <div className="mt-2 space-y-2">
                         <LinesList lines={r.lines} t={t} />
                         <div className="flex flex-wrap items-center justify-between gap-2">
-                          <span className="text-xs text-muted-foreground">{r.createdByName ? `${t("By", "Par")} ${r.createdByName}` : ""}</span>
+                          <span className="text-xs text-muted-foreground">{r.createdByName ? `${t("By", "Par")} ${r.createdByName}` : ""}
+                            {r.validatedByName ? ` · ${t("Validated by", "Validé par")} ${r.validatedByName}` : ""}
+                          </span>
                           <RowActions r={r} t={t} isOwner={isOwner} onReverse={() => setReversing(r)} />
                         </div>
                       </div>

@@ -303,6 +303,16 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
   const cnyOwedUsd = cnyOwed && cnyRef ? cnyOwed.dividedBy(cnyRef) : null;
   const impliedCny = cnyOwed && d(settleCny).gt(0) && d(amount).gt(0) ? d(settleCny).dividedBy(d(amount)) : null;
   const impliedGap = impliedCny && cnyRef ? impliedCny.minus(cnyRef).abs().dividedBy(cnyRef).times(100) : null;
+  // With yuan typed, the server puts the whole payment on those yuan, and refuses a rate further than its
+  // tolerance (at least 5 %) from the one on file: 22 000 $ for 80 050 ¥ is stopped here, with what to do.
+  const settings = useQuery<{ rateTolerancePct?: string }>({ queryKey: ["/api/settings"], enabled: !!cnyOwed }).data;
+  const cnyTolerance = Decimal.max(d(settings?.rateTolerancePct ?? "3"), 5);
+  const yuanMismatch = impliedCny && cnyRef && impliedGap && impliedGap.gt(cnyTolerance)
+    ? t(
+        `With yuan typed, all ${usd(d(amount).toFixed(2))} go to the ${money(d(settleCny).toFixed(2), "CNY")}: ${fmtNumber(impliedCny.toString(), 2)} ¥ for $1 instead of ${fmtNumber(cnyRef.toString(), 2)}. Pay the yuan alone (≈ ${usd(d(settleCny).dividedBy(cnyRef).toFixed(2))}), then the dollar debt in a second payment.`,
+        `Avec des yuans saisis, les ${usd(d(amount).toFixed(2))} vont tous aux ${money(d(settleCny).toFixed(2), "CNY")} : ${fmtNumber(impliedCny.toString(), 2)} ¥ pour 1 $ au lieu de ${fmtNumber(cnyRef.toString(), 2)}. Réglez les yuans seuls (≈ ${usd(d(settleCny).dividedBy(cnyRef).toFixed(2))}), puis la dette en dollars par un second paiement.`,
+      )
+    : null;
   // Which debts this payment reduces, in the server's order (payablesLines, contactLines, payParty).
   const dollarBalance = d(balance).minus(foreign.reduce((x, f) => x.plus(d(f.usd)), d(0)));
   const split = account && d(amount).gt(0) && (isCdf ? d(rate).gt(0) : account.currency === "USD")
@@ -370,7 +380,9 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
         ? t("Enter the exchange rate", "Saisissez le taux de change")
         : cnyOwed && settleCny && !d(settleCny).lte(cnyOwed)
           ? t("The yuan settled are more than what is owed", "Les yuans réglés dépassent ce qui est dû")
-          : drawerShort);
+          : yuanMismatch
+            ? t("The dollars do not match the yuan settled", "Les dollars ne correspondent pas aux yuans réglés")
+            : drawerShort);
 
   function save() {
     if (!account) return;
@@ -466,7 +478,7 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
                     `Owed: ${money(cnyOwed.toString(), "CNY")}${cnyOwedUsd ? ` ≈ ${usd(cnyOwedUsd.toFixed(2))} at the rate on file` : ""}. The difference with the invoice value is an exchange gain or loss.`,
                     `Dû\u00a0: ${money(cnyOwed.toString(), "CNY")}${cnyOwedUsd ? ` ≈ ${usd(cnyOwedUsd.toFixed(2))} au taux enregistré` : ""}. L'écart avec la valeur de la facture est un gain ou une perte de change.`,
                   )}
-                  {impliedCny && (
+                  {impliedCny && !yuanMismatch && (
                     <span className={cn("block", impliedGap && impliedGap.gt(5) && "font-medium text-amber-800 dark:text-amber-400")}>
                       {t(`This payment: ${fmtNumber(impliedCny.toString(), 2)} ¥ for $1`, `Ce paiement\u00a0: ${fmtNumber(impliedCny.toString(), 2)}\u00a0¥ pour 1\u00a0$`)}
                       {cnyRef && t(` (on file ${fmtNumber(cnyRef.toString(), 2)})`, ` (enregistré\u00a0: ${fmtNumber(cnyRef.toString(), 2)})`)}
@@ -475,7 +487,7 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
                   )}
                 </>
               }
-              error={d(settleCny).gt(cnyOwed) ? t("More than what is owed", "Plus que ce qui est dû") : null}
+              error={d(settleCny).gt(cnyOwed) ? t("More than what is owed", "Plus que ce qui est dû") : yuanMismatch}
               className="sm:col-span-2"
             >
               <div className="flex gap-2">

@@ -387,7 +387,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                 <AccountSelect hideCode value={effectiveAccount} onChange={setAccountId} types={["expense"]} />
               </Field>
               <Field label={t("Date", "Date")} error={dayInMonth ? null : t("The date must be inside the month", "La date doit être dans le mois")} required>
-                <Input type="date" value={effectiveDay} onChange={(e) => setDay(e.target.value)} />
+                <Input type="date" aria-label={t("Payroll date", "Date de la paie")} value={effectiveDay} onChange={(e) => setDay(e.target.value)} />
               </Field>
               <Field label={t("Salaries owed in", "Salaires dus en")}>
                 <Select value={currency} onValueChange={(v) => changeCurrency(v as "USD" | "CDF")}>
@@ -746,7 +746,7 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
                 <MoneyAccountSelect value={account?.id ?? null} onChange={(_, a) => setAccount(a)} />
               </Field>
               <Field label={t("Date", "Date")}>
-                <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
+                <Input type="date" aria-label={t("Payment date", "Date du paiement")} value={day} onChange={(e) => setDay(e.target.value)} />
               </Field>
               {isCdf && (
                 <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} required>
@@ -899,7 +899,7 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
                 <MoneyAccountSelect value={account?.id ?? null} onChange={(_, acc) => setAccount(acc)} />
               </Field>
               <Field label={t("Date", "Date")}>
-                <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
+                <Input type="date" aria-label={t("Payment date", "Date du paiement")} value={day} onChange={(e) => setDay(e.target.value)} />
               </Field>
               <Field
                 label={`${t("Amount", "Montant")}${account ? ` (${curLabel(account.currency)})` : ""}`}

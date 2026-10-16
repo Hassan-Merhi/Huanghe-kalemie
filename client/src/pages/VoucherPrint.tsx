@@ -39,6 +39,8 @@ interface Voucher {
   sourceType: string | null;
   sourceId: number | null;
   createdByName: string | null;
+  /** Set when someone else's pending voucher was validated: createdByName prepared it, this person validated it. */
+  validatedByName?: string | null;
   createdAt?: string;
   total: string;
   /** The daybook's amount: francs at the voucher's rate, without the exchange difference. */
@@ -248,12 +250,26 @@ export default function VoucherPrint() {
               <span className="text-muted-foreground">{t("Created by: ", "Saisi par\u00a0: ")}</span>
               <span>{v.createdByName ?? "—"}</span>
             </p>
+            {v.validatedByName && (
+              <p>
+                <span className="text-muted-foreground">{t("Validated by: ", "Validé par : ")}</span>
+                <span>{v.validatedByName}</span>
+              </p>
+            )}
           </div>
 
           <div className="grid grid-cols-3 gap-3 pt-4">
-            {[t("Prepared by", "Préparé par"), t("Approved by", "Approuvé par"), t("Received by", "Reçu par")].map((label) => (
+            {/* A validated pending voucher names who prepared and who approved it; the signatures stay blank. */}
+            {[
+              { label: t("Prepared by", "Préparé par"), name: v.validatedByName ? v.createdByName : null },
+              { label: t("Approved by", "Approuvé par"), name: v.validatedByName ?? null },
+              { label: t("Received by", "Reçu par"), name: null },
+            ].map(({ label, name }) => (
               <div key={label} className="flex h-24 flex-col justify-between rounded-md border p-2 text-xs">
-                <span className="text-muted-foreground">{label}</span>
+                <span className="text-muted-foreground">
+                  {label}
+                  {name && <span className="block font-medium text-foreground">{name}</span>}
+                </span>
                 <span className="border-t pt-1 text-muted-foreground">{t("Name & signature", "Nom et signature")}</span>
               </div>
             ))}
