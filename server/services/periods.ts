@@ -6,7 +6,7 @@ import type { Tx } from "../db";
 import { badRequest, conflict } from "../errors";
 import { deMonth, frDate, frNumber, monthText } from "@shared/french";
 import { cents } from "@shared/money";
-import { postJournal, rateFor, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
+import { lockPeriodsExclusive, postJournal, rateFor, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
 import { todayIso } from "../http";
 
 export function monthRange(month: string): { from: string; to: string } {
@@ -217,6 +217,8 @@ export async function closePeriod(tx: Tx, month: string, userId: number) {
   const today = todayIso();
   if (to >= today) throw badRequest("A month can be closed only after it has ended", "Un mois ne peut être clôturé qu'une fois terminé");
 
+  // Wait for the postings under way, and hold back new ones until the close is committed.
+  await lockPeriodsExclusive(tx);
   await tx.insert(periods).values({ month }).onConflictDoNothing();
   const [period] = await tx.select().from(periods).where(eq(periods.month, month)).for("update");
   if (period.status === "closed") throw conflict(`${month} is already closed`, `Le mois ${deMonth(month)} est déjà clôturé`);
@@ -291,6 +293,7 @@ export async function closePeriod(tx: Tx, month: string, userId: number) {
 
 /** Reopen the latest closed month so it can be corrected. */
 export async function reopenPeriod(tx: Tx, month: string, userId: number) {
+  await lockPeriodsExclusive(tx);
   const [period] = await tx.select().from(periods).where(eq(periods.month, month)).for("update");
   if (!period || period.status !== "closed") throw conflict(`${month} is not closed`, `Le mois ${deMonth(month)} n'est pas clôturé`);
   const [later] = await tx

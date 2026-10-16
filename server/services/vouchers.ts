@@ -78,21 +78,43 @@ async function mergeSettlingLines(tx: Tx, lines: VoucherLineInput[]): Promise<Vo
 }
 
 /**
- * The most staff may pay out on a contact or account today. `heldUsd` is what is held for them at
- * book value (positive when the shop owes them). Francs count at today's rate rather than their book
- * value, and dollars owed the other way are taken off, so a franc credit cannot be paid out to
- * someone who owes more in dollars. `cdf` is the same cap in whole francs when francs are involved.
+ * The most staff may pay out on a contact or account today. `held` gives what is held for them at book
+ * value (positive when the shop owes them), over all dates and up to the payment's date. Francs count at
+ * the day's rate rather than their book value, and dollars owed the other way are taken off, so a franc
+ * credit cannot be paid out to someone who owes more in dollars. `cdf` is the same cap in whole francs
+ * when francs are involved.
+ * Francs and dollars are counted together over all dates (nothing paid back since can go out again) and
+ * up to the payment's date (a payment dated before a deposit cannot pay it out), and the least cap wins,
+ * along with the earlier mixed count, so the cap only ever gets tighter.
  */
-async function capToday(tx: Tx, accountId: number, partyId: number | null, heldUsd: Decimal, date: string) {
-  const francs = await foreignBalance(tx, accountId, partyId, "CDF", date);
-  const francsHeld = francs.native.negated();
-  if (francsHeld.isZero()) return { usd: Decimal.max(heldUsd, 0), cdf: null };
+async function capToday(tx: Tx, accountId: number, partyId: number | null, held: { all: Decimal; asOf: Decimal }, date: string) {
+  const all = await foreignBalance(tx, accountId, partyId, "CDF");
+  const upToDate = await foreignBalance(tx, accountId, partyId, "CDF", date);
+  if (all.native.isZero() && upToDate.native.isZero()) return { usd: Decimal.max(Decimal.min(held.all, held.asOf), 0), cdf: null };
   const rate = dec((await rateFor(tx, date)).rate);
-  const dollarsHeld = heldUsd.plus(francs.usd);
-  return {
-    usd: Decimal.max(cents(dollarsHeld.plus(francsHeld.dividedBy(rate))), 0),
-    cdf: Decimal.max(francsHeld.plus(dollarsHeld.times(rate)).toDecimalPlaces(0, Decimal.ROUND_FLOOR), 0),
+  const cap = (heldUsd: Decimal, francs: { native: Decimal; usd: Decimal }) => {
+    const francsHeld = francs.native.negated();
+    const dollarsHeld = heldUsd.plus(francs.usd);
+    return {
+      usd: Decimal.max(cents(dollarsHeld.plus(francsHeld.dividedBy(rate))), 0),
+      cdf: Decimal.max(francsHeld.plus(dollarsHeld.times(rate)).toDecimalPlaces(0, Decimal.ROUND_FLOOR), 0),
+    };
   };
+  const caps = [cap(held.all, all), cap(held.asOf, upToDate), cap(held.all, upToDate)];
+  return { usd: Decimal.min(...caps.map((c) => c.usd)), cdf: Decimal.min(...caps.map((c) => c.cdf)) };
+}
+
+/** USD balance (debit minus credit) of an account, or of one contact on it, over all dates and up to `date`. */
+async function usdBalance(tx: Tx, accountId: number, partyId: number | null, date: string) {
+  const [row] = await tx
+    .select({
+      all: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)`,
+      asOf: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}) filter (where ${journals.date} <= ${date}), 0)`,
+    })
+    .from(journalLines)
+    .innerJoin(journals, eq(journals.id, journalLines.journalId))
+    .where(and(eq(journalLines.accountId, accountId), partyId ? eq(journalLines.partyId, partyId) : sql`true`));
+  return { all: dec(row?.all ?? 0), asOf: dec(row?.asOf ?? 0) };
 }
 
 async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherInput, rights: PostingRights) {
@@ -125,13 +147,10 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
         // Money paid to a customer refunds what they have paid ahead; beyond that it would be a
         // loan nobody approved. One payment at a time per customer, so two cannot both use it.
         await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`credit:party:${p.id}`}))`);
-        const [bal] = await tx
-          .select({ v: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)` })
-          .from(journalLines)
-          .where(and(eq(journalLines.accountId, receivables), eq(journalLines.partyId, p.id)));
+        const bal = await usdBalance(tx, receivables, p.id, input.date);
         // Francs paid ahead go back as those francs, or in dollars at today's rate, less any dollars
         // the customer still owes.
-        const cap = await capToday(tx, receivables, p.id, dec(bal?.v ?? 0).negated(), input.date);
+        const cap = await capToday(tx, receivables, p.id, { all: bal.all.negated(), asOf: bal.asOf.negated() }, input.date);
         const dollarCap = cap.usd;
         const tooMuch = money.currency === "CDF" && cap.cdf ? amount.gt(cap.cdf) : dec(usd).gt(dollarCap);
         if (tooMuch) {
@@ -180,13 +199,10 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
       if (kind === "payment" && a.type === "liability" && !rights.owner) {
         // Paying a liability (withholdings to remit…) settles what is owed on it, no more.
         await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`credit:account:${a.id}`}))`);
-        const [bal] = await tx
-          .select({ v: sql<string>`coalesce(sum(${journalLines.credit} - ${journalLines.debit}), 0)` })
-          .from(journalLines)
-          .where(eq(journalLines.accountId, a.id));
+        const bal = await usdBalance(tx, a.id, null, input.date);
         // Francs owed may be paid in full whatever today's rate: in francs, or in dollars at the day's
         // rate, less any dollars already overpaid.
-        const cap = await capToday(tx, a.id, null, dec(bal?.v ?? 0), input.date);
+        const cap = await capToday(tx, a.id, null, { all: bal.all.negated(), asOf: bal.asOf.negated() }, input.date);
         const tooMuch = money.currency === "CDF" && cap.cdf ? amount.gt(cap.cdf) : dec(usd).gt(cap.usd);
         if (tooMuch) {
           throw forbidden(
