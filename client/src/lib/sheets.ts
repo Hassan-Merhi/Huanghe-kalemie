@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { ambiguousTypedMeasure, parseTypedNumber } from "@shared/money";
+import { ambiguousImportMeasure, ambiguousTypedAmount, Decimal, parseTypedNumber } from "@shared/money";
 
 /*
  * Spreadsheet helpers: CSV download, Excel templates and reading an uploaded .xlsx / .xls / .csv.
@@ -115,11 +115,35 @@ export async function readSheet<F extends string>(file: File, fields: Record<F, 
 
 /**
  * A number cell read for what it holds: a measure (litres, metres, kilos, and every weight and volume) reads
- * "2,250" as 2,25 as a form field does, and asks about "1.000" (`unsure`: 1 000 or 1); pieces and money read
+ * "2,250" as 2,25 as a form field does, and asks about "1.000" or "1,000" (`unsure`: 1 000 or 1); pieces and money read
  * as parseTypedNumber always has ("1,250" pieces is 1 250).
  */
 export function readNumberCell(raw: string | number | null | undefined, measured: boolean): { value: string | null; unsure: [string, string] | null } {
   if (raw === null || raw === undefined) return { value: null, unsure: null };
   if (!measured) return { value: parseTypedNumber(raw), unsure: null };
-  return { value: parseTypedNumber(raw, { measured: true }), unsure: ambiguousTypedMeasure(raw) };
+  return { value: parseTypedNumber(raw, { measured: true }), unsure: ambiguousImportMeasure(raw) };
+}
+
+/**
+ * A price or cost cell in doubt: text such as "4.125" or "1,200" may be thousands or three decimals, and the
+ * server refuses it, so the page asks first. A number cell (0.125) never is.
+ */
+export function amountCellUnsure(raw: string | number | null | undefined): [string, string] | null {
+  return ambiguousTypedAmount(raw);
+}
+
+/**
+ * Rows as sent to the server: each number field the page read ("0.125", "4125") goes as a JSON number, so the
+ * server books exactly the value shown and never reads "4.125" again as text that could be thousands.
+ */
+export function toWire<R extends Record<string, unknown>>(row: R): R {
+  const out: Record<string, unknown> = { ...row };
+  for (const f of NUMBER_FIELDS) {
+    const v = out[f];
+    if (typeof v !== "string" || !/^-?\d+(\.\d+)?$/.test(v)) continue;
+    // Only when the number carries the value exactly (a 20-digit typo stays text, for the server to refuse).
+    const n = Number(v);
+    if (Number.isFinite(n) && new Decimal(String(n)).equals(v)) out[f] = n;
+  }
+  return out as R;
 }

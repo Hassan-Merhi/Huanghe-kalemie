@@ -69,11 +69,30 @@ export function monthOf(date: string): string {
 }
 
 /**
+ * Every posting (and every rate saved) holds this lock shared until it commits; closing or reopening a
+ * month holds it alone. A close therefore waits for the postings already under way and counts them,
+ * and a posting that starts during the close waits and then sees the month closed. One key for all
+ * months, so a month with no periods row yet is covered too. It is always the first lock a posting
+ * takes in postJournal, before the money and franc locks, and a close takes it before anything else.
+ */
+const PERIODS_LOCK = "periods:close";
+
+export async function lockPeriodsShared(tx: Tx): Promise<void> {
+  await tx.execute(sql`select pg_advisory_xact_lock_shared(hashtext(${PERIODS_LOCK}))`);
+}
+
+export async function lockPeriodsExclusive(tx: Tx): Promise<void> {
+  await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${PERIODS_LOCK}))`);
+}
+
+/**
  * Refuse a posting dated in a closed month, or before the last closed month: months close in
  * order, so a posting into an earlier open month would still change balances already closed.
  */
 export async function assertPeriodOpen(tx: Tx, date: string): Promise<void> {
   const month = monthOf(date);
+  // Read the periods only once no close is under way (see PERIODS_LOCK).
+  await lockPeriodsShared(tx);
   const [row] = await tx
     .select({ month: periods.month })
     .from(periods)

@@ -2,7 +2,7 @@ import type { Express, Request } from "express";
 import { and, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { accounts, DRAFT_KINDS, journalLines, journals, parties, partners, saleReturns, users, type DraftKind } from "@shared/schema";
-import { ambiguousTypedMeasure, cents, dec, Decimal, MoneyError, parseTypedNumber } from "@shared/money";
+import { ambiguousImportMeasure, ambiguousTypedAmount, cents, dec, Decimal, MoneyError, parseTypedNumber } from "@shared/money";
 import { frNumber } from "@shared/french";
 import { COST_FX_MEMO } from "../services/ledger";
 import { db } from "../db";
@@ -348,15 +348,31 @@ export function registerErpRoutes(
   const cell = z.union([z.string().max(200), z.number(), z.null()]).optional().transform((v) => (v === undefined || v === null ? null : String(v).trim()));
   // "12,50" from a French spreadsheet is twelve and a half, not 1250.
   const num = z.union([z.string().max(40), z.number(), z.null()]).optional().transform((v) => parseTypedNumber(v));
+  // Prices and costs: the browser sends a number cell as a JSON number, taken as it is (0.125 $ for a bolt),
+  // so the import books what the preview showed. Text that could be thousands or three decimals ("4.125",
+  // "1,200") is refused rather than guessed; "0,125" and "1 250,125" are decimals.
+  const priceCell = z.union([z.string().max(40), z.number(), z.null()]).optional().transform((v) => {
+    const unsure = ambiguousTypedAmount(v);
+    if (unsure) {
+      const text = String(v).trim();
+      throw new MoneyError(
+        `"${text}" could be ${unsure[0]} or ${unsure[1]}: write ${unsure[0]} without the separator, or put a number in the cell`,
+        `«\u00a0${text}\u00a0» : ${frNumber(unsure[0])} ou ${frNumber(unsure[1])} ? Écrivez ${unsure[0]} sans séparateur, ou mettez un nombre dans la cellule.`,
+      );
+    }
+    return parseTypedNumber(v);
+  });
   // Quantities, weights and volumes come from the browser as plain numbers ("12.375" kg): read the way a
   // form field reads a measure, so three decimals stay decimals. Pieces cannot come out split (each import
-  // checks whole units), and "1.000" (1 000 or 1?) is refused rather than guessed.
+  // checks whole units), and "1.000" or "1,000" (1 000 or 1?) is refused rather than guessed.
   const measure = z.union([z.string().max(40), z.number(), z.null()]).optional().transform((v) => {
-    const unsure = ambiguousTypedMeasure(v);
+    const unsure = ambiguousImportMeasure(v);
     if (unsure) {
+      const text = String(v).trim();
+      const mark = text.includes(",") ? "comma" : "dot";
       throw new MoneyError(
-        `"${String(v).trim()}" could be ${unsure[0]} or ${unsure[1]}: write it without the dot`,
-        `«\u00a0${String(v).trim()}\u00a0» : ${frNumber(unsure[0])} ou ${unsure[1]} ? Écrivez-le sans le point.`,
+        `"${text}" could be ${unsure[0]} or ${unsure[1]}: write it without the ${mark}`,
+        `«\u00a0${text}\u00a0» : ${frNumber(unsure[0])} ou ${unsure[1]} ? Écrivez-le sans ${mark === "comma" ? "la virgule" : "le point"}.`,
       );
     }
     return parseTypedNumber(v, { measured: true });
@@ -370,12 +386,12 @@ export function registerErpRoutes(
     colour: cell,
     sku: cell,
     barcode: cell,
-    sellPrice: num,
+    sellPrice: priceCell,
     reorderLevel: num,
     motorcycle: z.union([z.boolean(), z.string(), z.number(), z.null()]).optional().transform((v) => v === true || v === 1 || (typeof v === "string" && /^(yes|oui|y|o|1|true|vrai|moto)$/i.test(v.trim()))),
   });
-  const stockRow = itemRow.extend({ qty: measure, unitCost: num });
-  const containerRow = itemRow.extend({ quantity: measure.transform((v) => v ?? ""), unitPrice: num.transform((v) => v ?? ""), weightKg: measure, volumeCbm: measure });
+  const stockRow = itemRow.extend({ qty: measure, unitCost: priceCell });
+  const containerRow = itemRow.extend({ quantity: measure.transform((v) => v ?? ""), unitPrice: priceCell.transform((v) => v ?? ""), weightKg: measure, volumeCbm: measure });
 
   app.post("/api/import/items/preview", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = z.object({ rows: z.array(itemRow).max(5000) }).parse(req.body);
@@ -392,7 +408,7 @@ export function registerErpRoutes(
     res.status(201).json(result);
   }));
   app.post("/api/import/prices", requireRole(...STAFF), asyncHandler(async (req, res) => {
-    const body = z.object({ rows: z.array(z.object({ sku: cell, barcode: cell, sellPrice: num.transform((v) => v ?? "") })).min(1).max(5000) }).parse(req.body);
+    const body = z.object({ rows: z.array(z.object({ sku: cell, barcode: cell, sellPrice: priceCell.transform((v) => v ?? "") })).min(1).max(5000) }).parse(req.body);
     const result = await db.transaction((tx) => imports.updatePrices(tx, body.rows));
     await audit(req, "import", "prices", null, result);
     res.json(result);

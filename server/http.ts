@@ -34,8 +34,16 @@ export function errorHandler(err: unknown, req: Request, res: Response, _next: N
 
 // ---------------------------------------------------------------- Shared validators
 
-export const isoDate = z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Use a date like 2026-10-12");
-export const month = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, "Use a month like 2026-10");
+// Postgres has no year 0, and nothing in these books is older than 1900: "0000-01-01" is a typo, not a date.
+// A day the calendar does not have ("2026-02-30") is refused here too, rather than by the database.
+export const isoDate = z
+  .string()
+  .regex(/^(19|[2-9]\d)\d{2}-\d{2}-\d{2}$/, "Use a date like 2026-10-12")
+  .refine((v) => {
+    const d = new Date(`${v}T00:00:00Z`);
+    return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v;
+  }, "Use a date like 2026-10-12");
+export const month = z.string().regex(/^(19|[2-9]\d)\d{2}-(0[1-9]|1[0-2])$/, "Use a month like 2026-10");
 export const decimalString = z
   .union([z.string(), z.number()])
   .transform((v) => String(v).trim())
