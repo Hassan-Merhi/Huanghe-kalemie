@@ -59,7 +59,7 @@ import * as reports from "./services/reports";
 import * as checks from "./services/checks";
 import * as backup from "./services/backup";
 import { getSetting } from "./setup";
-import { assertPeriodOpen, cnyRateFor, reverseJournal, setExchangeRate } from "./services/ledger";
+import { assertNotFuture, assertPeriodOpen, cnyRateFor, reverseJournal, setExchangeRate } from "./services/ledger";
 import { containerNumberKey } from "@shared/containerNumber";
 import { lockVariants, transferStock } from "./services/stock";
 import * as vouchers from "./services/vouchers";
@@ -513,8 +513,10 @@ export function registerRoutes(app: Express) {
   app.post("/api/stock/transfers", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = z.object({ date: isoDate, fromLocationId: id, toLocationId: id, note: z.string().max(300).optional(), lines: z.array(z.object({ variantId: id, qty: positiveDecimal, unitIds: z.array(id).optional() })).min(1) }).parse(req.body);
     await db.transaction(async (tx) => {
-      // A transfer posts no journal, but it changes the stock of its date, so a closed month refuses it like any posting.
+      // A transfer posts no journal, but it changes the stock of its date, so a closed month or a date
+      // after tomorrow refuses it like any posting.
       await assertPeriodOpen(tx, body.date);
+      assertNotFuture(body.date);
       await lockVariants(tx, body.lines.map((l) => l.variantId));
       for (const l of body.lines) {
         await transferStock(tx, { date: body.date, type: "transfer_out", variantId: l.variantId, fromLocationId: body.fromLocationId, toLocationId: body.toLocationId, qty: l.qty, unitIds: l.unitIds, note: body.note, userId: uid(req) });

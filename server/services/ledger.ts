@@ -53,7 +53,19 @@ export async function systemAccountId(tx: Tx, key: SystemAccountKey): Promise<nu
   return row.id;
 }
 
+/**
+ * Counters drawn from a sequence. A sequence holds no lock until commit, so a posting that writes
+ * several journals cannot wait on another posting's number while holding a franc balance (and the
+ * other way round). A number drawn by a posting that fails is not reused.
+ */
+const SEQUENCES: Record<string, string> = { journal: "journal_number_seq" };
+
 export async function nextNumber(tx: Tx, key: string, prefix: string, width = 6): Promise<string> {
+  const seq = SEQUENCES[key];
+  if (seq) {
+    const r = await tx.execute<{ value: string }>(sql`select nextval(${seq}::regclass)::text as value`);
+    return `${prefix}${r.rows[0].value.padStart(width, "0")}`;
+  }
   const result = await tx.execute<{ value: number }>(sql`
     INSERT INTO ${counters} (key, value) VALUES (${key}, 1)
     ON CONFLICT (key) DO UPDATE SET value = ${counters.value} + 1

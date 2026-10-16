@@ -214,6 +214,13 @@ export async function restore(tx: Tx, file: BackupFile, opts: { replace: boolean
       await tx.execute(sql`select setval(pg_get_serial_sequence(${t}, 'id'), coalesce((select max(id) from ${sql.identifier(t)}), 1), (select count(*) > 0 from ${sql.identifier(t)}))`);
     }
   }
+  // Journal numbers carry on after the restored ones (a backup made before A22 still has the "journal" counter row).
+  await tx.execute(sql`
+    select setval('journal_number_seq', greatest(n, 1), n > 0) from (select greatest(
+      coalesce((select value from counters where key = 'journal'), 0),
+      coalesce((select max(substring(number from 3)::bigint) from journals where number ~ '^J-[0-9]{1,18}$'), 0)
+    ) as n) x
+  `);
   const checks = compareTotals(file.totals, await totalsOf(tx, Object.keys(file.totals.rows)));
   const wrong = checks.filter((c) => !c.ok);
   if (wrong.length) {
