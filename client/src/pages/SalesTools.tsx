@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { de } from "@shared/french";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
@@ -240,6 +240,8 @@ function PriceCell({ row }: { row: Row }) {
   const farOff = !!gap && gap.abs().gt(50);
   const belowCost = changed && !!row.avgCost && d(row.avgCost).gt(0) && d(value).lt(d(row.avgCost));
   const [confirming, setConfirming] = useState(false);
+  // "Corriger" goes back to the field with the unsaved price selected, to type over it; Escape or ✕ restores the saved one.
+  const input = useRef<HTMLInputElement>(null);
 
   async function save(confirmed = false) {
     if (!changed) {
@@ -268,6 +270,7 @@ function PriceCell({ row }: { row: Row }) {
     <>
       <div className="no-print flex items-center justify-end gap-1 print:hidden">
         <Input
+          ref={input}
           className={cn("h-8 w-24 text-right tabular", !valid && "border-destructive", changed && "border-primary")}
           inputMode="decimal" usd
           value={value}
@@ -294,9 +297,21 @@ function PriceCell({ row }: { row: Row }) {
           </>
         )}
       </div>
+      {changed && !saving && (
+        <p className="no-print mt-0.5 text-right text-xs text-amber-800 dark:text-amber-400 print:hidden" data-testid="price-unsaved">
+          {t(`Not saved (${usd(row.sellPrice)})`, `Non enregistré (${usd(row.sellPrice)})`)}
+        </p>
+      )}
       <Num className="hidden font-medium print:inline">{usd(row.sellPrice)}</Num>
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
-        <AlertDialogContent>
+        <AlertDialogContent
+          onCloseAutoFocus={(e) => {
+            if (!changed) return;
+            e.preventDefault();
+            input.current?.focus();
+            input.current?.select();
+          }}
+        >
           <AlertDialogHeader>
             <AlertDialogTitle>{t("Save this price?", "Enregistrer ce prix\u00a0?")}</AlertDialogTitle>
             <AlertDialogDescription asChild>

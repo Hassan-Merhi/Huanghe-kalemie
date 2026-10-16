@@ -186,6 +186,9 @@ function remeasure<R extends { name: string | null; unit: string | null }>(
 /** A number cell in the preview; while its row asks "1 000 or 1?", the cell is shown as the file has it. */
 const measureCell = (value: string | null, asked: string | number | false | null | undefined) =>
   asked !== undefined && asked !== null && asked !== false && String(asked).trim() ? String(asked).trim() : value ? fmtQty(value) : "—";
+/** A price or cost in the preview; one in doubt ("4.125": 4 125 or 4,125?) is shown as the file has it, not as one reading. */
+const amountCell = (value: string | null | undefined, raw: string | number | null | undefined, decimals: number) =>
+  amountCellUnsure(raw) ? String(raw).trim() : value ? (/^\d+(\.\d+)?$/.test(value) ? number(value, decimals, 2) : value) : "—";
 /**
  * The question to ask about a price or cost typed as text that could be thousands or three decimals
  * ("4.125": 4 125 or 4,125?). The server refuses such a cell, so the row cannot be imported until the
@@ -425,7 +428,7 @@ function ItemsImport() {
                       <TableCell>{variantOf(r) || "—"}</TableCell>
                       <TableCell className="font-mono text-xs">{p?.sku ?? r.sku ?? "—"}</TableCell>
                       <TableCell className="text-right"><Num>{measureCell(r.qty, asked && cells[i]?.qty)}</Num></TableCell>
-                      <TableCell className="text-right"><Num>{r.unitCost ? (/^\d+(\.\d+)?$/.test(r.unitCost) ? number(r.unitCost, 6, 2) : r.unitCost) : "—"}</Num></TableCell>
+                      <TableCell className="text-right"><Num>{amountCell(r.unitCost, cells[i]?.unitCost, 6)}</Num></TableCell>
                       <TableCell><StatusBadge status={status} /></TableCell>
                     </TableRow>
                   ))}
@@ -555,7 +558,7 @@ function PricesImport() {
                         <TableCell className="text-muted-foreground"><Num>{i + 2}</Num></TableCell>
                         <TableCell className="font-mono text-xs">{r.sku ?? "—"}{err && <div className="font-sans text-destructive">{err}</div>}</TableCell>
                         <TableCell className="font-mono text-xs">{r.barcode ?? "—"}</TableCell>
-                        <TableCell className="text-right"><Num>{r.sellPrice && !err ? usd(r.sellPrice) : r.sellPrice ?? "—"}</Num></TableCell>
+                        <TableCell className="text-right"><Num>{amountCellUnsure(cells[i]?.sellPrice) ? String(cells[i]?.sellPrice).trim() : r.sellPrice && !err ? usd(r.sellPrice) : r.sellPrice ?? "—"}</Num></TableCell>
                       </TableRow>
                     );
                   })}
@@ -808,7 +811,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
                           {err && <div className="text-xs text-destructive">{err}</div>}
                         </TableCell>
                         <TableCell className="text-right"><Num>{measureCell(r.quantity, asked && cells[i]?.quantity)}</Num></TableCell>
-                        <TableCell className="text-right"><Num>{r.unitPrice && /^\d+(\.\d+)?$/.test(r.unitPrice) ? number(r.unitPrice, 4, 2) : r.unitPrice ?? "—"}</Num></TableCell>
+                        <TableCell className="text-right"><Num>{amountCell(r.unitPrice, cells[i]?.unitPrice, 4)}</Num></TableCell>
                         <TableCell className="text-right"><Num>{measureCell(r.weightKg, asked && cells[i]?.weightKg)}</Num></TableCell>
                         <TableCell className="text-right"><Num>{measureCell(r.volumeCbm, asked && cells[i]?.volumeCbm)}</Num></TableCell>
                         <TableCell><StatusBadge status={status} /></TableCell>

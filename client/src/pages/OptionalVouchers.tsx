@@ -25,6 +25,7 @@ import { useAuth } from "@/lib/auth";
 import { d, date, usd } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
+import { useVoucherChecks } from "@/lib/voucherChecks";
 import { VOUCHER_KINDS, voucherKindLabel, type VoucherDraft, type VoucherKind } from "@/pages/Vouchers";
 
 const KIND_TONE: Record<VoucherKind, string> = {
@@ -247,14 +248,8 @@ export default function OptionalVouchers() {
                     "Elle sera passée avec tous les contrôles habituels\u00a0: les soldes, le stock et les rapports changent, et elle quitte cette liste.",
                   )
                 : t("Nothing was posted from it, so nothing else changes. This cannot be undone.", "Rien n'a été passé à partir d'elle, donc rien d'autre ne change. Action irréversible.")}
-              {confirm && (
-                <span className="mt-2 block font-medium text-foreground">
-                  {voucherKindLabel(confirm.draft.kind, t)} · {date(confirm.draft.date)}
-                  {confirm.draft.memo ? ` · ${confirm.draft.memo}` : ""}
-                  {confirm.draft.totalUsd ? ` · ${usd(confirm.draft.totalUsd)}` : ""}
-                </span>
-              )}
             </AlertDialogDescription>
+            {confirm && <DraftSummary draft={confirm.draft} check={confirm.action === "finalize"} />}
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t("Cancel", "Annuler")}</AlertDialogCancel>
@@ -264,6 +259,40 @@ export default function OptionalVouchers() {
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+    </div>
+  );
+}
+
+/**
+ * The pending voucher in the confirmation: its description (or what the day book will call it), and on
+ * "Valider" the same unusual-amount and over-debt questions as the voucher form, since this posts it.
+ */
+function DraftSummary({ draft, check }: { draft: VoucherDraft; check: boolean }) {
+  const t = useT();
+  const p = draft.payload;
+  const lines = Array.isArray(p.lines) ? (p.lines as Record<string, unknown>[]) : [];
+  const checks = useVoucherChecks({
+    kind: draft.kind,
+    day: draft.date,
+    accountId: Number(p.accountId) || null,
+    rate: p.rate ? String(p.rate) : null,
+    lines: lines.map((l) => ({ partyId: Number(l.partyId) || null, accountId: Number(l.accountId) || null, amount: l.amount == null ? "" : String(l.amount) })),
+    enabled: check,
+  });
+  const warnings = check ? [...checks.unusual, ...checks.overDebt, ...(checks.short ? [checks.short] : [])] : [];
+  const memo = draft.memo || checks.fallbackMemo || t("no description", "sans libellé");
+  return (
+    <div className="space-y-2 text-sm">
+      <p className="font-medium text-foreground">
+        {voucherKindLabel(draft.kind, t)} · {date(draft.date)} · <span className={cn(!draft.memo && "italic")}>{memo}</span>
+        {draft.totalUsd ? ` · ${usd(draft.totalUsd)}` : ""}
+      </p>
+      {warnings.length > 0 && (
+        <div role="alert" className="space-y-1 font-medium text-amber-800 dark:text-amber-400" data-testid="draft-warnings">
+          {warnings.map((w) => <p key={w}>{w}.</p>)}
+          <p className="font-normal text-muted-foreground">{t("Check for an extra zero before validating.", "Vérifiez qu'il n'y a pas un zéro de trop avant de valider.")}</p>
+        </div>
+      )}
     </div>
   );
 }

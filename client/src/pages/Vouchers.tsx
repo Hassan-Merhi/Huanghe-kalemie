@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useSearch } from "wouter";
 import { CheckCircle2, FileClock, Info, Plus, Printer, Trash2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -29,8 +29,9 @@ import { curLabel, d, money, number, pct, qty as fmtQty, todayLocal, usd } from 
 import { useT } from "@/lib/i18n";
 import type { Account, Party, Settings } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import Decimal from "decimal.js";
 import { AdjustForm, type AdjustmentDraft, type AdjustmentPayload } from "@/pages/Stock";
+import { BalanceWords } from "@/pages/Contacts";
+import { useVoucherChecks } from "@/lib/voucherChecks";
 
 type T = (en: string, fr: string) => string;
 
@@ -319,36 +320,16 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
   const current = bal ? d(isCdf ? bal.nativeBalance : bal.balance) : null;
   const after = current ? (kind === "payment" ? current.minus(total) : current.plus(total)) : null;
 
-  // An unusual payment is said and confirmed before saving: far above what that account was paid in the past
-  // year ("Loyer" 14 000 $ when it was 1 400 $), or most of the drawer at once.
-  const yearAgo = `${Number(day.slice(0, 4)) - 1}${day.slice(4)}`.replace(/-02-29$/, "-02-28");
-  const lineAccounts = kind === "payment" ? Array.from(new Set(lines.filter((l) => l.mode === "account" && l.accountId && isAmount(l.amount)).map((l) => l.accountId!))) : [];
-  const history = useQueries({
-    queries: lineAccounts.map((id) => ({ queryKey: [`/api/accounts/${id}/ledger`, { from: yearAgo, to: day }], enabled: canSave && /^\d{4}-\d\d-\d\d$/.test(day), staleTime: 60_000 })),
+  // An unusual payment, or a contact paid (or paying) more than is owed, is said and confirmed before saving.
+  const checks = useVoucherChecks({
+    kind,
+    day,
+    accountId,
+    rate: isCdf ? rateField.rate : null,
+    lines: lines.map((l) => (l.mode === "party" ? { partyId: l.partyId, accountId: null, amount: l.amount } : { partyId: null, accountId: l.accountId, amount: l.amount })),
+    enabled: canSave,
   });
-  const largestPaid = new Map<number, Decimal>();
-  lineAccounts.forEach((id, i) => {
-    const rows = (history[i]?.data as { rows?: { debit: string }[] } | undefined)?.rows ?? [];
-    const paid = rows.map((r) => d(r.debit)).filter((x) => x.gt(0));
-    // A first payment to an account has nothing to compare with.
-    if (paid.length) largestPaid.set(id, Decimal.max(...paid));
-  });
-  const lineUsd = (l: VLine) => (isCdf ? (rate.gt(0) ? d(l.amount).dividedBy(rate) : null) : d(l.amount));
-  const unusual: string[] = [];
-  if (kind === "payment") {
-    for (const l of lines) {
-      const most = l.accountId ? largestPaid.get(l.accountId) : undefined;
-      const u = l.mode === "account" && isAmount(l.amount) ? lineUsd(l) : null;
-      // Three times the most ever paid there: a rent that went up is not questioned, a zero too many is.
-      if (!most || !u || !u.gt(most.times(3))) continue;
-      const name = balances.data?.find((a) => a.id === l.accountId)?.name ?? "";
-      const typed = money(d(l.amount).toFixed(2), currency);
-      unusual.push(t(`${name}: ${typed}, far more than usual (at most ${usd(most.toFixed(2))} in the past 12 months)`, `${name}\u00a0: ${typed}, bien plus que d'habitude (au plus ${usd(most.toFixed(2))} sur les 12 derniers mois)`));
-    }
-    if (current && current.gt(0) && total.gt(current.times(0.5)) && total.lte(current) && account) {
-      unusual.push(t(`This payment takes ${pct(total.dividedBy(current).times(100).toNumber(), 0)} of ${account.name} (${money(current.toFixed(2), currency)})`, `Ce paiement prend ${pct(total.dividedBy(current).times(100).toNumber(), 0)} de ${account.name} (${money(current.toFixed(2), currency)})`));
-    }
-  }
+  const unusual = [...checks.unusual, ...checks.overDebt];
   const [confirmUnusual, setConfirmUnusual] = useState(false);
 
   const m = useApiMutation<Record<string, unknown>, { id: number; total: string }>("POST", `/api/vouchers/${kind}`, {
@@ -460,7 +441,15 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
               </div>
               <div className="min-w-0">
                 {l.mode === "party" ? (
-                  <PartySelect types={PARTY_TYPES[kind]} value={l.partyId} onChange={(id) => set(l.key, { partyId: id })} placeholder={t("Choose contact…", "Choisir le contact…")} />
+                  <>
+                    <PartySelect types={PARTY_TYPES[kind]} value={l.partyId} onChange={(id) => set(l.key, { partyId: id })} placeholder={t("Choose contact…", "Choisir le contact…")} />
+                    {/* What is owed, either way, before the amount is typed: "nous doit 1 450,00 $". */}
+                    {checks.partyOf(l.partyId) && (
+                      <p className="mt-1 px-1 text-xs" data-testid="line-owed">
+                        <BalanceWords balance={checks.partyOf(l.partyId)!.balance} />
+                      </p>
+                    )}
+                  </>
                 ) : (
                   <LineAccountSelect types={ACCOUNT_TYPES[kind]} value={l.accountId} onChange={(id) => set(l.key, { accountId: id })} />
                 )}
@@ -501,10 +490,19 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
       <AlertDialog open={confirmUnusual} onOpenChange={setConfirmUnusual}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("An unusual amount?", "Un montant inhabituel\u00a0?")}</AlertDialogTitle>
+            <AlertDialogTitle>
+              {checks.unusual.length || !checks.overDebt.length
+                ? t("An unusual amount?", "Un montant inhabituel\u00a0?")
+                : kind === "payment"
+                  ? t("Pay more than is owed?", "Payer plus que ce qui est dû\u00a0?")
+                  : t("Receive more than is owed?", "Recevoir plus que ce qui est dû\u00a0?")}
+            </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2">
                 {unusual.map((u) => <p key={u}>{u}.</p>)}
+                {checks.overDebt.length > 0 && (
+                  <p>{t("What is over stays on the contact's account and is deducted next time.", "Le surplus reste au compte du contact et sera déduit la prochaine fois.")}</p>
+                )}
                 <p>{t("Check for an extra zero before saving.", "Vérifiez qu'il n'y a pas un zéro de trop avant d'enregistrer.")}</p>
               </div>
             </AlertDialogDescription>
@@ -517,7 +515,9 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
                 save(true);
               }}
             >
-              {t(`Pay ${money(total.toFixed(2), currency)}`, `Payer ${money(total.toFixed(2), currency)}`)}
+              {kind === "payment"
+                ? t(`Pay ${money(total.toFixed(2), currency)}`, `Payer ${money(total.toFixed(2), currency)}`)
+                : t(`Save ${money(total.toFixed(2), currency)}`, `Enregistrer ${money(total.toFixed(2), currency)}`)}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

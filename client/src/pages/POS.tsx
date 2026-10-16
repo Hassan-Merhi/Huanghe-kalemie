@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { de } from "@shared/french";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -17,7 +17,7 @@ import { LocationSelect, MoneyAccountSelect, PartySelect, RateInput, VariantSear
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
-import { cdf, curLabel, d, date as fmtDate, frenchPunctuation, money, qty as fmtQty, todayLocal, typedNumberOk, unclearQty, usd, variantText } from "@/lib/format";
+import { cdf, curLabel, d, date as fmtDate, frenchPunctuation, MINUS, money, qty as fmtQty, todayLocal, typedNumberOk, unclearQty, usd, variantText } from "@/lib/format";
 import { unitLabel, wholeUnit } from "@/lib/units";
 import type { Account, MotorcycleUnit, Party, Settings, VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -102,13 +102,29 @@ const c2 = (x: Decimal) => x.toDecimalPlaces(2, ROUND);
 
 // ---------------------------------------------------------------- Receipt (80mm thermal)
 
+/**
+ * The receipt is set in a monospaced font, where the minus sign (U+2212) takes one cell and reads as a
+ * hyphen ("-124 200 FC"): it is drawn in the text font, at its full width, like everywhere else.
+ */
+function withMinus(text: React.ReactNode): React.ReactNode {
+  if (typeof text !== "string" || !text.includes(MINUS)) return text;
+  return text.split(MINUS).map((part, i) => (i === 0 ? part : <Fragment key={i}><span className="font-sans">{MINUS}</span>{part}</Fragment>));
+}
+
 function ReceiptRow({ left, right, bold }: { left: React.ReactNode; right: React.ReactNode; bold?: boolean }) {
   return (
     <div className={cn("flex justify-between gap-2", bold && "font-bold")}>
       <span className="min-w-0">{left}</span>
-      <span className="shrink-0 text-right tabular">{right}</span>
+      <span className="shrink-0 text-right tabular">{withMinus(right)}</span>
     </div>
   );
+}
+
+/** The franc rounding of a sale, the same way on the till and on the receipt: "−28 FC (−0,01 $)". */
+function francRoundingText(francs: Decimal, dollars: Decimal | null): string {
+  const sign = (x: Decimal) => (x.isNegative() ? MINUS : "+");
+  const fc = `${sign(francs)}${cdf(francs.abs().toString())}`;
+  return dollars && !dollars.isZero() ? `${fc} (${sign(dollars)}${usd(dollars.abs().toFixed(2))})` : fc;
 }
 
 /** The receipt body. Plain black on white so it prints well on thermal paper. */
@@ -131,6 +147,14 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
   const paymentsUsd = sale.payments.reduce((s, p) => s.plus(d(p.amountUsd)), d(0));
   const roundingGap = d(sale.paidUsd).minus(paymentsUsd);
   const francRounding = !roundingGap.isZero() && roundingGap.abs().lt(1) && sale.payments.some((p) => p.currency === "CDF") ? roundingGap : null;
+  // The same rounding in francs, as the till showed it: what was counted as paid less what was handed over,
+  // each franc payment at its own rate (28 FC, where 0,01 $ alone would not say how many francs).
+  const francFc = francRounding && cdfRate && d(cdfRate).gt(0)
+    ? d(sale.paidUsd)
+        .minus(sale.payments.reduce((s, p) => s.plus(p.currency === "CDF" && d(p.rate ?? cdfRate).gt(0) ? d(p.amountNative).dividedBy(d(p.rate ?? cdfRate)) : d(p.amountUsd)), d(0)))
+        .times(d(cdfRate))
+        .toDecimalPlaces(0, ROUND)
+    : null;
   // The shop's clock (Kalemie), whatever time zone the phone or computer is set to.
   const time = sale.createdAt ? new Date(sale.createdAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", timeZone: "Africa/Lubumbashi" }) : "";
   const dash = <div className="my-1.5 border-t border-dashed border-black" />;
@@ -174,7 +198,12 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
           right={p.currency === "CDF" ? `${cdf(p.amountNative)} (${usd(p.amountUsd)})` : usd(p.amountUsd)}
         />
       ))}
-      {francRounding && <ReceiptRow left={t("FC rounding", "Arrondi FC")} right={`${francRounding.isNegative() ? "−" : "+"}${usd(francRounding.abs().toFixed(2))}`} />}
+      {francRounding && (
+        <ReceiptRow
+          left={t("FC rounding", "Arrondi FC")}
+          right={francFc && !francFc.isZero() ? francRoundingText(francFc, francRounding) : `${francRounding.isNegative() ? MINUS : "+"}${usd(francRounding.abs().toFixed(2))}`}
+        />
+      )}
       {sale.payments.length > 0 && <ReceiptRow left={t("Paid", "Payé")} right={usd(sale.paidUsd)} />}
       {d(sale.creditUsd).gt(0) && <ReceiptRow bold left={t("On credit (to pay)", "À crédit (reste à payer)")} right={usd(sale.creditUsd)} />}
       {cdfRate && d(cdfRate).gt(0) && (
@@ -544,8 +573,16 @@ export default function POS() {
   // What is paid now (part of a credit sale), never above the total: francs rounded to 100 FC make "paid"
   // 27,01 $ on a 27,00 $ sale, which must still read 75 870 FC like the total.
   const toPay = paid.gt(0) && paid.lt(total) && !withinFrancs(receivedExact.minus(changeUsd)) ? paid : total;
+  // A part payment typed in francs only is that many francs, not its dollars at the rate (70 000 FC, not 70 003 FC).
+  const typedFc = toPay === paid && !changeUsd.gt(0) && paidRows.length > 0 && paidRows.every((p) => accById(p.accountId)!.currency === "CDF")
+    ? paidRows.reduce((s, p) => s.plus(d(p.amount).toDecimalPlaces(0, ROUND)), d(0))
+    : null;
+  const toPayFc = typedFc ?? (rateNum.gt(0) ? toPay.times(rateNum).toDecimalPlaces(0, ROUND) : null);
+  // Francs handed over against those francs are counted in francs, so 70 000 FC for 70 000 FC leaves nothing.
+  const changeFcExact = typedFc && handedCur === "CDF" ? d(handed).toDecimalPlaces(0, ROUND).minus(typedFc) : null;
   const handedUsd = handedCur === "CDF" ? (rateNum.gt(0) ? d(handed).dividedBy(rateNum) : d(0)) : d(handed);
-  const change = handedUsd.minus(toPay);
+  const change = changeFcExact ? (changeFcExact.isZero() || !rateNum.gt(0) ? d(0) : changeFcExact.dividedBy(rateNum)) : handedUsd.minus(toPay);
+  const changeFc = changeFcExact ? changeFcExact.abs() : rateNum.gt(0) ? change.abs().times(rateNum).toDecimalPlaces(0, ROUND) : null;
 
   // ---- submit
   function reset() {
@@ -886,7 +923,7 @@ export default function POS() {
                 {francRounding && !francRounding.isZero() ? (
                   <div className="flex justify-between text-muted-foreground" data-testid="franc-rounding">
                     <span>{t("FC rounding", "Arrondi FC")}</span>
-                    <Num>{cdf(francRounding.abs().toString())}</Num>
+                    <Num>{francRoundingText(francRounding, rateNum.gt(0) ? c2(francRounding.dividedBy(rateNum)) : null)}</Num>
                   </div>
                 ) : (
                   <div className="flex justify-between">
@@ -913,11 +950,11 @@ export default function POS() {
                       </SelectContent>
                     </Select>
                   </div>
-                  <div className="flex justify-between"><span>{t("To pay", "À payer")}</span><Num>{usd(toPay.toFixed(2))}{rateNum.gt(0) ? ` · ${cdf(toPay.times(rateNum).toDecimalPlaces(0, ROUND).toString())}` : ""}</Num></div>
+                  <div className="flex justify-between"><span>{t("To pay", "À payer")}</span><Num>{usd(toPay.toFixed(2))}{toPayFc ? ` · ${cdf(toPayFc.toString())}` : ""}</Num></div>
                   {handed && (
                     <div className={cn("flex justify-between font-semibold", change.lt(0) && "text-destructive")}>
                       <span>{change.lt(0) ? t("Still missing", "Il manque") : t("Change to give", "Monnaie à rendre")}</span>
-                      <Num>{usd(c2(change.abs()).toFixed(2))}{rateNum.gt(0) ? ` · ${cdf(change.abs().times(rateNum).toDecimalPlaces(0, ROUND).toString())}` : ""}</Num>
+                      <Num>{usd(c2(change.abs()).toFixed(2))}{changeFc ? ` · ${cdf(changeFc.toString())}` : ""}</Num>
                     </div>
                   )}
                 </div>
