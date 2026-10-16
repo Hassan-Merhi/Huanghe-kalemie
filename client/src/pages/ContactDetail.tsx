@@ -340,7 +340,9 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
   const advanceText = advance
     ? isCustomer
       ? t(`${usd(advance.usd)} stays to the customer's credit`, `${usd(advance.usd)} restent au crédit du client`)
-      : t(`${usd(advance.usd)} is an advance`, `${usd(advance.usd)} constituent une avance`)
+      : party.type === "employee"
+        ? t(`${usd(advance.usd)} is an advance on salary`, `${usd(advance.usd)} constituent une avance sur salaire`)
+        : t(`${usd(advance.usd)} is an advance`, `${usd(advance.usd)} constituent une avance`)
     : "";
   const splitText = cnyOwed && d(settleCny).gt(0) && split[0]?.kind === "cny"
     ? t(`These ${usd(split[0].usd)} settle ${money(split[0].native, "CNY")} of the yuan debt.`, `Ces ${usd(split[0].usd)} règlent ${money(split[0].native, "CNY")} de la dette en yuans.`)
@@ -525,7 +527,9 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
                 <p>
                   {isCustomer
                     ? t("The credit is deducted from their next purchases. Check for an extra zero before saving.", "L'avoir sera déduit de ses prochains achats. Vérifiez qu'il n'y a pas un zéro de trop avant d'enregistrer.")
-                    : t("The advance is deducted from the next invoices. Check for an extra zero before saving.", "L'avance sera déduite des prochaines factures. Vérifiez qu'il n'y a pas un zéro de trop avant d'enregistrer.")}
+                    : party.type === "employee"
+                      ? t("The advance is deducted from the next salary. Check for an extra zero before saving.", "L'avance sera déduite du prochain salaire. Vérifiez qu'il n'y a pas un zéro de trop avant d'enregistrer.")
+                      : t("The advance is deducted from the next invoices. Check for an extra zero before saving.", "L'avance sera déduite des prochaines factures. Vérifiez qu'il n'y a pas un zéro de trop avant d'enregistrer.")}
                 </p>
               </div>
             </AlertDialogDescription>

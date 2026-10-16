@@ -308,6 +308,8 @@ export default function Sales() {
     paid: sumOf((r) => netOf(r).paid),
     refunded: sumOf((r) => r.refundedUsd),
     credit: sumOf(creditOf),
+    // Of that credit, what customers' avoirs covered (the "Aujourd'hui" card's "dont sur l'avoir").
+    onAvoir: sumOf((r) => creditSplit(r).onAvoir),
     cogs: sumOf((r) => netOf(r).cogs),
     qty: sumOf((r) => d(r.qty).minus(d(r.returnedQty))),
   };
@@ -344,7 +346,12 @@ export default function Sales() {
           <StatCard label={t("Total", "Total")} value={usd(totals.total.toFixed(2))} sub={totals.returned.gt(0) ? `${t("returns", "retours")} −${usd(totals.returned.toFixed(2))}` : undefined} />
           {/* Credit given on these sales (less returns), not what is still owed: payments made later are on each
               customer's statement, so the card is not amber as if all of it were unpaid. */}
-          <StatCard label={t("Given on credit", "Accordé à crédit")} value={usd(totals.credit.toFixed(2))} sub={totals.credit.gt(0) ? t("later payments: see the customer statements", "paiements ultérieurs : voir les relevés clients") : undefined} />
+          <StatCard label={t("Given on credit", "Accordé à crédit")} value={usd(totals.credit.toFixed(2))} sub={totals.credit.gt(0) ? (
+              <>
+                {totals.onAvoir.gt(0) && <div className="text-emerald-800 dark:text-emerald-400">{t("of which from customers' credit", "dont sur l'avoir")} {usd(totals.onAvoir.toFixed(2))}</div>}
+                <div>{t("later payments: see the customer statements", "paiements ultérieurs : voir les relevés clients")}</div>
+              </>
+            ) : undefined} />
           {showCost && (
             <StatCard
               label={t("Profit", "Marge")}
@@ -434,7 +441,8 @@ export default function Sales() {
                     <TableCell className="text-right">
                       <Num>{usd(totals.paid.toFixed(2))}</Num>
                       <Refunded value={totals.refunded} />
-                      {totals.credit.gt(0) && <div className="whitespace-nowrap text-xs font-normal text-amber-800 dark:text-amber-400">{t("credit", "crédit")} {usd(totals.credit.toFixed(2))}</div>}
+                      {totals.onAvoir.gt(0) && <div className="whitespace-nowrap text-xs font-normal text-emerald-800 dark:text-emerald-400">{t("from credit", "sur l'avoir")} {usd(totals.onAvoir.toFixed(2))}</div>}
+                      {totals.credit.minus(totals.onAvoir).gt(0) && <div className="whitespace-nowrap text-xs font-normal text-amber-800 dark:text-amber-400">{t("credit", "crédit")} {usd(totals.credit.minus(totals.onAvoir).toFixed(2))}</div>}
                     </TableCell>
                     <TableCell className="text-right"><Num>{usd(totals.total.toFixed(2))}</Num></TableCell>
                     {showCost && <TableCell className="text-right"><Profit value={profit.toFixed(2)} /></TableCell>}

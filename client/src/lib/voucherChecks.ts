@@ -110,7 +110,11 @@ export function useVoucherChecks(input: { kind: string; day: string; accountId: 
       const paid = typed(amount);
       const over = usd(advance.usd);
       const some = owedUsd.gt(0);
-      const owedText = usd(owedUsd.toFixed(2));
+      // Francs or yuan owed count here at the voucher's rate, the contact's badge at the rate they were booked at
+      // (4 430,10 $ booked, 4 429,91 $ today): the figure says which, as on the contact page's "Payer".
+      const booked = Decimal.max(kind === "receipt" ? d(p.balance) : d(p.balance).negated(), 0);
+      const atRate = split.some((x) => x.kind === "cdf" || x.kind === "cny") && !owedUsd.toDecimalPlaces(2).eq(booked.toDecimalPlaces(2));
+      const owedText = `${usd(owedUsd.toFixed(2))}${atRate ? t(" at today's rate", " au taux du jour") : ""}`;
       overDebt.push(
         kind === "receipt"
           ? customer
