@@ -6,7 +6,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Loading, Num, PageHeader, StatCard } from "@/components/common";
-import { accountLabel, compactUsd, d, num, pct, qty as fmtQty, usd, variantText } from "@/lib/format";
+import { accountLabel, axisLines, compactUsd, d, num, pct, qty as fmtQty, usd, variantText } from "@/lib/format";
 import { count, useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { RangePicker, useRange } from "@/pages/Reports";
@@ -62,14 +62,19 @@ function MonthTick({ x, y, payload }: { x?: number; y?: number; payload?: { valu
   );
 }
 
-/** Category names cut to one line on the bar charts' axis; the full name is in the tooltip. */
-const shortName = (s: string) => (s.length > 17 ? `${s.slice(0, 16)}…` : s);
+/**
+ * Category names on the bar charts' axis, on up to two lines split between words
+ * ("Carburant du" / "groupe électrogène", see axisLines); the full name is in the tooltip.
+ */
 function CategoryTick({ x, y, payload }: { x?: number; y?: number; payload?: { value: string } }) {
   const name = String(payload?.value ?? "");
+  const lines = axisLines(name);
   return (
-    <text x={x} y={y} dy="0.35em" textAnchor="end" fontSize={11} fill="hsl(var(--muted-foreground))">
+    <text x={x} y={y} textAnchor="end" fontSize={11} fill="hsl(var(--muted-foreground))">
       <title>{name}</title>
-      {shortName(name)}
+      {lines.map((l, i) => (
+        <tspan key={i} x={x} dy={i === 0 ? (lines.length > 1 ? "-0.2em" : "0.35em") : "1.1em"}>{l}</tspan>
+      ))}
     </text>
   );
 }

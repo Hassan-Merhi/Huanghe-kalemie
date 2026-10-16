@@ -317,3 +317,18 @@ export function unclearQty(t: (en: string, fr: string) => string, value: string 
   const [big, small] = r.map((x) => qty(x));
   return t(`Say which quantity: ${big} or ${small}`, `Précisez la quantité\u00a0: ${big} ou ${small}`);
 }
+
+/** A chart label on up to two lines of 18 characters, split between words; only a longer name is cut with "…". */
+export function axisLines(s: string, max = 18): string[] {
+  const words = s.trim().split(/\s+/);
+  const lines: string[] = [];
+  for (const w of words) {
+    const last = lines[lines.length - 1];
+    if (last !== undefined && `${last} ${w}`.length <= max) lines[lines.length - 1] = `${last} ${w}`;
+    else lines.push(w);
+  }
+  if (lines.length <= 2 && lines.every((l) => l.length <= max)) return lines;
+  const second = lines.slice(1).join(" ");
+  const first = lines[0].length > max ? `${lines[0].slice(0, max - 1)}…` : lines[0];
+  return lines[0].length > max ? [first] : [first, second.length > max ? `${second.slice(0, max - 1)}…` : second];
+}

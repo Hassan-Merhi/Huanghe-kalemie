@@ -89,3 +89,12 @@ export function paymentSplit(input: {
   if (left.gt(0)) parts.push({ kind: "advance", usd: left.toFixed(2), native: null });
   return parts;
 }
+
+/** What is owed on a contact in the direction of a voucher line: by them on a receipt, by us on a payment. */
+export function owedOn(party: { balance: string; foreign?: { currency: string; native: string; usd: string }[] }, kind: "payment" | "receipt") {
+  const foreign = party.foreign ?? [];
+  const dollars = new Decimal(party.balance).minus(foreign.reduce((s, f) => s.plus(f.usd), new Decimal(0)));
+  const toward = (x: Decimal) => Decimal.max(kind === "receipt" ? x : x.negated(), 0);
+  const native = (cur: "CDF" | "CNY") => toward(new Decimal(foreign.find((f) => f.currency === cur)?.native ?? 0));
+  return { usd: toward(dollars), fc: native("CDF"), cny: native("CNY") };
+}
