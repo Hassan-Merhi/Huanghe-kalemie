@@ -17,11 +17,11 @@ import { MoneyAccountSelect, useMoneyAccounts, useRate } from "@/components/pick
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
-import { cdf, d, date as fmtDate, qty as fmtQty, todayLocal, usd, variantText, unclearQty } from "@/lib/format";
+import { cdf, d, date as fmtDate, fcRounding, qty as fmtQty, todayLocal, usd, variantText, unclearQty } from "@/lib/format";
 import type { Account, Party, Settings } from "@/lib/types";
 import { wholeUnit } from "@/lib/units";
 import { cn } from "@/lib/utils";
-import { ReceiptDialog, paymentText, type SaleFull } from "./POS";
+import { avoirSplit, ReceiptDialog, paymentText, type SaleFull } from "./POS";
 import { SaleFlags } from "./Sales";
 
 function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () => void; onDone: (sale: SaleFull) => void }) {
@@ -296,17 +296,39 @@ function VoidDialog({ sale, onClose }: { sale: SaleFull; onClose: () => void }) 
   );
 }
 
-/** Credit given on the sale, what returns took off the customer's account, and what is left. */
-function CreditRows({ credit, creditedReturns, creditLeft, owes }: { credit: Decimal; creditedReturns: Decimal; creditLeft: Decimal; owes: Decimal | null }) {
+/** "Réglé sur l'avoir 11,00 $ · avoir restant 15 739,00 $": credit the customer's avoir covered when the sale was made. */
+function AvoirRow({ avoir }: { avoir: ReturnType<typeof avoirSplit> }) {
+  const t = useT();
+  if (!avoir.used.gt(0)) return null;
+  return (
+    <div className="flex justify-between gap-2 py-2" data-testid="avoir-used">
+      <span>
+        {t("Settled from the customer's credit", "Réglé sur l'avoir")}
+        <span className="block text-xs text-muted-foreground">{t("Credit left after this sale", "Avoir restant après la vente")} {usd(avoir.left.toFixed(2))}</span>
+      </span>
+      <Num className="font-medium">{usd(avoir.used.toFixed(2))}</Num>
+    </div>
+  );
+}
+
+/** Credit given on the sale, what the customer's avoir and returns took off it, and what is left. */
+function CreditRows({ credit, creditedReturns, creditLeft, owes, avoir }: { credit: Decimal; creditedReturns: Decimal; creditLeft: Decimal; owes: Decimal | null; avoir: ReturnType<typeof avoirSplit> }) {
   const t = useT();
   if (creditedReturns.isZero()) {
     return (
-      <div className="flex justify-between gap-2 py-2 text-amber-800 dark:text-amber-400">
-        <span>{t("On credit", "À crédit")}</span>
-        <Num className="font-medium">{usd(credit.toFixed(2))}</Num>
-      </div>
+      <>
+        <AvoirRow avoir={avoir} />
+        {/* Only what the avoir did not cover is still to pay. */}
+        {avoir.toPay.gt(0) && (
+          <div className="flex justify-between gap-2 py-2 text-amber-800 dark:text-amber-400">
+            <span>{avoir.used.gt(0) ? t("On credit (to pay)", "À crédit (reste à payer)") : t("On credit", "À crédit")}</span>
+            <Num className="font-medium">{usd(avoir.toPay.toFixed(2))}</Num>
+          </div>
+        )}
+      </>
     );
   }
+  const stillOwed = Decimal.max(creditLeft.minus(avoir.used), 0);
   return (
     <>
       <div className="flex justify-between gap-2 py-2 text-muted-foreground">
@@ -317,12 +339,13 @@ function CreditRows({ credit, creditedReturns, creditLeft, owes }: { credit: Dec
         <span>{t("Returns taken off the customer's balance", "Retours déduits du solde du client")}</span>
         <Num>−{usd(creditedReturns.toFixed(2))}</Num>
       </div>
-      <div className={cn("flex justify-between gap-2 py-2", creditLeft.gt(0) && "text-amber-800 dark:text-amber-400")}>
+      <AvoirRow avoir={avoir} />
+      <div className={cn("flex justify-between gap-2 py-2", stillOwed.gt(0) && "text-amber-800 dark:text-amber-400")}>
         <span>
           {t("Still on credit", "Reste à crédit")}
           <span className="block text-xs text-muted-foreground">{t("Later payments show on the customer's statement.", "Les paiements ultérieurs figurent sur le relevé du client.")}</span>
         </span>
-        <Num className="font-medium">{usd(creditLeft.toFixed(2))}</Num>
+        <Num className="font-medium">{usd(stillOwed.toFixed(2))}</Num>
       </div>
       {creditedReturns.gt(credit) && (
         <p className="py-2 text-xs text-muted-foreground">
@@ -384,9 +407,10 @@ export default function SaleDetail() {
   const refunded = sale.returns.reduce((s, r) => s.plus(d(r.refundUsd)), d(0));
   const paidNet = voided ? d(sale.paidUsd) : d(sale.paidUsd).minus(refunded);
   const netTotal = voided ? d(sale.total) : d(sale.total).minus(returnedTotal);
-  // Francs change and refunds go in 100 FC steps, so "Payé" can differ from the total by a few cents.
-  const roundingGap = paidNet.plus(creditReduced ? creditLeft : credit).minus(netTotal);
-  const francRounding = !voided && !roundingGap.isZero() && roundingGap.abs().lt(1) && (sale.payments.some((p) => p.currency === "CDF") || sale.returns.some((r) => r.refundCurrency === "CDF")) ? roundingGap : null;
+  // Francs change and refunds go in 100 FC steps, so "Payé" can differ from the total by a few cents: the
+  // "Arrondi FC" of the books, the same figure and sign as on the Sales list, the till's and the refunds' together.
+  const francRounding = voided ? null : fcRounding(t, sale.fcRoundingUsd ?? 0);
+  const avoir = avoirSplit(sale);
   // Columns only when a line uses them, so the margin stays in view at 1024 px.
   const hasChassis = sale.lines.some((l) => l.chassisNo || l.engineNo);
   const hasDiscount = sale.lines.some((l) => d(l.lineDiscount).gt(0));
@@ -435,7 +459,12 @@ export default function SaleDetail() {
         {sale.returns.length > 0 && <Badge variant="outline">{t("Has returns", "Avec retours")}</Badge>}
         {!voided && <SaleFlags zeroPrice={sale.lines.some((l) => d(l.unitPrice).lte(0))} total={sale.total} cogs={sale.cogs} />}
         {credit.gt(0) &&
-          (!creditReduced ? (
+          (avoir.used.gt(0) && !creditReduced ? (
+            <>
+              <Badge variant="outline">{t("Settled from the customer's credit", "Réglé sur l'avoir")} {usd(avoir.used.toFixed(2))}</Badge>
+              {avoir.toPay.gt(0) && <Badge variant="outline">{t("On credit (to pay)", "À crédit (reste à payer)")} {usd(avoir.toPay.toFixed(2))}</Badge>}
+            </>
+          ) : !creditReduced ? (
             <Badge variant="outline">{t("On credit", "À crédit")} {usd(sale.creditUsd)}</Badge>
           ) : creditLeft.gt(0) ? (
             <Badge variant="outline">{t("Still on credit", "Reste à crédit")} {usd(creditLeft.toFixed(2))}</Badge>
@@ -459,7 +488,7 @@ export default function SaleDetail() {
             {d(sale.discount).gt(0) && <p className="text-xs text-muted-foreground">{t("Sale discount", "Remise")} {usd(sale.discount)}</p>}
           </CardContent>
         </Card>
-        <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Paid", "Payé")}</p><p className="text-xl font-semibold tabular">{usd(paidNet.toFixed(2))}</p>{!voided && refunded.gt(0) && <p className="text-xs text-muted-foreground">{t("refunded", "remboursé")} −{usd(refunded.toFixed(2))} · {t("of", "sur")} {usd(sale.paidUsd)}</p>}{francRounding && <p className="text-xs text-muted-foreground">{t("franc rounding", "arrondi FC")} {francRounding.isNegative() ? "−" : "+"}{usd(francRounding.abs().toFixed(2))}</p>}<p className="text-xs text-muted-foreground">{t("Credit", "Crédit")} {usd(sale.creditUsd)}{creditReduced ? ` · ${t("after returns", "après retours")} ${usd(creditLeft.toFixed(2))}` : ""}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Paid", "Payé")}</p><p className="text-xl font-semibold tabular">{usd(paidNet.toFixed(2))}</p>{!voided && refunded.gt(0) && <p className="text-xs text-muted-foreground">{t("refunded", "remboursé")} −{usd(refunded.toFixed(2))} · {t("of", "sur")} {usd(sale.paidUsd)}</p>}{francRounding && <p className="text-xs text-muted-foreground" data-testid="sale-fc-rounding">{sale.returns.length ? t("FC rounding (sale + returns)", "Arrondi FC (vente + retours)") : t("FC rounding", "Arrondi FC")} {francRounding.figure} · {francRounding.words}</p>}<p className="text-xs text-muted-foreground">{t("Credit", "Crédit")} {usd(sale.creditUsd)}{creditReduced ? ` · ${t("after returns", "après retours")} ${usd(creditLeft.toFixed(2))}` : ""}{avoir.used.gt(0) ? ` · ${t("settled from the customer's credit", "réglé sur l'avoir")} ${usd(avoir.used.toFixed(2))}` : ""}</p></CardContent></Card>
         <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Customer", "Client")}</p>{sale.customer ? <p className="font-medium">{sale.customer.name}</p> : <p className="text-muted-foreground">{t("Walk-in", "De passage")}</p>}{sale.customer?.phone && <p className="text-xs text-muted-foreground">{sale.customer.phone}</p>}</CardContent></Card>
         {showCost && sale.cogs !== undefined && !voided && (
           <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Cost / profit", "Coût / marge")}</p><p className="text-xl font-semibold tabular">{usd(profit.toFixed(2))}</p><p className="text-xs text-muted-foreground">{t("Cost of goods", "Coût des articles")} {usd(d(sale.cogs).minus(returnedCost).toFixed(2))}{returnedTotal.gt(0) ? ` · ${t("after returns", "après retours")}` : ""}</p></CardContent></Card>
@@ -515,7 +544,7 @@ export default function SaleDetail() {
           <CardHeader className="p-4 pb-2"><CardTitle className="text-base">{t("Payments", "Paiements")}</CardTitle></CardHeader>
           <CardContent className="p-4 pt-0">
             {sale.payments.length === 0 ? (
-              <EmptyState title={t("No payment: fully on credit", "Aucun paiement\u00a0: tout à crédit")} />
+              <EmptyState title={avoir.used.gt(0) ? t("No payment: settled from the customer's credit", "Aucun paiement\u00a0: réglé sur l'avoir") : t("No payment: fully on credit", "Aucun paiement\u00a0: tout à crédit")} />
             ) : (
               <div className="divide-y text-sm">
                 {sale.payments.map((p) => (
@@ -524,12 +553,12 @@ export default function SaleDetail() {
                     <Num className="font-medium">{paymentText(p)}</Num>
                   </div>
                 ))}
-                {credit.gt(0) && <CreditRows credit={credit} creditedReturns={creditedReturns} creditLeft={creditLeft} owes={customerOwes} />}
+                {credit.gt(0) && <CreditRows credit={credit} creditedReturns={creditedReturns} creditLeft={creditLeft} owes={customerOwes} avoir={avoir} />}
               </div>
             )}
-            {sale.payments.length === 0 && creditReduced && (
+            {sale.payments.length === 0 && (creditReduced || avoir.used.gt(0)) && (
               <div className="mt-2 divide-y text-sm">
-                <CreditRows credit={credit} creditedReturns={creditedReturns} creditLeft={creditLeft} owes={customerOwes} />
+                <CreditRows credit={credit} creditedReturns={creditedReturns} creditLeft={creditLeft} owes={customerOwes} avoir={avoir} />
               </div>
             )}
           </CardContent>

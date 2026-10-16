@@ -478,6 +478,9 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
   });
   const shown = problems.map((p) => (p === PENDING ? null : p));
   const totalNative = draft.reduce((s, r) => s.plus(d(r.quantity).times(d(r.unitPrice))), d(0));
+  // In dollars, the sum of each line's value rounded to the cent, as the server works the landed cost and the
+  // offload (11 118,05 $), not the total converted at once (11 118,06 $). Half up, like the server.
+  const totalUsd = draft.reduce((s, r) => s.plus(d(r.quantity).times(d(r.unitPrice)).times(rate).toDecimalPlaces(2)), d(0));
   // Ten motorcycles and two hundred tyres make no total: quantities add up only within one product.
   const oneProduct = draft.length > 0 && draft.every((r) => r.productName === draft[0].productName && unitKey(r.unit) === unitKey(draft[0].unit));
   const totalQty = oneProduct ? qtyWithUnit(t, draft.reduce((s, r) => s.plus(d(r.quantity)), d(0)).toString(), draft[0].unit) : null;
@@ -583,7 +586,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
               <span>{t("Total", "Total")} ({count(t, draft.length, ["line", "lines"], ["ligne", "lignes"])}){totalQty ? ` · ${totalQty}` : ""}</span>
               <span className="text-right">
                 <Num className="font-semibold">{fmtCur(totalNative.toFixed(2), c.currency)}</Num>
-                {foreign && <span className="block text-xs font-normal text-muted-foreground"><Num>{usd(totalNative.times(rate).toFixed(2))}</Num></span>}
+                {foreign && <span className="block text-xs font-normal text-muted-foreground"><Num>{usd(totalUsd.toFixed(2))}</Num></span>}
               </span>
             </div>
           </div>
@@ -655,7 +658,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                   <TableCell colSpan={3} />
                   <TableCell className="text-right">
                     <Num className="font-semibold">{fmtCur(totalNative.toFixed(2), c.currency)}</Num>
-                    {foreign && <div className="text-xs text-muted-foreground"><Num>{usd(totalNative.times(rate).toFixed(2))}</Num></div>}
+                    {foreign && <div className="text-xs text-muted-foreground"><Num>{usd(totalUsd.toFixed(2))}</Num></div>}
                   </TableCell>
                   {editable && <TableCell />}
                 </TableRow>

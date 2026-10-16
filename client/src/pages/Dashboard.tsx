@@ -23,6 +23,8 @@ interface DashboardData {
   money: { id: number; name: string; currency: "USD" | "CDF"; balance: string; nativeBalance: string }[];
   receivables: string;
   payables: string;
+  /** The same two balances contact by contact: what customers owe apart from their avoirs, our debts apart from our advances. */
+  contactBalances?: { customersOwe: string; customerAvoirs: string; weOweSuppliers: string; supplierAdvances: string };
   stockValue: string;
   lowStockCount: number;
   openContainers: { id: number; number: string; status: string; arrivalDate: string | null; purchaseUsd: string }[];
@@ -103,17 +105,35 @@ export default function Dashboard() {
             <StatCard label={t("Running costs this month", "Charges du mois")} value={usd(data.monthPnl.operatingExpenses)} sub={t("Rent, salaries, electricity…", "Loyer, salaires, électricité…")} />
             <StatCard label={t("Net profit this month", "Bénéfice net du mois")} value={usd(data.monthPnl.netProfit)} tone={d(data.monthPnl.netProfit).lt(0) ? "bad" : "good"} />
             <StatCard label={t("Stock value (at cost)", "Valeur du stock (au coût)")} value={usd(data.stockValue)} />
-            {/* Customers who paid ahead are owed by us: their credit is said as such, not as a negative debt. */}
-            <StatCard
-              label={d(data.receivables).lt(0) ? t("Customer credit", "Avoirs clients") : t("Customers owe us", "Créances clients")}
-              value={usd(d(data.receivables).abs().toFixed(2))}
-              sub={<Link href="/contacts" className="underline-offset-2 hover:underline">{t("See customers", "Voir les clients")}</Link>}
-            />
-            <StatCard
-              label={d(data.payables).lt(0) ? t("Advances to suppliers", "Avances aux fournisseurs") : t("We owe suppliers", "Dettes fournisseurs")}
-              value={usd(d(data.payables).abs().toFixed(2))}
-              sub={<Link href="/contacts" className="underline-offset-2 hover:underline">{t("See suppliers", "Voir les fournisseurs")}</Link>}
-            />
+            {/* Customers who paid ahead are owed by us, and an advance to one supplier is not less owed to another:
+                each side is said on its own, never netted. */}
+            {data.contactBalances ? (
+              <>
+                <StatCard
+                  label={t("Customers owe us", "Créances clients")}
+                  value={usd(data.contactBalances.customersOwe)}
+                  sub={<SideSub other={data.contactBalances.customerAvoirs} otherLabel={t("customer credit (we owe)", "avoirs clients (dus)")} link={t("See customers", "Voir les clients")} />}
+                />
+                <StatCard
+                  label={t("We owe suppliers", "Dettes fournisseurs")}
+                  value={usd(data.contactBalances.weOweSuppliers)}
+                  sub={<SideSub other={data.contactBalances.supplierAdvances} otherLabel={t("advances to suppliers", "avances aux fournisseurs")} link={t("See suppliers", "Voir les fournisseurs")} />}
+                />
+              </>
+            ) : (
+              <>
+                <StatCard
+                  label={d(data.receivables).lt(0) ? t("Customer credit", "Avoirs clients") : t("Customers owe us", "Créances clients")}
+                  value={usd(d(data.receivables).abs().toFixed(2))}
+                  sub={<Link href="/contacts" className="underline-offset-2 hover:underline">{t("See customers", "Voir les clients")}</Link>}
+                />
+                <StatCard
+                  label={d(data.payables).lt(0) ? t("Advances to suppliers", "Avances aux fournisseurs") : t("We owe suppliers", "Dettes fournisseurs")}
+                  value={usd(d(data.payables).abs().toFixed(2))}
+                  sub={<Link href="/contacts" className="underline-offset-2 hover:underline">{t("See suppliers", "Voir les fournisseurs")}</Link>}
+                />
+              </>
+            )}
             <StatCard
               label={t("Low stock items", "Articles en stock bas")}
               value={<span className="flex items-center gap-2">{data.lowStockCount}{data.lowStockCount > 0 && <AlertTriangle className="h-5 w-5 text-amber-500" />}</span>}
@@ -122,7 +142,7 @@ export default function Dashboard() {
           </div>
 
           <div className="grid gap-4 lg:grid-cols-2">
-            {data.position && <PositionCard p={data.position} onTheWay={data.openContainers} />}
+            {data.position && <PositionCard p={data.position} onTheWay={data.openContainers} sides={data.contactBalances} />}
             <RatesCard />
             <Card>
               <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
@@ -256,18 +276,41 @@ export default function Dashboard() {
   );
 }
 
-function PositionCard({ p, onTheWay }: { p: NonNullable<DashboardData["position"]>; onTheWay: DashboardData["openContainers"] }) {
+/** "avoirs clients (dus) 15 750,00 $ · Voir les clients": the other side of a contacts card, when there is one. */
+function SideSub({ other, otherLabel, link }: { other: string; otherLabel: string; link: string }) {
+  return (
+    <>
+      {d(other).gt(0) && <span className="block">{otherLabel} {usd(other)}</span>}
+      <Link href="/contacts" className="underline-offset-2 hover:underline">{link}</Link>
+    </>
+  );
+}
+
+function PositionCard({ p, onTheWay, sides }: { p: NonNullable<DashboardData["position"]>; onTheWay: DashboardData["openContainers"]; sides?: DashboardData["contactBalances"] }) {
   const t = useT();
   const purchase = onTheWay.reduce((s, c) => s.plus(d(c.purchaseUsd)), d(0));
+  // Credit customers hold is owed by us, and an advance to suppliers is owed to us: each said as what it is,
+  // contact by contact when known (the net is the same).
+  const contactRows: [string, string, boolean][] = sides
+    ? [
+        [t("Customers owe us", "Clients nous doivent"), sides.customersOwe, false],
+        ...(d(sides.customerAvoirs).gt(0) ? [[t("Customer credit (we owe)", "Avoirs clients (dus)"), sides.customerAvoirs, true] as [string, string, boolean]] : []),
+        ...(d(sides.supplierAdvances).gt(0) ? [[t("Advances to suppliers", "Avances aux fournisseurs"), sides.supplierAdvances, false] as [string, string, boolean]] : []),
+        [t("We owe", "Nous devons"), sides.weOweSuppliers, true],
+      ]
+    : [
+        d(p.receivables).lt(0) ? [t("Customer credit (we owe)", "Avoirs clients (dus)"), d(p.receivables).negated().toFixed(2), true] : [t("Customers owe us", "Clients nous doivent"), p.receivables, false],
+        d(p.payables).lt(0) ? [t("Advances to suppliers", "Avances aux fournisseurs"), d(p.payables).negated().toFixed(2), false] : [t("We owe", "Nous devons"), p.payables, true],
+      ];
   const rows: [string, string, boolean][] = [
     [t("Money", "Trésorerie"), p.money, false],
     [t("Stock (at cost)", "Stock (au coût)"), p.stock, false],
     [t("Container costs paid (on the way)", "Frais payés (conteneurs en route)"), p.transit, false],
-    // Credit customers hold is owed by us, and an advance to suppliers is owed to us: each said as what it is.
-    d(p.receivables).lt(0) ? [t("Customer credit (we owe)", "Avoirs clients (dus)"), d(p.receivables).negated().toFixed(2), true] : [t("Customers owe us", "Clients nous doivent"), p.receivables, false],
-    d(p.payables).lt(0) ? [t("Advances to suppliers", "Avances aux fournisseurs"), d(p.payables).negated().toFixed(2), false] : [t("We owe", "Nous devons"), p.payables, true],
+    ...contactRows,
   ];
-  if (p.otherAssets && !d(p.otherAssets).isZero()) rows.splice(4, 0, [t("Advances and deposits", "Avances et dépôts"), p.otherAssets, false]);
+  // Other advances and deposits go with the assets, before what is owed.
+  const firstOwed = rows.findIndex(([, , owed]) => owed);
+  if (p.otherAssets && !d(p.otherAssets).isZero()) rows.splice(firstOwed < 0 ? rows.length : firstOwed, 0, [t("Advances and deposits", "Avances et dépôts"), p.otherAssets, false]);
   if (p.otherLiabilities && !d(p.otherLiabilities).isZero()) rows.push([t("Other debts (withholdings…)", "Autres dettes (retenues…)"), p.otherLiabilities, true]);
   return (
     <Card>

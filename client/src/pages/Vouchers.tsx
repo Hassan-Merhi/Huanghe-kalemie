@@ -319,6 +319,9 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
   const bal = balances.data?.find((a) => a.id === accountId);
   const current = bal ? d(isCdf ? bal.nativeBalance : bal.balance) : null;
   const after = current ? (kind === "payment" ? current.minus(total) : current.plus(total)) : null;
+  // A payment the account cannot cover is stopped here, like the pending-voucher and supplier dialogs: the
+  // server would refuse it anyway, after the "more than is owed" question.
+  const short = after && after.lt(0) && kind === "payment" ? t(`Not enough money: the balance would be ${money(after.toFixed(2), currency)}`, `Fonds insuffisants\u00a0: le solde serait de ${money(after.toFixed(2), currency)}`) : null;
 
   // An unusual payment, or a contact paid (or paying) more than is owed, is said and confirmed before saving.
   const checks = useVoucherChecks({
@@ -367,6 +370,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
       if (!isAmount(l.amount) || !d(l.amount).gt(0)) return setError(t(`Line ${i + 1}: enter an amount greater than zero.`, `Ligne ${i + 1}\u00a0: saisissez un montant supérieur à zéro.`));
     }
     if (francSlip >= 0) return setError(francSlipText);
+    if (short) return;
     if (unusual.length && !confirmed) return setConfirmUnusual(true);
     m.mutate({ date: day, ...payload(true) });
   }
@@ -383,7 +387,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
                 ? `${t("Balance", "Solde")} ${money(current.toFixed(2), currency)} → ${t("after", "après")} ${money(after!.toFixed(2), currency)}`
                 : undefined
             }
-            error={after && after.lt(0) && kind === "payment" ? t(`Not enough money: the balance would be ${money(after.toFixed(2), currency)}`, `Fonds insuffisants\u00a0: le solde serait de ${money(after.toFixed(2), currency)}`) : null}
+            error={short}
             required
           >
             <MoneyAccountSelect value={accountId} onChange={(id) => setAccountId(id)} />
@@ -485,7 +489,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
         <Button variant="outline" disabled={savingDraft} onClick={() => onSaveDraft({ kind, date: day, memo: memo.trim() || null, payload: payload(false)! })}>
           {t("Save as pending", "Mettre en attente")}
         </Button>
-        <SubmitButton onClick={() => save()} pending={m.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
+        <SubmitButton onClick={() => save()} blocked={short} pending={m.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
       </ActionBar>
       <AlertDialog open={confirmUnusual} onOpenChange={setConfirmUnusual}>
         <AlertDialogContent>

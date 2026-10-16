@@ -451,7 +451,8 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
           {cnyOwed && !typedNumberOk(settleCny) ? (
             // "6.500" yuan not yet clarified: what the payment settles depends on it, so it is not guessed.
             <p className="text-xs text-muted-foreground sm:col-span-2" data-testid="payment-split">{t("Say how many yuan are settled to see what this payment covers.", "Précisez les yuans réglés pour voir ce que couvre ce paiement.")}</p>
-          ) : split.length > 0 ? (
+          ) : split.length > 0 && !yuanMismatch ? (
+            // While the dollars do not match the yuan, what they would settle is not said: the error under the yuan says why.
             <div className="space-y-1 sm:col-span-2">
               <p className="text-xs text-muted-foreground" data-testid="payment-split">{splitText}</p>
               {overText && <p role="alert" className="text-xs font-medium text-amber-800 dark:text-amber-400">{overText}</p>}

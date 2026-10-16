@@ -332,3 +332,25 @@ export function axisLines(s: string, max = 18): string[] {
   const first = lines[0].length > max ? `${lines[0].slice(0, max - 1)}…` : lines[0];
   return lines[0].length > max ? [first] : [first, second.length > max ? `${second.slice(0, max - 1)}…` : second];
 }
+
+/**
+ * A sale's franc rounding, signed as the books keep it (the "Arrondi FC" lines on exchange differences): +
+ * when the shop kept a few francs (the customer handed over a little more, or a refund paid a little less),
+ * − when it got a few francs less. The words say which, so the sign is never guessed: "−16 FC (−0,01 $)",
+ * "en moins pour la boutique". `keptFc`, when the francs are known (at the till), comes first.
+ */
+export function fcRounding(t: (en: string, fr: string) => string, keptUsd: unknown, keptFc?: unknown): { figure: string; words: string; short: string } | null {
+  const u = d(keptUsd);
+  const f = keptFc === undefined || keptFc === null ? null : d(keptFc).toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
+  const francs = f && !f.isZero() ? f : null;
+  if (u.isZero() && !francs) return null;
+  const signed = (x: Decimal, text: string) => `${x.isNegative() ? MINUS : "+"}${text}`;
+  const dollars = u.isZero() ? null : signed(u, usd(u.abs().toFixed(2)));
+  const figure = francs ? `${signed(francs, cdf(francs.abs().toString()))}${dollars ? ` (${dollars})` : ""}` : dollars!;
+  const kept = !(francs ?? u).isNegative();
+  return {
+    figure,
+    words: kept ? t("kept by the shop", "en plus pour la boutique") : t("short for the shop", "en moins pour la boutique"),
+    short: kept ? t("kept", "gardé") : t("short", "manquant"),
+  };
+}

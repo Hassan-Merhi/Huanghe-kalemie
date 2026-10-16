@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
 import { useAuth } from "@/lib/auth";
 import { count, useT } from "@/lib/i18n";
-import { cdf, d, date as fmtDate, monthStart, pct, qty as fmtQty, todayLocal, usd } from "@/lib/format";
+import { cdf, d, date as fmtDate, fcRounding, monthStart, pct, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 interface SaleListRow {
@@ -151,14 +151,16 @@ function creditOf(r: SaleListRow): string {
 /**
  * "+5,00 $ sur le compte client" under a paid amount above the sale's total: a credit sale returned after a
  * payment keeps the money paid, and what is over the total went on the customer's balance. The few cents of
- * franc rounding (change and refunds in 100 FC steps) read "arrondi FC +0,03 $" instead, as on the sale page:
- * they are on no account, and a walk-in customer has none.
+ * franc rounding (change and refunds in 100 FC steps) read "arrondi FC +0,03 $ gardé" instead, with the same
+ * figure and sign as the sale page (+ when the shop kept them): they are on no account, and a walk-in customer
+ * has none.
  */
 function OnAccount({ r }: { r: SaleListRow }) {
   const t = useT();
   if (r.status === "voided") return null;
   const n = netOf(r);
   const rounding = d(r.fcRoundingUsd ?? 0);
+  const roundingText = fcRounding(t, rounding);
   const over = n.paid.minus(n.total).minus(rounding);
   return (
     <>
@@ -167,9 +169,10 @@ function OnAccount({ r }: { r: SaleListRow }) {
           +{usd(over.toFixed(2))} {t("to the customer's account", "sur le compte client")}
         </span>
       )}
-      {!rounding.isZero() && (
-        <span className="block whitespace-nowrap text-xs text-muted-foreground" data-testid="paid-rounding">
-          {t("FC rounding", "arrondi FC")} {rounding.isNegative() ? "−" : "+"}{usd(rounding.abs().toFixed(2))}
+      {roundingText && (
+        <span className="block text-xs text-muted-foreground" data-testid="paid-rounding" title={roundingText.words}>
+          {n.returned.gt(0) ? t("FC rounding (sale + returns)", "arrondi FC (vente + retours)") : t("FC rounding", "arrondi FC")}{" "}
+          <span className="whitespace-nowrap">{roundingText.figure} {roundingText.short}</span>
         </span>
       )}
     </>
@@ -305,7 +308,9 @@ export default function Sales() {
           <StatCard label={t("Sales", "Ventes")} value={live.length} sub={`${fmtQty(totals.qty.toString())} ${t("units sold", "unités vendues")}`} />
           <StatCard label={t("Paid", "Payé")} value={usd(totals.paid.toFixed(2))} sub={totals.refunded.gt(0) ? `${t("refunded", "remboursé")} −${usd(totals.refunded.toFixed(2))}` : undefined} />
           <StatCard label={t("Total", "Total")} value={usd(totals.total.toFixed(2))} sub={totals.returned.gt(0) ? `${t("returns", "retours")} −${usd(totals.returned.toFixed(2))}` : undefined} />
-          <StatCard label={t("On credit", "À crédit")} value={usd(totals.credit.toFixed(2))} tone={totals.credit.gt(0) ? "warn" : "neutral"} />
+          {/* Credit given on these sales (less returns), not what is still owed: payments made later are on each
+              customer's statement, so the card is not amber as if all of it were unpaid. */}
+          <StatCard label={t("Given on credit", "Accordé à crédit")} value={usd(totals.credit.toFixed(2))} sub={totals.credit.gt(0) ? t("later payments: see the customer statements", "paiements ultérieurs : voir les relevés clients") : undefined} />
           {showCost && (
             <StatCard
               label={t("Profit", "Marge")}
