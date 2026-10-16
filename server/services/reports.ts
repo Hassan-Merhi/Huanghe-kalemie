@@ -619,9 +619,23 @@ export async function dashboard(tx: Tx, today: string) {
     .leftJoin(parties, eq(parties.id, sales.customerId))
     .orderBy(desc(sales.id))
     .limit(8);
+  // Each contact's balance on its own: Transit's advance is not netted against what we owe Huanghe, nor
+  // one customer's avoir against another's debt. Lines with no contact count by their own sign.
+  const byParty = await tx
+    .select({ accountId: journalLines.accountId, usd: sql<string>`sum(${journalLines.debit} - ${journalLines.credit})::text` })
+    .from(journalLines)
+    .where(inArray(journalLines.accountId, [receivablesId, payablesId]))
+    .groupBy(journalLines.accountId, journalLines.partyId);
+  const side = (accountId: number, sign: 1 | -1) => sum(byParty.filter((r) => r.accountId === accountId && dec(r.usd).times(sign).gt(0)).map((r) => dec(r.usd).abs())).toFixed(2);
   return {
     today,
     month,
+    contactBalances: {
+      customersOwe: side(receivablesId, 1),
+      customerAvoirs: side(receivablesId, -1),
+      weOweSuppliers: side(payablesId, -1),
+      supplierAdvances: side(payablesId, 1),
+    },
     todaySales: { count: todaySales.count, total: dec(todaySales.total).minus(returnsToday).toFixed(2), returns: returnsToday.toFixed(2) },
     monthPnl,
     monthMargin,

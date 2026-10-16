@@ -17,7 +17,7 @@ import { LocationSelect, MoneyAccountSelect, PartySelect, RateInput, VariantSear
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
-import { cdf, curLabel, d, date as fmtDate, frenchPunctuation, MINUS, money, qty as fmtQty, todayLocal, typedNumberOk, unclearQty, usd, variantText } from "@/lib/format";
+import { cdf, curLabel, d, date as fmtDate, fcRounding, frenchPunctuation, MINUS, money, qty as fmtQty, todayLocal, typedNumberOk, unclearQty, usd, variantText } from "@/lib/format";
 import { unitLabel, wholeUnit } from "@/lib/units";
 import type { Account, MotorcycleUnit, Party, Settings, VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -93,6 +93,12 @@ export interface SaleFull {
   lines: SaleLineFull[];
   payments: SalePaymentRow[];
   returns: SaleReturnRow[];
+  /** The franc rounding of the till alone and with the returns' refunds, + when the shop kept a few cents. */
+  saleFcRoundingUsd?: string;
+  fcRoundingUsd?: string;
+  /** The part of the credit the customer's avoir covered when the sale was made, and the avoir left then. */
+  avoirUsedUsd?: string | null;
+  avoirLeftUsd?: string | null;
 }
 
 const ROUND = Decimal.ROUND_HALF_UP;
@@ -120,11 +126,13 @@ function ReceiptRow({ left, right, bold }: { left: React.ReactNode; right: React
   );
 }
 
-/** The franc rounding of a sale, the same way on the till and on the receipt: "−28 FC (−0,01 $)". */
-function francRoundingText(francs: Decimal, dollars: Decimal | null): string {
-  const sign = (x: Decimal) => (x.isNegative() ? MINUS : "+");
-  const fc = `${sign(francs)}${cdf(francs.abs().toString())}`;
-  return dollars && !dollars.isZero() ? `${fc} (${sign(dollars)}${usd(dollars.abs().toFixed(2))})` : fc;
+/**
+ * "Réglé sur l'avoir 11,00 $ · avoir restant 15 739,00 $": a credit sale to a customer who had paid ahead owes
+ * nothing new; only what the avoir did not cover is still to pay.
+ */
+export function avoirSplit(sale: Pick<SaleFull, "creditUsd" | "avoirUsedUsd" | "avoirLeftUsd">) {
+  const used = d(sale.avoirUsedUsd ?? 0);
+  return { used, left: d(sale.avoirLeftUsd ?? 0), toPay: Decimal.max(d(sale.creditUsd).minus(used), 0) };
 }
 
 /** The receipt body. Plain black on white so it prints well on thermal paper. */
@@ -143,18 +151,23 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
   const gross = sale.lines.reduce((s, l) => s.plus(c2(d(l.qty).times(l.unitPrice))), d(0));
   const discount = gross.minus(sale.total);
   // Franc change goes in 100 FC steps, so the payment lines can miss what the sale counts as paid by a few
-  // cents (35,61 − 8,62 for 27,00 $): the receipt shows that rounding as its own line.
+  // cents (35,61 − 8,62 for 27,00 $): the receipt shows that rounding as its own line, the till's own (the
+  // returns come later, on their slips), signed as the books and the Sales list keep it.
   const paymentsUsd = sale.payments.reduce((s, p) => s.plus(d(p.amountUsd)), d(0));
-  const roundingGap = d(sale.paidUsd).minus(paymentsUsd);
-  const francRounding = !roundingGap.isZero() && roundingGap.abs().lt(1) && sale.payments.some((p) => p.currency === "CDF") ? roundingGap : null;
-  // The same rounding in francs, as the till showed it: what was counted as paid less what was handed over,
-  // each franc payment at its own rate (28 FC, where 0,01 $ alone would not say how many francs).
-  const francFc = francRounding && cdfRate && d(cdfRate).gt(0)
-    ? d(sale.paidUsd)
-        .minus(sale.payments.reduce((s, p) => s.plus(p.currency === "CDF" && d(p.rate ?? cdfRate).gt(0) ? d(p.amountNative).dividedBy(d(p.rate ?? cdfRate)) : d(p.amountUsd)), d(0)))
+  const keptUsd = sale.saleFcRoundingUsd !== undefined ? d(sale.saleFcRoundingUsd) : paymentsUsd.minus(sale.paidUsd);
+  const paidInFrancs = sale.payments.some((p) => p.currency === "CDF");
+  // The same rounding in francs, as the till showed it: what was handed over less what was counted as paid,
+  // each franc payment at its own rate (16 FC, where 0,01 $ alone would not say how many francs). Shown even
+  // when the dollars round to 0,00 $ (7 FC over), as the till did; never on a credit sale, which has none.
+  const keptFc = paidInFrancs && !d(sale.creditUsd).gt(0) && cdfRate && d(cdfRate).gt(0)
+    ? sale.payments
+        .reduce((s, p) => s.plus(p.currency === "CDF" && d(p.rate ?? cdfRate).gt(0) ? d(p.amountNative).dividedBy(d(p.rate ?? cdfRate)) : d(p.amountUsd)), d(0))
+        .minus(sale.paidUsd)
         .times(d(cdfRate))
         .toDecimalPlaces(0, ROUND)
     : null;
+  const rounding = paidInFrancs ? fcRounding(t, keptUsd, keptFc) : null;
+  const avoir = avoirSplit(sale);
   // The shop's clock (Kalemie), whatever time zone the phone or computer is set to.
   const time = sale.createdAt ? new Date(sale.createdAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", timeZone: "Africa/Lubumbashi" }) : "";
   const dash = <div className="my-1.5 border-t border-dashed border-black" />;
@@ -199,14 +212,21 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
           right={p.currency === "CDF" ? `${cdf(p.amountNative)} (${usd(p.amountUsd)})` : usd(p.amountUsd)}
         />
       ))}
-      {francRounding && (
+      {rounding && (
         <ReceiptRow
-          left={t("FC rounding", "Arrondi FC")}
-          right={francFc && !francFc.isZero() ? francRoundingText(francFc, francRounding) : `${francRounding.isNegative() ? MINUS : "+"}${usd(francRounding.abs().toFixed(2))}`}
+          left={<>{t("FC rounding", "Arrondi FC")} <span className="whitespace-nowrap">({rounding.words})</span></>}
+          right={rounding.figure}
         />
       )}
       {sale.payments.length > 0 && <ReceiptRow left={t("Paid", "Payé")} right={usd(sale.paidUsd)} />}
-      {d(sale.creditUsd).gt(0) && <ReceiptRow bold left={t("On credit (to pay)", "À crédit (reste à payer)")} right={usd(sale.creditUsd)} />}
+      {/* Credit the customer's avoir covered is not owed: only the rest is "to pay". */}
+      {avoir.used.gt(0) && (
+        <>
+          <ReceiptRow left={t("Settled from the customer's credit", "Réglé sur l'avoir")} right={usd(avoir.used.toFixed(2))} />
+          <ReceiptRow left={t("Credit left", "Avoir restant")} right={usd(avoir.left.toFixed(2))} />
+        </>
+      )}
+      {avoir.toPay.gt(0) && <ReceiptRow bold left={t("On credit (to pay)", "À crédit (reste à payer)")} right={usd(avoir.toPay.toFixed(2))} />}
       {cdfRate && d(cdfRate).gt(0) && (
         <p className="mt-1">{t("Rate", "Taux")}{"\u00a0"}: 1 $ = {fmtQty(cdfRate)} FC</p>
       )}
@@ -465,6 +485,11 @@ export default function POS() {
    * 16 FC, like 80 000 FC less 4 200 FC), so the line shows the same way for both.
    */
   const francRounding = rounded && tolerance.gt(0) && rateNum.gt(0) ? francGap(receivedExact.minus(changeExact)).toDecimalPlaces(0, ROUND) : null;
+  /** The same rounding signed as the receipt and the books keep it: + when the shop got a few francs more. */
+  const tillRounding = francRounding ? fcRounding(t, remaining.negated(), francRounding.negated()) : null;
+  /** What the customer's avoir (paid ahead) covers of the credit: nothing new is owed up to it. */
+  const avoirAvailable = customer && d(customer.balance).lt(0) ? d(customer.balance).negated() : null;
+  const avoirCovers = avoirAvailable && credit.gt(0) ? Decimal.min(credit, avoirAvailable) : null;
 
   /** A short franc payment: what is still to pay in francs too, in the 100 FC notes the customer can hand over. */
   const remainingFc = francs && !francRounding && credit.gt(0) && paid.gt(0) && rateNum.gt(0)
@@ -795,6 +820,10 @@ export default function POS() {
                 {customer && d(customer.balance).gt(0) && (
                   <p className="text-xs text-amber-800 dark:text-amber-400">{t("Already owes", "Doit déjà")} {usd(customer.balance)}</p>
                 )}
+                {/* Paid ahead: a sale on credit comes off this first, so nothing new is owed up to it. */}
+                {customer && d(customer.balance).lt(0) && (
+                  <p className="text-xs text-emerald-800 dark:text-emerald-400" data-testid="customer-avoir">{t("Credit available", "Avoir disponible")} {usd(d(customer.balance).negated().toFixed(2))}</p>
+                )}
               </Field>
               <Field label={t("Sale discount ($)", "Remise sur la vente ($)")}>
                 <Input inputMode="decimal" usd placeholder="0" value={discount} onChange={(e) => setDiscount(e.target.value)} />
@@ -928,10 +957,10 @@ export default function POS() {
                 {changeUsd.gt(0) && <div className="flex justify-between"><span>{t("Change given back", "Monnaie rendue")}</span><Num>−{usd(changeUsd.toFixed(2))}</Num></div>}
                 {/* Within the franc rounding the sale is paid in full, as the receipt says; the rounding line below explains the cents. */}
                 <div className="flex justify-between"><span>{t("Paid ($)", "Payé ($)")}</span><Num className="font-medium">{usd((francRounding ? total : paid).toFixed(2))}</Num></div>
-                {francRounding && !francRounding.isZero() ? (
-                  <div className="flex justify-between text-muted-foreground" data-testid="franc-rounding">
-                    <span>{t("FC rounding", "Arrondi FC")}</span>
-                    <Num>{francRoundingText(francRounding, rateNum.gt(0) ? c2(francRounding.dividedBy(rateNum)) : null)}</Num>
+                {tillRounding ? (
+                  <div className="flex justify-between gap-2 text-muted-foreground" data-testid="franc-rounding">
+                    <span>{t("FC rounding", "Arrondi FC")} <span className="whitespace-nowrap">({tillRounding.words})</span></span>
+                    <Num className="shrink-0">{tillRounding.figure}</Num>
                   </div>
                 ) : (
                   <div className="flex justify-between">
@@ -941,6 +970,11 @@ export default function POS() {
                       {remainingFc && <Num className="text-muted-foreground"> ≈ {cdf(remainingFc.toString())}</Num>}
                     </span>
                   </div>
+                )}
+                {avoirCovers && customerId && (
+                  <p className="text-right text-xs text-emerald-800 dark:text-emerald-400" data-testid="avoir-covers">
+                    {t("Settled from the customer's credit", "Réglé sur l'avoir")} {usd(avoirCovers.toFixed(2))} · {t("credit left", "avoir restant")} {usd(avoirAvailable!.minus(avoirCovers).toFixed(2))}
+                  </p>
                 )}
               </div>
 
