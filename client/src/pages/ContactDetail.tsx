@@ -7,6 +7,16 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton, unclearAmount } from "@/components/common";
 import { MoneyAccountSelect, PARTY_LABELS, RateInput, useRate, useRateField } from "@/components/pickers";
@@ -203,7 +213,7 @@ export default function ContactDetail() {
                           r.number
                         )}
                       </TableCell>
-                      <TableCell className="whitespace-nowrap">{journalTypeLabel(r.type, t)}</TableCell>
+                      <TableCell className="min-w-[7rem]">{journalTypeLabel(r.type, t)}</TableCell>
                       <TableCell className="min-w-[160px]">
                         {sys.memo(r.memo)}
                         {r.nativeAmount && r.currency !== "USD" && !d(r.nativeAmount).isZero() && (
@@ -226,7 +236,8 @@ export default function ContactDetail() {
                           )}
                         </TableCell>
                       ))}
-                      <TableCell className="text-right whitespace-nowrap"><BalanceWords balance={r.balance} /></TableCell>
+                      {/* "nous devons" over the amount when it is long, so the column stays in view at 1280 px. */}
+                      <TableCell className="min-w-[8.5rem] text-right"><BalanceWords balance={r.balance} /></TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -311,6 +322,27 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
       : advance
         ? t(`Nothing is owed: ${advanceText}.`, `Rien n'est dû\u00a0: ${advanceText}.`)
         : "";
+  // More than is owed becomes customer credit (or an advance to the supplier): "47 770 000" typed for a
+  // 1 772 $ debt is said in words and confirmed before saving. Under 100 FC left over is the notes' rounding.
+  const owedSettled = settled.reduce((s, p) => s.plus(p.usd), d(0));
+  const over = advance && (isCdf ? d(advance.usd).times(d(rate)).gte(100) : d(advance.usd).gt(0)) ? advance : null;
+  const paidText = isCdf ? `${cdf(d(amount).toFixed(0))} (${usd(d(usdEquivalent ?? 0).toFixed(2))})` : usd(d(amount).toFixed(2));
+  const overText = !over
+    ? null
+    : isCustomer
+      ? owedSettled.gt(0)
+        ? t(
+            `The customer pays ${paidText}; they owe ${usd(owedSettled.toFixed(2))}: ${usd(over.usd)} will become credit for them`,
+            `Le client paie ${paidText}\u00a0; il doit ${usd(owedSettled.toFixed(2))}\u00a0: ${usd(over.usd)} deviendront un avoir`,
+          )
+        : t(`The customer pays ${paidText}; they owe nothing: all of it will become credit for them`, `Le client paie ${paidText}\u00a0; il ne doit rien\u00a0: tout deviendra un avoir`)
+      : owedSettled.gt(0)
+        ? t(
+            `We pay ${paidText}; we owe ${usd(owedSettled.toFixed(2))}: ${usd(over.usd)} will become an advance`,
+            `Nous payons ${paidText}\u00a0; nous devons ${usd(owedSettled.toFixed(2))}\u00a0: ${usd(over.usd)} deviendront une avance`,
+          )
+        : t(`We pay ${paidText}; we owe nothing: all of it will become an advance`, `Nous payons ${paidText}\u00a0; nous ne devons rien\u00a0: tout deviendra une avance`);
+  const [confirmOver, setConfirmOver] = useState(false);
   /** The dollar amount looks like the yuan figure (50 550 typed for 50 550 ¥): far more dollars than the yuan are worth. */
   const looksLikeYuan = !!cnyOwedUsd && d(amount).gt(cnyOwedUsd.times(2)) && (!impliedGap || impliedGap.gt(20));
   const blocked = !account
@@ -386,7 +418,10 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
             // "6.500" yuan not yet clarified: what the payment settles depends on it, so it is not guessed.
             <p className="text-xs text-muted-foreground sm:col-span-2" data-testid="payment-split">{t("Say how many yuan are settled to see what this payment covers.", "Précisez les yuans réglés pour voir ce que couvre ce paiement.")}</p>
           ) : split.length > 0 ? (
-            <p className="text-xs text-muted-foreground sm:col-span-2" data-testid="payment-split">{splitText}</p>
+            <div className="space-y-1 sm:col-span-2">
+              <p className="text-xs text-muted-foreground" data-testid="payment-split">{splitText}</p>
+              {overText && <p role="alert" className="text-xs font-medium text-amber-800 dark:text-amber-400">{overText}</p>}
+            </div>
           ) : fcOwed && !(cnyOwed && d(settleCny).gt(0)) ? (
             <p className="text-xs text-muted-foreground sm:col-span-2">
               {isCdf
@@ -438,9 +473,37 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <SubmitButton onClick={save} blocked={blocked} pending={mutation.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
+          <SubmitButton onClick={() => (overText ? setConfirmOver(true) : save())} blocked={blocked} pending={mutation.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
         </DialogFooter>
       </DialogContent>
+      <AlertDialog open={confirmOver} onOpenChange={setConfirmOver}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{isCustomer ? t("Receive more than is owed?", "Recevoir plus que ce qui est dû\u00a0?") : t("Pay more than is owed?", "Payer plus que ce qui est dû\u00a0?")}</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>{overText}.</p>
+                <p>
+                  {isCustomer
+                    ? t("The credit is deducted from their next purchases. Check for an extra zero before saving.", "L'avoir sera déduit de ses prochains achats. Vérifiez qu'il n'y a pas un zéro de trop avant d'enregistrer.")
+                    : t("The advance is deducted from the next invoices. Check for an extra zero before saving.", "L'avance sera déduite des prochaines factures. Vérifiez qu'il n'y a pas un zéro de trop avant d'enregistrer.")}
+                </p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmOver(false);
+                save();
+              }}
+            >
+              {t(`Save ${paidText}`, `Enregistrer ${paidText}`)}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

@@ -326,7 +326,8 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-end gap-3">
         <Field label={t("Month", "Mois")}>
-          <MonthSelect value={month} onChange={setMonth} className="w-52" />
+          {/* Salaries are earned month by month: next month's payroll is not offered before it starts. */}
+          <MonthSelect value={month} onChange={setMonth} className="w-52" max={todayLocal().slice(0, 7)} />
         </Field>
         {run && canEdit && (
           <div className="flex flex-wrap gap-2">
@@ -441,16 +442,16 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                         {g.e.position && <span className="block text-xs text-muted-foreground">{g.e.position}</span>}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Input className="ml-auto w-24 text-right" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Salary of ${g.e.name}`, `Salaire ${de(g.e.name)}`)} aria-invalid={!!centsError(g.salary) || undefined} value={g.salary} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { salary: ev.target.value })} />
+                        <Input className="w-full text-right sm:ml-auto sm:w-28" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Salary of ${g.e.name}`, `Salaire ${de(g.e.name)}`)} aria-invalid={!!centsError(g.salary) || undefined} value={g.salary} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { salary: ev.target.value })} />
                       </TableCell>
                       <TableCell className="text-right">
-                        <Input className="ml-auto w-20 text-right" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Bonus for ${g.e.name}`, `Prime ${de(g.e.name)}`)} placeholder="—" aria-invalid={!!centsError(g.bonus) || undefined} value={g.bonus} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { bonus: ev.target.value })} />
+                        <Input className="w-full text-right sm:ml-auto sm:w-24" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Bonus for ${g.e.name}`, `Prime ${de(g.e.name)}`)} placeholder="—" aria-invalid={!!centsError(g.bonus) || undefined} value={g.bonus} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { bonus: ev.target.value })} />
                       </TableCell>
                       <TableCell className="text-right">
-                        <Input className="ml-auto w-20 text-right" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Withheld for ${g.e.name}`, `Retenue ${de(g.e.name)}`)} placeholder="—" aria-invalid={!!centsError(g.withheld) || undefined} value={g.withheld} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { withheld: ev.target.value })} />
+                        <Input className="w-full text-right sm:ml-auto sm:w-24" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Withheld for ${g.e.name}`, `Retenue ${de(g.e.name)}`)} placeholder="—" aria-invalid={!!centsError(g.withheld) || undefined} value={g.withheld} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { withheld: ev.target.value })} />
                       </TableCell>
                       <TableCell className="text-right">
-                        <Input className="ml-auto w-20 text-right" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Penalty for ${g.e.name}`, `Pénalité ${de(g.e.name)}`)} placeholder="—" aria-invalid={!!centsError(g.penalty) || undefined} value={g.penalty} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { penalty: ev.target.value })} />
+                        <Input className="w-full text-right sm:ml-auto sm:w-24" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Penalty for ${g.e.name}`, `Pénalité ${de(g.e.name)}`)} placeholder="—" aria-invalid={!!centsError(g.penalty) || undefined} value={g.penalty} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { penalty: ev.target.value })} />
                       </TableCell>
                       <TableCell className="text-right">
                         <Num className={cn("font-medium", g.net.isNegative() && "text-destructive")}>{fmt(g.net.toFixed(2))}</Num>
@@ -468,7 +469,8 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                 </TableFooter>
               </Table>
             </div>
-            {currency === "CDF" && notRound && (
+            {/* Centimes are refused below; "not a multiple of 100 FC" would only repeat it. */}
+            {currency === "CDF" && notRound && !withCents && (
               <p className="text-sm text-amber-800 dark:text-amber-400">
                 {t(
                   `${notRound.e.name}: ${fmt(notRound.net.toString())} is not a multiple of 100 FC, which is hard to pay in notes`,
@@ -514,8 +516,8 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
       {cancelledRuns.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-base">{t("Cancelled runs", "Passages annulés")}</CardTitle>
-            <p className="text-sm text-muted-foreground">{t("Kept for the record. Their entries were reversed.", "Gardés pour l'historique. Leurs écritures ont été annulées.")}</p>
+            <CardTitle className="text-base">{t("Cancelled runs", "Paies annulées")}</CardTitle>
+            <p className="text-sm text-muted-foreground">{t("Kept for the record. Their entries were reversed.", "Gardées pour l'historique. Leurs écritures ont été annulées.")}</p>
           </CardHeader>
           <CardContent className="space-y-4 p-0 pb-4">
             {cancelledRuns.map((r) => (
@@ -763,9 +765,9 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
                         <p className="truncate font-medium">{e.name}</p>
                         <p className="text-xs">{owedText(e) ?? <EmployeeBalance balance={e.balance} />}</p>
                       </div>
-                      <div className="text-right">
+                      <div className="w-full text-right sm:w-auto">
                         <div className="flex items-center justify-end gap-1">
-                          <Input className="w-28 text-right" inputMode="decimal" usd={!isCdf} thousands={isCdf} aria-label={t(`Amount paid to ${e.name}`, `Montant payé à ${e.name}`)} aria-invalid={(isCdf && !!francDecimalsError(t, "CDF", amountOf(e))) || undefined} value={amountOf(e)} onChange={(ev) => setAmounts((p) => ({ ...p, [keyOf(e)]: ev.target.value }))} />
+                          <Input className="w-full text-right sm:w-28" inputMode="decimal" usd={!isCdf} thousands={isCdf} aria-label={t(`Amount paid to ${e.name}`, `Montant payé à ${e.name}`)} aria-invalid={(isCdf && !!francDecimalsError(t, "CDF", amountOf(e))) || undefined} value={amountOf(e)} onChange={(ev) => setAmounts((p) => ({ ...p, [keyOf(e)]: ev.target.value }))} />
                           <span className="w-6 text-left text-xs text-muted-foreground">{isCdf ? "FC" : "$"}</span>
                         </div>
                         {overText(e) && <p role="alert" className="mt-1 max-w-[18rem] text-right text-xs font-medium text-amber-800 dark:text-amber-400">{overText(e)}</p>}

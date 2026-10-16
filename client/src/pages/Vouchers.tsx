@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useQueries, useQuery } from "@tanstack/react-query";
 import { Link, useLocation, useSearch } from "wouter";
 import { CheckCircle2, FileClock, Info, Plus, Printer, Trash2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -7,6 +7,16 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -19,6 +29,7 @@ import { curLabel, d, money, number, pct, qty as fmtQty, todayLocal, usd } from 
 import { useT } from "@/lib/i18n";
 import type { Account, Party, Settings } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import Decimal from "decimal.js";
 import { AdjustForm, type AdjustmentDraft, type AdjustmentPayload } from "@/pages/Stock";
 
 type T = (en: string, fr: string) => string;
@@ -308,6 +319,38 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
   const current = bal ? d(isCdf ? bal.nativeBalance : bal.balance) : null;
   const after = current ? (kind === "payment" ? current.minus(total) : current.plus(total)) : null;
 
+  // An unusual payment is said and confirmed before saving: far above what that account was paid in the past
+  // year ("Loyer" 14 000 $ when it was 1 400 $), or most of the drawer at once.
+  const yearAgo = `${Number(day.slice(0, 4)) - 1}${day.slice(4)}`.replace(/-02-29$/, "-02-28");
+  const lineAccounts = kind === "payment" ? Array.from(new Set(lines.filter((l) => l.mode === "account" && l.accountId && isAmount(l.amount)).map((l) => l.accountId!))) : [];
+  const history = useQueries({
+    queries: lineAccounts.map((id) => ({ queryKey: [`/api/accounts/${id}/ledger`, { from: yearAgo, to: day }], enabled: canSave && /^\d{4}-\d\d-\d\d$/.test(day), staleTime: 60_000 })),
+  });
+  const largestPaid = new Map<number, Decimal>();
+  lineAccounts.forEach((id, i) => {
+    const rows = (history[i]?.data as { rows?: { debit: string }[] } | undefined)?.rows ?? [];
+    const paid = rows.map((r) => d(r.debit)).filter((x) => x.gt(0));
+    // A first payment to an account has nothing to compare with.
+    if (paid.length) largestPaid.set(id, Decimal.max(...paid));
+  });
+  const lineUsd = (l: VLine) => (isCdf ? (rate.gt(0) ? d(l.amount).dividedBy(rate) : null) : d(l.amount));
+  const unusual: string[] = [];
+  if (kind === "payment") {
+    for (const l of lines) {
+      const most = l.accountId ? largestPaid.get(l.accountId) : undefined;
+      const u = l.mode === "account" && isAmount(l.amount) ? lineUsd(l) : null;
+      // Three times the most ever paid there: a rent that went up is not questioned, a zero too many is.
+      if (!most || !u || !u.gt(most.times(3))) continue;
+      const name = balances.data?.find((a) => a.id === l.accountId)?.name ?? "";
+      const typed = money(d(l.amount).toFixed(2), currency);
+      unusual.push(t(`${name}: ${typed}, far more than usual (at most ${usd(most.toFixed(2))} in the past 12 months)`, `${name}\u00a0: ${typed}, bien plus que d'habitude (au plus ${usd(most.toFixed(2))} sur les 12 derniers mois)`));
+    }
+    if (current && current.gt(0) && total.gt(current.times(0.5)) && total.lte(current) && account) {
+      unusual.push(t(`This payment takes ${pct(total.dividedBy(current).times(100).toNumber(), 0)} of ${account.name} (${money(current.toFixed(2), currency)})`, `Ce paiement prend ${pct(total.dividedBy(current).times(100).toNumber(), 0)} de ${account.name} (${money(current.toFixed(2), currency)})`));
+    }
+  }
+  const [confirmUnusual, setConfirmUnusual] = useState(false);
+
   const m = useApiMutation<Record<string, unknown>, { id: number; total: string }>("POST", `/api/vouchers/${kind}`, {
     success: kind === "payment" ? t("Payment recorded", "Paiement enregistré") : t("Receipt recorded", "Recette enregistrée"),
     onSuccess: (r) => {
@@ -330,7 +373,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
     return { accountId, ...(isCdf ? { rate: rateField.rate.trim() || null } : {}), memo: memo.trim() || null, lines: out };
   }
 
-  function save() {
+  function save(confirmed = false) {
     setError(null);
     if (!account) return setError(t("Choose the money account.", "Choisissez le compte de trésorerie."));
     if (isCdf && !rate.gt(0)) return setError(t("Enter the rate (CDF per 1 USD).", "Saisissez le taux (FC pour 1 $)."));
@@ -343,6 +386,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
       if (!isAmount(l.amount) || !d(l.amount).gt(0)) return setError(t(`Line ${i + 1}: enter an amount greater than zero.`, `Ligne ${i + 1}\u00a0: saisissez un montant supérieur à zéro.`));
     }
     if (francSlip >= 0) return setError(francSlipText);
+    if (unusual.length && !confirmed) return setConfirmUnusual(true);
     m.mutate({ date: day, ...payload(true) });
   }
 
@@ -442,13 +486,42 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
         </CardContent>
       </Card>
 
+      {unusual.length > 0 && (
+        <div role="alert" className="space-y-0.5 text-sm font-medium text-amber-800 dark:text-amber-400">
+          {unusual.map((u) => <p key={u}>{u}.</p>)}
+        </div>
+      )}
       {error && <ErrorText error={error} />}
       <ActionBar canSave={canSave}>
         <Button variant="outline" disabled={savingDraft} onClick={() => onSaveDraft({ kind, date: day, memo: memo.trim() || null, payload: payload(false)! })}>
           {t("Save as pending", "Mettre en attente")}
         </Button>
-        <SubmitButton onClick={save} pending={m.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
+        <SubmitButton onClick={() => save()} pending={m.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
       </ActionBar>
+      <AlertDialog open={confirmUnusual} onOpenChange={setConfirmUnusual}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("An unusual amount?", "Un montant inhabituel\u00a0?")}</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                {unusual.map((u) => <p key={u}>{u}.</p>)}
+                <p>{t("Check for an extra zero before saving.", "Vérifiez qu'il n'y a pas un zéro de trop avant d'enregistrer.")}</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmUnusual(false);
+                save(true);
+              }}
+            >
+              {t(`Pay ${money(total.toFixed(2), currency)}`, `Payer ${money(total.toFixed(2), currency)}`)}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }

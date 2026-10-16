@@ -212,8 +212,9 @@ function ReturnSlip({ sale, ret, accName }: { sale: SaleFull; ret: SaleFull["ret
       })}
       {dash}
       {/* A franc refund: the goods' value, then the francs handed back (rounded down to 100 FC) and their worth. */}
-      {ret.refundCurrency === "CDF" ? (
-        <div className="flex justify-between gap-2"><span>{t("Value of the items", "Valeur des articles")}</span><span className="tabular">{usd(ret.total)}</span></div>
+      {/* Nothing handed back (a credit sale): the value comes off the debt, so the slip does not say "refunded". */}
+      {ret.refundCurrency === "CDF" || !ret.refundAccountId ? (
+        <div className={cn("flex justify-between gap-2", !ret.refundAccountId && "font-bold")}><span>{t("Value of the items", "Valeur des articles")}</span><span className="tabular">{usd(ret.total)}</span></div>
       ) : (
         <div className="flex justify-between gap-2 font-bold"><span>{t("REFUND", "REMBOURSÉ")}</span><span className="tabular">{usd(ret.total)}</span></div>
       )}

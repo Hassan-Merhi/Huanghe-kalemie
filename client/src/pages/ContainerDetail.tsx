@@ -10,6 +10,16 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -541,7 +551,8 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                         <Input className="text-right" inputMode={wholeUnit(r.unit) ? "numeric" : "decimal"} whole={wholeUnit(r.unit)} measured={!wholeUnit(r.unit)} noAlert aria-label={t(`Quantity of ${itemLabel(r)}`, `Quantité ${de(itemLabel(r))}`)} value={r.quantity} onChange={(e) => update(r.key, { quantity: e.target.value })} />
                       </Field>
                       <Field label={t(`Price each (${curLabel(c.currency)})`, `Prix/unité (${curLabel(c.currency)})`)}>
-                        <Input className="text-right" inputMode="decimal" currency={c.currency} aria-label={t(`Price each of ${itemLabel(r)}`, `Prix unitaire ${de(itemLabel(r))}`)} value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
+                        {/* The question about "1.200" is said above the card's fields (as for the quantity): a box under the price would cover the volume. */}
+                        <Input className="text-right" inputMode="decimal" currency={c.currency} noAlert aria-label={t(`Price each of ${itemLabel(r)}`, `Prix unitaire ${de(itemLabel(r))}`)} value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
                       </Field>
                       <Field label={t("Total weight (kg)", "Poids total (kg)")}>
                         <Input className="text-right" inputMode="decimal" placeholder={t("total kg", "kg total")} aria-label={t(`Total weight of ${itemLabel(r)} (kg)`, `Poids total ${de(itemLabel(r))} (kg)`)} value={r.weightKg} onChange={(e) => update(r.key, { weightKg: e.target.value })} />
@@ -748,7 +759,7 @@ function ExpensesSection({ c, editable }: { c: ContainerFull; editable: boolean 
                     </TableCell>
                     {editable && (
                       <TableCell>
-                        <Button variant="ghost" size="icon" onClick={() => setDeleting(e)} title={t("Delete", "Supprimer")}>
+                        <Button variant="ghost" size="icon" onClick={() => setDeleting(e)} title={t("Delete", "Supprimer")} aria-label={t(`Delete ${L.type(e.type).toLowerCase()} ${money(e.amountNative, e.currency)}`, `Supprimer ${L.type(e.type).toLowerCase()} ${money(e.amountNative, e.currency)}`)}>
                           <Trash2 className="h-4 w-4" />
                         </Button>
                       </TableCell>
@@ -845,7 +856,7 @@ function DeleteExpenseDialog({ c, e, onClose }: { c: ContainerFull; e: Container
         <DialogHeader>
           <DialogTitle>{t("Delete this cost?", "Supprimer ce frais\u00a0?")}</DialogTitle>
           <DialogDescription>
-            {L.type(e.type)} · {money(e.amountNative, e.currency)} ({usd(e.amountUsd)})
+            {L.type(e.type)} · {money(e.amountNative, e.currency)}{e.currency !== "USD" && ` (${usd(e.amountUsd)})`}
           </DialogDescription>
         </DialogHeader>
         <p className="text-sm">
@@ -912,6 +923,23 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
             : method === "line" && !targetLineId
               ? t("Choose the line", "Choisissez la ligne")
               : null);
+
+  // A cost above the purchase value itself is most often francs typed with the currency left on dollars
+  // (3 370 000 "$" of duty on an 11 243 $ container): said under the amount and confirmed before saving.
+  const fob = c.preview ? d(c.preview.fobTotalUsd) : null;
+  const tooBig = fob && fob.gt(0) && usdValue && usdValue.gt(fob) ? usdValue.dividedBy(fob).times(100) : null;
+  const bigText = tooBig
+    ? isCdf
+      ? t(
+          `${usd(usdValue!.toFixed(2))} is ${pct(tooBig.toNumber(), 0)} of the purchase value (${usd(fob!.toFixed(2))}): check the amount and the rate`,
+          `${usd(usdValue!.toFixed(2))}, c'est ${pct(tooBig.toNumber(), 0)} de la valeur d'achat (${usd(fob!.toFixed(2))})\u00a0: vérifiez le montant et le taux`,
+        )
+      : t(
+          `${usd(usdValue!.toFixed(2))} is ${pct(tooBig.toNumber(), 0)} of the purchase value (${usd(fob!.toFixed(2))}): is it an amount in francs?`,
+          `${usd(usdValue!.toFixed(2))}, c'est ${pct(tooBig.toNumber(), 0)} de la valeur d'achat (${usd(fob!.toFixed(2))})\u00a0: est-ce un montant en francs\u00a0?`,
+        )
+    : null;
+  const [confirmBig, setConfirmBig] = useState(false);
 
   function save() {
     create.mutate({
@@ -984,7 +1012,12 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
               </Field>
             </>
           )}
-          <Field label={t(`Amount (${curLabel(currency)})`, `Montant (${curLabel(currency)})`)} error={francDecimalsError(t, currency, amount)} required>
+          <Field
+            label={t(`Amount (${curLabel(currency)})`, `Montant (${curLabel(currency)})`)}
+            error={francDecimalsError(t, currency, amount)}
+            hint={bigText && <span role="alert" className="font-medium text-amber-800 dark:text-amber-400">{bigText}</span>}
+            required
+          >
             <Input inputMode="decimal" usd={currency === "USD"} thousands={isCdf} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
           </Field>
           {isCdf && (
@@ -1038,9 +1071,33 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <SubmitButton onClick={save} blocked={blocked} pending={create.isPending}>{t("Add", "Ajouter")}</SubmitButton>
+          <SubmitButton onClick={() => (bigText ? setConfirmBig(true) : save())} blocked={blocked} pending={create.isPending}>{t("Add", "Ajouter")}</SubmitButton>
         </DialogFooter>
       </DialogContent>
+      <AlertDialog open={confirmBig} onOpenChange={setConfirmBig}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("A cost above the purchase value?", "Un frais supérieur à la valeur d'achat\u00a0?")}</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                <p>{L.type(type)} · {money(amt.toFixed(2), currency)}</p>
+                <p>{bigText}{bigText?.endsWith("?") ? "" : "."}</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmBig(false);
+                save();
+              }}
+            >
+              {t(`Add ${money(amt.toFixed(2), currency)}`, `Ajouter ${money(amt.toFixed(2), currency)}`)}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }
@@ -1232,6 +1289,7 @@ function OffloadButton({ c, disabledReason, priceOf }: { c: ContainerFull; disab
   const [noCostsOk, setNoCostsOk] = useState(false);
   const cheap = p ? cheapLines(c, priceOf, p.lines) : [];
   const [cheapOk, setCheapOk] = useState(false);
+  const [losingOk, setLosingOk] = useState(false);
   return (
     <>
       {/* The main button only once the container has arrived; before that, offloading is the exception. */}
@@ -1270,7 +1328,11 @@ function OffloadButton({ c, disabledReason, priceOf }: { c: ContainerFull; disab
                     </li>
                   ))}
                 </ul>
-                <p className="mt-1">{t("Raise the selling price on the item page after the offload, or check the invoice prices.", "Relevez le prix de vente dans la fiche article après le déchargement, ou vérifiez les prix de la facture.")}</p>
+                <p className="mt-1">{t("Raise the selling price on the item page after the offload, or check the invoice prices and the costs.", "Relevez le prix de vente dans la fiche article après le déchargement, ou vérifiez les prix de la facture et les frais.")}</p>
+                <label className="mt-2 flex items-start gap-2">
+                  <Checkbox checked={losingOk} onCheckedChange={(v) => setLosingOk(v === true)} className="mt-0.5" />
+                  <span>{t("I checked: offload at these costs", "J'ai vérifié\u00a0: décharger à ces coûts")}</span>
+                </label>
               </AlertDescription>
             </Alert>
           )}
@@ -1317,7 +1379,7 @@ function OffloadButton({ c, disabledReason, priceOf }: { c: ContainerFull; disab
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>{t("Cancel", "Annuler")}</Button>
-            <SubmitButton onClick={() => finalize.mutate({ offloadDate })} blocked={!offloadDate ? t("Choose the offload date", "Choisissez la date de déchargement") : noCosts && !noCostsOk ? t("Confirm there are no costs, or add them first", "Confirmez l'absence de frais, ou ajoutez-les d'abord") : cheap.length > 0 && !cheapOk ? t("Confirm the prices of the lines with a very high margin", "Confirmez les prix des lignes à marge très élevée") : null} pending={finalize.isPending}>
+            <SubmitButton onClick={() => finalize.mutate({ offloadDate })} blocked={!offloadDate ? t("Choose the offload date", "Choisissez la date de déchargement") : noCosts && !noCostsOk ? t("Confirm there are no costs, or add them first", "Confirmez l'absence de frais, ou ajoutez-les d'abord") : cheap.length > 0 && !cheapOk ? t("Confirm the prices of the lines with a very high margin", "Confirmez les prix des lignes à marge très élevée") : losing.length > 0 && !losingOk ? t("Confirm the lines that cost more than they sell for", "Confirmez les lignes qui coûtent plus que leur prix de vente") : null} pending={finalize.isPending}>
               <Lock className="mr-1 h-4 w-4" /> {t("Confirm offload", "Confirmer le déchargement")}
             </SubmitButton>
           </DialogFooter>

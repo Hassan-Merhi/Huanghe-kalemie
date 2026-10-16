@@ -541,7 +541,9 @@ export default function POS() {
   }
 
   // ---- change calculator (helper only)
-  const toPay = paid.gt(0) ? paid : total;
+  // What is paid now (part of a credit sale), never above the total: francs rounded to 100 FC make "paid"
+  // 27,01 $ on a 27,00 $ sale, which must still read 75 870 FC like the total.
+  const toPay = paid.gt(0) && paid.lt(total) && !withinFrancs(receivedExact.minus(changeUsd)) ? paid : total;
   const handedUsd = handedCur === "CDF" ? (rateNum.gt(0) ? d(handed).dividedBy(rateNum) : d(0)) : d(handed);
   const change = handedUsd.minus(toPay);
 
