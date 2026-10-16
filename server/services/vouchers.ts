@@ -1,10 +1,10 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { frMoney } from "@shared/french";
 import { accounts, auditLog, expenses, journalLines, journals, parties, voucherDrafts, type DraftKind } from "@shared/schema";
-import { cents, dec, sum, Decimal } from "@shared/money";
+import { allocateCents, cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, forbidden, notFound } from "../errors";
-import { assertNotFuture, contactLines, foreignBalance, lockBalances, moneyLeg, postJournal, rateFor, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type PostLine } from "./ledger";
+import { assertNotFuture, contactLines, foreignBalance, lockBalances, moneyLeg, postJournal, rateFor, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
 import * as ops from "./operations";
 
 /*
@@ -132,16 +132,20 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
   // the contacts, then the balance sheet accounts settled like a contact.
   await lockBalances(tx, { parties: partyIds, accounts: accountRows.filter((a) => !a.isMoney && (a.type === "asset" || a.type === "liability")).map((a) => a.id) });
 
+  // The money account's dollars, valued once for the whole amount, shared across the lines by their
+  // amounts: each line rounded on its own would book 100 lines of 15 FC as 1 $ of rent for 0,53 $ of
+  // francs, the gap landing in exchange differences.
+  const shares = allocateCents(money.usd, input.lines.map((l) => cents(l.amount).abs()));
   const lines: (PostLine & { usd: string; expense?: { accountId: number; name: string; native: string; description: string } })[] = [];
   for (const [i, l] of input.lines.entries()) {
     const n = i + 1;
     const amount = cents(l.amount);
     if (amount.lte(0)) throw badRequest(`Line ${n}: the amount must be greater than zero`, `Ligne ${n} : le montant doit être supérieur à zéro`);
     if (!!l.partyId === !!l.accountId) throw badRequest(`Line ${n}: pick a contact or an account`, `Ligne ${n} : choisissez un contact ou un compte`);
-    const usd = toUsd(money.currency, amount, money.rate);
+    const usd = shares[i].toFixed(2);
     // A line worth less than a cent would book nothing in dollars and leave its francs to the
     // exchange account, so it is refused.
-    if (dec(usd).lt(0.01)) throw badRequest(`Line ${n}: the amount is worth less than one cent`, `Ligne ${n} : le montant vaut moins d'un centime`);
+    if (dec(usd).lt(0.01) || (money.rate && amount.dividedBy(money.rate).lt(0.01))) throw badRequest(`Line ${n}: the amount is worth less than one cent`, `Ligne ${n} : le montant vaut moins d'un centime`);
     const side = kind === "payment" ? { debit: usd } : { credit: usd };
     if (l.partyId) {
       const p = partyRows.find((x) => x.id === l.partyId);

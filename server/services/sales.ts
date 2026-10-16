@@ -31,6 +31,10 @@ import { issueStock, linkMovementsToJournal, lockVariants, receiveStock, stockQt
  */
 const FRANC_ROUNDING = new Decimal(100);
 
+/** A till sale has a few lines and a few payments; thousands of them only serve to hide cents of rounding. */
+const MAX_SALE_LINES = 200;
+const MAX_SALE_PAYMENTS = 10;
+
 export interface SaleLineInput {
   variantId: number;
   unitId?: number | null;
@@ -72,6 +76,8 @@ export async function priceLimits(tx: Tx, role: Role): Promise<{ maxDiscountPct:
 
 export async function createSale(tx: Tx, input: CreateSaleInput, userId: number, rules?: PriceRules) {
   if (input.lines.length === 0) throw badRequest("Add at least one item", "Ajoutez au moins un article");
+  if (input.lines.length > MAX_SALE_LINES) throw badRequest(`A sale can have at most ${MAX_SALE_LINES} lines`, `Une vente peut avoir au plus ${MAX_SALE_LINES} lignes`);
+  if (input.payments.length > MAX_SALE_PAYMENTS) throw badRequest(`A sale can have at most ${MAX_SALE_PAYMENTS} payments`, `Une vente peut avoir au plus ${MAX_SALE_PAYMENTS} paiements`);
   const [location] = await tx.select({ id: locations.id }).from(locations).where(eq(locations.id, input.locationId));
   if (!location) throw badRequest("That location does not exist", "Cet emplacement n'existe pas");
 
@@ -105,6 +111,10 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
     if (price.isZero()) throw badRequest(`${v.name} (${v.sku}): enter the selling price (it is 0 $)`, `${v.name} (${v.sku}) : saisissez le prix de vente (il est à 0 $)`);
     const lineDiscount = cents(l.lineDiscount ?? 0);
     if (lineDiscount.isNegative()) throw badRequest("A discount cannot be negative", "Une remise ne peut pas être négative");
+    // A line worth less than a cent would give the item away (1 000 lines of 0,001 L are a free litre).
+    if (cents(q.times(price)).isZero()) {
+      throw badRequest(`${v.name} (${v.sku}): this quantity is worth less than one cent`, `${v.name} (${v.sku}) : cette quantité vaut moins d'un centime`);
+    }
     const amount = cents(q.times(price)).minus(lineDiscount);
     if (amount.isNegative()) throw badRequest("A line discount is bigger than the line", "Une remise de ligne dépasse le montant de la ligne");
     if (v.tracksSerials) {
@@ -127,7 +137,8 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
   const limits = rules ? await priceLimits(tx, rules.role) : { maxDiscountPct: null, belowCost: true };
   if (limits.maxDiscountPct) {
     gross.forEach((g, i) => {
-      const list = cents(g.q.times(g.variant.sellPrice));
+      // Unrounded, so the cent a small line loses to rounding counts as discount too.
+      const list = g.q.times(g.variant.sellPrice);
       if (list.lte(0)) return;
       const given = list.minus(g.amount.minus(discountShares[i]));
       if (given.times(100).gt(list.times(limits.maxDiscountPct!))) {
@@ -144,8 +155,17 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
   // another. Staff take the day's rate; the owner may type one within the tolerance.
   const staffRate = !!rules && rules.role !== "owner";
   let saleRate: string | null | undefined = staffRate ? null : undefined;
-  const legs = [];
+  // Payments into the same account are one amount, valued once: each leg rounded to the cent on its
+  // own would let 1 000 legs of 15 FC pass for 1 000 cents. Each leg is still checked as typed.
+  const payments: SalePaymentInput[] = [];
   for (const p of input.payments) {
+    await moneyLeg(tx, { accountId: p.accountId, amount: p.amount, rate: saleRate === undefined ? p.rate : saleRate, date: input.date });
+    const same = payments.find((x) => x.accountId === p.accountId);
+    if (same) same.amount = cents(same.amount).plus(cents(p.amount)).toFixed(2);
+    else payments.push({ ...p, amount: cents(p.amount).toFixed(2) });
+  }
+  const legs = [];
+  for (const p of payments) {
     const leg = await moneyLeg(tx, { accountId: p.accountId, amount: p.amount, rate: saleRate === undefined ? p.rate : saleRate, date: input.date });
     if (leg.rate && saleRate === undefined) saleRate = leg.rate;
     legs.push(leg);
@@ -177,6 +197,14 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
     throw badRequest(
       "Payments are more than the total. Enter the change given back, or only the money kept.",
       "Les paiements dépassent le total. Indiquez la monnaie rendue, ou seulement l'argent encaissé.",
+    );
+  }
+  // Whatever is left on credit, the francs taken must cover the rest of the sale in francs, within the
+  // same 100 FC: the dollars of each franc account are rounded to the cent, the francs are what was counted.
+  if (francRate && francGap.minus(credit.times(francRate)).abs().gt(FRANC_ROUNDING)) {
+    throw badRequest(
+      "The francs received do not match the dollars they are booked at. Enter each drawer's francs as one payment.",
+      "Les francs reçus ne correspondent pas aux dollars comptés. Saisissez les francs de chaque caisse en un seul paiement.",
     );
   }
   if (credit.gt(0) && !input.customerId) throw badRequest("Choose a customer to sell on credit", "Choisissez un client pour vendre à crédit");
@@ -252,7 +280,7 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
         saleId: sale.id,
         accountId: l.accountId,
         currency: l.currency,
-        amountNative: cents(input.payments[i].amount).toFixed(2),
+        amountNative: cents(payments[i].amount).toFixed(2),
         rate: l.rate,
         amountUsd: l.usd,
       })),
@@ -374,24 +402,34 @@ export async function getSale(tx: Tx, id: number) {
   // The franc rounding as the Sales list reads it: the "Arrondi FC" lines on exchange differences, + when the
   // shop kept a few cents (the customer handed over a little more, or got a little less back on a refund).
   // `saleFcRoundingUsd` is the till's alone, for the receipt; `fcRoundingUsd` adds the returns' refunds.
+  // A cancelled sale's reversal takes its rounding back, so both net to zero, as in the list and the ledger.
   const fx = await systemAccountId(tx, SYSTEM_ACCOUNTS.fx);
+  const tillJournals = [sale.journalId, sale.voidJournalId].filter((x): x is number => !!x);
   const roundingRows = sale.journalId
     ? await tx
         .select({ journalId: journalLines.journalId, usd: sql<string>`(${journalLines.credit} - ${journalLines.debit})::text` })
         .from(journalLines)
-        .where(and(eq(journalLines.accountId, fx), eq(journalLines.memo, "Arrondi FC"), inArray(journalLines.journalId, [sale.journalId, ...returnRows.map((r) => r.journalId).filter((x): x is number => !!x)])))
+        .where(and(eq(journalLines.accountId, fx), eq(journalLines.memo, "Arrondi FC"), inArray(journalLines.journalId, [...tillJournals, ...returnRows.map((r) => r.journalId).filter((x): x is number => !!x)])))
     : [];
-  const saleFcRounding = sum(roundingRows.filter((r) => r.journalId === sale.journalId).map((r) => r.usd));
+  const saleFcRounding = sum(roundingRows.filter((r) => tillJournals.includes(r.journalId)).map((r) => r.usd));
   const fcRounding = sum(roundingRows.map((r) => r.usd));
   // A credit sale to a customer holding an avoir (paid ahead) owes nothing new: the credit comes off that avoir.
   // Read from the customer's balance just after this sale was posted, so the receipt and the sale page say
-  // what was covered then, and what avoir was left.
+  // what was covered then, and what avoir was left: the customer's receivable alone, in date order then
+  // posting order. A cancelled sale gave its avoir back, so it used none.
   let avoir: { usedUsd: string; leftUsd: string } | null = null;
-  if (sale.customerId && sale.journalId && dec(sale.creditUsd).gt(0)) {
+  if (sale.customerId && sale.journalId && dec(sale.creditUsd).gt(0) && sale.status !== "voided") {
     const [after] = await tx
       .select({ usd: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)::text` })
       .from(journalLines)
-      .where(and(eq(journalLines.partyId, sale.customerId), lte(journalLines.journalId, sale.journalId)));
+      .innerJoin(journals, eq(journals.id, journalLines.journalId))
+      .where(
+        and(
+          eq(journalLines.accountId, receivables),
+          eq(journalLines.partyId, sale.customerId),
+          sql`(${journals.date} < ${sale.date} or (${journals.date} = ${sale.date} and ${journals.id} <= ${sale.journalId}))`,
+        ),
+      );
     const before = dec(after.usd).minus(sale.creditUsd);
     const used = Decimal.min(dec(sale.creditUsd), Decimal.max(before.negated(), 0));
     if (used.gt(0)) avoir = { usedUsd: used.toFixed(2), leftUsd: Decimal.max(dec(after.usd).negated(), 0).toFixed(2) };

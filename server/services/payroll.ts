@@ -1,6 +1,6 @@
 import { and, asc, eq, sql } from "drizzle-orm";
 import { accounts, journalLines, journals, parties, payrollRuns, type PayrollLine } from "@shared/schema";
-import { cents, dec, sum, Decimal } from "@shared/money";
+import { allocateCents, cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, francDecimalsError, notFound } from "../errors";
 import { deMonth, monthText } from "@shared/french";
@@ -103,6 +103,16 @@ export async function runPayroll(tx: Tx, input: PayrollRunInput, userId: number)
     });
   }
   if (!lines.length) throw badRequest("Nothing to book: enter at least one salary", "Rien à comptabiliser : saisissez au moins un salaire");
+  // Francs owed are valued once for the whole run and shared by amount, so the cost is what all those
+  // francs are worth, not the sum of each line rounded to the cent.
+  const withheldNative = sum(lines.map((l) => l.withheld ?? 0));
+  let withheldUsd = usdOf(withheldNative);
+  if (rate) {
+    const natives = [...lines.map((l) => dec(l.net)), withheldNative];
+    const shares = allocateCents(usdOf(sum(natives)), natives);
+    lines.forEach((l, i) => (l.netUsd = shares[i].toFixed(2)));
+    withheldUsd = shares[lines.length];
+  }
   // Each employee's advance is taken below: all of them first, in id order (see lockBalances).
   await lockBalances(tx, { parties: lines.map((l) => l.partyId) });
   const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
@@ -110,11 +120,10 @@ export async function runPayroll(tx: Tx, input: PayrollRunInput, userId: number)
   const owed: PostLine[] = lines
     .filter((l) => !dec(l.net).isZero())
     .map((l) => ({ accountId: payables, credit: l.netUsd!, partyId: l.partyId, memo: `Salaire ${monthText(input.month)}`, ...native(l.net) }));
-  const withheldNative = sum(lines.map((l) => l.withheld ?? 0));
   if (!withheldNative.isZero()) {
     owed.push({
       accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.payrollWithheld),
-      credit: usdOf(withheldNative),
+      credit: withheldUsd,
       memo: `Retenues sur salaires ${monthText(input.month)}`,
       ...native(withheldNative.toFixed(2)),
     });
