@@ -4,7 +4,7 @@ import { cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, francDecimalsError, notFound } from "../errors";
 import { deMonth, monthText } from "@shared/french";
-import { postJournal, rateFor, resolveRate, reverseJournal, shopToday, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
+import { lockBalances, postJournal, rateFor, resolveRate, reverseJournal, shopToday, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
 import { applyAdvances, reverseAdvances } from "./operations";
 import { monthRange } from "./periods";
 import { partyBalances } from "./reports";
@@ -103,6 +103,8 @@ export async function runPayroll(tx: Tx, input: PayrollRunInput, userId: number)
     });
   }
   if (!lines.length) throw badRequest("Nothing to book: enter at least one salary", "Rien à comptabiliser : saisissez au moins un salaire");
+  // Each employee's advance is taken below: all of them first, in id order (see lockBalances).
+  await lockBalances(tx, { parties: lines.map((l) => l.partyId) });
   const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
   const native = (amount: string) => (rate ? { currency: "CDF" as const, nativeAmount: amount, rate } : {});
   const owed: PostLine[] = lines
@@ -151,7 +153,9 @@ export async function cancelRun(tx: Tx, month: string, date: string | null | und
     // as a payment of 2100, so a cancel and that payment cannot both pass. Each currency is compared in
     // itself (francs in francs), so a month-end revaluation of the francs doesn't count as a payment.
     const withheldId = await systemAccountId(tx, SYSTEM_ACCOUNTS.payrollWithheld);
-    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`credit:account:${withheldId}`}))`);
+    // The employees' balances first, then this account's (see lockBalances): the cancel gives their
+    // advances back and clears what is left of their francs.
+    await lockBalances(tx, { parties: (run.lines as PayrollLine[]).map((l) => l.partyId), accounts: [withheldId] });
     const owedOn = async (currency: "USD" | "CDF", journalId?: number) => {
       const [r] = await tx
         .select({

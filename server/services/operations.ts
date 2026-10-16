@@ -22,6 +22,8 @@ import {
   contactLines,
   foreignBalance,
   bookValue,
+  lockBalances,
+  lockForeignBalances,
   moneyLeg,
   nextNumber,
   rateFor,
@@ -203,7 +205,9 @@ export async function transferMoney(tx: Tx, input: TransferInput, userId: number
   } else if (!cents(input.fromAmount).equals(cents(input.toAmount))) {
     throw badRequest("A transfer in one currency must send and receive the same amount", "Un transfert dans la même devise doit envoyer et recevoir le même montant");
   }
-  // What the money leaving is worth: dollars at face value, francs at what they cost on average.
+  // What the money leaving is worth: dollars at face value, francs at what they cost on average, read
+  // under the same locks the journal takes (see lockForeignBalances).
+  await lockForeignBalances(tx, [from, to].filter((l) => l.currency === "CDF").map((l) => ({ accountId: l.accountId, partyId: null, currency: "CDF" })));
   let value = dec(from.usd);
   if (from.currency === "CDF") {
     const bal = await foreignBalance(tx, from.accountId, null, "CDF", input.date);
@@ -241,6 +245,8 @@ export interface PartyPaymentInput {
 /** A customer pays what they owe. */
 export async function receiveFromCustomer(tx: Tx, input: PartyPaymentInput, userId: number) {
   const party = await requireParty(tx, input.partyId, ["customer"]);
+  // What they owe in francs and dollars decides the split, so one payment at a time per customer.
+  await lockBalances(tx, { parties: [party.id] });
   const leg = await moneyLeg(tx, input);
   const receivables = await systemAccountId(tx, SYSTEM_ACCOUNTS.receivables);
   return postJournal(tx, {
@@ -261,6 +267,8 @@ export async function receiveFromCustomer(tx: Tx, input: PartyPaymentInput, user
  * the yuan rate on file, else at their cost; the exchange difference is booked when posted.
  */
 export async function advanceToYuanLines(tx: Tx, payables: number, partyId: number, date: string, settledNative: Decimal = new Decimal(0)): Promise<PostLine[]> {
+  // The advance read here must not be taken by another bill at the same time (see lockBalances).
+  await lockBalances(tx, { parties: [partyId] });
   const cny = await foreignBalance(tx, payables, partyId, "CNY", date);
   if (!cny.native.isNegative() || !cny.usd.isNegative()) return [];
   const owedNative = cny.native.abs();
@@ -301,6 +309,7 @@ export async function advanceToYuanLines(tx: Tx, payables: number, partyId: numb
 
 /** Lines applying a dollar advance to francs a supplier or employee is owed, at the day's franc rate. */
 export async function advanceToFrancLines(tx: Tx, payables: number, partyId: number, date: string): Promise<PostLine[]> {
+  await lockBalances(tx, { parties: [partyId] });
   const fc = await foreignBalance(tx, payables, partyId, "CDF", date);
   if (!fc.native.isNegative() || !fc.usd.isNegative()) return [];
   const advance = Decimal.max((await foreignBalance(tx, payables, partyId, "USD", date)).usd, 0);
@@ -330,6 +339,9 @@ export async function applyAdvances(
   source: { type: AdvanceSource; id: number },
   currency: "CNY" | "CDF",
 ): Promise<number | null> {
+  // One bill at a time per contact takes their advance: a yuan bill and a franc bill posted together
+  // would otherwise both take the same dollars. The bill's own journal took this lock already.
+  await lockBalances(tx, { parties: [partyId] });
   const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
   // Only the bill's own currency, so undoing the bill gives back exactly what it took.
   const linesOn = (on: string) => (currency === "CNY" ? advanceToYuanLines(tx, payables, partyId, on) : advanceToFrancLines(tx, payables, partyId, on));
@@ -366,6 +378,8 @@ export async function payablesLines(
   input: { payables: number; partyId: number; usd: DecimalInput; money: { currency: string; nativeAmount: string | null; rate: string | null }; date: string; memo?: string | null },
 ): Promise<PostLine[]> {
   const { payables, partyId } = input;
+  // The yuan, francs and dollars owed decide the split, so one payment at a time per contact.
+  await lockBalances(tx, { parties: [partyId] });
   const cny = await foreignBalance(tx, payables, partyId, "CNY", input.date);
   const fcOwed = (await foreignBalance(tx, payables, partyId, "CDF", input.date)).native.negated();
   const usdBalance = (await foreignBalance(tx, payables, partyId, "USD", input.date)).usd;
@@ -421,6 +435,8 @@ export async function payablesLines(
 /** Pay a supplier or agent (container invoice, clearing agent, transporter, unpaid bills). */
 export async function payParty(tx: Tx, input: PartyPaymentInput, userId: number) {
   const party = await requireParty(tx, input.partyId, ["supplier", "agent", "employee"]);
+  // Before any of their balances is read (see payablesLines).
+  await lockBalances(tx, { parties: [party.id] });
   const leg = await moneyLeg(tx, input);
   const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
   let partyLines: PostLine[];
