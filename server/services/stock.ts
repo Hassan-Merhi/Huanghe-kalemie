@@ -5,7 +5,7 @@ import { Decimal, cents, dec, type DecimalInput } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, wholeUnitError } from "../errors";
 import { wholeUnit } from "@shared/units";
-import { lockPeriodsShared } from "./ledger";
+import { lockPeriodsShared, noteVariantLocks } from "./ledger";
 
 /*
  * Stock is valued at weighted average cost per variant. Each variant keeps its total quantity
@@ -32,13 +32,15 @@ interface MovementRef {
 
 /**
  * Every posting that touches stock takes its locks in one order: the periods lock (shared), then the
- * items' rows in id order, then the franc, money and credit locks (in postJournal; journal numbers take none).
+ * items' rows in id order, then the contacts' balances (lockBalances), then the franc and money locks (in
+ * postJournal; journal numbers take none). See the lock order in ledger.ts.
  * A service calls this before its first journal, so an offload or a cancelled sale (which post first)
  * and a sale, return or adjustment of the same item (which move stock first) cannot wait on each other.
  */
 export async function lockVariants(tx: Tx, variantIds: number[]): Promise<void> {
   const ids = Array.from(new Set(variantIds)).sort((a, b) => a - b);
   if (!ids.length) return;
+  noteVariantLocks(tx, ids);
   await lockPeriodsShared(tx);
   await tx.select({ id: variants.id }).from(variants).where(inArray(variants.id, ids)).orderBy(asc(variants.id)).for("update");
 }

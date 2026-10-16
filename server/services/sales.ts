@@ -22,7 +22,7 @@ import { allocateCents, cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, forbidden, notFound, wholeUnitError } from "../errors";
 import { wholeUnit } from "@shared/units";
-import { moneyLeg, nextNumber, postJournal, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
+import { lockBalances, moneyLeg, nextNumber, postJournal, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
 import { issueStock, linkMovementsToJournal, lockVariants, receiveStock, stockQty } from "./stock";
 
 /**
@@ -448,6 +448,8 @@ export async function returnSale(tx: Tx, saleId: number, input: ReturnInput, use
     .where(and(eq(saleLines.saleId, saleId), inArray(saleLines.id, input.lines.map((l) => l.saleLineId))))
     .for("update");
   await lockVariants(tx, lineRows.map((l) => l.variantId));
+  // What the customer owes decides how much of the refund comes off the debt (see lockBalances).
+  await lockBalances(tx, { parties: [sale.customerId] });
 
   if (input.refundAccountId) {
     const [account] = await tx.select({ id: accounts.id, isMoney: accounts.isMoney }).from(accounts).where(eq(accounts.id, input.refundAccountId));

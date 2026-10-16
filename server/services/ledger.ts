@@ -97,6 +97,84 @@ export async function lockPeriodsExclusive(tx: Tx): Promise<void> {
   await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${PERIODS_LOCK}))`);
 }
 
+/*
+ * Lock order. Every transaction takes its locks in this order, so no two can wait on each other:
+ *   1. the periods lock, shared (PERIODS_LOCK);
+ *   2. the items' rows, in id order (lockVariants);
+ *   3. the contacts' balances, in id order, then the balance sheet accounts' balances, in id order
+ *      (lockBalances);
+ *   4. the franc and yuan balances, in key order, then the money accounts paid from, in id order
+ *      (both in postJournal).
+ * A contact's balance is locked before anything reads it to decide how a payment or a bill is split or
+ * applied (a dollar advance taken by a yuan bill, yuan settled by a payment, a refund capped by what was
+ * paid ahead), and by every posting that writes to it: the journal number used to queue them all, but it
+ * comes from a sequence now and holds nothing.
+ */
+type HeldLocks = { variants: Set<number>; parties: Set<number>; accounts: Set<number>; later: boolean };
+const heldLocks = new WeakMap<object, HeldLocks>();
+
+function held(tx: Tx): HeldLocks {
+  const fresh = (): HeldLocks => ({ variants: new Set(), parties: new Set(), accounts: new Set(), later: false });
+  // Outside a transaction a lock lasts one statement, so nothing is remembered as held.
+  if (typeof (tx as { rollback?: unknown }).rollback !== "function") return fresh();
+  let h = heldLocks.get(tx);
+  if (!h) heldLocks.set(tx, (h = fresh()));
+  return h;
+}
+
+/**
+ * A lock asked for out of order could deadlock (and the transaction would be run again). It is logged
+ * and taken anyway; with HK_LOCK_ORDER=strict (the lock order tests) it fails instead. Tests that run
+ * several services in one transaction on purpose are not routes, so they are not logged.
+ */
+function outOfOrder(what: string): void {
+  const message = `Lock taken out of order: ${what}`;
+  if (process.env.HK_LOCK_ORDER === "strict") throw new AppError(500, message, "LOCK_ORDER", `Verrou pris dans le désordre : ${what}`);
+  if (!process.env.VITEST) console.warn(message);
+}
+
+/** Notes the items' row locks (step 2 of the lock order; see lockVariants). */
+export function noteVariantLocks(tx: Tx, ids: number[]): void {
+  const h = held(tx);
+  const fresh = ids.filter((id) => !h.variants.has(id));
+  if (fresh.length && (h.parties.size || h.accounts.size || h.later)) outOfOrder(`items ${fresh.join(", ")} after a balance`);
+  fresh.forEach((id) => h.variants.add(id));
+}
+
+/**
+ * Lock contacts' balances (and balance sheet accounts' balances, kept apart from contacts) for the rest
+ * of the transaction, in id order. Taking one already held does nothing.
+ */
+export async function lockBalances(tx: Tx, input: { parties?: (number | null | undefined)[]; accounts?: (number | null | undefined)[] }): Promise<void> {
+  const h = held(tx);
+  const fresh = (ids: (number | null | undefined)[] | undefined, have: Set<number>) =>
+    Array.from(new Set((ids ?? []).filter((x): x is number => !!x && !have.has(x)))).sort((a, b) => a - b);
+  const parties = fresh(input.parties, h.parties);
+  const accounts = fresh(input.accounts, h.accounts);
+  if (!parties.length && !accounts.length) return;
+  if (h.later) outOfOrder(`balances ${[...parties, ...accounts].join(", ")} after a franc or money lock`);
+  if (parties.length && (h.accounts.size || parties[0] < Math.max(0, ...h.parties))) outOfOrder(`contact ${parties.join(", ")} after ${[...h.parties].join(", ") || "an account"}`);
+  if (accounts.length && accounts[0] < Math.max(0, ...h.accounts)) outOfOrder(`account ${accounts.join(", ")} after ${[...h.accounts].join(", ")}`);
+  await lockPeriodsShared(tx);
+  for (const id of parties) {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`party:${id}`}))`);
+    h.parties.add(id);
+  }
+  for (const id of accounts) {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`credit:account:${id}`}))`);
+    h.accounts.add(id);
+  }
+}
+
+/** Lock franc and yuan balances (step 4 of the lock order), in key order. */
+export async function lockForeignBalances(tx: Tx, keys: { accountId: number; partyId: number | null; currency: string }[]): Promise<void> {
+  const h = held(tx);
+  h.later = true;
+  for (const key of Array.from(new Set(keys.map((k) => `${k.accountId}|${k.partyId ?? ""}|${k.currency}`))).sort()) {
+    await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`fx:${key}`}))`);
+  }
+}
+
 /**
  * Refuse a posting dated in a closed month, or before the last closed month: months close in
  * order, so a posting into an earlier open month would still change balances already closed.
@@ -289,6 +367,9 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
     };
   });
 
+  // Every contact the journal writes to, before its francs and yuan (see lockBalances). A period close
+  // holds the periods lock alone, so nothing else is posting.
+  if (!input.skipPeriodCheck) await lockBalances(tx, { parties: values.map((v) => v.partyId) });
   if (!input.exactValues) await costForeignOutflows(tx, values, input.date);
 
   const number = await nextNumber(tx, "journal", "J-");
@@ -310,6 +391,7 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
   const paidFrom = input.skipPeriodCheck
     ? []
     : Array.from(new Set(values.filter((v) => v.credit.gt(0) && byId.get(v.accountId)?.isMoney).map((v) => v.accountId))).sort((a, b) => a - b);
+  if (paidFrom.length) held(tx).later = true;
   for (const id of paidFrom) await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`money:${id}`}))`);
 
   await tx.insert(journalLines).values(
@@ -382,13 +464,15 @@ type PendingLine = { accountId: number; debit: Decimal; credit: Decimal; partyId
 async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string) {
   const running = new Map<string, { native: Decimal; usd: Decimal }>();
   let fxDebit = new Decimal(0);
+  // One posting at a time per balance, so two payments cannot both spend the same francs. All of the
+  // journal's balances at once, in key order, so two journals touching the same two cannot cross.
+  const foreign = values.filter((v) => v.currency !== "USD" && v.nativeAmount);
+  if (foreign.length) await lockForeignBalances(tx, foreign);
   for (const v of values) {
     if (v.currency === "USD" || !v.nativeAmount) continue;
     const key = `${v.accountId}|${v.partyId ?? ""}|${v.currency}`;
     let bal = running.get(key);
     if (!bal) {
-      // One posting at a time per balance, so two payments cannot both spend the same francs.
-      await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`fx:${key}`}))`);
       bal = await foreignBalance(tx, v.accountId, v.partyId, v.currency, date);
       running.set(key, bal);
     }
@@ -651,6 +735,8 @@ export async function contactLines(
   },
 ): Promise<PostLine[]> {
   const usd = cents(input.usd);
+  // The balances read below decide the split, so they are locked first (see lockBalances).
+  await lockBalances(tx, input.partyId ? { parties: [input.partyId] } : { accounts: [input.accountId] });
   const base = { accountId: input.accountId, partyId: input.partyId, memo: input.memo ?? null };
   const plain = [{ ...base, [input.side]: usd }];
   if (usd.isZero()) return plain;

@@ -214,13 +214,6 @@ export async function restore(tx: Tx, file: BackupFile, opts: { replace: boolean
       await tx.execute(sql`select setval(pg_get_serial_sequence(${t}, 'id'), coalesce((select max(id) from ${sql.identifier(t)}), 1), (select count(*) > 0 from ${sql.identifier(t)}))`);
     }
   }
-  // Journal numbers carry on after the restored ones (a backup made before A22 still has the "journal" counter row).
-  await tx.execute(sql`
-    select setval('journal_number_seq', greatest(n, 1), n > 0) from (select greatest(
-      coalesce((select value from counters where key = 'journal'), 0),
-      coalesce((select max(substring(number from 3)::bigint) from journals where number ~ '^J-[0-9]{1,18}$'), 0)
-    ) as n) x
-  `);
   const checks = compareTotals(file.totals, await totalsOf(tx, Object.keys(file.totals.rows)));
   const wrong = checks.filter((c) => !c.ok);
   if (wrong.length) {
@@ -231,6 +224,20 @@ export async function restore(tx: Tx, file: BackupFile, opts: { replace: boolean
       `Les données restaurées ne correspondent pas à la sauvegarde (${wrong.map((c) => c.label).join(", ")}) ; rien n'a été modifié`,
     );
   }
+  // The journal number sequence only once every check passed, as the last write: it belongs to no table,
+  // so the truncate above does not restart it within the transaction and its setval is not undone by a
+  // rollback. Set before a refused restore, it would leave the numbers behind the journals still in place,
+  // and every posting after it would fail on a duplicate number. (The ids' sequences were restarted by
+  // the truncate, so theirs roll back with it.)
+  // Journal numbers carry on after the restored ones (a backup made before A22 still has the "journal"
+  // counter row). Into an empty shop they never go back either: a number already given stays given.
+  await tx.execute(sql`
+    select setval('journal_number_seq', greatest(n, 1), n > 0) from (select greatest(
+      coalesce((select value from counters where key = 'journal'), 0),
+      coalesce((select max(substring(number from 3)::bigint) from journals where number ~ '^J-[0-9]{1,18}$'), 0),
+      ${opts.replace ? sql`0` : sql`(select case when is_called then last_value else last_value - 1 end from journal_number_seq)`}
+    ) as n) x
+  `);
   // Everyone signs in again against the restored users.
   const [{ sessions }] = (await tx.execute<{ sessions: string | null }>(sql`select to_regclass('public.user_sessions')::text as sessions`)).rows;
   if (sessions) await tx.execute(sql`delete from user_sessions`);

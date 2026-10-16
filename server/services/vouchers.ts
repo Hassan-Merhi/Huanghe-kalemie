@@ -4,7 +4,7 @@ import { accounts, auditLog, expenses, journalLines, journals, parties, voucherD
 import { cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, forbidden, notFound } from "../errors";
-import { assertNotFuture, contactLines, foreignBalance, moneyLeg, postJournal, rateFor, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type PostLine } from "./ledger";
+import { assertNotFuture, contactLines, foreignBalance, lockBalances, moneyLeg, postJournal, rateFor, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type PostLine } from "./ledger";
 import * as ops from "./operations";
 
 /*
@@ -128,6 +128,9 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
   const accountIds = input.lines.map((l) => l.accountId).filter((x): x is number => !!x);
   const partyRows = partyIds.length ? await tx.select().from(parties).where(inArray(parties.id, partyIds)) : [];
   const accountRows = accountIds.length ? await tx.select().from(accounts).where(inArray(accounts.id, accountIds)) : [];
+  // Every balance a line reads to split or cap itself, all at once and in id order (see lockBalances):
+  // the contacts, then the balance sheet accounts settled like a contact.
+  await lockBalances(tx, { parties: partyIds, accounts: accountRows.filter((a) => !a.isMoney && (a.type === "asset" || a.type === "liability")).map((a) => a.id) });
 
   const lines: (PostLine & { usd: string; expense?: { accountId: number; name: string; native: string; description: string } })[] = [];
   for (const [i, l] of input.lines.entries()) {
@@ -145,8 +148,7 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
       if (!p) throw badRequest(`Line ${n}: that contact does not exist`, `Ligne ${n} : ce contact n'existe pas`);
       if (kind === "payment" && p.type === "customer" && !rights.owner) {
         // Money paid to a customer refunds what they have paid ahead; beyond that it would be a
-        // loan nobody approved. One payment at a time per customer, so two cannot both use it.
-        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`credit:party:${p.id}`}))`);
+        // loan nobody approved. One payment at a time per customer (locked above), so two cannot both use it.
         const bal = await usdBalance(tx, receivables, p.id, input.date);
         // Francs paid ahead go back as those francs, or in dollars at today's rate, less any dollars
         // the customer still owes.
@@ -197,8 +199,7 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
         throw badRequest(`Line ${n}: an expense refund is recorded by cancelling the expense`, `Ligne ${n} : un remboursement de dépense s'enregistre en annulant la dépense`);
       }
       if (kind === "payment" && a.type === "liability" && !rights.owner) {
-        // Paying a liability (withholdings to remit…) settles what is owed on it, no more.
-        await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`credit:account:${a.id}`}))`);
+        // Paying a liability (withholdings to remit…) settles what is owed on it, no more (locked above).
         const bal = await usdBalance(tx, a.id, null, input.date);
         // Francs owed may be paid in full whatever today's rate: in francs, or in dollars at the day's
         // rate, less any dollars already overpaid.
@@ -414,10 +415,17 @@ export async function finalizeDraft(
       throw conflict("Unknown voucher type", "Type de pièce inconnu");
   }
   // The journal is the validator's (posted with their rights); who prepared the draft is kept in the
-  // activity log against that journal, so the voucher and the daybook can name both.
-  const journalId = (result as { id?: number; journalId?: number | null }).journalId ?? (result as { id?: number }).id;
-  if (draft.createdBy && draft.createdBy !== userId && typeof journalId === "number") {
-    await tx.insert(auditLog).values({ userId: draft.createdBy, action: "prepare", entity: "journal", entityId: journalId, data: { draftId: id, validatedBy: userId } });
+  // activity log against that journal, so the voucher and the daybook can name both. An adjustment's
+  // id is not a journal's: a count that changed nothing posts no journal, and is logged against the
+  // adjustment itself rather than against whichever journal has that id.
+  const posted = draft.kind === "adjustment" ? (result as { journalId?: number | null }).journalId : (result as { id?: number | null }).id;
+  if (draft.createdBy && draft.createdBy !== userId) {
+    if (typeof posted === "number") {
+      await tx.insert(auditLog).values({ userId: draft.createdBy, action: "prepare", entity: "journal", entityId: posted, data: { draftId: id, validatedBy: userId } });
+    } else if (draft.kind === "adjustment") {
+      const adjustmentId = (result as { id?: number }).id ?? null;
+      await tx.insert(auditLog).values({ userId: draft.createdBy, action: "prepare", entity: "stock_adjustment", entityId: adjustmentId, data: { draftId: id, validatedBy: userId } });
+    }
   }
   await tx.delete(voucherDrafts).where(and(eq(voucherDrafts.id, id)));
   return { kind: draft.kind, result };

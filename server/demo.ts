@@ -108,12 +108,11 @@ export async function seedDemo(): Promise<void> {
       { variantId: oil.variants[0].id, quantity: "600", unitPrice: "2", weightKg: "560", volumeCbm: "1" },
     ]),
   );
-  await db.transaction(async (tx) => {
-    await containerSvc.addExpense(tx, c.id, { date: day(60), type: "freight", amount: "6500", currency: "USD", method: "volume", paidFromAccountId: acc("cash_usd") }, userId);
-    await containerSvc.addExpense(tx, c.id, { date: day(35), type: "duties", amount: "5200", currency: "USD", method: "value", payablePartyId: agent.id }, userId);
-    await containerSvc.addExpense(tx, c.id, { date: day(33), type: "transport", description: "Lubumbashi → Kalemie", amount: "3000", currency: "USD", method: "weight", paidFromAccountId: acc("cash_usd") }, userId);
-    await containerSvc.addExpense(tx, c.id, { date: day(32), type: "offload_labour", amount: "560000", currency: "CDF", rate: "2800", method: "quantity", paidFromAccountId: acc("cash_cdf") }, userId);
-  });
+  // One transaction per cost, as the container screen posts them (each takes its own locks in order).
+  await db.transaction((tx) => containerSvc.addExpense(tx, c.id, { date: day(60), type: "freight", amount: "6500", currency: "USD", method: "volume", paidFromAccountId: acc("cash_usd") }, userId));
+  await db.transaction((tx) => containerSvc.addExpense(tx, c.id, { date: day(35), type: "duties", amount: "5200", currency: "USD", method: "value", payablePartyId: agent.id }, userId));
+  await db.transaction((tx) => containerSvc.addExpense(tx, c.id, { date: day(33), type: "transport", description: "Lubumbashi → Kalemie", amount: "3000", currency: "USD", method: "weight", paidFromAccountId: acc("cash_usd") }, userId));
+  await db.transaction((tx) => containerSvc.addExpense(tx, c.id, { date: day(32), type: "offload_labour", amount: "560000", currency: "CDF", rate: "2800", method: "quantity", paidFromAccountId: acc("cash_cdf") }, userId));
   await db.transaction((tx) => containerSvc.finalizeContainer(tx, c.id, day(31), userId));
   await db.transaction((tx) => ops.payParty(tx, { date: day(30), partyId: supplier.id, accountId: acc("cash_usd"), amount: "30000" }, userId));
 
