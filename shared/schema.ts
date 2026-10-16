@@ -8,6 +8,7 @@ import {
   integer,
   jsonb,
   numeric,
+  pgSequence,
   pgTable,
   primaryKey,
   serial,
@@ -72,6 +73,14 @@ export const counters = pgTable("counters", {
   key: varchar("key", { length: 40 }).primaryKey(),
   value: integer("value").notNull().default(0),
 });
+
+/**
+ * Journal numbers (J-000123). A sequence, not a counters row: the row stayed locked until the posting
+ * committed, so an offload that posts a second journal for the deposits it uses could deadlock with a
+ * payment that took the same franc balance before its number. A posting that fails leaves its number
+ * unused; the numbers still only go up.
+ */
+export const journalNumberSeq = pgSequence("journal_number_seq", { startWith: 1, minValue: 1 });
 
 /** One row per Idempotency-Key the browser sent, so a double tap or a retry posts only once. */
 export const idempotencyKeys = pgTable("idempotency_keys", {
