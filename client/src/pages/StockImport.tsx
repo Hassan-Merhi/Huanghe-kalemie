@@ -20,7 +20,7 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { curLabel, d, money, number, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import { useI18n, useT, count } from "@/lib/i18n";
-import { downloadXlsx, readNumberCell, readSheet } from "@/lib/sheets";
+import { amountCellUnsure, downloadXlsx, readNumberCell, readSheet, toWire } from "@/lib/sheets";
 import { wholeUnit } from "@/lib/units";
 import type { Product } from "@/lib/types";
 
@@ -180,6 +180,25 @@ function remeasure<R extends { name: string | null; unit: string | null }>(
   });
   return { rows: out, unsure };
 }
+/**
+ * The question to ask about a price or cost typed as text that could be thousands or three decimals
+ * ("4.125": 4 125 or 4,125?). The server refuses such a cell, so the row cannot be imported until the
+ * file says which.
+ */
+function amountQuestion(t: T, cells: Cells | undefined, fields: { key: string; en: string; fr: string }[]): string | null {
+  for (const f of fields) {
+    const raw = cells?.[f.key];
+    const u = amountCellUnsure(raw);
+    if (!u) continue;
+    const text = String(raw).trim();
+    return t(
+      `${f.en} "${text}": ${number(u[0], 6)} or ${number(u[1], 6)}? Write ${u[0]} without the separator, or put a number in the cell`,
+      `${f.fr} «\u00a0${text}\u00a0»\u00a0: ${number(u[0], 6)} ou ${number(u[1], 6)}\u00a0? Écrivez ${u[0]} sans séparateur, ou mettez un nombre dans la cellule`,
+    );
+  }
+  return null;
+}
+const SELL_PRICE = { key: "sellPrice", en: "Sell price", fr: "Prix de vente" };
 const rowError = (p: PreviewRow | undefined, lang: string) => (p ? (lang === "fr" ? p.errorFr ?? p.error : p.error ?? p.errorFr) : undefined);
 
 // ---------------------------------------------------------------- Page
@@ -275,7 +294,7 @@ function ItemsImport() {
       setRows(clean);
       setCells(rawCells);
       setBusy(true);
-      const p = await api<PreviewRow[]>("POST", "/api/import/items/preview", { rows: clean.map(({ qty: _q, unitCost: _c, ...r }) => r) });
+      const p = await api<PreviewRow[]>("POST", "/api/import/items/preview", { rows: clean.map(({ qty: _q, unitCost: _c, ...r }) => toWire(r)) });
       setPreview(p);
     } catch (e) {
       setFileError(e instanceof Error ? e.message : String(e));
@@ -296,7 +315,7 @@ function ItemsImport() {
   const { rows, unsure } = useMemo(() => remeasure(t, fileRows, cells, preview, "qty", []), [t, fileRows, cells, preview]);
   const merged = rows.map((r, i) => {
     const p = preview[i];
-    const err = rowError(p?.status === "error" ? p : undefined, lang) ?? unsure[i] ?? localError(r);
+    const err = rowError(p?.status === "error" ? p : undefined, lang) ?? unsure[i] ?? amountQuestion(t, cells[i], [SELL_PRICE, { key: "unitCost", en: "Unit cost", fr: "Coût unitaire" }]) ?? localError(r);
     return { r, p, err, status: (err ? "error" : p?.status ?? "existing") as PreviewRow["status"] };
   });
   const errors = merged.filter((m) => m.err).length;
@@ -382,7 +401,7 @@ function ItemsImport() {
                       <TableCell>{variantOf(r) || "—"}</TableCell>
                       <TableCell className="font-mono text-xs">{p?.sku ?? r.sku ?? "—"}</TableCell>
                       <TableCell className="text-right"><Num>{r.qty ? fmtQty(r.qty) : "—"}</Num></TableCell>
-                      <TableCell className="text-right"><Num>{r.unitCost ? usd(r.unitCost) : "—"}</Num></TableCell>
+                      <TableCell className="text-right"><Num>{r.unitCost ? (/^\d+(\.\d+)?$/.test(r.unitCost) ? number(r.unitCost, 6, 2) : r.unitCost) : "—"}</Num></TableCell>
                       <TableCell><StatusBadge status={status} /></TableCell>
                     </TableRow>
                   ))}
@@ -406,7 +425,7 @@ function ItemsImport() {
               <SubmitButton
                 blocked={errors > 0 ? t("Fix the errors in the file and load it again", "Corrigez les erreurs dans le fichier et chargez-le à nouveau") : !locationId ? t("Choose the location", "Choisissez l'emplacement") : !day && t("Choose the opening stock date", "Choisissez la date du stock d'ouverture")}
                 pending={run.isPending}
-                onClick={() => run.mutate({ date: day, locationId, updatePrices, rows })}
+                onClick={() => run.mutate({ date: day, locationId, updatePrices, rows: rows.map(toWire) })}
               >
                 <Upload className="mr-1 h-4 w-4" /> {t("Import", "Importer")} ({rows.length})
               </SubmitButton>
@@ -425,6 +444,7 @@ type PriceRow = Record<keyof typeof PRICE_FIELDS, string | null>;
 function PricesImport() {
   const t = useT();
   const [rows, setRows] = useState<PriceRow[]>([]);
+  const [cells, setCells] = useState<Cells[]>([]);
   const [fileError, setFileError] = useState<string | null>(null);
   const [updated, setUpdated] = useState<number | null>(null);
 
@@ -441,23 +461,26 @@ function PricesImport() {
     setUpdated(null);
     setRows([]);
     try {
-      const { rows: raw, found } = await readSheet(file, PRICE_FIELDS);
+      const { rows: raw, found, cells: rawCells } = await readSheet(file, PRICE_FIELDS);
       if (!found.includes("sellPrice") || (!found.includes("sku") && !found.includes("barcode"))) {
         setFileError(t("The file needs a SKU or barcode column and a price column.", "Le fichier doit avoir une colonne Code (SKU) ou code-barres et une colonne de prix."));
         return;
       }
       setRows(raw.map((r) => ({ ...r, sellPrice: numCell(r.sellPrice) })));
+      setCells(rawCells);
     } catch (e) {
       setFileError(e instanceof Error ? e.message : String(e));
     }
   }
 
-  const problem = (r: PriceRow) => {
+  const problem = (r: PriceRow, i: number) => {
     if (!r.sku && !r.barcode) return t("SKU or barcode missing", "Code ou code-barres manquant");
+    const unsure = amountQuestion(t, cells[i], [SELL_PRICE]);
+    if (unsure) return unsure;
     if (!r.sellPrice || !/^\d+(\.\d+)?$/.test(r.sellPrice)) return t("Price is not a valid number", "Le prix n'est pas un nombre valide");
     return null;
   };
-  const errors = rows.filter((r) => problem(r)).length;
+  const errors = rows.filter((r, i) => problem(r, i)).length;
 
   const run = useApiMutation<unknown, { updated: number }>("POST", "/api/import/prices", {
     success: t("Prices updated", "Prix mis à jour"),
@@ -502,7 +525,7 @@ function PricesImport() {
                 </TableHeader>
                 <TableBody>
                   {rows.map((r, i) => {
-                    const err = problem(r);
+                    const err = problem(r, i);
                     return (
                       <TableRow key={i}>
                         <TableCell className="text-muted-foreground"><Num>{i + 2}</Num></TableCell>
@@ -517,7 +540,7 @@ function PricesImport() {
             </div>
             <div className="flex flex-wrap justify-end gap-2">
               <Button variant="outline" onClick={() => setRows([])}>{t("Cancel", "Annuler")}</Button>
-              <SubmitButton blocked={errors > 0 && t("Fix the errors in the file and load it again", "Corrigez les erreurs dans le fichier et chargez-le à nouveau")} pending={run.isPending} onClick={() => run.mutate({ rows })}>
+              <SubmitButton blocked={errors > 0 && t("Fix the errors in the file and load it again", "Corrigez les erreurs dans le fichier et chargez-le à nouveau")} pending={run.isPending} onClick={() => run.mutate({ rows: rows.map(toWire) })}>
                 <Upload className="mr-1 h-4 w-4" /> {t("Update prices", "Mettre à jour les prix")} ({rows.length})
               </SubmitButton>
             </div>
@@ -674,7 +697,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
       setRows(clean);
       setCells(rawCells);
       setBusy(true);
-      setPreview(await api<PreviewRow[]>("POST", "/api/import/items/preview", { rows: clean.map(({ quantity: _q, unitPrice: _p, weightKg: _w, volumeCbm: _v, ...r }) => r) }));
+      setPreview(await api<PreviewRow[]>("POST", "/api/import/items/preview", { rows: clean.map(({ quantity: _q, unitPrice: _p, weightKg: _w, volumeCbm: _v, ...r }) => toWire(r)) }));
     } catch (e) {
       setFileError(e instanceof Error ? e.message : String(e));
     } finally {
@@ -694,7 +717,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
   );
   const merged = rows.map((r, i) => {
     const p = preview[i];
-    const err = rowError(p?.status === "error" ? p : undefined, lang) ?? unsure[i] ?? localError(r);
+    const err = rowError(p?.status === "error" ? p : undefined, lang) ?? unsure[i] ?? amountQuestion(t, cells[i], [{ key: "unitPrice", en: "Unit price", fr: "Prix unitaire" }, SELL_PRICE]) ?? localError(r);
     return { r, p, err, status: (err ? "error" : p?.status ?? "existing") as PreviewRow["status"] };
   });
   const errors = merged.filter((m) => m.err).length;
@@ -787,7 +810,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
           <SubmitButton
             blocked={!busy && (!rows.length ? t("Load a file with at least one row", "Chargez un fichier avec au moins une ligne") : errors > 0 && t("Fix the errors in the file and load it again", "Corrigez les erreurs dans le fichier et chargez-le à nouveau"))}
             pending={busy || run.isPending}
-            onClick={() => run.mutate({ mode, rows })}
+            onClick={() => run.mutate({ mode, rows: rows.map(toWire) })}
           >
             <Upload className="mr-1 h-4 w-4" /> {mode === "replace" ? t("Replace the lines", "Remplacer les lignes") : t("Add to the lines", "Ajouter aux lignes")} ({rows.length})
           </SubmitButton>
