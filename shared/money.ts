@@ -107,6 +107,22 @@ export function allocateCents(total: DecimalInput, weights: DecimalInput[]): Dec
   return result.map((c) => c.times(sign).dividedBy(100));
 }
 
+/** Currency marks a spreadsheet cell may carry around its number ("12,5 $", "28 000 FC", "7 ¥"). */
+const CURRENCY_MARKS = /US\$|USD|\$|FC|CDF|CNY|RMB|¥|￥|元/gi;
+
+/**
+ * The currency a typed amount names, if any: "USD" for "$", "US$" or "USD", "CDF" for "FC" or "CDF",
+ * "CNY" for "¥", "CNY", "RMB" or "元", "mixed" when a cell names two. A number cell names none.
+ */
+export function typedCurrencyMark(value: unknown): "USD" | "CDF" | "CNY" | "mixed" | null {
+  if (typeof value !== "string") return null;
+  const found = new Set(
+    (value.match(CURRENCY_MARKS) ?? []).map((m) => (/^(US\$|USD|\$)$/i.test(m) ? "USD" : /^(FC|CDF)$/i.test(m) ? "CDF" : "CNY")),
+  );
+  if (found.size > 1) return "mixed";
+  return (found.values().next().value as "USD" | "CDF" | "CNY" | undefined) ?? null;
+}
+
 /**
  * A number typed in a spreadsheet, in French or English style: "1 415,51", "1,415.51", "12,5 $", "2.800 FC".
  * The last "," or "." followed by one or two digits is the decimal mark; any other "," "." or space groups thousands.
@@ -121,8 +137,9 @@ export function allocateCents(total: DecimalInput, weights: DecimalInput[]): Dec
  */
 export function parseTypedNumber(value: unknown, opts: { measured?: boolean } = {}): string | null {
   if (value === null || value === undefined) return null;
-  if (typeof value === "number") return Number.isFinite(value) ? String(value) : null;
-  let s = String(value).replace(/[\s\u00a0\u202f]/g, "").replace(/\$|FC|CDF|USD/gi, "");
+  // Plain digits, never "1e-7": the server reads the text as written.
+  if (typeof value === "number") return Number.isFinite(value) ? new Decimal(value).toFixed() : null;
+  let s = String(value).replace(/[\s\u00a0\u202f]/g, "").replace(CURRENCY_MARKS, "");
   if (s === "") return null;
   const neg = /^[-\u2212]/.test(s);
   if (/^[-+\u2212]/.test(s)) s = s.slice(1);
@@ -160,7 +177,7 @@ export function ambiguousTypedMeasure(value: unknown): [string, string] | null {
  */
 export function ambiguousTypedAmount(value: unknown): [string, string] | null {
   if (typeof value !== "string") return null;
-  const s = value.replace(/[\s\u00a0\u202f]/g, "").replace(/\$|FC|CDF|USD/gi, "");
+  const s = value.replace(/[\s\u00a0\u202f]/g, "").replace(CURRENCY_MARKS, "");
   const m = /^([-+\u2212]?)([1-9]\d{0,2})[.,](\d{3})$/.exec(s);
   if (!m) return null;
   const sign = m[1] && m[1] !== "+" ? "-" : "";

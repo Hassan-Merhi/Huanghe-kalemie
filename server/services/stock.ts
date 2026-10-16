@@ -1,10 +1,11 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { frNumber } from "@shared/french";
 import { locations, motorcycleUnits, products, stockLevels, stockMovements, variants, type MovementType } from "@shared/schema";
 import { Decimal, cents, dec, type DecimalInput } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, wholeUnitError } from "../errors";
 import { wholeUnit } from "@shared/units";
+import { lockPeriodsShared } from "./ledger";
 
 /*
  * Stock is valued at weighted average cost per variant. Each variant keeps its total quantity
@@ -27,6 +28,19 @@ interface MovementRef {
   journalId?: number | null;
   note?: string | null;
   userId?: number | null;
+}
+
+/**
+ * Every posting that touches stock takes its locks in one order: the periods lock (shared), then the
+ * items' rows in id order, then the money and credit locks, then the journal counter (in postJournal).
+ * A service calls this before its first journal, so an offload or a cancelled sale (which post first)
+ * and a sale, return or adjustment of the same item (which move stock first) cannot wait on each other.
+ */
+export async function lockVariants(tx: Tx, variantIds: number[]): Promise<void> {
+  const ids = Array.from(new Set(variantIds)).sort((a, b) => a - b);
+  if (!ids.length) return;
+  await lockPeriodsShared(tx);
+  await tx.select({ id: variants.id }).from(variants).where(inArray(variants.id, ids)).orderBy(asc(variants.id)).for("update");
 }
 
 async function lockVariant(tx: Tx, variantId: number) {

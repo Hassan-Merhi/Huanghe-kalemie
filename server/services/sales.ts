@@ -23,7 +23,7 @@ import type { Tx } from "../db";
 import { badRequest, conflict, forbidden, notFound, wholeUnitError } from "../errors";
 import { wholeUnit } from "@shared/units";
 import { moneyLeg, nextNumber, postJournal, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
-import { issueStock, linkMovementsToJournal, receiveStock, stockQty } from "./stock";
+import { issueStock, linkMovementsToJournal, lockVariants, receiveStock, stockQty } from "./stock";
 
 /**
  * Francs cannot be counted to the cent of a dollar: a sale paid partly in francs may be over or under
@@ -76,6 +76,8 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
   if (!location) throw badRequest("That location does not exist", "Cet emplacement n'existe pas");
 
   const variantIds = Array.from(new Set(input.lines.map((l) => l.variantId)));
+  // All the items at once, in id order (see lockVariants), so two sales of the same items cannot cross.
+  await lockVariants(tx, variantIds);
   const variantRows = await tx
     .select({ id: variants.id, sku: variants.sku, name: products.name, tracksSerials: products.tracksSerials, unit: products.unit, active: variants.active, sellPrice: variants.sellPrice })
     .from(variants)
@@ -385,6 +387,8 @@ export async function voidSale(tx: Tx, id: number, date: string, reason: string,
   const returns = await tx.select({ id: saleReturns.id }).from(saleReturns).where(eq(saleReturns.saleId, id));
   if (returns.length) throw conflict("This sale has returns, so it cannot be cancelled. Return the remaining items instead.", "Cette vente a des retours, elle ne peut donc pas être annulée. Retournez plutôt les articles restants.");
   const lines = await tx.select().from(saleLines).where(eq(saleLines.saleId, id));
+  // The items before the reversing journal (see lockVariants), as a sale of them locks them first.
+  await lockVariants(tx, lines.map((l) => l.variantId));
 
   const voidJournalId = sale.journalId
     ? await reverseJournal(tx, sale.journalId, { date, type: "sale_void", memo: `Vente ${sale.number} annulée\u00a0: ${reason}`, userId })
@@ -443,6 +447,7 @@ export async function returnSale(tx: Tx, saleId: number, input: ReturnInput, use
     .from(saleLines)
     .where(and(eq(saleLines.saleId, saleId), inArray(saleLines.id, input.lines.map((l) => l.saleLineId))))
     .for("update");
+  await lockVariants(tx, lineRows.map((l) => l.variantId));
 
   if (input.refundAccountId) {
     const [account] = await tx.select({ id: accounts.id, isMoney: accounts.isMoney }).from(accounts).where(eq(accounts.id, input.refundAccountId));

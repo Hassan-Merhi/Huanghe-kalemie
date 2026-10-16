@@ -23,6 +23,7 @@ import { useI18n, useT, count } from "@/lib/i18n";
 import { amountCellUnsure, downloadXlsx, readNumberCell, readSheet, toWire } from "@/lib/sheets";
 import { knownUnit, unitLabel, wholeUnit } from "@/lib/units";
 import type { Product } from "@/lib/types";
+import { typedCurrencyMark } from "@shared/money";
 
 type T = (en: string, fr: string) => string;
 
@@ -190,9 +191,21 @@ const measureCell = (value: string | null, asked: string | number | false | null
  * ("4.125": 4 125 or 4,125?). The server refuses such a cell, so the row cannot be imported until the
  * file says which.
  */
-function amountQuestion(t: T, cells: Cells | undefined, fields: { key: string; en: string; fr: string }[]): string | null {
+const CUR_NAME: Record<string, [string, string]> = { USD: ["US dollars", "dollars US"], CDF: ["francs", "francs"], CNY: ["yuan", "yuans"] };
+
+function amountQuestion(t: T, cells: Cells | undefined, fields: { key: string; en: string; fr: string; currency?: string }[]): string | null {
   for (const f of fields) {
     const raw = cells?.[f.key];
+    // "28 000 FC" in a dollar column: the server refuses it, so the row says so first.
+    const mark = typedCurrencyMark(raw);
+    if (mark && f.currency && mark !== f.currency) {
+      const text = String(raw).trim();
+      const [isEn, isFr] = CUR_NAME[mark] ?? [mark, mark];
+      const [wantEn, wantFr] = CUR_NAME[f.currency] ?? [f.currency, f.currency];
+      return mark === "mixed"
+        ? t(`${f.en} "${text}" names two currencies: keep one`, `${f.fr} «\u00a0${text}\u00a0» indique deux devises\u00a0: n'en gardez qu'une`)
+        : t(`${f.en} "${text}" is in ${isEn}, not ${wantEn}`, `${f.fr} «\u00a0${text}\u00a0» est en ${isFr}, pas en ${wantFr}`);
+    }
     const u = amountCellUnsure(raw);
     if (!u) continue;
     const text = String(raw).trim();
@@ -203,7 +216,7 @@ function amountQuestion(t: T, cells: Cells | undefined, fields: { key: string; e
   }
   return null;
 }
-const SELL_PRICE = { key: "sellPrice", en: "Sell price", fr: "Prix de vente" };
+const SELL_PRICE = { key: "sellPrice", en: "Sell price", fr: "Prix de vente", currency: "USD" };
 const rowError = (p: PreviewRow | undefined, lang: string) => (p ? (lang === "fr" ? p.errorFr ?? p.error : p.error ?? p.errorFr) : undefined);
 
 // ---------------------------------------------------------------- Page
@@ -321,7 +334,7 @@ function ItemsImport() {
   const { rows, unsure, units } = useMemo(() => remeasure(t, fileRows, cells, preview, "qty", []), [t, fileRows, cells, preview]);
   const merged = rows.map((r, i) => {
     const p = preview[i];
-    const err = rowError(p?.status === "error" ? p : undefined, lang) ?? unsure[i] ?? amountQuestion(t, cells[i], [SELL_PRICE, { key: "unitCost", en: "Unit cost", fr: "Coût unitaire" }]) ?? localError(r, units[i]);
+    const err = rowError(p?.status === "error" ? p : undefined, lang) ?? unsure[i] ?? amountQuestion(t, cells[i], [SELL_PRICE, { key: "unitCost", en: "Unit cost", fr: "Coût unitaire", currency: "USD" }]) ?? localError(r, units[i]);
     // A unit the shop does not know is kept as typed, and its quantity may have decimals: said, not refused.
     const note = !err && !knownUnit(units[i])
       ? t(`Unknown unit "${units[i].trim()}": kept as typed, decimals allowed`, `Unité «\u00a0${units[i].trim()}\u00a0» inconnue\u00a0: gardée telle quelle, décimales permises`)
@@ -728,7 +741,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
   );
   const merged = rows.map((r, i) => {
     const p = preview[i];
-    const err = rowError(p?.status === "error" ? p : undefined, lang) ?? unsure[i] ?? amountQuestion(t, cells[i], [{ key: "unitPrice", en: "Unit price", fr: "Prix unitaire" }, SELL_PRICE]) ?? localError(r);
+    const err = rowError(p?.status === "error" ? p : undefined, lang) ?? unsure[i] ?? amountQuestion(t, cells[i], [{ key: "unitPrice", en: "Unit price", fr: "Prix unitaire", currency: currency.toUpperCase() }, SELL_PRICE]) ?? localError(r);
     return { r, p, err, unsure: unsure[i], status: (err ? "error" : p?.status ?? "existing") as PreviewRow["status"] };
   });
   const errors = merged.filter((m) => m.err).length;

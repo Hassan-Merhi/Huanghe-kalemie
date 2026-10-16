@@ -66,7 +66,11 @@ export default function OptionalVouchers() {
   const total = rows.reduce((sum, r) => sum.plus(r.totalUsd ? d(r.totalUsd) : 0), d(0));
   const filtered = kind !== "all" || !!from || !!to || !!search.trim();
 
-  const finalize = useApiMutation<{ id: number }, FinalizeResult>("POST", (b) => `/api/voucher-drafts/${b.id}/finalize`, {
+  // The draft's updatedAt goes with it: a draft changed since it was shown here is refused (409) and the list reloads.
+  const finalize = useApiMutation<{ id: number; updatedAt: string }, FinalizeResult>("POST", (b) => `/api/voucher-drafts/${b.id}/finalize`, {
+    onError: () => {
+      void q.refetch();
+    },
     onSuccess: (res) => {
       const journalId = res.result?.id ?? res.result?.journalId ?? null;
       toast({
@@ -83,9 +87,8 @@ export default function OptionalVouchers() {
 
   function run() {
     if (!confirm) return;
-    const body = { id: confirm.draft.id };
-    if (confirm.action === "finalize") finalize.mutate(body);
-    else remove.mutate(body);
+    if (confirm.action === "finalize") finalize.mutate({ id: confirm.draft.id, updatedAt: confirm.draft.updatedAt });
+    else remove.mutate({ id: confirm.draft.id });
     setConfirm(null);
   }
 

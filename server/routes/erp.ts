@@ -1,14 +1,14 @@
 import type { Express, Request } from "express";
 import { and, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
-import { accounts, DRAFT_KINDS, journalLines, journals, parties, partners, saleReturns, users, type DraftKind } from "@shared/schema";
-import { ambiguousImportMeasure, ambiguousTypedAmount, cents, dec, Decimal, MoneyError, parseTypedNumber } from "@shared/money";
+import { accounts, containers, DRAFT_KINDS, journalLines, journals, parties, partners, saleReturns, users, type DraftKind } from "@shared/schema";
+import { ambiguousImportMeasure, ambiguousTypedAmount, cents, dec, Decimal, MoneyError, parseTypedNumber, typedCurrencyMark } from "@shared/money";
 import { frNumber } from "@shared/french";
 import { COST_FX_MEMO } from "../services/ledger";
 import { db } from "../db";
 import { forbidden, notFound } from "../errors";
 import { requireRole } from "../auth";
-import { asyncHandler, decimalString, id, isoDate, month, optionalDecimal, optionalId, paramId, positiveDecimal, todayIso } from "../http";
+import { asyncHandler, decimalString, id, integerDigits, isoDate, MAX_DIGITS, month, optionalDecimal, optionalId, optionalRate, paramId, positiveDecimal, todayIso } from "../http";
 import * as vouchers from "../services/vouchers";
 import * as payroll from "../services/payroll";
 import * as imports from "../services/imports";
@@ -39,7 +39,7 @@ export function registerErpRoutes(
   const voucherSchema = z.object({
     date: isoDate,
     accountId: id,
-    rate: optionalDecimal,
+    rate: optionalRate,
     memo: z.string().max(300).optional().nullable(),
     lines: z.array(z.object({ partyId: optionalId, accountId: optionalId, amount: positiveDecimal, memo: z.string().max(300).optional().nullable() })).min(1).max(100),
   });
@@ -297,6 +297,8 @@ export function registerErpRoutes(
     res.json({ ok: true });
   }));
   app.post("/api/voucher-drafts/:id/finalize", requireRole(...STAFF), asyncHandler(async (req, res) => {
+    // The version the validator reviewed: a draft saved again since is refused with 409, not posted.
+    const { updatedAt } = z.object({ updatedAt: z.string().max(40).optional().nullable() }).parse(req.body ?? {});
     const result = await db.transaction((tx) =>
       vouchers.finalizeDraft(tx, paramId(req), uid(req), { owner: req.user!.role === "owner" }, (kind, payload) => {
         if (kind === "journal" && req.user!.role !== "owner") {
@@ -306,7 +308,7 @@ export function registerErpRoutes(
         // Staff take francs at the day's rate, as on the direct voucher routes.
         if (req.user!.role !== "owner" && parsed && typeof parsed === "object" && "rate" in parsed) (parsed as { rate?: string | null }).rate = null;
         return parsed;
-      }),
+      }, updatedAt ?? null),
     );
     await audit(req, "finalize", "voucher_draft", paramId(req), result);
     res.json(result);
@@ -325,7 +327,7 @@ export function registerErpRoutes(
         date: isoDate.optional().nullable(),
         accountId: id,
         currency: z.enum(["USD", "CDF"]).optional().nullable(),
-        rate: optionalDecimal,
+        rate: optionalRate,
         lines: z
           .array(z.object({ partyId: id, salary: decimalString, bonus: optionalDecimal, withheld: optionalDecimal, penalty: optionalDecimal, deduction: optionalDecimal }))
           .min(1),
@@ -346,26 +348,69 @@ export function registerErpRoutes(
   // ---------------------------------------------------------------- Spreadsheet imports
 
   const cell = z.union([z.string().max(200), z.number(), z.null()]).optional().transform((v) => (v === undefined || v === null ? null : String(v).trim()));
-  // "12,50" from a French spreadsheet is twelve and a half, not 1250.
-  const num = z.union([z.string().max(40), z.number(), z.null()]).optional().transform((v) => parseTypedNumber(v));
-  // Prices and costs: the browser sends a number cell as a JSON number, taken as it is (0.125 $ for a bolt),
-  // so the import books what the preview showed. Text that could be thousands or three decimals ("4.125",
-  // "1,200") is refused rather than guessed; "0,125" and "1 250,125" are decimals.
-  const priceCell = z.union([z.string().max(40), z.number(), z.null()]).optional().transform((v) => {
-    const unsure = ambiguousTypedAmount(v);
-    if (unsure) {
-      const text = String(v).trim();
+  type Cur = "USD" | "CDF" | "CNY";
+  const CUR_EN: Record<Cur, string> = { USD: "US dollars", CDF: "francs", CNY: "yuan" };
+  const CUR_FR: Record<Cur, string> = { USD: "dollars US", CDF: "francs", CNY: "yuans" };
+  /**
+   * A spreadsheet number as the server books it: plain digits with an optional decimal point. Hex
+   * ("0x10"), exponents ("1e3", "1.5e3") and anything else that is not a typed number are refused rather
+   * than read as 16, 1000 or 15000; a JSON number cell is taken as it is, if it is finite. A price whose
+   * cell names a currency ("28 000 FC") must name the one it is entered in. Over 12 digits is a bad input.
+   */
+  function importNumber(v: unknown, ctx: z.RefinementCtx, opts: { measured?: boolean; currency?: Cur; where?: { en: string; fr: string } } = {}): string | null {
+    if (typeof v === "number" && !Number.isFinite(v)) throw new MoneyError("The cell is not a finite number", "La cellule n'est pas un nombre fini");
+    const text = String(v ?? "").trim();
+    if (opts.currency) {
+      const where = opts.where ?? { en: "prices here are", fr: "les prix sont ici" };
+      const mark = typedCurrencyMark(v);
+      if (mark === "mixed") {
+        throw new MoneyError(`"${text}" names two currencies: keep one`, `«\u00a0${text}\u00a0» indique deux devises : n'en gardez qu'une.`);
+      }
+      if (mark && mark !== opts.currency) {
+        throw new MoneyError(
+          `"${text}" is in ${CUR_EN[mark]}, but ${where.en} in ${CUR_EN[opts.currency]}: enter it in ${CUR_EN[opts.currency]}`,
+          `«\u00a0${text}\u00a0» est en ${CUR_FR[mark]}, mais ${where.fr} en ${CUR_FR[opts.currency]} : saisissez-le en ${CUR_FR[opts.currency]}.`,
+        );
+      }
+    }
+    const out = parseTypedNumber(v, { measured: opts.measured });
+    if (out === null) return null;
+    if (!/^-?\d+(\.\d+)?$/.test(out)) {
       throw new MoneyError(
-        `"${text}" could be ${unsure[0]} or ${unsure[1]}: write ${unsure[0]} without the separator, or put a number in the cell`,
-        `«\u00a0${text}\u00a0» : ${frNumber(unsure[0])} ou ${frNumber(unsure[1])} ? Écrivez ${unsure[0]} sans séparateur, ou mettez un nombre dans la cellule.`,
+        `"${text}" is not a number: write digits only, with a comma or a dot for the decimals`,
+        `«\u00a0${text}\u00a0» n'est pas un nombre : écrivez seulement des chiffres, avec une virgule ou un point pour les décimales.`,
       );
     }
-    return parseTypedNumber(v);
-  });
+    if (integerDigits(out) > MAX_DIGITS) {
+      ctx.addIssue({ code: z.ZodIssueCode.custom, message: "Must be less than 1 000 000 000 000" });
+      return z.NEVER;
+    }
+    return out;
+  }
+  const rawNumber = z.union([z.string().max(40), z.number(), z.null()]).optional();
+  // "12,50" from a French spreadsheet is twelve and a half, not 1250.
+  const num = rawNumber.transform((v, ctx) => importNumber(v, ctx));
+  // Prices and costs: the browser sends a number cell as a JSON number, taken as it is (0.125 $ for a bolt),
+  // so the import books what the preview showed. Text that could be thousands or three decimals ("4.125",
+  // "1,200") is refused rather than guessed; "0,125" and "1 250,125" are decimals. Item prices and opening
+  // costs are in dollars; a container's prices are in its invoice currency.
+  const priceIn = (currency: Cur, where?: { en: string; fr: string }) =>
+    rawNumber.transform((v, ctx) => {
+      const unsure = ambiguousTypedAmount(v);
+      if (unsure) {
+        const text = String(v).trim();
+        throw new MoneyError(
+          `"${text}" could be ${unsure[0]} or ${unsure[1]}: write ${unsure[0]} without the separator, or put a number in the cell`,
+          `«\u00a0${text}\u00a0» : ${frNumber(unsure[0])} ou ${frNumber(unsure[1])} ? Écrivez ${unsure[0]} sans séparateur, ou mettez un nombre dans la cellule.`,
+        );
+      }
+      return importNumber(v, ctx, { currency, where });
+    });
+  const priceCell = priceIn("USD");
   // Quantities, weights and volumes come from the browser as plain numbers ("12.375" kg): read the way a
   // form field reads a measure, so three decimals stay decimals. Pieces cannot come out split (each import
   // checks whole units), and "1.000" or "1,000" (1 000 or 1?) is refused rather than guessed.
-  const measure = z.union([z.string().max(40), z.number(), z.null()]).optional().transform((v) => {
+  const measure = rawNumber.transform((v, ctx) => {
     const unsure = ambiguousImportMeasure(v);
     if (unsure) {
       const text = String(v).trim();
@@ -375,7 +420,7 @@ export function registerErpRoutes(
         `«\u00a0${text}\u00a0» : ${frNumber(unsure[0])} ou ${unsure[1]} ? Écrivez-le sans ${mark === "comma" ? "la virgule" : "le point"}.`,
       );
     }
-    return parseTypedNumber(v, { measured: true });
+    return importNumber(v, ctx, { measured: true });
   });
   const itemRow = z.object({
     name: cell.transform((v) => v ?? ""),
@@ -391,7 +436,8 @@ export function registerErpRoutes(
     motorcycle: z.union([z.boolean(), z.string(), z.number(), z.null()]).optional().transform((v) => v === true || v === 1 || (typeof v === "string" && /^(yes|oui|y|o|1|true|vrai|moto)$/i.test(v.trim()))),
   });
   const stockRow = itemRow.extend({ qty: measure, unitCost: priceCell });
-  const containerRow = itemRow.extend({ quantity: measure.transform((v) => v ?? ""), unitPrice: priceCell.transform((v) => v ?? ""), weightKg: measure, volumeCbm: measure });
+  const containerRow = (currency: Cur) =>
+    itemRow.extend({ quantity: measure.transform((v) => v ?? ""), unitPrice: priceIn(currency, { en: "this container is", fr: "ce conteneur est" }).transform((v) => v ?? ""), weightKg: measure, volumeCbm: measure });
 
   app.post("/api/import/items/preview", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = z.object({ rows: z.array(itemRow).max(5000) }).parse(req.body);
@@ -414,7 +460,11 @@ export function registerErpRoutes(
     res.json(result);
   }));
   app.post("/api/containers/:id/import-lines", requireRole(...STAFF), asyncHandler(async (req, res) => {
-    const body = z.object({ mode: z.enum(["append", "replace"]), rows: z.array(containerRow).min(1).max(5000) }).parse(req.body);
+    // Prices are read in the container's currency, so a cell marked in another one is refused.
+    const [c] = await db.select({ currency: containers.currency }).from(containers).where(eq(containers.id, paramId(req)));
+    if (!c) throw notFound("Container", "Conteneur introuvable");
+    const currency = (["USD", "CDF", "CNY"].includes(c.currency) ? c.currency : "USD") as Cur;
+    const body = z.object({ mode: z.enum(["append", "replace"]), rows: z.array(containerRow(currency)).min(1).max(5000) }).parse(req.body);
     const result = await db.transaction((tx) => imports.importContainerLines(tx, paramId(req), body));
     await audit(req, "import", "container_lines", paramId(req), { rows: body.rows.length, ...result });
     res.json({ ...result, container: await containerSvc.getContainer(db, paramId(req)) });

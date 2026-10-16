@@ -12,14 +12,14 @@ import {
   parties,
 } from "@shared/schema";
 import { computeLandedCost, type AllocationMethod, type LandedCostResult } from "@shared/landedCost";
-import { cents, dec, sum, Decimal } from "@shared/money";
+import { cents, dec, sum, Decimal, MoneyError } from "@shared/money";
 import { frNumber } from "@shared/french";
 import type { Tx } from "../db";
 import { badRequest, conflict, notFound, wholeUnitError, francDecimalsError } from "../errors";
 import { wholeUnit } from "@shared/units";
 import { moneyLeg, postJournal, rateFor, rateTolerancePct, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type ForeignCurrency } from "./ledger";
 import { applyAdvances, assertSameCurrency, reverseAdvances } from "./operations";
-import { issueStock, linkMovementsToJournal, receiveStock, stockQty } from "./stock";
+import { issueStock, linkMovementsToJournal, lockVariants, receiveStock, stockQty } from "./stock";
 import { variantColour } from "./catalog";
 
 export async function getContainer(tx: Tx, id: number) {
@@ -70,7 +70,7 @@ export interface ContainerLineInput {
 
 /** Replace all lines of a container that is not finalized. */
 export async function replaceLines(tx: Tx, containerId: number, lines: ContainerLineInput[]) {
-  await lockEditable(tx, containerId);
+  const container = await lockEditable(tx, containerId);
   const variantIds = Array.from(new Set(lines.map((l) => l.variantId)));
   if (variantIds.length) {
     const found = await tx
@@ -92,6 +92,21 @@ export async function replaceLines(tx: Tx, containerId: number, lines: Container
   for (const l of lines) {
     if (dec(l.quantity).lte(0)) throw badRequest("Every line needs a quantity greater than zero", "Chaque ligne doit avoir une quantité supérieure à zéro");
     if (dec(l.unitPrice).isNegative()) throw badRequest("Unit price cannot be negative", "Le prix unitaire ne peut pas être négatif");
+    // A price is kept to six decimals: one smaller would be stored, and booked, as nothing.
+    const price = dec(l.unitPrice);
+    if (price.gt(0) && price.toDecimalPlaces(6).isZero()) {
+      throw new MoneyError(
+        `A unit price of ${price.toFixed()} rounds to zero at six decimals: enter 0 for a free item, or the real price`,
+        `Un prix unitaire de ${frNumber(price.toFixed())} vaut zéro à six décimales : saisissez 0 pour un article gratuit, ou le vrai prix`,
+      );
+    }
+    // And a priced line worth under half a cent at the container's rate would go into stock at nothing (see computeLandedCost).
+    if (price.gt(0) && cents(dec(l.quantity).times(price).times(container.rateToUsd)).isZero()) {
+      throw new MoneyError(
+        `A line of ${dec(l.quantity).toFixed()} at ${price.toFixed()} is worth less than one cent: enter 0 for a free item, or the real price`,
+        `Une ligne de ${frNumber(dec(l.quantity).toFixed())} à ${frNumber(price.toFixed())} vaut moins d'un centime : saisissez 0 pour un article gratuit, ou le vrai prix`,
+      );
+    }
   }
   // Expenses pinned to a line keep their target only if that line survives; lines are re-created,
   // so clear single-line targets and let the user re-pick them.
@@ -360,6 +375,8 @@ export async function finalizeContainer(tx: Tx, containerId: number, offloadDate
   const unpinned = full.expenses.find((e) => e.method === "line" && !e.targetLineId);
   if (unpinned) throw badRequest("An expense charged to one line has no line. Pick its line first.", "Une dépense imputée à une seule ligne n'a pas de ligne. Choisissez d'abord sa ligne.");
   const result = await previewLandedCost(tx, containerId);
+  // The items before the journal (see lockVariants): a sale of one of them locks it first too.
+  await lockVariants(tx, full.lines.map((l) => l.variantId));
 
   const inventoryId = await systemAccountId(tx, SYSTEM_ACCOUNTS.inventory);
   const invoice = supplierInvoiceNative(container.currency, full.lines, result.fobTotalUsd);
@@ -491,6 +508,8 @@ export async function reverseContainer(tx: Tx, containerId: number, date: string
   // Only while nothing of these items has left stock since the offload: then the container's own
   // goods are all still here and come out at exactly the cost they went in with.
   const variantIds = Array.from(new Set(full.lines.map((l) => l.variantId)));
+  // The items before anything is read or posted (see lockVariants): the advances go back as journals first.
+  await lockVariants(tx, variantIds);
   if (variantIds.length) {
     const [offload] = await tx
       .select({ id: sql<number>`max(${stockMovements.id})` })
