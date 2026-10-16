@@ -360,8 +360,38 @@ export async function getSale(tx: Tx, id: number) {
   });
   const [customer] = sale.customerId ? await tx.select().from(parties).where(eq(parties.id, sale.customerId)) : [];
   const [cashier] = sale.createdBy ? await tx.select({ fullName: users.fullName, username: users.username }).from(users).where(eq(users.id, sale.createdBy)) : [];
+  // The franc rounding as the Sales list reads it: the "Arrondi FC" lines on exchange differences, + when the
+  // shop kept a few cents (the customer handed over a little more, or got a little less back on a refund).
+  // `saleFcRoundingUsd` is the till's alone, for the receipt; `fcRoundingUsd` adds the returns' refunds.
+  const fx = await systemAccountId(tx, SYSTEM_ACCOUNTS.fx);
+  const roundingRows = sale.journalId
+    ? await tx
+        .select({ journalId: journalLines.journalId, usd: sql<string>`(${journalLines.credit} - ${journalLines.debit})::text` })
+        .from(journalLines)
+        .where(and(eq(journalLines.accountId, fx), eq(journalLines.memo, "Arrondi FC"), inArray(journalLines.journalId, [sale.journalId, ...returnRows.map((r) => r.journalId).filter((x): x is number => !!x)])))
+    : [];
+  const saleFcRounding = sum(roundingRows.filter((r) => r.journalId === sale.journalId).map((r) => r.usd));
+  const fcRounding = sum(roundingRows.map((r) => r.usd));
+  // A credit sale to a customer holding an avoir (paid ahead) owes nothing new: the credit comes off that avoir.
+  // Read from the customer's balance just after this sale was posted, so the receipt and the sale page say
+  // what was covered then, and what avoir was left.
+  let avoir: { usedUsd: string; leftUsd: string } | null = null;
+  if (sale.customerId && sale.journalId && dec(sale.creditUsd).gt(0)) {
+    const [after] = await tx
+      .select({ usd: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)::text` })
+      .from(journalLines)
+      .where(and(eq(journalLines.partyId, sale.customerId), lte(journalLines.journalId, sale.journalId)));
+    const before = dec(after.usd).minus(sale.creditUsd);
+    const used = Decimal.min(dec(sale.creditUsd), Decimal.max(before.negated(), 0));
+    if (used.gt(0)) avoir = { usedUsd: used.toFixed(2), leftUsd: Decimal.max(dec(after.usd).negated(), 0).toFixed(2) };
+  }
   return {
     ...sale,
+    saleFcRoundingUsd: saleFcRounding.toFixed(2),
+    fcRoundingUsd: fcRounding.toFixed(2),
+    /** The part of the credit covered by the customer's avoir at the time of the sale, and the avoir left after it. */
+    avoirUsedUsd: avoir?.usedUsd ?? null,
+    avoirLeftUsd: avoir?.leftUsd ?? null,
     customer: customer ?? null,
     cashierName: cashier ? cashier.fullName || cashier.username : null,
     lines: lines.map((l) => ({
