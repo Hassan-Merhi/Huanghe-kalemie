@@ -58,6 +58,7 @@ import * as checks from "./services/checks";
 import * as backup from "./services/backup";
 import { getSetting } from "./setup";
 import { cnyRateFor, reverseJournal, setExchangeRate } from "./services/ledger";
+import { containerNumberKey } from "@shared/containerNumber";
 import { transferStock } from "./services/stock";
 import * as vouchers from "./services/vouchers";
 import { registerErpRoutes } from "./routes/erp";
@@ -767,11 +768,22 @@ export function registerRoutes(app: Express) {
     arrivalDate: isoDate.optional().nullable(),
     notes: z.string().max(2000).optional().nullable(),
   });
-  /** Container numbers are unique (as stored, in capitals): say which number, not "this value is already used". */
+  /**
+   * Container numbers are unique (as stored, in capitals), spaces and dashes aside: "HHU 2026 010" is
+   * HHU-2026-010. Say which number, not "this value is already used".
+   */
   async function assertContainerNumberFree(tx: Tx, number: string, exceptId?: number) {
     const wanted = number.trim().toUpperCase();
-    const [other] = await tx.select({ id: containers.id }).from(containers).where(and(eq(containers.number, wanted), exceptId ? ne(containers.id, exceptId) : undefined));
-    if (other) throw new AppError(409, `Container number ${wanted} already exists`, "DUPLICATE_NUMBER", `Le numéro de conteneur ${wanted} existe déjà`);
+    const key = containerNumberKey(wanted);
+    const [other] = await tx
+      .select({ id: containers.id, number: containers.number })
+      .from(containers)
+      .where(and(sql`regexp_replace(upper(${containers.number}), '[[:space:]_./-]', '', 'g') = ${key}`, exceptId ? ne(containers.id, exceptId) : undefined))
+      .limit(1);
+    if (other) {
+      const same = other.number === wanted ? "" : ` (${other.number})`;
+      throw new AppError(409, `Container number ${wanted} already exists${same}`, "DUPLICATE_NUMBER", `Le numéro de conteneur ${wanted} existe déjà${same}`);
+    }
   }
   app.post("/api/containers", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = containerSchema.parse(req.body);

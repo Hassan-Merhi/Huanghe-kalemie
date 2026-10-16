@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import { containerNumberKey } from "@shared/containerNumber";
 import { Link, useLocation } from "wouter";
 import { Plus } from "lucide-react";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
@@ -169,9 +170,11 @@ function NewContainerDialog({ onClose, onCreated }: { onClose: () => void; onCre
   const existing = useQuery<ContainerRow[]>({ queryKey: ["/api/containers"] }).data ?? [];
   const [takenError, setTakenError] = useState<string | null>(null);
   const typedNumber = number.trim().toUpperCase();
-  const taken = typedNumber !== "" && existing.some((c) => c.number.toUpperCase() === typedNumber);
+  // Spaces and dashes aside, as the server compares: "HHU 2026 010" is HHU-2026-010.
+  const taken = typedNumber !== "" ? existing.find((c) => containerNumberKey(c.number) === containerNumberKey(typedNumber)) : undefined;
+  const same = taken && taken.number.toUpperCase() !== typedNumber ? ` (${taken.number})` : "";
   const numberError = taken
-    ? t(`Container number ${typedNumber} already exists`, `Le numéro de conteneur ${typedNumber} existe déjà`)
+    ? t(`Container number ${typedNumber} already exists${same}`, `Le numéro de conteneur ${typedNumber} existe déjà${same}`)
     : takenError;
   const create = useApiMutation<Record<string, unknown>, ContainerRow>("POST", "/api/containers", {
     success: t("Container created", "Conteneur créé"),

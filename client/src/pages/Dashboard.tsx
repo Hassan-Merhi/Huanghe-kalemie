@@ -103,8 +103,17 @@ export default function Dashboard() {
             <StatCard label={t("Running costs this month", "Charges du mois")} value={usd(data.monthPnl.operatingExpenses)} sub={t("Rent, salaries, electricity…", "Loyer, salaires, électricité…")} />
             <StatCard label={t("Net profit this month", "Bénéfice net du mois")} value={usd(data.monthPnl.netProfit)} tone={d(data.monthPnl.netProfit).lt(0) ? "bad" : "good"} />
             <StatCard label={t("Stock value (at cost)", "Valeur du stock (au coût)")} value={usd(data.stockValue)} />
-            <StatCard label={t("Customers owe us", "Créances clients")} value={usd(data.receivables)} sub={<Link href="/contacts" className="underline-offset-2 hover:underline">{t("See customers", "Voir les clients")}</Link>} />
-            <StatCard label={t("We owe suppliers", "Dettes fournisseurs")} value={usd(data.payables)} sub={<Link href="/contacts" className="underline-offset-2 hover:underline">{t("See suppliers", "Voir les fournisseurs")}</Link>} />
+            {/* Customers who paid ahead are owed by us: their credit is said as such, not as a negative debt. */}
+            <StatCard
+              label={d(data.receivables).lt(0) ? t("Customer credit", "Avoirs clients") : t("Customers owe us", "Créances clients")}
+              value={usd(d(data.receivables).abs().toFixed(2))}
+              sub={<Link href="/contacts" className="underline-offset-2 hover:underline">{t("See customers", "Voir les clients")}</Link>}
+            />
+            <StatCard
+              label={d(data.payables).lt(0) ? t("Advances to suppliers", "Avances aux fournisseurs") : t("We owe suppliers", "Dettes fournisseurs")}
+              value={usd(d(data.payables).abs().toFixed(2))}
+              sub={<Link href="/contacts" className="underline-offset-2 hover:underline">{t("See suppliers", "Voir les fournisseurs")}</Link>}
+            />
             <StatCard
               label={t("Low stock items", "Articles en stock bas")}
               value={<span className="flex items-center gap-2">{data.lowStockCount}{data.lowStockCount > 0 && <AlertTriangle className="h-5 w-5 text-amber-500" />}</span>}
@@ -254,8 +263,9 @@ function PositionCard({ p, onTheWay }: { p: NonNullable<DashboardData["position"
     [t("Money", "Trésorerie"), p.money, false],
     [t("Stock (at cost)", "Stock (au coût)"), p.stock, false],
     [t("Container costs paid (on the way)", "Frais payés (conteneurs en route)"), p.transit, false],
-    [t("Customers owe us", "Clients nous doivent"), p.receivables, false],
-    [t("We owe", "Nous devons"), p.payables, true],
+    // Credit customers hold is owed by us, and an advance to suppliers is owed to us: each said as what it is.
+    d(p.receivables).lt(0) ? [t("Customer credit (we owe)", "Avoirs clients (dus)"), d(p.receivables).negated().toFixed(2), true] : [t("Customers owe us", "Clients nous doivent"), p.receivables, false],
+    d(p.payables).lt(0) ? [t("Advances to suppliers", "Avances aux fournisseurs"), d(p.payables).negated().toFixed(2), false] : [t("We owe", "Nous devons"), p.payables, true],
   ];
   if (p.otherAssets && !d(p.otherAssets).isZero()) rows.splice(4, 0, [t("Advances and deposits", "Avances et dépôts"), p.otherAssets, false]);
   if (p.otherLiabilities && !d(p.otherLiabilities).isZero()) rows.push([t("Other debts (withholdings…)", "Autres dettes (retenues…)"), p.otherLiabilities, true]);

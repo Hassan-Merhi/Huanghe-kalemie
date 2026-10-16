@@ -266,8 +266,9 @@ export function PositionCard({ position: p }: { position: Position }) {
     [t("Money (cash, bank, mobile)", "Trésorerie (caisse, banque, mobile)"), p.money],
     [t("Stock (at cost)", "Stock (au coût)"), p.stock],
     [t("Goods on the way", "Marchandises en route"), p.transit],
-    [t("Customers owe us", "Clients nous doivent"), p.receivables],
-    [t("We owe", "Nous devons"), p.payables, true],
+    // Credit customers hold is owed by us, and an advance to suppliers is owed to us: each said as what it is.
+    d(p.receivables).lt(0) ? [t("Customer credit (we owe)", "Avoirs clients (dus)"), d(p.receivables).negated().toFixed(2), true] : [t("Customers owe us", "Clients nous doivent"), p.receivables],
+    d(p.payables).lt(0) ? [t("Advances to suppliers", "Avances aux fournisseurs"), d(p.payables).negated().toFixed(2)] : [t("We owe", "Nous devons"), p.payables, true],
   ];
   if (p.otherAssets && !d(p.otherAssets).isZero()) rows.splice(4, 0, [t("Advances and deposits", "Avances et dépôts"), p.otherAssets]);
   if (p.otherLiabilities && !d(p.otherLiabilities).isZero()) rows.push([t("Other debts (withholdings…)", "Autres dettes (retenues…)"), p.otherLiabilities, true]);

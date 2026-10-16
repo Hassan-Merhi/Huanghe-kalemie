@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import type Decimal from "decimal.js";
+import Decimal from "decimal.js";
 import { useQuery } from "@tanstack/react-query";
 import { Landmark } from "lucide-react";
 import { Field, Num, SubmitButton } from "@/components/common";
@@ -25,7 +25,8 @@ import { useT } from "@/lib/i18n";
 /** The day's franc (and yuan) rate: shown to everyone, set by managers and the owner. */
 export function RatesCard() {
   const t = useT();
-  const { can } = useAuth();
+  const { can, user } = useAuth();
+  const isOwner = user?.role === "owner";
   const today = todayLocal();
   const todayQ = useRate(today);
   const listQ = useQuery<{ date: string; cdfPerUsd: string; cnyPerUsd: string | null }[]>({ queryKey: ["/api/exchange-rates"] });
@@ -47,18 +48,45 @@ export function RatesCard() {
   const isToday = current?.source === today;
   const settings = useQuery<Settings>({ queryKey: ["/api/settings"] }).data;
   const tolerance = d(settings?.rateTolerancePct ?? "3");
-  // Compared with the last rate before the chosen day (as the server does for managers), never with that
-  // day's own rate, which may be the very mistake being put right.
+  // Compared, as the server does, with whichever is nearer of the last rate before the chosen day and that
+  // day's own rate, so a day's own mistake (28 100) put right does not warn against itself; "281", far
+  // from both, is said against today's 2 810 shown above, not yesterday's 2 812.
   const rows = listQ.data ?? [];
-  const refCdf = rows.find((r) => r.date < day)?.cdfPerUsd ?? (current && current.source !== day ? current.cdfPerUsd : null);
+  const before = rows.find((r) => r.date < day)?.cdfPerUsd ?? (current && current.source !== day ? current.cdfPerUsd : null);
+  const own = rows.find((r) => r.date === day)?.cdfPerUsd ?? null;
+  const nearer = (refs: (string | null)[], x: string) =>
+    refs.filter((r): r is string => !!r && d(r).gt(0)).reduce<string | null>((best, r) => (!best || d(r).minus(d(x)).abs().lt(d(best).minus(d(x)).abs()) ? r : best), null);
+  const refNear = d(value).gt(0) ? nearer([before, own], value) : before;
   const refCny = rows.find((r) => r.date < day && r.cnyPerUsd)?.cnyPerUsd ?? null;
   const gapOf = (typedRate: string, ref: string | null): Decimal | null => {
     const x = d(typedRate);
     return ref && d(ref).gt(0) && x.gt(0) ? x.minus(ref).abs().dividedBy(ref).times(100) : null;
   };
+  const nearGap = gapOf(value, refNear);
+  const cdfFar = !!nearGap && nearGap.gt(tolerance);
+  // Far from both: said against the day's rate shown on the card, not one from another day.
+  const refCdf = cdfFar ? own ?? refNear : refNear;
   const cdfGap = gapOf(value, refCdf);
   const cnyGap = cny ? gapOf(cny, refCny) : null;
-  const cdfFar = !!cdfGap && cdfGap.gt(tolerance);
+  // A manager cannot save a past day's rate, nor one far from the last (the server refuses both): said
+  // here, without offering "save anyway". The owner may save any rate after confirming.
+  const managerLimit = Decimal.max(tolerance, 5);
+  const ownerOnly = isOwner
+    ? null
+    : day && day < today
+      ? t("Only the owner can change a past day's rate.", "Seul le propriétaire peut modifier le taux d'un jour passé.")
+      : nearGap && nearGap.gt(managerLimit) && refCdf
+        ? t(
+            `More than ${pct(managerLimit.toString(), 0)} away from ${fmtQty(refCdf)} FC: only the owner can save it. Check the figure, or ask the owner.`,
+            `Plus de ${pct(managerLimit.toString(), 0)} d'écart avec ${fmtQty(refCdf)}\u00a0FC\u00a0: seul le propriétaire peut l'enregistrer. Vérifiez le chiffre, ou demandez au propriétaire.`,
+          )
+        : null;
+  const ownerOnlyCny = !isOwner && !ownerOnly && cnyTyped && cnyGap && cnyGap.gt(managerLimit) && refCny
+    ? t(
+        `More than ${pct(managerLimit.toString(), 0)} away from ${fmtQty(refCny)} ¥: only the owner can save it.`,
+        `Plus de ${pct(managerLimit.toString(), 0)} d'écart avec ${fmtQty(refCny)}\u00a0¥\u00a0: seul le propriétaire peut l'enregistrer.`,
+      )
+    : null;
   // No yuan rate on file yet: only a rate a yuan cannot have (outside 4 to 12,5 ¥ for 1 $, as the server
   // checks a container's) is questioned.
   const cnyOdd = !refCny && !!cny && d(cny).gt(0) && (d(cny).lt(4) || d(cny).gt("12.5"));
@@ -100,20 +128,20 @@ export function RatesCard() {
             <Field label={t("Date", "Date")} required className="w-44 shrink-0">
               <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
             </Field>
-            <Field label={t("FC per $1", "FC pour 1\u00a0$")} required className="min-w-[7rem] flex-1" hint={cdfFar && refCdf ? farHint(cdfGap!, refCdf, "FC") : undefined}>
+            <Field label={t("FC per $1", "FC pour 1\u00a0$")} required className="min-w-[7rem] flex-1" hint={ownerOnly ? <span className="font-medium text-amber-800 dark:text-amber-400">{ownerOnly}</span> : cdfFar && refCdf ? farHint(cdfGap!, refCdf, "FC") : undefined}>
               <Input inputMode="decimal" thousands value={value} onChange={(e) => setValue(e.target.value)} />
             </Field>
             <Field
               // A short label, on one line like its neighbour, so both fields sit at the same height.
               label={t("¥ per $1", "¥ pour 1\u00a0$")}
-              hint={cnyFar && refCny ? farHint(cnyGap!, refCny, "¥") : cnyOdd ? <span className="font-medium text-amber-800 dark:text-amber-400">{t("A dollar buys about 7.1 ¥: check it", "Un dollar vaut environ 7,1\u00a0¥\u00a0: vérifiez-le")}</span> : lastCny ? t("Optional", "Facultatif") : t("Optional, about 7.1", "Facultatif, environ 7,1")}
+              hint={ownerOnlyCny ? <span className="font-medium text-amber-800 dark:text-amber-400">{ownerOnlyCny}</span> : cnyFar && refCny ? farHint(cnyGap!, refCny, "¥") : cnyOdd ? <span className="font-medium text-amber-800 dark:text-amber-400">{t("A dollar buys about 7.1 ¥: check it", "Un dollar vaut environ 7,1\u00a0¥\u00a0: vérifiez-le")}</span> : lastCny ? t("Optional", "Facultatif") : t("Optional, about 7.1", "Facultatif, environ 7,1")}
               className="min-w-[7rem] flex-1"
             >
               <Input inputMode="decimal" value={cny} onChange={(e) => setCny(e.target.value)} />
             </Field>
             <SubmitButton
               className="w-full sm:flex-col sm:items-stretch [&>button]:w-full"
-              blocked={!day ? t("Choose a date", "Choisissez une date") : !d(value).gt(0) ? t("Enter a rate above zero", "Saisissez un taux supérieur à zéro") : cny && !d(cny).gt(0) ? t("The yuan rate must be above zero", "Le taux du yuan doit être supérieur à zéro") : null}
+              blocked={!day ? t("Choose a date", "Choisissez une date") : !d(value).gt(0) ? t("Enter a rate above zero", "Saisissez un taux supérieur à zéro") : cny && !d(cny).gt(0) ? t("The yuan rate must be above zero", "Le taux du yuan doit être supérieur à zéro") : ownerOnly || ownerOnlyCny ? t("Only the owner can save this rate", "Seul le propriétaire peut enregistrer ce taux") : null}
               pending={m.isPending}
               onClick={() => (cdfFar || cnyFar ? setConfirming(true) : save())}
             >

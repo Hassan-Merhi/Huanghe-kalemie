@@ -27,6 +27,7 @@ import { useAuth } from "@/lib/auth";
 import { useT, count } from "@/lib/i18n";
 import type { MotorcycleUnit, VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { useSystemText } from "@/lib/systemText";
 
 type T = (en: string, fr: string) => string;
 
@@ -752,6 +753,7 @@ function UnitPicker({ variantId, locationId, needed, value, onChange }: { varian
 
 function AdjustmentHistory() {
   const t = useT();
+  const sys = useSystemText();
   const q = useQuery<Adjustment[]>({ queryKey: ["/api/stock/adjustments"] });
   const { data: locations = [] } = useLocations();
   const [open, setOpen] = useState<Set<number>>(new Set());
@@ -801,7 +803,7 @@ function AdjustmentHistory() {
                   <TableCell className="whitespace-nowrap">{date(a.date)}</TableCell>
                   <TableCell className="whitespace-nowrap">{a.locationName ?? locations.find((l) => l.id === a.locationId)?.name ?? `#${a.locationId}`}</TableCell>
                   <TableCell><Badge variant={a.kind === "opening" ? "default" : a.kind === "damage" || a.kind === "loss" ? "destructive" : "outline"}>{kindLabel(t, a.kind)}</Badge></TableCell>
-                  <TableCell className="max-w-[320px] truncate" title={a.reason}>{a.reason}</TableCell>
+                  <TableCell className="max-w-[320px] truncate" title={sys.memo(a.reason)}>{sys.memo(a.reason)}</TableCell>
                   <TableCell className="text-right"><Num>{lines.length}</Num></TableCell>
                   <TableCell className="text-right">{a.value !== undefined && <Num className={cn("font-medium", tone(a.value))}>{signed(a.value)}</Num>}</TableCell>
                 </TableRow>

@@ -3,7 +3,7 @@ import { num, qty } from "./format";
 
 type T = (en: string, fr: string) => string;
 
-export { UNITS, unitKey, wholeUnit } from "@shared/units";
+export { UNITS, knownUnit, unitKey, wholeUnit } from "@shared/units";
 
 const NAMES: Record<string, { en: [string, string]; fr: [string, string] }> = {
   pcs: { en: ["piece", "pieces"], fr: ["pièce", "pièces"] },

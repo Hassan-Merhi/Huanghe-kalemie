@@ -278,6 +278,7 @@ export async function partyStatement(tx: Tx, partyId: number, hidden?: Set<numbe
   const rows = await tx
     .select({
       journalId: journals.id,
+      lineId: journalLines.id,
       number: journals.number,
       date: journals.date,
       type: journals.type,
@@ -298,22 +299,37 @@ export async function partyStatement(tx: Tx, partyId: number, hidden?: Set<numbe
   const journalIds = Array.from(new Set(rows.map((r) => r.journalId)));
   const others = journalIds.length
     ? await tx
-        .select({ journalId: journalLines.journalId, debit: journalLines.debit, credit: journalLines.credit, partyId: journalLines.partyId, currency: journalLines.currency, nativeAmount: journalLines.nativeAmount, rate: journalLines.rate, memo: journalLines.memo, isMoney: accounts.isMoney, systemKey: accounts.systemKey })
+        .select({ id: journalLines.id, journalId: journalLines.journalId, debit: journalLines.debit, credit: journalLines.credit, partyId: journalLines.partyId, currency: journalLines.currency, nativeAmount: journalLines.nativeAmount, rate: journalLines.rate, memo: journalLines.memo, isMoney: accounts.isMoney, systemKey: accounts.systemKey })
         .from(journalLines)
         .innerJoin(accounts, eq(accounts.id, journalLines.accountId))
         .where(and(inArray(journalLines.journalId, journalIds), or(eq(accounts.isMoney, true), and(eq(accounts.systemKey, SYSTEM_ACCOUNTS.fx), eq(journalLines.memo, COST_FX_MEMO)), sql`${journalLines.partyId} is not null`)))
     : [];
-  const paidOf = (journalId: number) => {
+  // When the payment is split over several of the contact's lines (francs owed, then dollars), each line
+  // shows its own part: a dollar line as booked, with no exchange difference; a franc (or yuan) line what
+  // the money paid less the dollar lines when it is the only one, else its units at the payment's rate.
+  const paidOf = (journalId: number, lineId: number) => {
     const ls = others.filter((l) => l.journalId === journalId);
     const fx = ls.filter((l) => l.systemKey === SYSTEM_ACCOUNTS.fx).reduce((s, l) => s.plus(l.debit).minus(l.credit), dec(0));
-    const contacts = new Set(ls.filter((l) => l.partyId !== null).map((l) => l.partyId));
+    const theirs = ls.filter((l) => l.partyId !== null);
+    const contacts = new Set(theirs.map((l) => l.partyId));
     if (fx.isZero() || contacts.size !== 1) return null;
     const value = (l: (typeof ls)[number], side: "debit" | "credit") =>
       dec(l[side]).isZero() || l.currency !== "CDF" || !l.nativeAmount || !dec(l.rate ?? 0).gt(0) ? dec(l[side]) : cents(dec(l.nativeAmount).abs().dividedBy(dec(l.rate!)));
     const money = ls.filter((l) => l.isMoney);
     const out = money.reduce((s, l) => s.plus(value(l, "credit")), dec(0));
     const into = money.reduce((s, l) => s.plus(value(l, "debit")), dec(0));
-    return out.gt(0) !== into.gt(0) ? Decimal.max(out, into) : null;
+    const total = out.gt(0) !== into.gt(0) ? Decimal.max(out, into) : null;
+    if (theirs.length === 1) return total;
+    const own = theirs.find((l) => l.id === lineId);
+    if (!own || own.currency === "USD" || !own.nativeAmount || !dec(own.rate ?? 0).gt(0)) return null;
+    const side = dec(own.debit).gt(0) ? "debit" : "credit";
+    const sameSide = theirs.filter((l) => dec(l[side]).gt(0));
+    const foreign = sameSide.filter((l) => l.currency !== "USD");
+    if (total && foreign.length === 1) {
+      const rest = total.minus(sameSide.filter((l) => l.currency === "USD").reduce((s, l) => s.plus(l[side]), dec(0)));
+      if (rest.gt(0)) return rest;
+    }
+    return cents(dec(own.nativeAmount).abs().dividedBy(dec(own.rate!)));
   };
   const typedIds = rows.filter((r) => PARTNER_MEMO_TYPES.has(r.type)).map((r) => r.journalId);
   const masked =
@@ -327,7 +343,7 @@ export async function partyStatement(tx: Tx, partyId: number, hidden?: Set<numbe
       if (masked.has(r.journalId)) r = { ...r, memo: "Mouvement d'un autre associé" };
       running = running.plus(r.debit).minus(r.credit);
       const booked = dec(r.debit).minus(r.credit).abs();
-      const paid = paidOf(r.journalId);
+      const paid = paidOf(r.journalId, r.lineId);
       const doc = paid && !paid.equals(booked) ? { paid: paid.toFixed(2), fxDiff: booked.minus(paid).toFixed(2) } : {};
       return { ...r, ...doc, balance: running.toFixed(2) };
     }),

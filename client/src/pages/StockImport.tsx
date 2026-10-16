@@ -21,7 +21,7 @@ import { useAuth } from "@/lib/auth";
 import { curLabel, d, money, number, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import { useI18n, useT, count } from "@/lib/i18n";
 import { downloadXlsx, readNumberCell, readSheet } from "@/lib/sheets";
-import { wholeUnit } from "@/lib/units";
+import { knownUnit, unitLabel, wholeUnit } from "@/lib/units";
 import type { Product } from "@/lib/types";
 
 type T = (en: string, fr: string) => string;
@@ -145,7 +145,7 @@ type Cells = Partial<Record<string, string | number>>;
  * measures (weight, volume), `qtyField` only when the row's item is not counted in whole units. A row's
  * unit is its item's own when the item exists (the file cannot change it), else the file's unit for that
  * item (its first row naming one), else pieces.
- * Returns the rows to show and send, and per row the question to ask about a "1.000".
+ * Returns the rows to show and send, per row the question to ask about a "1.000", and per row its unit.
  */
 function remeasure<R extends { name: string | null; unit: string | null }>(
   t: T,
@@ -154,15 +154,17 @@ function remeasure<R extends { name: string | null; unit: string | null }>(
   preview: PreviewRow[],
   qtyField: keyof R & string,
   fields: { key: keyof R & string; en: string; fr: string }[],
-): { rows: R[]; unsure: (string | null)[] } {
+): { rows: R[]; unsure: (string | null)[]; units: string[] } {
   const fileUnit = new Map<string, string>();
   for (const r of rows) {
     const k = (r.name ?? "").trim().toLowerCase();
     if (r.unit?.trim() && !fileUnit.has(k)) fileUnit.set(k, r.unit.trim());
   }
   const unsure: (string | null)[] = [];
+  const units: string[] = [];
   const out = rows.map((r, i) => {
     const unit = preview[i]?.unit ?? fileUnit.get((r.name ?? "").trim().toLowerCase()) ?? "pcs";
+    units.push(unit);
     const all = [{ key: qtyField, en: "Quantity", fr: "Quantité", measured: !wholeUnit(unit) }, ...fields.map((f) => ({ ...f, measured: true }))];
     const next = { ...r };
     let question: string | null = null;
@@ -178,8 +180,11 @@ function remeasure<R extends { name: string | null; unit: string | null }>(
     unsure.push(question);
     return next;
   });
-  return { rows: out, unsure };
+  return { rows: out, unsure, units };
 }
+/** A number cell in the preview; while its row asks "1 000 or 1?", the cell is shown as the file has it. */
+const measureCell = (value: string | null, asked: string | number | false | null | undefined) =>
+  asked !== undefined && asked !== null && asked !== false && String(asked).trim() ? String(asked).trim() : value ? fmtQty(value) : "—";
 const rowError = (p: PreviewRow | undefined, lang: string) => (p ? (lang === "fr" ? p.errorFr ?? p.error : p.error ?? p.errorFr) : undefined);
 
 // ---------------------------------------------------------------- Page
@@ -284,20 +289,25 @@ function ItemsImport() {
     }
   }
 
-  // Client-side checks the server would refuse anyway: opening quantity without a cost.
-  const localError = (r: StockRow): string | null => {
+  // Client-side checks the server would refuse anyway: opening quantity without a cost, 2,5 pieces.
+  const localError = (r: StockRow, unit: string): string | null => {
     const q = r.qty ? d(r.qty) : null;
     if (r.qty && !/^-?\d+(\.\d+)?$/.test(r.qty)) return t("Quantity is not a number", "La quantité n'est pas un nombre");
     if (q && q.isNegative()) return t("Quantity cannot be negative", "La quantité ne peut pas être négative");
+    if (q && !q.isInteger() && wholeUnit(unit)) return t(`Counted by the ${unitLabel(t, unit, 1)}: the quantity must be a whole number`, `Se compte à l'unité (${unitLabel(t, unit, 1)})\u00a0: la quantité doit être un nombre entier`);
     if (q && q.gt(0) && !r.unitCost) return t("Give the unit cost for the opening quantity", "Indiquez le coût unitaire de la quantité d'ouverture");
     return null;
   };
   // Litres and kilos: "2,250" is 2,25 once the row's unit is known.
-  const { rows, unsure } = useMemo(() => remeasure(t, fileRows, cells, preview, "qty", []), [t, fileRows, cells, preview]);
+  const { rows, unsure, units } = useMemo(() => remeasure(t, fileRows, cells, preview, "qty", []), [t, fileRows, cells, preview]);
   const merged = rows.map((r, i) => {
     const p = preview[i];
-    const err = rowError(p?.status === "error" ? p : undefined, lang) ?? unsure[i] ?? localError(r);
-    return { r, p, err, status: (err ? "error" : p?.status ?? "existing") as PreviewRow["status"] };
+    const err = rowError(p?.status === "error" ? p : undefined, lang) ?? unsure[i] ?? localError(r, units[i]);
+    // A unit the shop does not know is kept as typed, and its quantity may have decimals: said, not refused.
+    const note = !err && !knownUnit(units[i])
+      ? t(`Unknown unit "${units[i].trim()}": kept as typed, decimals allowed`, `Unité «\u00a0${units[i].trim()}\u00a0» inconnue\u00a0: gardée telle quelle, décimales permises`)
+      : null;
+    return { r, p, err, note, unsure: unsure[i], status: (err ? "error" : p?.status ?? "existing") as PreviewRow["status"] };
   });
   const errors = merged.filter((m) => m.err).length;
 
@@ -371,17 +381,18 @@ function ItemsImport() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {merged.map(({ r, p, err, status }, i) => (
+                  {merged.map(({ r, p, err, note, unsure: asked, status }, i) => (
                     <TableRow key={i}>
                       <TableCell className="text-muted-foreground"><Num>{p?.row ?? i + 2}</Num></TableCell>
                       <TableCell className="min-w-[160px]">
                         <div className="font-medium">{r.name}</div>
                         {r.category && <div className="text-xs text-muted-foreground">{r.category}</div>}
                         {err && <div className="text-xs text-destructive">{err}</div>}
+                        {note && <div className="text-xs text-amber-800 dark:text-amber-400">{note}</div>}
                       </TableCell>
                       <TableCell>{variantOf(r) || "—"}</TableCell>
                       <TableCell className="font-mono text-xs">{p?.sku ?? r.sku ?? "—"}</TableCell>
-                      <TableCell className="text-right"><Num>{r.qty ? fmtQty(r.qty) : "—"}</Num></TableCell>
+                      <TableCell className="text-right"><Num>{measureCell(r.qty, asked && cells[i]?.qty)}</Num></TableCell>
                       <TableCell className="text-right"><Num>{r.unitCost ? usd(r.unitCost) : "—"}</Num></TableCell>
                       <TableCell><StatusBadge status={status} /></TableCell>
                     </TableRow>
@@ -408,7 +419,7 @@ function ItemsImport() {
                 pending={run.isPending}
                 onClick={() => run.mutate({ date: day, locationId, updatePrices, rows })}
               >
-                <Upload className="mr-1 h-4 w-4" /> {t("Import", "Importer")} ({rows.length})
+                <Upload className="mr-1 h-4 w-4" /> {t("Import", "Importer")} ({rows.length - errors})
               </SubmitButton>
             </div>
           </CardContent>
@@ -695,7 +706,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
   const merged = rows.map((r, i) => {
     const p = preview[i];
     const err = rowError(p?.status === "error" ? p : undefined, lang) ?? unsure[i] ?? localError(r);
-    return { r, p, err, status: (err ? "error" : p?.status ?? "existing") as PreviewRow["status"] };
+    return { r, p, err, unsure: unsure[i], status: (err ? "error" : p?.status ?? "existing") as PreviewRow["status"] };
   });
   const errors = merged.filter((m) => m.err).length;
   // Rows with an error are not imported, so they are not in the total either.
@@ -752,7 +763,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {merged.map(({ r, p, err, status }, i) => (
+                    {merged.map(({ r, p, err, unsure: asked, status }, i) => (
                       <TableRow key={i}>
                         <TableCell className="text-muted-foreground"><Num>{p?.row ?? i + 2}</Num></TableCell>
                         <TableCell className="min-w-[150px]">
@@ -760,10 +771,10 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
                           <div className="font-mono text-xs text-muted-foreground">{p?.sku ?? r.sku ?? ""}</div>
                           {err && <div className="text-xs text-destructive">{err}</div>}
                         </TableCell>
-                        <TableCell className="text-right"><Num>{r.quantity ? fmtQty(r.quantity) : "—"}</Num></TableCell>
+                        <TableCell className="text-right"><Num>{measureCell(r.quantity, asked && cells[i]?.quantity)}</Num></TableCell>
                         <TableCell className="text-right"><Num>{r.unitPrice && /^\d+(\.\d+)?$/.test(r.unitPrice) ? number(r.unitPrice, 4, 2) : r.unitPrice ?? "—"}</Num></TableCell>
-                        <TableCell className="text-right"><Num>{r.weightKg ? fmtQty(r.weightKg) : "—"}</Num></TableCell>
-                        <TableCell className="text-right"><Num>{r.volumeCbm ? fmtQty(r.volumeCbm) : "—"}</Num></TableCell>
+                        <TableCell className="text-right"><Num>{measureCell(r.weightKg, asked && cells[i]?.weightKg)}</Num></TableCell>
+                        <TableCell className="text-right"><Num>{measureCell(r.volumeCbm, asked && cells[i]?.volumeCbm)}</Num></TableCell>
                         <TableCell><StatusBadge status={status} /></TableCell>
                       </TableRow>
                     ))}
@@ -789,7 +800,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onClose, onI
             pending={busy || run.isPending}
             onClick={() => run.mutate({ mode, rows })}
           >
-            <Upload className="mr-1 h-4 w-4" /> {mode === "replace" ? t("Replace the lines", "Remplacer les lignes") : t("Add to the lines", "Ajouter aux lignes")} ({rows.length})
+            <Upload className="mr-1 h-4 w-4" /> {mode === "replace" ? t("Replace the lines", "Remplacer les lignes") : t("Add to the lines", "Ajouter aux lignes")} ({rows.length - errors})
           </SubmitButton>
         </DialogFooter>
       </DialogContent>

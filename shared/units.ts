@@ -6,9 +6,9 @@
 export const UNITS = ["pcs", "set", "pair", "litre", "metre", "kg", "box", "roll"] as const;
 export const COUNTED_UNITS = new Set(["pcs", "set", "pair", "box", "roll"]);
 
-/** Names typed in imports or older data, in either language, mapped to one key. */
+/** Names typed in imports or older data, in either language, mapped to one key ("pce." and "u." too: a final dot is ignored). */
 const ALIASES: Record<string, string> = {
-  pc: "pcs", piece: "pcs", pieces: "pcs", "pièce": "pcs", "pièces": "pcs", u: "pcs", unit: "pcs", "unité": "pcs", "unités": "pcs",
+  pc: "pcs", pce: "pcs", pces: "pcs", piece: "pcs", pieces: "pcs", "pièce": "pcs", "pièces": "pcs", u: "pcs", unit: "pcs", "unité": "pcs", "unités": "pcs",
   jeu: "set", jeux: "set", sets: "set", kit: "set",
   paire: "pair", paires: "pair", pairs: "pair",
   l: "litre", litres: "litre", liter: "litre", liters: "litre",
@@ -19,9 +19,15 @@ const ALIASES: Record<string, string> = {
 };
 
 export function unitKey(u: string | null | undefined): string {
-  const k = (u ?? "").trim().toLowerCase();
+  const typed = (u ?? "").trim().toLowerCase();
+  const k = typed.length > 1 ? typed.replace(/\.$/, "") : typed;
   if ((UNITS as readonly string[]).includes(k)) return k;
   return ALIASES[k] ?? k;
+}
+
+/** True when the unit typed is one the shop knows (an empty unit means pieces). */
+export function knownUnit(u: string | null | undefined): boolean {
+  return (UNITS as readonly string[]).includes(unitKey(u || "pcs"));
 }
 
 /** True when the unit is counted in whole numbers (pieces, sets…). An empty unit means pieces. */

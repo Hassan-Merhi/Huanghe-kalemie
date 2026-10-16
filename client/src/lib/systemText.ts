@@ -41,6 +41,7 @@ const MEMOS: Record<string, string> = {
   "Écart de change de réévaluation": "Revaluation exchange difference",
   "Stock ajouté": "Stock added",
   "Stock retiré": "Stock removed",
+  "Stock d'ouverture importé": "Opening stock imported",
   Transfert: "Transfer",
   "Mouvement d'un autre associé": "Another partner's movement",
   "Avance rendue : la facture est annulée": "Advance returned: the bill is cancelled",
@@ -92,7 +93,7 @@ export function memoText(text: string | null | undefined, lang: string): string 
   }
   // "ADJ-000001 : Inventaire", "CDF-A6 : Fret": a generated number before the no-break colon.
   const numbered = /^(\S+)\u00a0: (.*)$/s.exec(text);
-  if (numbered) return `${numbered[1]}: ${numbered[2]}`;
+  if (numbered) return `${numbered[1]}: ${MEMOS[numbered[2]] ?? numbered[2]}`;
   return text;
 }
 
