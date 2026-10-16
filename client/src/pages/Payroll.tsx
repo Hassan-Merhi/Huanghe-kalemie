@@ -299,6 +299,20 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
     success: t("Payroll saved", "Paie enregistrée"),
     onSuccess: () => setPaying(true),
   });
+  // What cancelling turns into advances: the part of each net pay already paid out. An employee owed nothing
+  // more on this run was paid it all; reversing the salary leaves that money as an advance to repay.
+  const paidAsAdvance = (run?.lines ?? []).reduce(
+    (s, l) => {
+      const bal = d(data.employees.find((e) => e.id === l.partyId)?.balance);
+      const netUsd = d(l.netUsd ?? (run!.currency === "USD" ? l.net : 0));
+      const usdPart = Decimal.max(bal.plus(netUsd), 0).minus(Decimal.max(bal, 0));
+      if (!usdPart.gt(0)) return s;
+      // In the run's currency, at the run's own rate (the whole net when all of it was paid).
+      const native = netUsd.gt(0) ? usdPart.dividedBy(netUsd).times(d(l.net)) : usdPart;
+      return { usd: s.usd.plus(usdPart), native: s.native.plus(native) };
+    },
+    { usd: d(0), native: d(0) },
+  );
   const cancel = useApiMutation<Record<string, unknown>>("POST", `/api/payroll/runs/${month}/cancel`, {
     success: t("Payroll cancelled", "Paie annulée"),
     onSuccess: () => setConfirmCancel(false),
@@ -542,10 +556,18 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
           <AlertDialogHeader>
             <AlertDialogTitle>{t(`Cancel the ${monthLabel(month)} payroll?`, `Annuler la paie ${deMonth(month)}\u00a0?`)}</AlertDialogTitle>
             <AlertDialogDescription>
-              {t(
-                `The salary entry for ${monthLabel(month)} will be reversed. Payments already made stay on the employees' accounts.`,
-                `L'écriture des salaires ${deMonth(month)} sera annulée. Les paiements déjà faits restent sur le compte des employés.`,
-              )}
+              {t(`The salary entry for ${monthLabel(month)} will be reversed.`, `L'écriture des salaires ${deMonth(month)} sera annulée.`)}{" "}
+              {paidAsAdvance.usd.gt(0)
+                ? run?.currency === "CDF"
+                  ? t(
+                      `${cdf(paidAsAdvance.native.toFixed(0))} already paid will become advances (${usd(paidAsAdvance.usd.toFixed(2))}) to repay or deduct from the next salaries.`,
+                      `${cdf(paidAsAdvance.native.toFixed(0))} déjà payés deviendront des avances (${usd(paidAsAdvance.usd.toFixed(2))}) à rembourser ou à déduire des prochains salaires.`,
+                    )
+                  : t(
+                      `${usd(paidAsAdvance.usd.toFixed(2))} already paid will become advances to repay or deduct from the next salaries.`,
+                      `${usd(paidAsAdvance.usd.toFixed(2))} déjà payés deviendront des avances à rembourser ou à déduire des prochains salaires.`,
+                    )
+                : t("Nothing has been paid on it yet.", "Rien n'a encore été payé dessus.")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

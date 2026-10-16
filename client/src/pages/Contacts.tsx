@@ -11,7 +11,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Tabs, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { PARTY_LABELS } from "@/components/pickers";
+import { DuplicatePartyAlert, PARTY_LABELS, useDuplicateParty } from "@/components/pickers";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
@@ -201,7 +201,15 @@ export function PartyDialog({ type, party, onClose }: { type: PartyType; party: 
   const label = PARTY_LABELS[party?.type ?? type];
   const busy = create.isPending || update.isPending;
 
-  function save() {
+  // An edit that keeps the name and phone is not asked again: the contact was saved like that on purpose.
+  const sameAsSaved = !!party && name.trim() === party.name && (phone.trim() || null) === (party.phone ?? null);
+  const duplicateText = useDuplicateParty(name, phone, party?.id);
+  const duplicate = sameAsSaved ? null : duplicateText;
+  const [askDuplicate, setAskDuplicate] = useState(false);
+
+  function save(confirmed = false) {
+    if (duplicate && !confirmed) return setAskDuplicate(true);
+    setAskDuplicate(false);
     const body: Record<string, unknown> = { name: name.trim(), phone: phone.trim() || null, notes: notes.trim() || null, active };
     if (isEmployee) {
       body.position = position.trim() || null;
@@ -225,6 +233,7 @@ export function PartyDialog({ type, party, onClose }: { type: PartyType; party: 
           <Field label={t("Phone", "Téléphone")}>
             <Input inputMode="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
           </Field>
+          {duplicate && <p className="text-sm text-amber-800 dark:text-amber-400" data-testid="party-duplicate">{duplicate}</p>}
           {isEmployee && (
             <>
               <Field label={t("Position", "Poste")}>
@@ -249,9 +258,10 @@ export function PartyDialog({ type, party, onClose }: { type: PartyType; party: 
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <SubmitButton onClick={save} blocked={!name.trim() ? t("Enter a name", "Saisissez un nom") : !typedNumberOk(monthlySalary) && t("Correct the monthly salary", "Corrigez le salaire mensuel")} pending={busy}>{t("Save", "Enregistrer")}</SubmitButton>
+          <SubmitButton onClick={() => save()} blocked={!name.trim() ? t("Enter a name", "Saisissez un nom") : !typedNumberOk(monthlySalary) && t("Correct the monthly salary", "Corrigez le salaire mensuel")} pending={busy}>{t("Save", "Enregistrer")}</SubmitButton>
         </DialogFooter>
       </DialogContent>
+      <DuplicatePartyAlert text={duplicate} open={askDuplicate} onCancel={() => setAskDuplicate(false)} onConfirm={() => save(true)} />
     </Dialog>
   );
 }

@@ -226,6 +226,7 @@ export default function ContainerDetail() {
                 containerId={c.id}
                 currency={c.currency}
                 linesDirty={linesDirty}
+                onContainer={c.lines.map((l) => l.variantId)}
                 onImported={() => { setLinesDirty(false); setLinesKey((k) => k + 1); }}
               />
             </div>
