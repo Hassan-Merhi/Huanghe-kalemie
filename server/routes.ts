@@ -932,6 +932,10 @@ export function registerRoutes(app: Express) {
         // "Payé" can sit a few cents off the total, and is not money on the customer's account. A cancelled
         // sale's reversal takes its rounding back, so it nets to zero.
         fcRoundingUsd: sql<string>`(select coalesce(sum(jl.credit - jl.debit), 0)::numeric(20,2)::text from journal_lines jl join accounts a on a.id = jl.account_id and a.system_key = 'fx' where jl.memo = 'Arrondi FC' and (jl.journal_id = ${sales.journalId} or jl.journal_id = ${sales.voidJournalId} or jl.journal_id in (select sr.journal_id from sale_returns sr where sr.sale_id = ${sales.id})))`,
+        // The part of the credit the customer's avoir covered when the sale was posted (as the sale page reads it).
+        avoirUsedUsd: sql<string>`(case when ${sales.creditUsd} > 0 and ${sales.customerId} is not null and ${sales.journalId} is not null then least(${sales.creditUsd}, greatest(${sales.creditUsd} - (select coalesce(sum(jl.debit - jl.credit), 0) from journal_lines jl where jl.party_id = ${sales.customerId} and jl.journal_id <= ${sales.journalId}), 0)) else 0 end)::numeric(20,2)::text`,
+        // The till's rounding alone: with it, "Payé" is the cash the shop really kept (see paidKeptUsd).
+        saleFcRoundingUsd: sql<string>`(select coalesce(sum(jl.credit - jl.debit), 0)::numeric(20,2)::text from journal_lines jl join accounts a on a.id = jl.account_id and a.system_key = 'fx' where jl.memo = 'Arrondi FC' and jl.journal_id = ${sales.journalId})`,
         lineCount: sql<number>`(select count(*)::int from sale_lines sl where sl.sale_id = ${sales.id})`,
         firstItem: sql<string | null>`(select p.name from sale_lines sl join variants v on v.id = sl.variant_id join products p on p.id = v.product_id where sl.sale_id = ${sales.id} order by sl.id limit 1)`,
       })
@@ -942,7 +946,7 @@ export function registerRoutes(app: Express) {
       .orderBy(desc(sales.date), desc(sales.id))
       .limit(500);
     const showCost = req.user!.role !== "cashier";
-    res.json(rows.map((r) => ({ ...r.sale, cogs: showCost ? r.sale.cogs : undefined, customerName: r.customerName, cashier: r.cashier, zeroPrice: !!r.zeroPrice, qty: r.qty, returnedQty: r.returnedQty, returnedTotal: r.returnedTotal, returnedCogs: showCost ? r.returnedCogs : undefined, refundedUsd: r.refundedUsd, creditLeftUsd: r.creditLeftUsd, fcRoundingUsd: r.fcRoundingUsd, lineCount: r.lineCount, firstItem: r.firstItem })));
+    res.json(rows.map((r) => ({ ...r.sale, cogs: showCost ? r.sale.cogs : undefined, customerName: r.customerName, cashier: r.cashier, zeroPrice: !!r.zeroPrice, qty: r.qty, returnedQty: r.returnedQty, returnedTotal: r.returnedTotal, returnedCogs: showCost ? r.returnedCogs : undefined, refundedUsd: r.refundedUsd, creditLeftUsd: r.creditLeftUsd, fcRoundingUsd: r.fcRoundingUsd, paidKeptUsd: salesSvc.paidKept(r.sale, r.saleFcRoundingUsd, r.refundedUsd), avoirUsedUsd: r.avoirUsedUsd, lineCount: r.lineCount, firstItem: r.firstItem })));
   }));
   app.get("/api/sales/:id", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
     const sale = await salesSvc.getSale(db, paramId(req));
@@ -1143,6 +1147,13 @@ export function registerRoutes(app: Express) {
       from sales s
       where s.date = ${date} and s.credit_usd > 0
     `);
+    // The part of that credit a customer's avoir (paid ahead) covered when the sale was posted, read as the sale
+    // page reads it: nothing new is owed for it, so the card says "dont sur l'avoir" apart from "dont à crédit".
+    const creditOnAvoir = await db.execute<{ usd: string }>(sql`
+      select coalesce(sum(least(s.credit_usd, greatest(s.credit_usd - (select coalesce(sum(jl.debit - jl.credit), 0) from journal_lines jl where jl.party_id = s.customer_id and jl.journal_id <= s.journal_id), 0))), 0) as usd
+      from sales s
+      where s.date = ${date} and s.credit_usd > 0 and s.customer_id is not null and s.journal_id is not null and s.void_journal_id is null
+    `);
     // Drawer count (not for cashiers, who do not see balances): every money account's opening
     // balance, what came in and went out that day by kind of operation, and the expected closing.
     let drawer: unknown = undefined;
@@ -1188,6 +1199,7 @@ export function registerRoutes(app: Express) {
       count: totals.count,
       total: dec(totals.total).toFixed(2),
       credit: dec(totals.credit).minus(v.credit).minus(creditReturned.rows[0]?.usd ?? 0).toFixed(2),
+      creditOnAvoirUsd: dec(creditOnAvoir.rows[0]?.usd ?? 0).toFixed(2),
       voidsCount: v.count,
       voidsTotal: dec(v.total).toFixed(2),
       returnsCount: returns.count,

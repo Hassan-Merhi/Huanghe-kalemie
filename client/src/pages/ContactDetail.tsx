@@ -354,19 +354,23 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
   const owedSettled = settled.reduce((s, p) => s.plus(p.usd), d(0));
   const over = advance && (isCdf ? d(advance.usd).times(d(rate)).gte(100) : d(advance.usd).gt(0)) ? advance : null;
   const paidText = isCdf ? `${cdf(d(amount).toFixed(0))} (${usd(d(usdEquivalent ?? 0).toFixed(2))})` : usd(d(amount).toFixed(2));
+  // Francs or yuan owed count here at the payment's rate, the header at the rate they were booked at
+  // (84 000 FC: 4 430,10 $ booked, 4 429,91 $ today): the figure says which, so the two do not read as one debt.
+  const owedAtRate = !!outstanding && settled.some((p) => p.kind === "cdf" || p.kind === "cny") && !owedSettled.toDecimalPlaces(2).eq(outstanding.toDecimalPlaces(2));
+  const owedText = `${usd(owedSettled.toFixed(2))}${owedAtRate ? t(" at today's rate", " au taux du jour") : ""}`;
   const overText = !over
     ? null
     : isCustomer
       ? owedSettled.gt(0)
         ? t(
-            `The customer pays ${paidText}; they owe ${usd(owedSettled.toFixed(2))}: ${usd(over.usd)} will become credit for them`,
-            `Le client paie ${paidText}\u00a0; il doit ${usd(owedSettled.toFixed(2))}\u00a0: ${usd(over.usd)} deviendront un avoir`,
+            `The customer pays ${paidText}; they owe ${owedText}: ${usd(over.usd)} will become credit for them`,
+            `Le client paie ${paidText}\u00a0; il doit ${owedText}\u00a0: ${usd(over.usd)} deviendront un avoir`,
           )
         : t(`The customer pays ${paidText}; they owe nothing: all of it will become credit for them`, `Le client paie ${paidText}\u00a0; il ne doit rien\u00a0: tout deviendra un avoir`)
       : owedSettled.gt(0)
         ? t(
-            `We pay ${paidText}; we owe ${usd(owedSettled.toFixed(2))}: ${usd(over.usd)} will become an advance`,
-            `Nous payons ${paidText}\u00a0; nous devons ${usd(owedSettled.toFixed(2))}\u00a0: ${usd(over.usd)} deviendront une avance`,
+            `We pay ${paidText}; we owe ${owedText}: ${usd(over.usd)} will become an advance`,
+            `Nous payons ${paidText}\u00a0; nous devons ${owedText}\u00a0: ${usd(over.usd)} deviendront une avance`,
           )
         : t(`We pay ${paidText}; we owe nothing: all of it will become an advance`, `Nous payons ${paidText}\u00a0; nous ne devons rien\u00a0: tout deviendra une avance`);
   const [confirmOver, setConfirmOver] = useState(false);

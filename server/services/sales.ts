@@ -18,7 +18,7 @@ import {
   variants,
   type Role,
 } from "@shared/schema";
-import { allocateCents, cents, dec, sum, Decimal } from "@shared/money";
+import { allocateCents, cents, dec, sum, Decimal, type DecimalInput } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, forbidden, notFound, wholeUnitError } from "../errors";
 import { wholeUnit } from "@shared/units";
@@ -297,6 +297,17 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
   return getSale(tx, sale.id);
 }
 
+/**
+ * "Payé" on the sale page and the Sales list: the cash the shop really kept, the payments at their rates less
+ * the refunds at theirs. The booked `paidUsd` leaves out the till's franc rounding ("Arrondi FC", + when the
+ * shop kept a few cents), so it is added back; then Payé − Total is the "Arrondi FC" shown beside it.
+ * A cancelled sale keeps its booked figure.
+ */
+export function paidKept(sale: { status: string; paidUsd: string }, saleFcRoundingUsd: DecimalInput | null, refundedUsd: DecimalInput | null): string {
+  if (sale.status === "voided") return dec(sale.paidUsd).toFixed(2);
+  return dec(sale.paidUsd).plus(saleFcRoundingUsd ?? 0).minus(refundedUsd ?? 0).toFixed(2);
+}
+
 export async function getSale(tx: Tx, id: number) {
   const [sale] = await tx.select().from(sales).where(eq(sales.id, id));
   if (!sale) throw notFound("Sale", "Vente introuvable");
@@ -385,8 +396,10 @@ export async function getSale(tx: Tx, id: number) {
     const used = Decimal.min(dec(sale.creditUsd), Decimal.max(before.negated(), 0));
     if (used.gt(0)) avoir = { usedUsd: used.toFixed(2), leftUsd: Decimal.max(dec(after.usd).negated(), 0).toFixed(2) };
   }
+  const refunded = sum(returns.map((r) => r.refundUsd ?? 0));
   return {
     ...sale,
+    paidKeptUsd: paidKept(sale, saleFcRounding, refunded),
     saleFcRoundingUsd: saleFcRounding.toFixed(2),
     fcRoundingUsd: fcRounding.toFixed(2),
     /** The part of the credit covered by the customer's avoir at the time of the sale, and the avoir left after it. */

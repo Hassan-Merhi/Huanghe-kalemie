@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
+import Decimal from "decimal.js";
 import { Link, useLocation } from "wouter";
 import { Plus, Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -36,6 +37,10 @@ interface SaleListRow {
   creditLeftUsd?: string;
   /** Franc rounding of the till and the refunds, + when the shop kept a few cents. */
   fcRoundingUsd?: string;
+  /** "Payé": the cash really kept, payments and refunds at their own rates (Payé − Total = fcRoundingUsd). */
+  paidKeptUsd?: string;
+  /** The part of the credit the customer's avoir covered when the sale was made: nothing new is owed for it. */
+  avoirUsedUsd?: string;
   lineCount?: number;
   firstItem?: string | null;
 }
@@ -45,6 +50,8 @@ interface Daily {
   count: number;
   total: string;
   credit: string;
+  /** The part of that credit a customer's avoir covered: nothing new is owed for it. */
+  creditOnAvoirUsd?: string;
   voidsCount: number;
   voidsTotal: string;
   returnsCount?: number;
@@ -57,6 +64,8 @@ function DailySummary() {
   const today = todayLocal();
   const q = useQuery<Daily>({ queryKey: ["/api/reports/daily", { date: today }] });
   const data = q.data;
+  const onAvoir = data ? Decimal.max(Decimal.min(d(data.creditOnAvoirUsd ?? 0), d(data.credit)), 0) : d(0);
+  const owedCredit = data ? d(data.credit).minus(onAvoir) : d(0);
   return (
     <Card className="mb-4">
       <CardContent className="p-4">
@@ -83,7 +92,9 @@ function DailySummary() {
                   {t("Returns", "Retours")} −{usd(data.returnsTotal)}
                 </p>
               )}
-              {d(data.credit).gt(0) && <p className="text-sm text-amber-800 dark:text-amber-400">{t("of which on credit", "dont à crédit")} {usd(data.credit)}</p>}
+              {/* Credit an avoir covered is not owed: it reads apart, so "dont à crédit" is only what is still to pay. */}
+              {onAvoir.gt(0) && <p className="text-sm text-emerald-800 dark:text-emerald-400">{t("of which from customers' credit", "dont sur l'avoir")} {usd(onAvoir.toFixed(2))}</p>}
+              {owedCredit.gt(0) && <p className="text-sm text-amber-800 dark:text-amber-400">{t("of which on credit", "dont à crédit")} {usd(owedCredit.toFixed(2))}</p>}
             </div>
             <div className="flex flex-wrap gap-2 sm:justify-end">
               {data.byAccount.length === 0 && <p className="text-sm text-muted-foreground">{t("No money received yet today.", "Aucun encaissement aujourd'hui.")}</p>}
@@ -135,17 +146,40 @@ function Profit({ value, muted }: { value: string; muted?: boolean }) {
   );
 }
 
-/** A sale as the list shows it: net of the goods brought back, and paid net of the cash refunded. */
+/**
+ * A sale as the list shows it: net of the goods brought back, and paid net of the cash refunded, as the cash
+ * really kept (as on the sale page), so Payé − Total is the "Arrondi FC" under it.
+ */
 function netOf(r: SaleListRow) {
   const total = d(r.total).minus(d(r.returnedTotal));
   const cogs = r.cogs !== undefined ? d(r.cogs).minus(d(r.returnedCogs)) : undefined;
   const refunded = d(r.refundedUsd);
-  return { total, cogs, profit: cogs !== undefined ? total.minus(cogs) : undefined, returned: d(r.returnedTotal), paid: d(r.paidUsd).minus(refunded), refunded };
+  const paid = r.paidKeptUsd !== undefined ? d(r.paidKeptUsd) : d(r.paidUsd).minus(refunded);
+  return { total, cogs, profit: cogs !== undefined ? total.minus(cogs) : undefined, returned: d(r.returnedTotal), paid, refunded };
 }
 
 /** What is still on credit after returns took it off the customer's balance (the sale page's "Reste à crédit"). */
 function creditOf(r: SaleListRow): string {
   return r.creditLeftUsd ?? r.creditUsd;
+}
+
+/** Of that credit, what the customer's avoir covered and what is still owed, as the sale page splits it. */
+function creditSplit(r: SaleListRow) {
+  const left = d(creditOf(r));
+  const onAvoir = Decimal.min(d(r.avoirUsedUsd ?? 0), left);
+  return { onAvoir, owed: left.minus(onAvoir) };
+}
+
+/** "Crédit 12,00 $" in amber, and "sur l'avoir 10,00 $" in green for the part an avoir covered. */
+function CreditText({ r }: { r: SaleListRow }) {
+  const t = useT();
+  const c = creditSplit(r);
+  return (
+    <>
+      {c.onAvoir.gt(0) && <span className="text-emerald-800 dark:text-emerald-400"> · {t("from credit", "sur l'avoir")} {usd(c.onAvoir.toFixed(2))}</span>}
+      {c.owed.gt(0) && <span className="text-amber-800 dark:text-amber-400"> · {t("Credit", "Crédit")} {usd(c.owed.toFixed(2))}</span>}
+    </>
+  );
 }
 
 /**
@@ -236,7 +270,7 @@ function SaleCard({ r, showCost }: { r: SaleListRow; showCost: boolean }) {
       <div className="mt-1.5 flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <p className="min-w-0 tabular">
           {t("Qty", "Qté")} {fmtQty(d(r.qty).minus(d(r.returnedQty)).toString())} · {t("Paid", "Payé")} {usd((voided ? d(r.paidUsd) : n.paid).toFixed(2))}
-          {d(creditOf(r)).gt(0) && !voided && <span className="text-amber-800 dark:text-amber-400"> · {t("Credit", "Crédit")} {usd(creditOf(r))}</span>}
+          {!voided && <CreditText r={r} />}
           <OnAccount r={r} />
           {/* What came back, under the figures so the items above keep their line. */}
           {!voided && n.returned.gt(0) && (
@@ -374,8 +408,15 @@ export default function Sales() {
                           <Num>{usd((voided ? d(r.paidUsd) : n.paid).toFixed(2))}</Num>
                           {!voided && <Refunded value={n.refunded} />}
                           <OnAccount r={r} />
-                          {/* What was not paid: owed by the customer. */}
-                          {d(voided ? r.creditUsd : creditOf(r)).gt(0) && <div className={cn("whitespace-nowrap text-xs", !voided && "text-amber-800 dark:text-amber-400")}>{t("credit", "crédit")} {usd(voided ? r.creditUsd : creditOf(r))}</div>}
+                          {/* What was not paid: owed by the customer, apart from what their avoir covered. */}
+                          {voided
+                            ? d(r.creditUsd).gt(0) && <div className="whitespace-nowrap text-xs">{t("credit", "crédit")} {usd(r.creditUsd)}</div>
+                            : (
+                                <>
+                                  {creditSplit(r).onAvoir.gt(0) && <div className="whitespace-nowrap text-xs text-emerald-800 dark:text-emerald-400">{t("from credit", "sur l'avoir")} {usd(creditSplit(r).onAvoir.toFixed(2))}</div>}
+                                  {creditSplit(r).owed.gt(0) && <div className="whitespace-nowrap text-xs text-amber-800 dark:text-amber-400">{t("credit", "crédit")} {usd(creditSplit(r).owed.toFixed(2))}</div>}
+                                </>
+                              )}
                         </TableCell>
                         <TableCell className="text-right">
                           <Num className={cn("font-medium", voided && "line-through")}>{usd((voided ? d(r.total) : n.total).toFixed(2))}</Num>

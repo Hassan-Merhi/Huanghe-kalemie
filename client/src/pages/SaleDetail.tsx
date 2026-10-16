@@ -403,9 +403,10 @@ export default function SaleDetail() {
   const creditReduced = credit.gt(0) && creditedReturns.gt(0);
   const customerBalance = customers.data?.find((p) => p.id === sale.customerId)?.balance;
   const customerOwes = customerBalance === undefined ? null : d(customerBalance);
-  // Cash handed back on returns: "Payé" reads net of it, as on the Sales list.
+  // Cash handed back on returns: "Payé" reads net of it, as on the Sales list, and is the cash really kept
+  // (the till's francs and the refunds' at their rates), so Payé − Total is the "Arrondi FC" below it.
   const refunded = sale.returns.reduce((s, r) => s.plus(d(r.refundUsd)), d(0));
-  const paidNet = voided ? d(sale.paidUsd) : d(sale.paidUsd).minus(refunded);
+  const paidNet = voided ? d(sale.paidUsd) : sale.paidKeptUsd !== undefined ? d(sale.paidKeptUsd) : d(sale.paidUsd).minus(refunded);
   const netTotal = voided ? d(sale.total) : d(sale.total).minus(returnedTotal);
   // Francs change and refunds go in 100 FC steps, so "Payé" can differ from the total by a few cents: the
   // "Arrondi FC" of the books, the same figure and sign as on the Sales list, the till's and the refunds' together.
@@ -488,7 +489,7 @@ export default function SaleDetail() {
             {d(sale.discount).gt(0) && <p className="text-xs text-muted-foreground">{t("Sale discount", "Remise")} {usd(sale.discount)}</p>}
           </CardContent>
         </Card>
-        <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Paid", "Payé")}</p><p className="text-xl font-semibold tabular">{usd(paidNet.toFixed(2))}</p>{!voided && refunded.gt(0) && <p className="text-xs text-muted-foreground">{t("refunded", "remboursé")} −{usd(refunded.toFixed(2))} · {t("of", "sur")} {usd(sale.paidUsd)}</p>}{francRounding && <p className="text-xs text-muted-foreground" data-testid="sale-fc-rounding">{sale.returns.length ? t("FC rounding (sale + returns)", "Arrondi FC (vente + retours)") : t("FC rounding", "Arrondi FC")} {francRounding.figure} · {francRounding.words}</p>}<p className="text-xs text-muted-foreground">{t("Credit", "Crédit")} {usd(sale.creditUsd)}{creditReduced ? ` · ${t("after returns", "après retours")} ${usd(creditLeft.toFixed(2))}` : ""}{avoir.used.gt(0) ? ` · ${t("settled from the customer's credit", "réglé sur l'avoir")} ${usd(avoir.used.toFixed(2))}` : ""}</p></CardContent></Card>
+        <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Paid", "Payé")}</p><p className="text-xl font-semibold tabular">{usd(paidNet.toFixed(2))}</p>{!voided && refunded.gt(0) && <p className="text-xs text-muted-foreground">{t("refunded", "remboursé")} −{usd(refunded.toFixed(2))} · {t("of", "sur")} {usd(d(sale.paidUsd).plus(d(sale.saleFcRoundingUsd ?? 0)).toFixed(2))}</p>}{francRounding && <p className="text-xs text-muted-foreground" data-testid="sale-fc-rounding">{sale.returns.length ? t("FC rounding (sale + returns)", "Arrondi FC (vente + retours)") : t("FC rounding", "Arrondi FC")} {francRounding.figure} · {francRounding.words}</p>}<p className="text-xs text-muted-foreground">{t("Credit", "Crédit")} {usd(sale.creditUsd)}{creditReduced ? ` · ${t("after returns", "après retours")} ${usd(creditLeft.toFixed(2))}` : ""}{avoir.used.gt(0) ? ` · ${t("settled from the customer's credit", "réglé sur l'avoir")} ${usd(avoir.used.toFixed(2))}` : ""}</p></CardContent></Card>
         <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Customer", "Client")}</p>{sale.customer ? <p className="font-medium">{sale.customer.name}</p> : <p className="text-muted-foreground">{t("Walk-in", "De passage")}</p>}{sale.customer?.phone && <p className="text-xs text-muted-foreground">{sale.customer.phone}</p>}</CardContent></Card>
         {showCost && sale.cogs !== undefined && !voided && (
           <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Cost / profit", "Coût / marge")}</p><p className="text-xl font-semibold tabular">{usd(profit.toFixed(2))}</p><p className="text-xs text-muted-foreground">{t("Cost of goods", "Coût des articles")} {usd(d(sale.cogs).minus(returnedCost).toFixed(2))}{returnedTotal.gt(0) ? ` · ${t("after returns", "après retours")}` : ""}</p></CardContent></Card>
