@@ -2,7 +2,7 @@ import type { Express, Request } from "express";
 import { and, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { accounts, containers, DRAFT_KINDS, journalLines, journals, parties, partners, saleReturns, users, type DraftKind } from "@shared/schema";
-import { ambiguousImportMeasure, ambiguousTypedAmount, cents, dec, Decimal, MoneyError, parseTypedNumber, typedCurrencyMark } from "@shared/money";
+import { ambiguousImportMeasure, ambiguousTypedAmount, cents, dec, Decimal, MoneyError, parseTypedNumber, sum, typedCurrencyMark } from "@shared/money";
 import { frNumber } from "@shared/french";
 import { COST_FX_MEMO } from "../services/ledger";
 import { db } from "../db";
@@ -98,7 +98,7 @@ export function registerErpRoutes(
   /** Journals where a franc rounding or exchange difference is a side effect, not part of the document. */
   const FX_SIDE = new Set<string>(["sale", "sale_void", "sale_return", "transfer", "payment", "receipt", "customer_receipt", "supplier_payment", "expense", "container_expense", "payroll"]);
   type DayLine = {
-    line: { debit: string; credit: string; currency: string; nativeAmount: string | null; rate: string | null; memo: string | null };
+    line: { accountId: number; debit: string; credit: string; currency: string; nativeAmount: string | null; rate: string | null; memo: string | null };
     isMoney: boolean;
     systemKey: string | null;
   };
@@ -133,10 +133,19 @@ export function registerErpRoutes(
       if (!rounding.isZero()) fxDiff.fxRounding = rounding.toFixed(2);
     }
     if (type === "sale") {
+      // Change from the drawer it was paid into is one amount with the payment, valued once as the till
+      // values it: what the drawer kept, in francs at the sale's rate, so the change is what was received less that.
+      const received = total(money, "debit");
+      const kept = Array.from(new Set(money.map((l) => l.line.accountId))).reduce((s, id) => {
+        const drawer = money.filter((l) => l.line.accountId === id);
+        const fc = drawer.find((l) => l.line.currency === "CDF" && l.line.nativeAmount && dec(l.line.rate ?? 0).gt(0));
+        if (!fc) return s.plus(total(drawer, "debit")).minus(total(drawer, "credit"));
+        return s.plus(cents(sum(drawer.map((l) => l.line.nativeAmount ?? 0)).dividedBy(dec(fc.line.rate!))));
+      }, dec(0));
       return {
         amount: total(ls.filter((l) => l.systemKey === "sales"), "credit").toFixed(2),
-        received: total(money, "debit").toFixed(2),
-        changeGiven: total(money, "credit").toFixed(2),
+        received: received.toFixed(2),
+        changeGiven: received.minus(kept).toFixed(2),
         ...fxDiff,
       };
     }

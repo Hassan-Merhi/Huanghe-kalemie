@@ -170,9 +170,22 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
     if (leg.rate && saleRate === undefined) saleRate = leg.rate;
     legs.push(leg);
   }
-  const changeLeg = input.change && dec(input.change.amount).gt(0)
+  let changeLeg = input.change && dec(input.change.amount).gt(0)
     ? await moneyLeg(tx, { accountId: input.change.accountId, amount: input.change.amount, rate: saleRate === undefined ? input.change.rate : saleRate, date: input.date })
     : null;
+  // Francs given back from the drawer they were taken into are one amount with them, valued once (as the
+  // payments into one drawer are): 337 000 FC less 100 FC is the 336 900 FC kept, 119,98 $, not each side
+  // rounded to the cent on its own. The change is what the payment is worth less what the drawer kept
+  // (it leaves at that value: see costForeignOutflows).
+  const sameDrawer = changeLeg?.rate ? legs.find((l) => l.accountId === changeLeg!.accountId && l.rate) : undefined;
+  if (changeLeg && sameDrawer) {
+    const kept = dec(sameDrawer.nativeAmount!).minus(changeLeg.nativeAmount!);
+    if (kept.gt(0)) {
+      const net = await moneyLeg(tx, { accountId: sameDrawer.accountId, amount: kept.toFixed(2), rate: sameDrawer.rate, date: input.date });
+      const changeUsd = dec(sameDrawer.usd).minus(net.usd);
+      if (changeUsd.gt(0)) changeLeg = { ...changeLeg, usd: changeUsd.toFixed(2) };
+    }
+  }
   const received = sum(legs.map((l) => l.usd));
   if (changeLeg && dec(changeLeg.usd).gte(received)) {
     throw badRequest("The change given back is more than the money received", "La monnaie rendue dépasse l'argent reçu");
@@ -336,6 +349,24 @@ export function paidKept(sale: { status: string; paidUsd: string }, saleFcRoundi
   return dec(sale.paidUsd).plus(saleFcRoundingUsd ?? 0).minus(refundedUsd ?? 0).toFixed(2);
 }
 
+/**
+ * The customer's receivable just after a sale was posted: their receivable account alone, in date order
+ * then posting order (a payment back-dated before the sale counts, one typed later for a later day does not).
+ */
+function receivableAfterSaleSql() {
+  return sql<string>`(select coalesce(sum(jl.debit - jl.credit), 0) from journal_lines jl join journals j on j.id = jl.journal_id join accounts a on a.id = jl.account_id and a.system_key = 'receivables' where jl.party_id = ${sales.customerId} and (j.date < ${sales.date} or (j.date = ${sales.date} and j.id <= ${sales.journalId})))`;
+}
+
+/**
+ * The part of a credit sale the customer's avoir (paid ahead) covered when it was posted, read from their
+ * receivable just after it (see receivableAfterSaleSql); none on a cancelled sale, which gave it back.
+ * One rule for the sale page and the daily report's "dont sur l'avoir" (the Sales list reads it the same way).
+ * Selects from `sales`.
+ */
+export function avoirUsedSql() {
+  return sql<string>`(case when ${sales.creditUsd} > 0 and ${sales.customerId} is not null and ${sales.journalId} is not null and ${sales.status} <> 'voided' then least(${sales.creditUsd}, greatest(${sales.creditUsd} - ${receivableAfterSaleSql()}, 0)) else 0 end)::numeric(20,2)`;
+}
+
 export async function getSale(tx: Tx, id: number) {
   const [sale] = await tx.select().from(sales).where(eq(sales.id, id));
   if (!sale) throw notFound("Sale", "Vente introuvable");
@@ -419,20 +450,8 @@ export async function getSale(tx: Tx, id: number) {
   // posting order. A cancelled sale gave its avoir back, so it used none.
   let avoir: { usedUsd: string; leftUsd: string } | null = null;
   if (sale.customerId && sale.journalId && dec(sale.creditUsd).gt(0) && sale.status !== "voided") {
-    const [after] = await tx
-      .select({ usd: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)::text` })
-      .from(journalLines)
-      .innerJoin(journals, eq(journals.id, journalLines.journalId))
-      .where(
-        and(
-          eq(journalLines.accountId, receivables),
-          eq(journalLines.partyId, sale.customerId),
-          sql`(${journals.date} < ${sale.date} or (${journals.date} = ${sale.date} and ${journals.id} <= ${sale.journalId}))`,
-        ),
-      );
-    const before = dec(after.usd).minus(sale.creditUsd);
-    const used = Decimal.min(dec(sale.creditUsd), Decimal.max(before.negated(), 0));
-    if (used.gt(0)) avoir = { usedUsd: used.toFixed(2), leftUsd: Decimal.max(dec(after.usd).negated(), 0).toFixed(2) };
+    const [read] = await tx.select({ used: avoirUsedSql(), after: sql<string>`${receivableAfterSaleSql()}::text` }).from(sales).where(eq(sales.id, sale.id));
+    if (dec(read.used).gt(0)) avoir = { usedUsd: dec(read.used).toFixed(2), leftUsd: Decimal.max(dec(read.after).negated(), 0).toFixed(2) };
   }
   const refunded = sum(returns.map((r) => r.refundUsd ?? 0));
   return {

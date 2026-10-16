@@ -1150,11 +1150,10 @@ export function registerRoutes(app: Express) {
     `);
     // The part of that credit a customer's avoir (paid ahead) covered when the sale was posted, read as the sale
     // page reads it: nothing new is owed for it, so the card says "dont sur l'avoir" apart from "dont à crédit".
-    const creditOnAvoir = await db.execute<{ usd: string }>(sql`
-      select coalesce(sum(least(s.credit_usd, greatest(s.credit_usd - (select coalesce(sum(jl.debit - jl.credit), 0) from journal_lines jl where jl.party_id = s.customer_id and jl.journal_id <= s.journal_id), 0))), 0) as usd
-      from sales s
-      where s.date = ${date} and s.credit_usd > 0 and s.customer_id is not null and s.journal_id is not null and s.void_journal_id is null
-    `);
+    const [creditOnAvoir] = await db
+      .select({ usd: sql<string>`coalesce(sum(${salesSvc.avoirUsedSql()}), 0)` })
+      .from(sales)
+      .where(and(eq(sales.date, date), sql`${sales.creditUsd} > 0`));
     // Drawer count (not for cashiers, who do not see balances): every money account's opening
     // balance, what came in and went out that day by kind of operation, and the expected closing.
     let drawer: unknown = undefined;
@@ -1200,7 +1199,7 @@ export function registerRoutes(app: Express) {
       count: totals.count,
       total: dec(totals.total).toFixed(2),
       credit: dec(totals.credit).minus(v.credit).minus(creditReturned.rows[0]?.usd ?? 0).toFixed(2),
-      creditOnAvoirUsd: dec(creditOnAvoir.rows[0]?.usd ?? 0).toFixed(2),
+      creditOnAvoirUsd: dec(creditOnAvoir?.usd ?? 0).toFixed(2),
       voidsCount: v.count,
       voidsTotal: dec(v.total).toFixed(2),
       returnsCount: returns.count,
