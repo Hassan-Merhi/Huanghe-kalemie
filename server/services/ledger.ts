@@ -245,6 +245,11 @@ export interface PostJournalInput {
    * valued at what that balance cost on average, and the difference is an exchange gain or loss.
    */
   exactValues?: boolean;
+  /**
+   * A reversal: dollars a month-end revaluation left on a franc or yuan balance this journal empties go
+   * to exchange differences in it (see revaluedDollarLines).
+   */
+  clearRevalued?: boolean;
 }
 
 /** Native and USD totals of one foreign-currency balance: a CDF money account, or a contact's CDF/CNY balance. */
@@ -371,6 +376,10 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
   // holds the periods lock alone, so nothing else is posting.
   if (!input.skipPeriodCheck) await lockBalances(tx, { parties: values.map((v) => v.partyId) });
   if (!input.exactValues) await costForeignOutflows(tx, values, input.date, byId, !input.skipPeriodCheck);
+  if (input.clearRevalued && !input.skipPeriodCheck) {
+    const emptied = values.filter((v) => v.currency !== "USD" && v.nativeAmount && !byId.get(v.accountId)?.isMoney);
+    values.push(...(await revaluedDollarLines(tx, emptied as RevaluedKey[], input.date, values)));
+  }
 
   const number = await nextNumber(tx, "journal", "J-");
   const [journal] = await tx
@@ -467,7 +476,7 @@ type AccountRow = typeof accounts.$inferSelect;
  * Francs or yuan left on a contact (or a balance sheet account settled like one) that are worth under
  * half a cent at the rate used could never be paid or refunded: the journal that leaves them, or the
  * next one on that contact, clears them against exchange differences, with no money. Only when their
- * dollars are under half a cent too, as every posting leaves them: dollars that do not match the francs
+ * dollars are a cent at most too, as every posting leaves them: dollars that do not match the francs
  * or yuan (a journal posted by hand) are a mistake for a person to correct, shown by the self-check.
  */
 async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string, byId: Map<number, AccountRow>, clearResidues: boolean) {
@@ -541,9 +550,11 @@ async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string, 
     const lineRate = foreign.find((v) => keyOf(v) === key && v.rate && dec(v.rate).gt(0))?.rate;
     const rate = lineRate ? dec(lineRate) : k.currency === "CDF" ? (await rateFor(tx, date)).rate : await cnyRateFor(tx, date);
     if (!rate || !bal.native.abs().dividedBy(rate).lt("0.005")) continue;
-    // And booked at under half a cent: larger dollars on so few francs or yuan are not an exchange
-    // difference, so they are left where they are for a person to correct (see selfCheck).
-    if (!bal.usd.abs().lt("0.005")) continue;
+    // And booked at no more than a cent: a posting can leave one on them (a part taken out at average
+    // cost is rounded to the cent), which goes to exchange differences with them, never to a drawer.
+    // Larger dollars on so few francs or yuan are not an exchange difference, so they are left where
+    // they are for a person to correct (see selfCheck).
+    if (bal.usd.abs().gt("0.01")) continue;
     // Only a balance with nothing dated after this journal: clearing it on an earlier day would change
     // what later postings settled.
     const all = await foreignBalance(tx, k.accountId, k.partyId, k.currency);
@@ -551,14 +562,15 @@ async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string, 
     if (!all.native.equals(asOf.native) || !all.usd.equals(asOf.usd)) continue;
     values.push({
       accountId: k.accountId,
-      debit: new Decimal(0),
-      credit: new Decimal(0),
+      debit: bal.usd.isNegative() ? bal.usd.abs() : new Decimal(0),
+      credit: bal.usd.isPositive() ? bal.usd : new Decimal(0),
       partyId: k.partyId,
       currency: k.currency,
       nativeAmount: bal.native.negated().toFixed(2),
       rate: rate.toFixed(4),
       memo: RESIDUE_MEMO,
     });
+    fxDebit = fxDebit.plus(bal.usd);
   }
   if (!fxDebit.isZero()) {
     values.push({
@@ -572,6 +584,74 @@ async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string, 
       memo: COST_FX_MEMO,
     });
   }
+}
+
+/** Memo of the lines that move to exchange differences the dollars left on a balance a reversal emptied (see revaluedDollarLines). */
+export const REVALUED_MEMO = "Écart de change à l'annulation";
+
+type RevaluedKey = { accountId: number; partyId: number | null; currency: ForeignCurrency };
+
+/**
+ * A reversal gives francs or yuan back at the dollars they were booked at. When a month-end revaluation
+ * restated them in between, a balance can be left with no francs or yuan but the revaluation's dollars.
+ * These lines move them to exchange differences, as the next revaluation would have done. Only for
+ * balances of `keys` with exactly no francs or yuan once `pending` (the lines of the journal being
+ * posted, if any) is added, nothing dated after `date`, and no more dollars than revaluations booked on
+ * them: any other mismatch is for a person to correct (see selfCheck). The callers pass no money account
+ * a reversal could empty but the one a cancelled payroll paid from.
+ */
+export async function revaluedDollarLines(tx: Tx, keys: RevaluedKey[], date: string, pending: PendingLine[] = []): Promise<PendingLine[]> {
+  const keyOf = (k: { accountId: number; partyId: number | null; currency: string }) => `${k.accountId}|${k.partyId ?? ""}|${k.currency}`;
+  const unique = Array.from(new Map(keys.map((k) => [keyOf(k), { accountId: k.accountId, partyId: k.partyId, currency: k.currency }])).values());
+  if (!unique.length) return [];
+  await lockForeignBalances(tx, unique);
+  const lines: PendingLine[] = [];
+  let gain = new Decimal(0);
+  for (const k of unique) {
+    const where = and(
+      eq(journalLines.accountId, k.accountId),
+      k.partyId ? eq(journalLines.partyId, k.partyId) : sql`${journalLines.partyId} is null`,
+      eq(journalLines.currency, k.currency),
+    );
+    const [r] = await tx
+      .select({
+        native: sql<string>`coalesce(sum(${journalLines.nativeAmount}), 0)`,
+        usd: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)`,
+        later: sql<number>`count(*) filter (where ${journals.date} > ${date})::int`,
+        revalued: sql<string>`coalesce(sum(abs(${journalLines.debit} - ${journalLines.credit})) filter (where ${journals.type} = 'revaluation'), 0)`,
+      })
+      .from(journalLines)
+      .innerJoin(journals, eq(journals.id, journalLines.journalId))
+      .where(where);
+    const own = pending.filter((v) => keyOf(v) === keyOf(k));
+    const native = dec(r.native).plus(sum(own.map((v) => dec(v.nativeAmount ?? 0))));
+    const usd = dec(r.usd).plus(sum(own.map((v) => v.debit.minus(v.credit))));
+    if (!native.isZero() || usd.isZero() || r.later > 0 || usd.abs().gt(dec(r.revalued))) continue;
+    const rate = own.find((v) => v.rate)?.rate ?? (k.currency === "CDF" ? (await rateFor(tx, date)).rate.toFixed(4) : (await cnyRateFor(tx, date))?.toFixed(4) ?? null);
+    gain = gain.plus(usd);
+    lines.push({
+      accountId: k.accountId,
+      debit: usd.isNegative() ? usd.abs() : new Decimal(0),
+      credit: usd.isPositive() ? usd : new Decimal(0),
+      partyId: k.partyId,
+      currency: k.currency,
+      nativeAmount: "0.00",
+      rate,
+      memo: REVALUED_MEMO,
+    });
+  }
+  if (!lines.length) return [];
+  lines.push({
+    accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.fx),
+    debit: gain.isPositive() ? gain : new Decimal(0),
+    credit: gain.isNegative() ? gain.abs() : new Decimal(0),
+    partyId: null,
+    currency: "USD",
+    nativeAmount: null,
+    rate: null,
+    memo: REVALUED_MEMO,
+  });
+  return lines;
 }
 
 /** Post the exact opposite of a journal, dated `date`, and link the two. */
@@ -601,6 +681,7 @@ export async function reverseJournal(
     userId: opts.userId,
     skipPeriodCheck: opts.skipPeriodCheck,
     exactValues: true,
+    clearRevalued: true,
     lines: lines.map((l) => ({
       accountId: l.accountId,
       debit: l.credit,
