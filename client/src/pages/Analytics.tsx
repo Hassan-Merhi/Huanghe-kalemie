@@ -13,7 +13,8 @@ import { RangePicker, useRange } from "@/pages/Reports";
 
 interface Analytics {
   totals: { income: string; costOfSales: string; grossProfit: string; operatingExpenses: string; netProfit: string };
-  sales: { count: number; total: string; credit: string };
+  /** credit: as given at the till; creditOwed / creditOnAvoir: after returns, owed and covered by an avoir (as on Sales). */
+  sales: { count: number; total: string; credit: string; creditOwed?: string; creditOnAvoir?: string };
   daily: { date: string; revenue: string; cogs: string; grossProfit: string; expenses: string }[];
   trend: { month: string; income: string; costOfSales: string; grossProfit: string; operatingExpenses: string; netProfit: string }[];
   payments: { accountId: number; name: string; currency: string; usd: string }[];
@@ -126,8 +127,12 @@ function Body({ a }: { a: Analytics }) {
   const trend = a.trend.map((x) => ({ month: monthLabel(x.month), income: num(x.income), grossProfit: num(x.grossProfit), netProfit: num(x.netProfit) }));
   const byCat = [...a.byCategory].sort((x, y) => num(y.revenue) - num(x.revenue)).slice(0, 10).map((x) => ({ name: x.name || t("No category", "Sans catégorie"), revenue: num(x.revenue) }));
   const payments = [...a.payments].sort((x, y) => num(y.usd) - num(x.usd)).map((x) => ({ name: x.currency === "CDF" ? accountLabel(x.name, "CDF") : x.name, usd: num(x.usd) }));
-  const credit = num(a.sales.credit);
+  // Credit as the Sales list counts it: after returns, and the part an avoir covered apart (it is not owed).
+  const creditOwed = a.sales.creditOwed ?? a.sales.credit;
+  const onAvoir = d(a.sales.creditOnAvoir ?? 0);
+  const credit = num(creditOwed);
   if (credit > 0) payments.push({ name: t("On credit", "À crédit"), usd: credit });
+  if (onAvoir.gt(0)) payments.push({ name: t("From customers' credit", "Sur l'avoir"), usd: num(onAvoir) });
   const expenses = [...a.expenses].sort((x, y) => num(y.amount) - num(x.amount)).slice(0, 10).map((x) => ({ name: x.name, amount: num(x.amount) }));
   const stock = [...a.stockByCategory].sort((x, y) => num(y.value) - num(x.value)).slice(0, 10).map((x) => ({ name: x.name || t("No category", "Sans catégorie"), value: num(x.value) }));
   const barH = (n: number) => Math.max(160, n * 30 + 40);
@@ -140,7 +145,16 @@ function Body({ a }: { a: Analytics }) {
         <StatCard label={t("Gross profit", "Marge brute")} value={usd(a.totals.grossProfit)} tone={d(a.totals.grossProfit).lt(0) ? "bad" : "good"} sub={marginPct ? `${pct(marginPct, 1, 1)} ${t("of income", "des recettes")}` : undefined} />
         <StatCard label={t("Running costs", "Charges")} value={usd(a.totals.operatingExpenses)} />
         <StatCard label={t("Net profit", "Bénéfice net")} value={usd(a.totals.netProfit)} tone={d(a.totals.netProfit).lt(0) ? "bad" : "good"} />
-        <StatCard label={t("Credit sales", "Ventes à crédit")} value={usd(a.sales.credit)} sub={d(a.sales.total).gt(0) ? `${pct(d(a.sales.credit).div(d(a.sales.total)).times(100).toNumber(), 0)} ${t("of sales", "des ventes")}` : undefined} />
+        <StatCard
+          label={t("Credit sales", "Ventes à crédit")}
+          value={usd(creditOwed)}
+          sub={
+            <>
+              <div>{t("after returns", "après retours")}</div>
+              {onAvoir.gt(0) && <div className="text-emerald-800 dark:text-emerald-400">{t("From customers' credit", "Sur l'avoir")} {usd(onAvoir.toFixed(2))}</div>}
+            </>
+          }
+        />
       </div>
       <p className="-mt-2 text-xs text-muted-foreground">
         {t(
@@ -194,7 +208,7 @@ function Body({ a }: { a: Analytics }) {
             <YAxis {...yCat} dataKey="name" />
             <Tooltip {...TOOLTIP} formatter={tipUsd} />
             <Bar dataKey="usd" name={t("Amount ($)", "Montant ($)")} radius={[0, 2, 2, 0]}>
-              {payments.map((p, i) => <Cell key={i} fill={p.name === t("On credit", "À crédit") ? C_MUTED : C_MAIN} />)}
+              {payments.map((p, i) => <Cell key={i} fill={p.name === t("On credit", "À crédit") || p.name === t("From customers' credit", "Sur l'avoir") ? C_MUTED : C_MAIN} />)}
             </Bar>
           </BarChart>
         </ChartCard>

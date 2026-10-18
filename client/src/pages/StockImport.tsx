@@ -204,8 +204,9 @@ function remeasure<R extends { name: string | null; unit: string | null }>(
 const measureCell = (value: string | null, asked: string | number | false | null | undefined) =>
   asked !== undefined && asked !== null && asked !== false && String(asked).trim() ? String(asked).trim() : value ? fmtQty(value) : "—";
 /** A price or cost in the preview; one in doubt ("1,350": 1 350 or 1,35?) is shown as the file has it, not as one reading. */
-const amountCell = (value: string | null | undefined, raw: string | number | null | undefined, decimals: number) =>
-  amountCellUnsure(raw) ? String(raw).trim() : value ? (/^\d+(\.\d+)?$/.test(value) ? number(value, decimals, 2) : value) : "—";
+/** Francs are whole ("26 500", not "26 500,00"); a franc price with centimes keeps them in view, so its error reads. */
+const amountCell = (value: string | null | undefined, raw: string | number | null | undefined, decimals: number, minDecimals = 2) =>
+  amountCellUnsure(raw) ? String(raw).trim() : value ? (/^\d+(\.\d+)?$/.test(value) ? number(value, decimals, minDecimals) : value) : "—";
 /**
  * The question to ask about a price or cost typed as text that could be thousands or three decimals
  * ("1,350": 1 350 $ or 1,35 $?). The server refuses such a cell, so the row cannot be imported until the
@@ -667,7 +668,7 @@ function PricesImport() {
             <div className="flex flex-wrap justify-end gap-2">
               <Button variant="outline" onClick={() => setRows([])}>{t("Cancel", "Annuler")}</Button>
               <SubmitButton blocked={errors > 0 && t("Fix the errors in the file and load it again", "Corrigez les erreurs dans le fichier et chargez-le à nouveau")} pending={run.isPending} onClick={() => submit()}>
-                <Upload className="mr-1 h-4 w-4" /> {t("Update prices", "Mettre à jour les prix")} ({rows.length})
+                <Upload className="mr-1 h-4 w-4" /> {t("Update prices", "Mettre à jour les prix")} ({rows.length - errors})
               </SubmitButton>
             </div>
           </CardContent>
@@ -944,7 +945,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onContainer,
                           {err && <div className="text-xs text-destructive">{err}</div>}
                         </TableCell>
                         <TableCell className="text-right"><Num>{measureCell(r.quantity, asked && cells[i]?.quantity)}</Num></TableCell>
-                        <TableCell className="text-right"><Num>{amountCell(r.unitPrice, cells[i]?.unitPrice, 4)}</Num></TableCell>
+                        <TableCell className="text-right"><Num>{amountCell(r.unitPrice, cells[i]?.unitPrice, 4, currency === "CDF" ? 0 : 2)}</Num></TableCell>
                         <TableCell className="text-right"><Num>{measureCell(r.weightKg, asked && cells[i]?.weightKg)}</Num></TableCell>
                         <TableCell className="text-right"><Num>{measureCell(r.volumeCbm, asked && cells[i]?.volumeCbm)}</Num></TableCell>
                         <TableCell>

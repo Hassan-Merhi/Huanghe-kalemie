@@ -28,19 +28,35 @@ export interface ForeignBalance {
   native: string;
   usd: string;
 }
-/** "56 000 FC que nous lui devons", "1 200 ¥ qu'il nous doit" (one contact, so singular)… Negative native = we owe the contact. */
-export function foreignText(f: ForeignBalance, t: (en: string, fr: string) => string) {
+/**
+ * "56 000 FC que nous lui devons", "1 200 ¥ qu'il nous doit" (one contact, so singular)… Negative native = we owe the
+ * contact; for a customer that is an avoir, "56 000 FC d'avoir", as the till and the receipt say.
+ */
+export function foreignText(f: ForeignBalance, t: (en: string, fr: string) => string, customer = false) {
   const amount = money(d(f.native).abs().toString(), f.currency);
-  return d(f.native).isNegative() ? t(`${amount} owed to them`, `${amount} que nous lui devons`) : t(`${amount} they owe`, `${amount} qu'il nous doit`);
+  if (d(f.native).isNegative()) return customer ? t(`${amount} of credit`, `${amount} d'avoir`) : t(`${amount} owed to them`, `${amount} que nous lui devons`);
+  return t(`${amount} they owe`, `${amount} qu'il nous doit`);
 }
 
 
-export function BalanceWords({ balance, className }: { balance: string; className?: string }) {
+/**
+ * "nous doit 12,00 $", "nous devons 15,50 $". What the shop holds for a customer is an avoir, taken off their next
+ * purchases, not money paid out: it reads "avoir 15,50 $" (with the "déduit de ses prochains achats" when `long`).
+ */
+export function BalanceWords({ balance, className, customer, long }: { balance: string; className?: string; customer?: boolean; long?: boolean }) {
   const t = useT();
   const b = d(balance);
   if (b.isZero()) return <span className={cn("text-muted-foreground", className)}>{t("Settled", "Soldé")}</span>;
   if (b.isPositive()) {
     return <span className={cn("font-medium text-amber-800 dark:text-amber-400", className)}>{t(`owes us ${usd(b.toFixed(2))}`, `nous doit ${usd(b.toFixed(2))}`)}</span>;
+  }
+  if (customer) {
+    return (
+      <span className={cn("font-medium text-emerald-800 dark:text-emerald-400", className)} data-testid="balance-avoir">
+        {t(`credit ${usd(b.abs().toFixed(2))}`, `avoir ${usd(b.abs().toFixed(2))}`)}
+        {long && <span className="block text-sm font-normal text-muted-foreground">{t("deducted from their next purchases", "déduit de ses prochains achats")}</span>}
+      </span>
+    );
   }
   return <span className={cn("font-medium text-blue-700 dark:text-blue-400", className)}>{t(`we owe ${usd(b.abs().toFixed(2))}`, `nous devons ${usd(b.abs().toFixed(2))}`)}</span>;
 }
@@ -114,7 +130,8 @@ export default function Contacts() {
       <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-3 sm:gap-3">
         <StatCard label={t("Contacts", "Contacts")} value={rows.length} />
         <StatCard label={t("They owe us", "Ils nous doivent")} value={usd(owedToUs.toFixed(2))} />
-        <StatCard label={t("We owe them", "Nous leur devons")} value={usd(weOwe.toFixed(2))} />
+        {/* A customer's avoir is taken off their next purchases: it is not money the shop pays out. */}
+        <StatCard label={type === "customer" ? t("Customers' credit", "Avoirs clients") : t("We owe them", "Nous leur devons")} value={usd(weOwe.toFixed(2))} />
       </div>
 
       <ErrorText error={q.error} />
@@ -150,8 +167,8 @@ export default function Contacts() {
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{p.phone}</TableCell>
                       <TableCell className="text-right whitespace-nowrap">
-                        <BalanceWords balance={p.balance} />
-                        {p.foreign?.map((f) => <span key={f.currency} className="block text-xs text-muted-foreground">{t("of which", "dont")} {foreignText(f, t)}</span>)}
+                        <BalanceWords balance={p.balance} customer={type === "customer"} />
+                        {p.foreign?.map((f) => <span key={f.currency} className="block text-xs text-muted-foreground">{t("of which", "dont")} {foreignText(f, t, type === "customer")}</span>)}
                       </TableCell>
                       {can("manager") && (
                         <TableCell onClick={(e) => e.stopPropagation()}>
@@ -169,7 +186,7 @@ export default function Contacts() {
                     <TableCell className="text-right">
                       <Num>
                         <span className="block">{t("owed to us", "à recevoir")} {usd(owedToUs.toFixed(2))}</span>
-                        <span className="block">{t("we owe", "à payer")} {usd(weOwe.toFixed(2))}</span>
+                        <span className="block">{type === "customer" ? t("credit", "avoirs") : t("we owe", "à payer")} {usd(weOwe.toFixed(2))}</span>
                       </Num>
                     </TableCell>
                     {can("manager") && <TableCell />}
