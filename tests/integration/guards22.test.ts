@@ -115,7 +115,7 @@ describe.skipIf(!hasDb)("Guards found by the twenty-second audit", async () => {
     const [r] = await db.select({ usd: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)::numeric(20,2)::text` }).from(journalLines).where(eq(journalLines.accountId, accountId));
     return r.usd;
   }
-  /** A residue left the old way, by a journal posted exactly as given. */
+  /** A residue left by an older posting, by a journal posted exactly as given: `native` owed to the contact, booked at `usd` (0 or 0,01). */
   async function oldResidue(accountId: number, partyId: number, currency: "CDF" | "CNY", native: string, usd: string, rate: string, date = today) {
     await db.transaction((tx) =>
       ledger.postJournal(tx, {
@@ -124,7 +124,8 @@ describe.skipIf(!hasDb)("Guards found by the twenty-second audit", async () => {
         memo: "Reste",
         exactValues: true,
         lines: [
-          { accountId, partyId, credit: usd, currency, nativeAmount: native, rate },
+          { accountId, partyId, credit: "0.01", currency, nativeAmount: native, rate },
+          { accountId, partyId, debit: (0.01 - Number(usd)).toFixed(2), currency, nativeAmount: "0", rate },
           { accountId: cashUsd, debit: usd },
         ],
       }),
@@ -173,24 +174,24 @@ describe.skipIf(!hasDb)("Guards found by the twenty-second audit", async () => {
     expect(sale.status, JSON.stringify(sale.body)).toBe(201);
     expect((await call("POST", "/api/vouchers/payment", { date: odd, accountId: cashUsd, lines: [{ partyId: c2, amount: "0.01" }] }, "gerant")).status).toBe(403);
 
-    // A residue left by an older posting goes the next time the contact is touched, at its book value
-    // against exchange differences (here a 0,01 $ gain), with no money for it.
+    // A residue left by an older posting goes the next time the contact is touched, with no money for it
+    // (A28: only one booked at 0 $, as postings leave them; see guards23 for one booked at more).
     const c3 = await customer("Client L1c");
-    await oldResidue(receivables, c3, "CDF", "10", "0.01", "2808");
-    expect(await owed(c3, "CDF", receivables)).toEqual(["-10.00", "-0.01"]);
+    await oldResidue(receivables, c3, "CDF", "10", "0", "2808");
+    expect(await owed(c3, "CDF", receivables)).toEqual(["-10.00", "0.00"]);
     const paid = await call("POST", "/api/money/customer-receipt", { date: today, partyId: c3, accountId: cashUsd, amount: "5" }, "gerant");
     expect(paid.status, JSON.stringify(paid.body)).toBe(201);
     expect(await owed(c3, "CDF", receivables)).toEqual(["0.00", "0.00"]);
     expect(await owed(c3, "USD", receivables)).toEqual(["0.00", "-5.00"]);
     const j = await journalSums(paid.body.id);
-    expect([j.net(fx), j.net(cashUsd)]).toEqual(["-0.01", "5.00"]);
+    expect([j.net(fx), j.net(cashUsd)]).toEqual(["0.00", "5.00"]);
     // A balance with something dated later is left alone: clearing it on an earlier day would change what
     // the later posting settled.
     const c4 = await customer("Client L1d");
-    await oldResidue(receivables, c4, "CDF", "10", "0.01", "2808", dayOffset(-1));
+    await oldResidue(receivables, c4, "CDF", "10", "0", "2808", dayOffset(-1));
     expect((await call("POST", "/api/money/customer-receipt", { date: today, partyId: c4, accountId: cashCdf, amount: "100" }, "gerant")).status).toBe(201);
     expect((await call("POST", "/api/money/customer-receipt", { date: dayOffset(-1), partyId: c4, accountId: cashUsd, amount: "5" }, "gerant")).status).toBe(201);
-    expect(await owed(c4, "CDF", receivables)).toEqual(["-110.00", "-0.05"]);
+    expect(await owed(c4, "CDF", receivables)).toEqual(["-110.00", "-0.04"]);
   });
 
   it("L2: the dollars shown settle all the yuan owed, and yuan worth under half a cent are cleared", async () => {
@@ -221,17 +222,17 @@ describe.skipIf(!hasDb)("Guards found by the twenty-second audit", async () => {
     expect((await pay(s4, "1.00", "71")).status).toBe(400);
     expect((await pay(s4, "10.00", "7.10", "admin")).status).toBe(400);
     expect((await pay(s4, "10.50", "71")).status).toBe(201);
-    // 0,03 ¥ left by an older posting: nothing to pay in yuan, and a dollar payment clears them (the dollars
-    // are an advance; the 0,01 $ they were booked at is an exchange gain).
+    // 0,03 ¥ left by an older posting at 0 $: nothing to pay in yuan, and a dollar payment clears them
+    // (the dollars are an advance).
     const s5 = await supplier("Fournisseur L2e");
-    await oldResidue(payables, s5, "CNY", "0.03", "0.01", "3");
+    await oldResidue(payables, s5, "CNY", "0.03", "0", "3");
     const refused = await pay(s5, "0.01", "0.03", "admin");
     expect(refused.status).toBe(400);
     expect(refused.body.message).toMatch(/half a cent/);
     const p5 = await pay(s5, "0.01");
     expect(p5.status, JSON.stringify(p5.body)).toBe(201);
     expect([await owed(s5, "CNY"), await owed(s5, "USD")]).toEqual([["0.00", "0.00"], ["0.00", "0.01"]]);
-    expect((await journalSums(p5.body.id)).net(fx)).toBe("-0.01");
+    expect((await journalSums(p5.body.id)).net(fx)).toBe("0.00");
     // A dollar advance of at least the yuan's shown value settles all of them.
     const s6 = await supplier("Fournisseur L2f");
     expect((await pay(s6, "10.00")).status).toBe(201);
