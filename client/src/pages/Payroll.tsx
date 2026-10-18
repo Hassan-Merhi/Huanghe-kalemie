@@ -537,9 +537,9 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
             {cancelledRuns.map((r) => (
               <div key={r.id} className="space-y-1">
                 <p className="flex flex-wrap items-center gap-2 px-6 text-sm">
-                  <Badge variant="destructive">{t("Cancelled", "Annulé")}</Badge>
-                  {t("Saved on", "Enregistré le")} {fmtDate(r.date)}
-                  {r.cancelledAt && <> · {t("cancelled on", "annulé le")} {fmtDate(r.cancelledAt)}</>}
+                  <Badge variant="destructive">{t("Cancelled", "Annulée")}</Badge>
+                  {t("Saved on", "Enregistrée le")} {fmtDate(r.date)}
+                  {r.cancelledAt && <> · {t("cancelled on", "annulée le")} {fmtDate(r.cancelledAt)}</>}
                   {r.cancelJournalId && <Link href={`/vouchers/${r.cancelJournalId}`} className="text-primary hover:underline">{t("cancelling entry", "écriture d'annulation")}</Link>}
                 </p>
                 <RunLinesTable run={r} />
@@ -1040,7 +1040,7 @@ function HistoryTab({ runs }: { runs: PayrollRun[] }) {
                     <TableCell>{open === r.id ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</TableCell>
                     <TableCell className="font-medium">
                       {capitalize(monthLabel(r.month))}
-                      {r.status === "cancelled" && <Badge variant="destructive" className="ml-2">{t("Cancelled", "Annulé")}</Badge>}
+                      {r.status === "cancelled" && <Badge variant="destructive" className="ml-2">{t("Cancelled", "Annulée")}</Badge>}
                     </TableCell>
                     <TableCell className="hidden whitespace-nowrap sm:table-cell">{fmtDate(r.date)}</TableCell>
                     <TableCell className="text-right"><Num>{r.lines.length}</Num></TableCell>

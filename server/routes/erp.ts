@@ -1,7 +1,7 @@
 import type { Express, Request } from "express";
 import { and, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
-import { accounts, containers, DRAFT_KINDS, journalLines, journals, parties, partners, saleReturns, users, type DraftKind } from "@shared/schema";
+import { accounts, containers, DRAFT_KINDS, expenses, journalLines, journals, parties, partners, saleReturns, users, type DraftKind } from "@shared/schema";
 import { ambiguousImportMeasure, ambiguousTypedAmount, cents, dec, Decimal, MoneyError, parseTypedNumber, sum, typedCurrencyMark } from "@shared/money";
 import { frNumber } from "@shared/french";
 import { COST_FX_MEMO } from "../services/ledger";
@@ -81,6 +81,20 @@ export function registerErpRoutes(
     // Posted from someone else's pending voucher: they prepared it, the journal's author validated it.
     const preparer = (await vouchers.preparedBy(db, [j.journal.id])).get(j.journal.id);
     const [prep] = preparer ? await db.select({ fullName: users.fullName }).from(users).where(eq(users.id, preparer)) : [];
+    // An expense line paid in francs carries only its dollars; the francs typed on it are on its expense,
+    // so the printed voucher can say "100 000 FC" per line, not only 35,61 $.
+    const spent = await db
+      .select({ accountId: expenses.accountId, amountNative: expenses.amountNative, amountUsd: expenses.amountUsd })
+      .from(expenses)
+      .where(and(eq(expenses.journalId, j.journal.id), eq(expenses.currency, "CDF")))
+      .orderBy(expenses.id);
+    const withFrancs = m.lines.map((l) => {
+      if (l.nativeAmount || !dec(l.debit).gt(0)) return l;
+      const i = spent.findIndex((e) => e.accountId === l.accountId && dec(e.amountUsd).equals(l.debit));
+      if (i < 0) return l;
+      const [e] = spent.splice(i, 1);
+      return { ...l, docNativeAmount: dec(e.amountNative).toFixed(2) };
+    });
     res.json({
       ...m.journal,
       createdByName: prep ? prep.fullName : j.createdByName,
@@ -88,7 +102,7 @@ export function registerErpRoutes(
       total: m.lines.reduce((s, l) => s.plus(l.debit), dec(0)).toFixed(2),
       amount: doc.amount,
       fxDiff: "fxDiff" in doc ? doc.fxDiff ?? null : null,
-      lines: m.lines.map((l) => (l.accountId === -1 ? { ...l, systemKey: null } : l)),
+      lines: withFrancs.map((l) => (l.accountId === -1 ? { ...l, systemKey: null } : l)),
     });
   }));
 

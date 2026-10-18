@@ -27,6 +27,8 @@ interface VoucherLine {
   currency: string;
   nativeAmount: string | null;
   rate: string | null;
+  /** An expense line paid in francs: the francs typed on it (the line itself books only dollars). */
+  docNativeAmount?: string;
   memo: string | null;
 }
 
@@ -202,6 +204,8 @@ export default function VoucherPrint() {
                             {l.currency === "CDF" ? cdf(d(l.nativeAmount).abs().toString()) : money(d(l.nativeAmount).abs().toString(), l.currency)}
                             {l.rate && <span className="block text-xs text-muted-foreground">{t("rate", "taux")} {qty(d(l.rate).toDecimalPlaces(2).toString())}{"\u00a0"}{l.currency === "CDF" ? "FC" : l.currency}/$</span>}
                           </Num>
+                        ) : l.docNativeAmount ? (
+                          <Num>{cdf(l.docNativeAmount)}</Num>
                         ) : ""}
                       </td>
                     )}

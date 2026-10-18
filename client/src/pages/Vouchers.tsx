@@ -316,6 +316,14 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
   // Francs change hands in whole notes: say so on the form, before the server refuses it.
   const francSlip = isCdf ? lines.findIndex((l) => isAmount(l.amount) && !d(l.amount).isInteger()) : -1;
   const francSlipText = t(`Line ${francSlip + 1}: franc amounts are whole numbers (no centimes).`, `Ligne ${francSlip + 1}\u00a0: les montants en FC sont des nombres entiers (sans centimes).`);
+  // "0,004 $" rounds to nothing: said on the line, not as the server's field path after saving.
+  const isTiny = (l: VLine) => isAmount(l.amount) && d(l.amount).gt(0) && d(l.amount).toDecimalPlaces(2).isZero();
+  const tinySlip = francSlip < 0 ? lines.findIndex(isTiny) : -1;
+  const slipText = francSlip >= 0
+    ? francSlipText
+    : tinySlip >= 0
+      ? t(`Line ${tinySlip + 1}: the amount is less than one cent.`, `Ligne ${tinySlip + 1}\u00a0: le montant vaut moins d'un centime.`)
+      : null;
   const bal = balances.data?.find((a) => a.id === accountId);
   const current = bal ? d(isCdf ? bal.nativeBalance : bal.balance) : null;
   const after = current ? (kind === "payment" ? current.minus(total) : current.plus(total)) : null;
@@ -370,7 +378,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
       if (l.amount.trim() && !isAmount(l.amount)) return setError(t(`Line ${i + 1}: correct the amount.`, `Ligne ${i + 1}\u00a0: corrigez le montant.`));
       if (!isAmount(l.amount) || !d(l.amount).gt(0)) return setError(t(`Line ${i + 1}: enter an amount greater than zero.`, `Ligne ${i + 1}\u00a0: saisissez un montant supérieur à zéro.`));
     }
-    if (francSlip >= 0) return setError(francSlipText);
+    if (slipText) return setError(slipText);
     if (short) return;
     if (unusual.length && !confirmed) return setConfirmUnusual("save");
     m.mutate({ date: day, ...payload(true) });
@@ -400,7 +408,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
           </Field>
           {isCdf && (
             <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} hint={totalUsd ? `= ${usd(totalUsd.toFixed(2))}` : undefined} required>
-              <RateInput day={day} value={rateField.rate} onChange={rateField.setRate} />
+              <RateInput day={day} value={rateField.rate} onChange={rateField.setRate} ownerOnly />
             </Field>
           )}
           <Field label={t("Description", "Libellé")} className={isCdf ? "" : "lg:col-span-2"}>
@@ -464,7 +472,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
                   <LineAccountSelect types={ACCOUNT_TYPES[kind]} value={l.accountId} onChange={(id) => set(l.key, { accountId: id })} />
                 )}
               </div>
-              <Input inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-invalid={(isCdf && isAmount(l.amount) && !d(l.amount).isInteger()) || undefined} className="text-right tabular" placeholder={t(`Amount (${curLabel(currency)})`, `Montant (${curLabel(currency)})`)} value={l.amount} onChange={(e) => set(l.key, { amount: e.target.value })} />
+              <Input inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-invalid={(isCdf && isAmount(l.amount) && !d(l.amount).isInteger()) || isTiny(l) || undefined} className="text-right tabular" placeholder={t(`Amount (${curLabel(currency)})`, `Montant (${curLabel(currency)})`)} value={l.amount} onChange={(e) => set(l.key, { amount: e.target.value })} />
               <Input placeholder={t("Note (optional)", "Note (facultatif)")} value={l.memo} onChange={(e) => set(l.key, { memo: e.target.value })} />
               <Button variant="ghost" size="icon" className="justify-self-end" disabled={lines.length <= 1} onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} aria-label={t("Remove line", "Retirer la ligne")}>
                 <Trash2 className="h-4 w-4" />
@@ -477,9 +485,9 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
             </Button>
             <div className="text-right text-sm">
               <span className="text-muted-foreground">{t("Total", "Total")} </span>
-              <Num className="text-lg font-semibold">{francSlip >= 0 ? "—" : money(total.toFixed(2), currency)}</Num>
-              {francSlip >= 0 && <span className="block text-xs font-medium text-destructive" role="alert">{francSlipText}</span>}
-              {isCdf && francSlip < 0 && <span className="block text-xs text-muted-foreground">{totalUsd ? `≈ ${usd(totalUsd.toFixed(2))}` : t("enter the rate", "saisissez le taux")}</span>}
+              <Num className="text-lg font-semibold">{slipText ? "—" : money(total.toFixed(2), currency)}</Num>
+              {slipText && <span className="block text-xs font-medium text-destructive" role="alert">{slipText}</span>}
+              {isCdf && !slipText && <span className="block text-xs text-muted-foreground">{totalUsd ? `≈ ${usd(totalUsd.toFixed(2))}` : t("enter the rate", "saisissez le taux")}</span>}
             </div>
           </div>
         </CardContent>

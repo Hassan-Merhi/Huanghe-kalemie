@@ -711,7 +711,11 @@ export function useRateField(day: string) {
  * Rate input for a franc amount: starts at the day's rate, says how far a typed rate is from it,
  * and warns before the server refuses one outside the allowed gap. Cashiers cannot change it.
  */
-export function RateInput({ day, value, onChange, className }: { day: string; value: string; onChange: (v: string) => void; className?: string }) {
+/**
+ * `ownerOnly`: the server takes the day's rate from anyone but the owner here (sales, vouchers, customer
+ * payments), so a manager sees it as text too rather than a rate the books would not use.
+ */
+export function RateInput({ day, value, onChange, className, ownerOnly }: { day: string; value: string; onChange: (v: string) => void; className?: string; ownerOnly?: boolean }) {
   const t = useT();
   const { user } = useAuth();
   const dayQ = useRate(day);
@@ -720,7 +724,7 @@ export function RateInput({ day, value, onChange, className }: { day: string; va
   const tolerance = d(settings?.rateTolerancePct ?? "3");
   const r = d(value);
   const gap = dayRate.gt(0) && r.gt(0) ? r.minus(dayRate).abs().dividedBy(dayRate).times(100) : d(0);
-  const readOnly = user?.role === "cashier";
+  const readOnly = user?.role === "cashier" || (!!ownerOnly && user?.role !== "owner");
   return (
     <div className={cn("space-y-1", className)}>
       {readOnly ? (

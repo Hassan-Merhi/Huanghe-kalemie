@@ -158,8 +158,20 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
   // Payments into the same account are one amount, valued once: each leg rounded to the cent on its
   // own would let 1 000 legs of 15 FC pass for 1 000 cents. Each leg is still checked as typed.
   const payments: SalePaymentInput[] = [];
+  let typedRate: string | null = null;
   for (const p of input.payments) {
-    await moneyLeg(tx, { accountId: p.accountId, amount: p.amount, rate: saleRate === undefined ? p.rate : saleRate, date: input.date });
+    const checked = await moneyLeg(tx, { accountId: p.accountId, amount: p.amount, rate: saleRate === undefined ? p.rate : saleRate, date: input.date });
+    // The owner's francs are all valued at the first payment's rate: a second rate would be silently replaced
+    // (61 776 FC at 2 808 and 2 750 is not the 22 $ the till added up), so it is refused instead.
+    if (checked.rate && saleRate === undefined) {
+      if (typedRate && !dec(typedRate).equals(checked.rate)) {
+        throw badRequest(
+          `All franc payments of a sale use one rate: ${frNumber(dec(typedRate).toString())} and ${frNumber(dec(checked.rate).toString())} FC for $1 were given`,
+          `Tous les paiements en francs d'une vente se font au même taux : ${frNumber(dec(typedRate).toString())} FC et ${frNumber(dec(checked.rate).toString())} FC pour 1 $ ont été saisis. Gardez un seul taux.`,
+        );
+      }
+      typedRate ??= checked.rate;
+    }
     const same = payments.find((x) => x.accountId === p.accountId);
     if (same) same.amount = cents(same.amount).plus(cents(p.amount)).toFixed(2);
     else payments.push({ ...p, amount: cents(p.amount).toFixed(2) });

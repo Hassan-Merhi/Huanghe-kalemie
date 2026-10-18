@@ -344,6 +344,9 @@ function ChassisPicker({ line, locationId, takenUnitIds, onChange }: { line: Car
   );
 }
 
+/** The server's limit on payment lines per sale (MAX_SALE_PAYMENTS). */
+const MAX_PAYMENTS = 10;
+
 export default function POS() {
   const t = useT();
   const { can, user } = useAuth();
@@ -377,6 +380,13 @@ export default function POS() {
   const rateQ = useRate(saleDate);
   const dayRate = rateQ.data?.cdfPerUsd ? d(rateQ.data.cdfPerUsd).toString() : "";
   const accById = useCallback((id: number | null) => moneyAccounts.find((a) => a.id === id), [moneyAccounts]);
+  /**
+   * The server values every franc of a sale at one rate: the day's for staff, for the owner the rate of the
+   * first franc payment. The till uses that same rate for every payment and the change, so what it adds up
+   * is what the receipt says.
+   */
+  const firstFcPay = pays.find((p) => accById(p.accountId)?.currency === "CDF");
+  const saleFcRate = user?.role === "owner" && firstFcPay?.rate != null ? firstFcPay.rate : dayRate;
 
   // Changing location: the chosen motorcycles are at the old location, so pick again.
   const prevLocation = useRef<number | null>(null);
@@ -420,19 +430,19 @@ export default function POS() {
     if (!acc) return d(0);
     const amount = c2(d(p.amount));
     if (acc.currency === "CDF") {
-      const r = d(p.rate ?? dayRate);
+      const r = d(saleFcRate);
       return r.gt(0) ? c2(amount.dividedBy(r)) : d(0);
     }
     return amount;
   };
   const received = pays.reduce((s, p) => s.plus(payUsd(p)), d(0));
-  const rateNum = d(dayRate);
+  const rateNum = d(saleFcRate);
   /** What was handed over, in dollars, before rounding each payment to the cent. */
   const receivedExact = pays.reduce((s, p) => {
     const acc = accById(p.accountId);
     if (!acc || d(p.amount).lte(0)) return s;
     if (acc.currency !== "CDF") return s.plus(c2(d(p.amount)));
-    const r = d(p.rate ?? dayRate);
+    const r = d(saleFcRate);
     return r.gt(0) ? s.plus(c2(d(p.amount)).dividedBy(r)) : s;
   }, d(0));
   const paidRows = pays.filter((p) => accById(p.accountId) && d(p.amount).gt(0));
@@ -513,7 +523,7 @@ export default function POS() {
   // A rate typed far from the day's comes first: every total below is worked out with it.
   const rateTolerance = d(shop?.rateTolerancePct ?? "3");
   const dayRateNum = d(dayRate);
-  const rateOff = dayRateNum.gt(0) && pays.some((p) => accById(p.accountId)?.currency === "CDF" && p.rate && d(p.rate).gt(0) && d(p.rate).minus(dayRateNum).abs().dividedBy(dayRateNum).times(100).gt(rateTolerance));
+  const rateOff = dayRateNum.gt(0) && !!firstFcPay && rateNum.gt(0) && rateNum.minus(dayRateNum).abs().dividedBy(dayRateNum).times(100).gt(rateTolerance);
   if (rateOff) {
     problems.push(t(`The rate is more than ${rateTolerance.toString()}% from the day's rate (${fmtQty(dayRate)}): correct it`, `Le taux s'écarte de plus de ${rateTolerance.toString()}\u00a0% du taux du jour (${fmtQty(dayRate)})\u00a0: corrigez-le`));
   }
@@ -557,7 +567,7 @@ export default function POS() {
     if (!acc && d(p.amount).gt(0)) problems.push(t("Choose the account for each payment", "Choisissez le compte pour chaque paiement"));
     // An empty payment row is simply ignored when the sale is saved.
     if (acc && d(p.amount).lt(0)) problems.push(t("A payment cannot be negative", "Un paiement ne peut pas être négatif"));
-    if (acc?.currency === "CDF" && d(p.amount).gt(0) && d(p.rate ?? dayRate).lte(0)) problems.push(t("Enter the exchange rate for CDF payments", "Saisissez le taux pour les paiements en francs"));
+    if (acc?.currency === "CDF" && d(p.amount).gt(0) && rateNum.lte(0)) problems.push(t("Enter the exchange rate for CDF payments", "Saisissez le taux pour les paiements en francs"));
     if (acc?.currency === "CDF" && !d(p.amount).isInteger()) problems.push(t("Franc amounts are whole numbers", "Les montants en FC sont des nombres entiers"));
   }
   if (!typedNumberOk(changeAmt)) problems.push(t("Correct the change given back", "Corrigez la monnaie rendue"));
@@ -620,7 +630,13 @@ export default function POS() {
   const typedFc = toPay === paid && !changeUsd.gt(0) && paidRows.length > 0 && paidRows.every((p) => accById(p.accountId)!.currency === "CDF")
     ? paidRows.reduce((s, p) => s.plus(d(p.amount).toDecimalPlaces(0, ROUND)), d(0))
     : null;
-  const toPayFc = typedFc ?? (rateNum.gt(0) ? toPay.times(rateNum).toDecimalPlaces(0, ROUND) : null);
+  // Part of the sale (the rest on the avoir) is asked in 100 FC notes, like the rest of a mixed payment.
+  const toPayFc = typedFc ?? (rateNum.gt(0) ? francsFor(toPay, toPay.gt(0) && toPay.lt(total)) : null);
+  /**
+   * A credit sale with nothing paid and no avoir: nothing is due now, so the calculator says so instead of
+   * the total. With an avoir it still shows the part the avoir leaves, the usual amount asked for.
+   */
+  const allOnCredit = !!customerId && !paid.gt(0) && !avoirCovers && onCredit.gt(0);
   // Francs handed over against those francs are counted in francs, so 70 000 FC for 70 000 FC leaves nothing.
   const changeFcExact = typedFc && handedCur === "CDF" ? d(handed).toDecimalPlaces(0, ROUND).minus(typedFc) : null;
   const handedUsd = handedCur === "CDF" ? (rateNum.gt(0) ? d(handed).dividedBy(rateNum) : d(0)) : d(handed);
@@ -669,7 +685,7 @@ export default function POS() {
         .filter((p) => p.accountId && d(p.amount).gt(0))
         .map((p) => {
           const acc = accById(p.accountId)!;
-          return { accountId: acc.id, amount: c2(d(p.amount)).toFixed(2), ...(acc.currency === "CDF" ? { rate: d(p.rate ?? dayRate).toString() } : {}) };
+          return { accountId: acc.id, amount: c2(d(p.amount)).toFixed(2), ...(acc.currency === "CDF" ? { rate: rateNum.toString() } : {}) };
         }),
       change: changeAcc && changeNative.gt(0)
         ? { accountId: changeAcc.id, amount: changeNative.toFixed(2), ...(changeAcc.currency === "CDF" ? { rate: rateNum.toString() } : {}) }
@@ -857,7 +873,7 @@ export default function POS() {
                   <span className="font-medium">{t("Total", "Total")}</span>
                   <span className="text-3xl font-bold tabular">{usd(total.toFixed(2))}</span>
                 </div>
-                {rateNum.gt(0) && <p className="text-right text-xs text-muted-foreground">≈ {cdf(total.times(rateNum).toDecimalPlaces(0, ROUND).toString())} · 1 $ = {fmtQty(dayRate)} FC</p>}
+                {rateNum.gt(0) && <p className="text-right text-xs text-muted-foreground">≈ {cdf(total.times(rateNum).toDecimalPlaces(0, ROUND).toString())} · 1 $ = {fmtQty(rateNum.toString())} FC</p>}
               </div>
 
               <div className="grid grid-cols-2 gap-2">
@@ -892,19 +908,33 @@ export default function POS() {
                         />
                         <span className="pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 text-sm font-medium text-muted-foreground">{acc?.currency === "CDF" ? "FC" : "$"}</span>
                       </div>
-                      {acc?.currency === "CDF" && (
-                        <RateInput day={saleDate} value={p.rate ?? dayRate} onChange={(v) => updatePay(p.key, { rate: v })} />
+                      {acc?.currency === "CDF" && p === firstFcPay && (
+                        <RateInput day={saleDate} value={p.rate ?? dayRate} onChange={(v) => updatePay(p.key, { rate: v })} ownerOnly />
+                      )}
+                      {/* One rate per sale: a second franc payment takes the first one's, said rather than asked again. */}
+                      {acc?.currency === "CDF" && p !== firstFcPay && (
+                        <p className="flex h-9 items-center rounded-md bg-muted/60 px-3 text-sm tabular-nums" aria-label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")}>
+                          {fmtQty(saleFcRate)}{"\u00a0"}FC/$
+                        </p>
                       )}
                     </div>
                     {acc?.currency === "CDF" && (
-                      <p className="text-xs text-muted-foreground">= {usd(payUsd(p).toFixed(2))} ({t("rate", "taux")} {fmtQty(p.rate ?? dayRate)} FC/$)</p>
+                      <p className="text-xs text-muted-foreground">
+                        = {usd(payUsd(p).toFixed(2))} ({t("rate", "taux")} {fmtQty(saleFcRate)} FC/$)
+                        {p !== firstFcPay && <span className="block">{t("Same rate as the first franc payment: a sale has one rate.", "Même taux que le premier paiement en francs\u00a0: une vente a un seul taux.")}</span>}
+                      </p>
                     )}
                   </div>
                 );
               })}
-              <Button variant="outline" size="sm" className="w-full" onClick={() => setPays((ps) => [...ps, { key: keyRef.current++, accountId: findCash("USD")?.id ?? null, amount: remaining.gt(0) ? remaining.toFixed(2) : "", rate: null }])}>
+              <Button variant="outline" size="sm" className="w-full" disabled={pays.length >= MAX_PAYMENTS} onClick={() => setPays((ps) => [...ps, { key: keyRef.current++, accountId: findCash("USD")?.id ?? null, amount: remaining.gt(0) ? remaining.toFixed(2) : "", rate: null }])}>
                 <Plus className="mr-1 h-4 w-4" /> {t("Add payment", "Ajouter un paiement")}
               </Button>
+              {pays.length >= MAX_PAYMENTS && (
+                <p className="text-xs text-muted-foreground" data-testid="pay-limit">
+                  {t(`At most ${MAX_PAYMENTS} payments per sale: add to an existing line instead.`, `Au plus ${MAX_PAYMENTS} paiements par vente\u00a0: ajoutez plutôt le montant à une ligne existante.`)}
+                </p>
+              )}
 
               {showChange && (
                 <div className="space-y-2 rounded-md border border-dashed p-2">
@@ -1012,10 +1042,14 @@ export default function POS() {
                   </div>
                   {nothingToPay ? (
                     <p className="text-emerald-800 dark:text-emerald-400" data-testid="calc-on-avoir">{t("Nothing to pay: settled from the customer's credit", "Rien à payer\u00a0: réglé sur l'avoir")}</p>
+                  ) : allOnCredit ? (
+                    <p className="text-amber-800 dark:text-amber-400" data-testid="calc-on-credit">
+                      {t(`Nothing to pay now: ${usd(onCredit.toFixed(2))} on credit. Enter a payment above for a part paid now.`, `Rien à payer maintenant\u00a0: ${usd(onCredit.toFixed(2))} à crédit. Saisissez un paiement ci-dessus pour une partie payée tout de suite.`)}
+                    </p>
                   ) : (
                     <div className="flex justify-between"><span>{t("To pay", "À payer")}</span><Num>{usd(toPay.toFixed(2))}{toPayFc ? ` · ${cdf(toPayFc.toString())}` : ""}</Num></div>
                   )}
-                  {handed && (
+                  {handed && !allOnCredit && (
                     <div className={cn("flex justify-between font-semibold", change.lt(0) && "text-destructive")}>
                       <span>{change.lt(0) ? t("Still missing", "Il manque") : t("Change to give", "Monnaie à rendre")}</span>
                       <Num>{usd(c2(change.abs()).toFixed(2))}{changeFc ? ` · ${cdf(changeFc.toString())}` : ""}</Num>
