@@ -119,7 +119,7 @@ export default function Stock() {
         {isManager && <TabsContent value="adjust"><AdjustForm onDone={() => setTab("history")} /></TabsContent>}
         <TabsContent value="history"><AdjustmentHistory /></TabsContent>
         {isManager && multiLocation && <TabsContent value="transfer"><TransferForm onDone={() => setTab("transfers")} /></TabsContent>}
-        <TabsContent value="transfers"><TransferHistory /></TabsContent>
+        <TabsContent value="transfers"><TransferHistory multiLocation={multiLocation} /></TabsContent>
       </Tabs>
     </div>
   );
@@ -994,7 +994,7 @@ interface TransferRow {
 
 const validDate = (s: string) => /^\d{4}-\d{2}-\d{2}$/.test(s);
 
-function TransferHistory() {
+function TransferHistory({ multiLocation }: { multiLocation: boolean }) {
   const t = useT();
   const [from, setFrom] = useState(monthStart());
   const [to, setTo] = useState(todayLocal());
@@ -1015,7 +1015,13 @@ function TransferHistory() {
       {q.isLoading ? (
         <Loading />
       ) : rows.length === 0 ? (
-        <EmptyState title={t("No transfers in this period", "Aucun transfert sur cette période")} />
+        <EmptyState title={t("No transfers in this period", "Aucun transfert sur cette période")}>
+          {/* With one place there is nowhere to move stock to: say what makes this tab useful. */}
+          {!multiLocation && t(
+            "Transfers move stock from one location to another: add a second location (warehouse, second shop) in Settings › Locations.",
+            "Les transferts déplacent le stock d'un emplacement à un autre\u00a0: ajoutez un second emplacement (dépôt, deuxième boutique) dans Paramètres › Emplacements.",
+          )}
+        </EmptyState>
       ) : (
         <Card className="overflow-x-auto">
           <Table>

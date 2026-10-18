@@ -13,7 +13,7 @@ import {
   stockLevels,
   variants,
 } from "@shared/schema";
-import { cents, dec, sum, Decimal } from "@shared/money";
+import { cents, dec, sum, Decimal, type DecimalInput } from "@shared/money";
 import type { Tx } from "../db";
 import { notFound } from "../errors";
 import { monthRange, pnlByAccount, summarizePnl } from "./periods";
@@ -138,8 +138,10 @@ export async function balanceSheet(tx: Tx, asOf?: string, partnerId?: number | n
     if (split) {
       const debit = dec(split.debit);
       const credit = dec(split.credit);
-      const owedToUs = r.type === "asset" ? r.name : `${r.name} (avances versées)`;
-      const weOwe = r.type === "liability" ? r.name : `${r.name} (avances reçues)`;
+      // The other side named for what it is, not with a second bracket: "Clients (créances) (avances reçues)"
+      // reads "Avances reçues des clients".
+      const owedToUs = r.type === "asset" ? r.name : r.systemKey === SYSTEM_ACCOUNTS.payables ? "Avances versées aux fournisseurs, agents et employés" : `${r.name} (avances versées)`;
+      const weOwe = r.type === "liability" ? r.name : r.systemKey === SYSTEM_ACCOUNTS.receivables ? "Avances reçues des clients" : `${r.name} (avances reçues)`;
       if (!debit.isZero()) assets.push({ ...line(r, 1), name: owedToUs, amount: debit.toFixed(2), nativeBalance: null });
       if (!credit.isZero()) liabilities.push({ ...line(r, -1), name: weOwe, amount: credit.toFixed(2), nativeBalance: null });
       continue;
@@ -469,6 +471,24 @@ export async function profitAndLoss(tx: Tx, from: string, to: string) {
   return { from, to, accounts: rows, totals: summarizePnl(rows) };
 }
 
+/**
+ * The per-unit cost a stock value kept to the cent stands for, for display: 2,25 L at 0,125 $ are kept as
+ * 0,28 $, which divided back reads 0,1244 $. The roundest cost (to the cent, then 0,005, 0,001, 0,0005 and
+ * 0,0001 $) that still gives that value to the cent is shown: 0,125 $. Read only: the value, the ledger and
+ * every cost a sale takes stay value ÷ qty; when no rounder figure gives the value, value ÷ qty is shown.
+ */
+export function shownUnitCost(value: DecimalInput, qty: DecimalInput): Decimal {
+  const q = dec(qty);
+  const v = cents(value);
+  if (!q.gt(0)) return dec(0);
+  const exact = v.dividedBy(q);
+  for (const step of ["0.01", "0.005", "0.001", "0.0005", "0.0001"]) {
+    const near = exact.dividedBy(step).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).times(step);
+    if (near.gt(0) && cents(near.times(q)).equals(v)) return near;
+  }
+  return exact;
+}
+
 export async function stockValuation(tx: Tx) {
   const rows = await tx
     .select({
@@ -495,7 +515,7 @@ export async function stockValuation(tx: Tx) {
     const q = dec(r.qty);
     return {
       ...r,
-      avgCost: q.isZero() ? "0.000000" : dec(r.value).dividedBy(q).toFixed(6),
+      avgCost: q.isZero() ? "0.000000" : shownUnitCost(r.value, q).toFixed(6),
       retailValue: q.times(r.sellPrice).toFixed(2),
       low: dec(r.reorderLevel).gt(0) && q.lte(r.reorderLevel),
     };

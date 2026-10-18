@@ -234,6 +234,8 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
   const [accountId, setAccountId] = useState<number | null>(null);
   const [day, setDay] = useState("");
   const [paying, setPaying] = useState(false);
+  // The payroll just saved: said at the top of the payment dialog that opens, not by a toast over its title.
+  const [justSaved, setJustSaved] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [currency, setCurrency] = useState<"USD" | "CDF">("USD");
 
@@ -296,8 +298,10 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
   }
 
   const post = useApiMutation<Record<string, unknown>, PayrollRun>("POST", "/api/payroll/runs", {
-    success: t("Payroll saved", "Paie enregistrée"),
-    onSuccess: () => setPaying(true),
+    onSuccess: () => {
+      setJustSaved(true);
+      setPaying(true);
+    },
   });
   // What cancelling turns into advances: the part of each net pay already paid out. An employee owed nothing
   // more on this run was paid it all; reversing the salary leaves that money as an advance to repay.
@@ -549,7 +553,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
         </Card>
       )}
 
-      {paying && <PaySalariesDialog month={month} run={run} employees={data.employees} onClose={() => setPaying(false)} />}
+      {paying && <PaySalariesDialog month={month} run={run} employees={data.employees} saved={justSaved} onClose={() => { setPaying(false); setJustSaved(false); }} />}
 
       <AlertDialog open={confirmCancel} onOpenChange={setConfirmCancel}>
         <AlertDialogContent>
@@ -638,7 +642,7 @@ function RunLinesTable({ run }: { run: PayrollRun }) {
 
 // ---------------------------------------------------------------- Pay salaries
 
-function PaySalariesDialog({ month, run, employees, onClose }: { month: string; run: PayrollRun | null; employees: Party[]; onClose: () => void }) {
+function PaySalariesDialog({ month, run, employees, saved, onClose }: { month: string; run: PayrollRun | null; employees: Party[]; saved?: boolean; onClose: () => void }) {
   const t = useT();
   const monthLabel = useMonthLabel();
   const [account, setAccount] = useState<Account | null>(null);
@@ -732,8 +736,8 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
     ? t(`Not enough money: balance ${balanceText(drawerNow)} → after ${balanceText(drawerAfter)}`, `Fonds insuffisants\u00a0: solde ${balanceText(drawerNow)} → après ${balanceText(drawerAfter)}`)
     : null;
 
+  // No toast: the dialog stays open and says the voucher is saved, where a toast would cover its title on a phone.
   const pay = useApiMutation<Record<string, unknown>, { id: number; total: string }>("POST", "/api/vouchers/payment", {
-    success: t("Salaries paid", "Salaires payés"),
     onSuccess: (res) => setDoneId(res.id),
   });
 
@@ -757,6 +761,11 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
       <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{t(`Pay salaries · ${monthLabel(month)}`, `Payer les salaires · ${monthLabel(month)}`)}</DialogTitle>
+          {saved && !doneId && (
+            <p className="flex items-center gap-1 text-sm font-medium text-green-800 dark:text-green-400" role="status" data-testid="payroll-saved">
+              <Check className="h-4 w-4 shrink-0" /> {t("Payroll saved. Now pay what each employee is owed.", "Paie enregistrée. Payez maintenant ce qui est dû à chaque employé.")}
+            </p>
+          )}
           <DialogDescription>
             {t(
               "Prefilled with what each employee is owed; advances already given are deducted. Amounts are in the currency of the account paid from.",

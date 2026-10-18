@@ -329,6 +329,23 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
         settleCny: cnyOwed && d(settleCny).gt(0) ? d(settleCny) : null,
       })
     : [];
+  /**
+   * "Tout" in a franc box: the francs owed plus the dollars owed at the payment's rate, in whole francs (1 767 $
+   * at 2 808: 4 961 736 FC), offered only when the server's split of it settles both with nothing left over.
+   * Yuan owed are settled from a dollar box ("Yuans réglés"): no franc "Tout" then.
+   */
+  const fcAll = (() => {
+    if (!isCdf || !d(rate).gt(0) || (!isCustomer && owedIn("CNY"))) return null;
+    const owedUsd = Decimal.max(isCustomer ? dollarBalance : dollarBalance.negated(), 0);
+    const owedFc = fcOwed ?? d(0);
+    if (!owedUsd.gt(0)) return owedFc.gt(0) ? owedFc : null;
+    const francs = owedFc.plus(owedUsd.times(d(rate)).toDecimalPlaces(0, Decimal.ROUND_HALF_UP));
+    const parts = paymentSplit({ usd: francs.dividedBy(d(rate)), francs, rate: d(rate), owedUsd, owedFc });
+    const settled = !parts.some((x) => x.kind === "advance")
+      && parts.filter((x) => x.kind === "usd").reduce((a, x) => a.plus(x.usd), d(0)).equals(owedUsd)
+      && parts.filter((x) => x.kind === "cdf").reduce((a, x) => a.plus(d(x.kind === "cdf" ? x.native : 0)), d(0)).equals(owedFc);
+    return settled ? francs : owedFc.gt(0) ? owedFc : null;
+  })();
   const partText = (p: PaymentPart) =>
     p.kind === "usd"
       ? t(`${usd(p.usd)} of the dollar debt`, `${usd(p.usd)} de la dette en dollars`)
@@ -472,8 +489,8 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
                   {t("All", "Tout")}
                 </Button>
               )}
-              {isCdf && fcOwed && (
-                <Button type="button" variant="outline" size="sm" className="h-10" onClick={() => setAmount(fcOwed.toFixed(0))}>
+              {fcAll && (
+                <Button type="button" variant="outline" size="sm" className="h-10" onClick={() => setAmount(fcAll.toFixed(0))}>
                   {t("All", "Tout")}
                 </Button>
               )}

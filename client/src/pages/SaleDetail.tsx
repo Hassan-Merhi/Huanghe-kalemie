@@ -24,7 +24,7 @@ import { cn } from "@/lib/utils";
 import { avoirSplit, ReceiptDialog, paymentText, type SaleFull } from "./POS";
 import { SaleFlags } from "./Sales";
 
-function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () => void; onDone: (sale: SaleFull) => void }) {
+function ReturnDialog({ sale, owes, onClose, onDone }: { sale: SaleFull; owes: Decimal | null; onClose: () => void; onDone: (sale: SaleFull) => void }) {
   const t = useT();
   const today = todayLocal();
   const [date, setDate] = useState(today);
@@ -54,8 +54,19 @@ function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () =
   const fractional = chosen.find((x) => wholeUnit(x.line.unit) && !x.q.isInteger());
   const refund = chosen.reduce((s, x) => s.plus(d(x.line.lineTotal).times(x.q).dividedBy(x.line.qty).toDecimalPlaces(2)), d(0));
   const isCdf = mode === "account" && account?.currency === "CDF";
+  // The server's split (returnSale): goods sold on credit and not yet paid come off the customer's debt
+  // before any cash goes back, at most what they owe; with no refund account, all of it goes on their
+  // balance, so what is beyond their debt becomes an avoir (5 $ owed, 22 $ back: 5 $ off the debt, 17 $ avoir).
+  const owed = owes ? Decimal.max(owes, 0) : null;
+  const creditedBefore = sale.returns.reduce((s, r) => s.plus(d(r.refundToBalanceUsd ?? (r.refundAccountId ? 0 : r.total))), d(0));
+  const unpaidOnSale = Decimal.max(d(sale.creditUsd).minus(creditedBefore), 0);
+  const toDebt = mode === "credit"
+    ? (owed ? Decimal.min(refund, owed) : refund)
+    : sale.customerId && owed ? Decimal.min(refund, unpaidOnSale, owed) : d(0);
+  const toAvoir = mode === "credit" && owed ? refund.minus(toDebt) : d(0);
+  const toCash = mode === "account" ? refund.minus(toDebt) : d(0);
   // Francs go back rounded down to 100 FC: the customer gets these, worth a few cents less than the goods.
-  const payOutFc = isCdf && d(effRate).gt(0) ? refund.times(d(effRate)).dividedBy(100).toDecimalPlaces(0, Decimal.ROUND_FLOOR).times(100) : null;
+  const payOutFc = isCdf && d(effRate).gt(0) ? toCash.times(d(effRate)).dividedBy(100).toDecimalPlaces(0, Decimal.ROUND_FLOOR).times(100) : null;
   // "1.000" pieces is asked about by its field (1 000 or 1?), never read as 1.
   const unclear = sale.lines.map((l) => unclearQty(t, qtys[l.id])).find(Boolean);
   const blocked = unclear
@@ -110,7 +121,10 @@ function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () =
                     <TableRow key={l.id}>
                       <TableCell>
                         <p className="font-medium">{l.productName} {variantText(l.attributes)}</p>
-                        <p className="text-xs text-muted-foreground">{l.sku}{l.chassisNo ? ` · ${l.chassisNo}` : ""} · {usd(l.lineTotal)}</p>
+                        {/* "2 × 22,00 $" as on the receipt; a line with a discount shares it in, so its total. */}
+                        <p className="text-xs text-muted-foreground">
+                          {l.sku}{l.chassisNo ? ` · ${l.chassisNo}` : ""} · {d(l.qty).times(l.unitPrice).toDecimalPlaces(2).equals(d(l.lineTotal)) ? `${fmtQty(l.qty)}\u00a0×\u00a0${usd(l.unitPrice)}` : `${fmtQty(l.qty)} · ${usd(l.lineTotal)}`}
+                        </p>
                       </TableCell>
                       <TableCell className="text-right"><Num>{fmtQty(max.toString())}</Num></TableCell>
                       <TableCell className="text-right">
@@ -144,7 +158,9 @@ function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () =
             <div className="flex flex-wrap gap-2">
               <Button type="button" size="sm" variant={mode === "account" ? "default" : "outline"} onClick={() => setMode("account")}>{t("Pay back from a money account", "Rendre l'argent depuis un compte")}</Button>
               {sale.customerId && (
-                <Button type="button" size="sm" variant={mode === "credit" ? "default" : "outline"} onClick={() => setMode("credit")}>{t("Reduce what the customer owes", "Réduire la dette du client")}</Button>
+                <Button type="button" size="sm" variant={mode === "credit" ? "default" : "outline"} onClick={() => setMode("credit")}>
+                  {owed && owed.isZero() ? t("Keep it as customer credit", "Mettre en avoir du client") : t("Reduce what the customer owes", "Réduire la dette du client")}
+                </Button>
               )}
             </div>
             {mode === "account" ? (
@@ -165,10 +181,24 @@ function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () =
           {payOutFc ? (
             <div className="space-y-1 rounded-md bg-muted p-3">
               <div className="flex justify-between gap-2 text-sm"><span>{t("Value of the items", "Valeur des articles")}</span><Num>{usd(refund.toFixed(2))}</Num></div>
+              {toDebt.gt(0) && <div className="flex justify-between gap-2 text-sm"><span>{t("Taken off the debt", "Déduit de la dette")}</span><Num>−{usd(toDebt.toFixed(2))}</Num></div>}
               <div className="flex justify-between gap-2 font-medium">
                 <span>{t("Handed back", "Rendu")}</span>
                 <Num>{cdf(payOutFc.toString())} ({usd(payOutFc.dividedBy(d(effRate)).toFixed(2))})</Num>
               </div>
+            </div>
+          ) : mode === "credit" && toAvoir.gt(0) ? (
+            <div className="space-y-1 rounded-md bg-muted p-3" data-testid="return-split">
+              {/* Beyond what the customer owes, the return is held for them as an avoir, said with its figure. */}
+              {toDebt.gt(0) && <div className="flex justify-between gap-2 text-sm"><span>{t("Taken off the debt", "Déduit de la dette")}</span><Num>{usd(toDebt.toFixed(2))}</Num></div>}
+              <div className="flex justify-between gap-2 text-sm"><span>{t("Kept as customer credit", "Mis en avoir du client")}</span><Num>{usd(toAvoir.toFixed(2))}</Num></div>
+              <div className="flex justify-between gap-2 font-medium"><span>{t("Value of the items", "Valeur des articles")}</span><Num>{usd(refund.toFixed(2))}</Num></div>
+            </div>
+          ) : mode === "account" && toDebt.gt(0) ? (
+            <div className="space-y-1 rounded-md bg-muted p-3" data-testid="return-split">
+              {/* What was sold on credit and not paid comes off the debt; only the rest is handed back. */}
+              <div className="flex justify-between gap-2 text-sm"><span>{t("Taken off the debt", "Déduit de la dette")}</span><Num>{usd(toDebt.toFixed(2))}</Num></div>
+              <div className="flex justify-between gap-2 font-medium"><span>{t("Refund total", "Total remboursé")}</span><Num>{usd(toCash.toFixed(2))}</Num></div>
             </div>
           ) : (
             <div className="flex justify-between rounded-md bg-muted p-3 font-medium">
@@ -396,7 +426,7 @@ function CreditRows({ creditedReturns, stillOwed, owes, avoir }: { creditedRetur
           {/* The extra comes off the customer's other debts first; only what is left over is held for them. */}
           {owes?.gt(0)
             ? t(`The extra ${usd(extra.toFixed(2))} reduces what the customer still owes (${usd(owes.toFixed(2))}).`, `Les ${usd(extra.toFixed(2))} en plus réduisent sa dette restante (${usd(owes.toFixed(2))}).`)
-            : t(`The extra ${usd(extra.toFixed(2))} is held for the customer on their balance.`, `Les ${usd(extra.toFixed(2))} en plus restent en avance sur le solde du client.`)}
+            : t(`The extra ${usd(extra.toFixed(2))} is kept as credit for the customer.`, `Les ${usd(extra.toFixed(2))} en plus restent en avoir pour le client.`)}
         </p>
       )}
     </>
@@ -428,7 +458,8 @@ export default function SaleDetail() {
   const [dialog, setDialog] = useState<null | "receipt" | "return" | "void">(null);
   const [slipId, setSlipId] = useState<number | null>(null);
   // What the customer owes overall, to say where returns beyond this sale's credit went.
-  const customers = useQuery<Party[]>({ queryKey: ["/api/parties"], enabled: !!q.data?.customerId && d(q.data.creditUsd).gt(0) });
+  // Also how the return dialog splits a refund between the debt and the avoir.
+  const customers = useQuery<Party[]>({ queryKey: ["/api/parties"], enabled: !!q.data?.customerId });
 
   if (q.isLoading) return <Loading />;
   if (q.error || !q.data) return <ErrorText error={q.error ?? t("Sale not found", "Vente introuvable")} />;
@@ -673,6 +704,7 @@ export default function SaleDetail() {
       {dialog === "return" && (
         <ReturnDialog
           sale={sale}
+          owes={customerOwes}
           onClose={() => setDialog(null)}
           onDone={(s) => {
             setDialog(null);

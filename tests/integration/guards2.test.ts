@@ -119,7 +119,7 @@ describe.skipIf(!hasDb)("Guards against moving value between partners", async ()
     await db.transaction((tx) => ops.payParty(tx, { date: "2026-08-21", partyId: supplierId, accountId: cashUsd, amount: "100" }, userId));
     const bs = await reports.balanceSheet(db);
     expect(bs.balanced).toBe(true);
-    expect(bs.assets.some((a) => a.name.includes("avances versées"))).toBe(true);
+    expect(bs.assets.some((a) => a.name === "Avances versées aux fournisseurs, agents et employés")).toBe(true);
   });
 
   it("seals backups so a file changed by hand is noticed", async () => {

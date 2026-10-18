@@ -13,6 +13,9 @@ const ACCOUNTS: Record<string, string> = {
   "Stock de marchandises": "Stock of goods",
   "Marchandises en transit (frais de conteneur)": "Goods in transit (container costs)",
   "Fournisseurs, agents et employés (dettes)": "Suppliers, agents and employees (payables)",
+  // The balance sheet's lines for contacts on the other side.
+  "Avances reçues des clients": "Advances received from customers",
+  "Avances versées aux fournisseurs, agents et employés": "Advances paid to suppliers, agents and employees",
   "Retenues sur salaires à reverser": "Salary withholdings to pay over",
   "Soldes d'ouverture": "Opening balances",
   Ventes: "Sales",
