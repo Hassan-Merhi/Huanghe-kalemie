@@ -604,6 +604,8 @@ type RevaluedKey = { accountId: number; partyId: number | null; currency: Foreig
  * - on a contact (or another account that is not money), what its own francs or yuan can be worth apart at
  *   the rates they were posted at: half of them at the lowest rate against half at the highest, plus half a
  *   cent per line for its rounding.
+ * A balance the reversal leaves holding francs or yuan whose dollars have the other sign has its dollars
+ * restated to them at the day's rate instead, within the same bound, moving no francs or yuan.
  * Dollars booked on it by hand with no francs or yuan, or more than that, are for a person to correct
  * (see selfCheck), and stay. The lines move no francs or yuan, so no money leaves a drawer: the callers pass
  * no money account a reversal could empty but the one a cancelled payroll paid from, and on it only a
@@ -661,7 +663,20 @@ export async function revaluedDollarLines(tx: Tx, keys: RevaluedKey[], date: str
     // (as costForeignOutflows does): a reversal can leave a franc or two that a refund took beyond the
     // receipt it undoes. Only in the journal being posted, and never on a drawer, whose francs are counted.
     const residue = !native.isZero();
-    if (residue && (!pending.length || moneyIds.has(k.accountId) || !rate || !native.abs().dividedBy(dec(rate)).lt("0.005"))) continue;
+    if (residue && (!pending.length || moneyIds.has(k.accountId) || !rate)) continue;
+    // More francs or yuan left on a contact whose dollars say the other way (the shop owing 68 $ on 15 FC
+    // the customer owes, the rates of the postings undone and kept far apart): their dollars are restated
+    // to them at the day's rate, as the next revaluation would, within the same bound. Their dollars then
+    // have their sign, so no cap pays out what they do not hold. Dollars of their sign are left to it.
+    let restated: Decimal | null = null;
+    let dayRate: string | null = null;
+    if (residue && !native.abs().dividedBy(dec(rate)).lt("0.005")) {
+      if (usd.isZero() || usd.isNegative() === native.isNegative()) continue;
+      const day = k.currency === "CDF" ? (await rateFor(tx, date)).rate : await cnyRateFor(tx, date);
+      if (!day || !day.gt(0)) continue;
+      restated = cents(native.dividedBy(day));
+      dayRate = day.toFixed(4);
+    }
     let moved: Decimal;
     if (moneyIds.has(k.accountId)) {
       // A drawer: only what revaluations booked on it.
@@ -677,8 +692,10 @@ export async function revaluedDollarLines(tx: Tx, keys: RevaluedKey[], date: str
         if (all[i + 1].group !== all[i].group && running.isZero()) start = i + 1;
       }
       const since = all.slice(start);
-      moved = sum(since.map((r) => r.usd));
+      moved = sum(since.map((r) => r.usd)).minus(restated ?? 0);
       if (moved.isZero()) continue;
+      // Dollars from before that window stay: the balance must still end with the sign of its francs or yuan.
+      if (restated && !usd.minus(moved).isZero() && usd.minus(moved).isNegative() !== native.isNegative()) continue;
       if (since.some((r) => r.native.isZero() && !r.usd.isZero() && !r.revaluation && !r.cleared)) continue;
       const revalued = revaluedIn(since);
       const posts = since.filter((r) => !r.native.isZero() && r.rate && dec(r.rate).gt(0));
@@ -695,8 +712,8 @@ export async function revaluedDollarLines(tx: Tx, keys: RevaluedKey[], date: str
       credit: moved.isPositive() ? moved : new Decimal(0),
       partyId: k.partyId,
       currency: k.currency,
-      nativeAmount: native.negated().toFixed(2),
-      rate,
+      nativeAmount: restated ? "0.00" : native.negated().toFixed(2),
+      rate: dayRate ?? rate,
       memo: REVALUED_MEMO,
     });
   }

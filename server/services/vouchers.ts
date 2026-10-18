@@ -21,6 +21,8 @@ export interface VoucherLineInput {
   accountId?: number | null;
   amount: string;
   memo?: string | null;
+  /** A receipt from a supplier: the yuan they owe that this line settles in full (see payablesReceiptLines). */
+  settleNative?: string | null;
 }
 
 export interface VoucherInput {
@@ -68,6 +70,7 @@ async function mergeSettlingLines(tx: Tx, lines: VoucherLineInput[]): Promise<Vo
     if (seen) {
       seen.amount = cents(seen.amount).plus(cents(l.amount)).toFixed(2);
       if (l.memo && l.memo !== seen.memo) seen.memo = seen.memo ? `${seen.memo} ; ${l.memo}` : l.memo;
+      if (l.settleNative && dec(l.settleNative).gt(0)) seen.settleNative = cents(seen.settleNative ?? 0).plus(cents(l.settleNative)).toFixed(2);
       continue;
     }
     const copy = { ...l };
@@ -151,6 +154,7 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
     const amount = cents(l.amount);
     if (amount.lte(0)) throw badRequest(`Line ${n}: the amount must be greater than zero`, `Ligne ${n} : le montant doit être supérieur à zéro`);
     if (!!l.partyId === !!l.accountId) throw badRequest(`Line ${n}: pick a contact or an account`, `Ligne ${n} : choisissez un contact ou un compte`);
+    const settleNative = l.settleNative && dec(l.settleNative).gt(0) ? l.settleNative : null;
     const usd = shares[i].toFixed(2);
     // A line worth less than a cent would book nothing in dollars and leave its francs to the
     // exchange account, so it is refused.
@@ -159,6 +163,9 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
     if (l.partyId) {
       const p = partyRows.find((x) => x.id === l.partyId);
       if (!p) throw badRequest(`Line ${n}: that contact does not exist`, `Ligne ${n} : ce contact n'existe pas`);
+      if (settleNative && (kind !== "receipt" || p.type === "customer")) {
+        throw badRequest(`Line ${n}: yuan are settled only on money received from a supplier`, `Ligne ${n} : des yuans ne se soldent que sur un encaissement d'un fournisseur`);
+      }
       if (kind === "payment" && p.type === "customer" && !rights.owner) {
         // Money paid to a customer refunds what they have paid ahead; beyond that it would be a
         // loan nobody approved. One payment at a time per customer (locked above), so two cannot both use it.
@@ -183,11 +190,12 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
             ? // Paid like a payment to the contact: what is owed in yuan is settled too.
               await ops.payablesLines(tx, { payables, partyId: p.id, usd, money: lineMoney, date: input.date, memo: l.memo || p.name })
             : // And received the other way: yuan they owe us (a paid yuan bill since undone) are settled too.
-              await ops.payablesReceiptLines(tx, { payables, partyId: p.id, usd, money: lineMoney, date: input.date, memo: l.memo || p.name });
+              await ops.payablesReceiptLines(tx, { payables, partyId: p.id, usd, money: lineMoney, date: input.date, memo: l.memo || p.name, settleNative, name: p.name, owner: rights.owner });
       split.forEach((line, k) => lines.push({ ...line, usd: k === 0 ? usd : "0" }));
     } else {
       const a = accountRows.find((x) => x.id === l.accountId);
       if (!a) throw badRequest(`Line ${n}: that account does not exist`, `Ligne ${n} : ce compte n'existe pas`);
+      if (settleNative) throw badRequest(`Line ${n}: yuan are settled only on money received from a supplier`, `Ligne ${n} : des yuans ne se soldent que sur un encaissement d'un fournisseur`);
       if (a.isMoney) throw badRequest(`Line ${n}: use a transfer to move money between ${a.name} and another money account`, `Ligne ${n} : utilisez un transfert pour déplacer de l'argent entre ${a.name} et un autre compte de trésorerie`);
       if (a.systemKey && BLOCKED_KEYS.includes(a.systemKey)) {
         throw badRequest(`Line ${n}: ${a.name} is kept by its own screen; pick a contact or another account`, `Ligne ${n} : ${a.name} est tenu par son propre écran ; choisissez un contact ou un autre compte`);
