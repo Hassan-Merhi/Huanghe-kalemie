@@ -158,10 +158,10 @@ export default function ContactDetail() {
         <Card>
           <CardContent className="p-4">
             <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("Balance", "Solde")}</p>
-            <p className="mt-1 text-2xl font-semibold"><BalanceWords balance={balance} /></p>
+            <p className="mt-1 text-2xl font-semibold"><BalanceWords balance={balance} customer={isCustomer} long /></p>
             {foreign.map((f) => (
               <p key={f.currency} className="mt-1 text-sm text-muted-foreground">
-                {t("Of which", "Dont")} {foreignText(f, t)} <span className="tabular">({usd(d(f.usd).abs().toFixed(2))})</span>
+                {t("Of which", "Dont")} {foreignText(f, t, isCustomer)} <span className="tabular">({usd(d(f.usd).abs().toFixed(2))})</span>
               </p>
             ))}
           </CardContent>
@@ -184,7 +184,7 @@ export default function ContactDetail() {
             {t("Statement", "Relevé de compte")} · {party.name}
           </CardTitle>
           <p className="text-sm text-muted-foreground">
-            {t("Printed", "Imprimé le")} {fmtDate(todayLocal())} · {t("Balance:", "Solde\u00a0:")} <BalanceWords balance={balance} />
+            {t("Printed", "Imprimé le")} {fmtDate(todayLocal())} · {t("Balance:", "Solde\u00a0:")} <BalanceWords balance={balance} customer={isCustomer} />
           </p>
         </CardHeader>
         <CardContent className="p-0">
@@ -244,7 +244,7 @@ export default function ContactDetail() {
                         </TableCell>
                       ))}
                       {/* "nous devons" over the amount when it is long, so the column stays in view at 1280 px. */}
-                      <TableCell className="min-w-[8.5rem] text-right"><BalanceWords balance={r.balance} /></TableCell>
+                      <TableCell className="min-w-[8.5rem] text-right"><BalanceWords balance={r.balance} customer={isCustomer} /></TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

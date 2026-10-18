@@ -477,7 +477,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
                       const all = checks.settleAll(l.partyId);
                       return (
                         <p className="mt-1 flex flex-wrap items-center gap-x-1.5 px-1 text-xs" data-testid="line-owed">
-                          <BalanceWords balance={pty.balance} />
+                          <BalanceWords balance={pty.balance} customer={pty.type === "customer"} />
                           {fcBooked && !d(fcBooked.native).isZero() && <span className="text-muted-foreground">({t("of which", "dont")} {cdf(d(fcBooked.native).abs().toFixed(0))})</span>}
                           {cnyBooked && <span className="text-muted-foreground">({t("of which", "dont")} {money(d(cnyBooked.native).abs().toFixed(2), "CNY")})</span>}
                           {cnyBooked && (

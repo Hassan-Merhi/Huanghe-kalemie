@@ -1,6 +1,5 @@
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
-import Decimal from "decimal.js";
 import { Link, useLocation } from "wouter";
 import { Plus, Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
@@ -13,69 +12,22 @@ import { useAuth } from "@/lib/auth";
 import { count, useT } from "@/lib/i18n";
 import { cdf, d, date as fmtDate, fcRounding, monthStart, pct, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import { cn } from "@/lib/utils";
-
-interface SaleListRow {
-  id: number;
-  number: string;
-  date: string;
-  status: "completed" | "voided";
-  total: string;
-  paidUsd: string;
-  creditUsd: string;
-  cogs?: string;
-  customerName: string | null;
-  cashier: string | null;
-  zeroPrice?: boolean;
-  qty?: string;
-  returnedQty?: string;
-  /** Amount and cost of the goods brought back (all returns on the sale). */
-  returnedTotal?: string;
-  returnedCogs?: string;
-  /** Cash handed back on those returns (part of a return may instead come off what the customer owes). */
-  refundedUsd?: string;
-  /** Credit still owed on the sale once returns came off the customer's balance. */
-  creditLeftUsd?: string;
-  /** Franc rounding of the till and the refunds, + when the shop kept a few cents. */
-  fcRoundingUsd?: string;
-  /** "Payé": the cash really kept, payments and refunds at their own rates (Payé − Total = fcRoundingUsd). */
-  paidKeptUsd?: string;
-  /** The part of the credit the customer's avoir covered when the sale was made: nothing new is owed for it. */
-  avoirUsedUsd?: string;
-  /** The same at the sale, before returns: the sale page's "Réglé sur l'avoir". */
-  avoirAtSaleUsd?: string;
-  lineCount?: number;
-  firstItem?: string | null;
-}
-
-interface Daily {
-  date: string;
-  count: number;
-  total: string;
-  netCount?: number;
-  netTotal?: string;
-  credit: string;
-  /** The part of that credit a customer's avoir covered: nothing new is owed for it. */
-  creditOnAvoirUsd?: string;
-  voidsCount: number;
-  voidsTotal: string;
-  returnsCount?: number;
-  returnsTotal?: string;
-  byAccount: { account_id: number; name: string; currency: string; usd: string; native: string; refund_native?: string }[];
-}
+import { creditOf, creditSplit, dailyFigures, netOf, type Daily, type SaleListRow } from "@/lib/saleRows";
 
 function DailySummary() {
   const t = useT();
   const today = todayLocal();
   const q = useQuery<Daily>({ queryKey: ["/api/reports/daily", { date: today }] });
   const data = q.data;
-  const onAvoir = data ? Decimal.max(Decimal.min(d(data.creditOnAvoirUsd ?? 0), d(data.credit)), 0) : d(0);
-  const owedCredit = data ? d(data.credit).minus(onAvoir) : d(0);
+  const fig = data ? dailyFigures(data) : null;
+  const onAvoir = fig?.onAvoir ?? d(0);
+  const owedCredit = fig?.owedCredit ?? d(0);
   return (
     <Card className="mb-4">
       <CardContent className="p-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("Today", "Aujourd'hui")} · {fmtDate(data?.date ?? today)}</p>
-          {data && <p className="text-sm text-muted-foreground">{count(t, data.netCount ?? data.count, ["sale", "sales"], ["vente", "ventes"])}</p>}
+          {data && <p className="text-sm text-muted-foreground">{count(t, fig!.count, ["sale", "sales"], ["vente", "ventes"])}</p>}
         </div>
         {q.error ? (
           <ErrorText error={q.error} />
@@ -85,7 +37,7 @@ function DailySummary() {
           <div className="mt-2 grid gap-4 sm:grid-cols-[auto_1fr]">
             <div>
               {/* Today's sales still standing, less what was brought back today: the dashboard's and the daily report's figure. */}
-              <p className="text-3xl font-semibold tabular">{usd(data.netTotal ?? d(data.total).minus(data.voidsTotal).minus(d(data.returnsTotal)).toFixed(2))}</p>
+              <p className="text-3xl font-semibold tabular">{usd(fig!.total.toFixed(2))}</p>
               {data.voidsCount > 0 && (
                 <p className="text-sm text-muted-foreground">
                   {count(t, data.voidsCount, ["sale cancelled", "sales cancelled"], ["vente annulée", "ventes annulées"])} (−{usd(data.voidsTotal)})
@@ -150,33 +102,6 @@ function Profit({ value, muted }: { value: string; muted?: boolean }) {
       {usd(v.toFixed(2))}
     </Num>
   );
-}
-
-/**
- * A sale as the list shows it: net of the goods brought back, and paid net of the cash refunded, as the cash
- * really kept (as on the sale page), so Payé − Total is the "Arrondi FC" under it.
- */
-function netOf(r: SaleListRow) {
-  const total = d(r.total).minus(d(r.returnedTotal));
-  const cogs = r.cogs !== undefined ? d(r.cogs).minus(d(r.returnedCogs)) : undefined;
-  const refunded = d(r.refundedUsd);
-  const paid = r.paidKeptUsd !== undefined ? d(r.paidKeptUsd) : d(r.paidUsd).minus(refunded);
-  return { total, cogs, profit: cogs !== undefined ? total.minus(cogs) : undefined, returned: d(r.returnedTotal), paid, refunded };
-}
-
-/** What is still on credit after returns took it off the customer's balance (the sale page's "Reste à crédit"). */
-function creditOf(r: SaleListRow): string {
-  return r.creditLeftUsd ?? r.creditUsd;
-}
-
-/** Of that credit, what the customer's avoir covered (at most the credit left, from the server) and what is still owed, as the sale page splits it. */
-function creditSplit(r: SaleListRow) {
-  const left = d(creditOf(r));
-  const onAvoir = d(r.avoirUsedUsd ?? 0);
-  // Returns took the avoir's part down (23 $ at the sale, 6 $ after a 22 $ tyre came back): said, so the
-  // list's net figure is not read against the sale page's 23 $.
-  const atSale = d(r.avoirAtSaleUsd ?? 0);
-  return { onAvoir, owed: left.minus(onAvoir), avoirBefore: onAvoir.gt(0) && atSale.gt(onAvoir) ? atSale : null };
 }
 
 /** "Crédit 12,00 $" in amber, and "sur l'avoir 10,00 $" in green for the part an avoir covered. */

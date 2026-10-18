@@ -30,6 +30,7 @@ import { count, useT } from "@/lib/i18n";
 import { downloadCsv, downloadXlsx } from "@/lib/sheets";
 import type { VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { creditSplit, dailyFigures, netOf, type Daily, type SaleListRow } from "@/lib/saleRows";
 import { WIDE_PRINT_CSS } from "@/pages/ContactDetail";
 
 interface StockItem {
@@ -472,38 +473,40 @@ function BulkPriceDialog({ rows, onClose }: { rows: Row[]; onClose: () => void }
 
 // ---------------------------------------------------------------- Today's sales
 
-interface SaleListRow {
-  id: number;
-  number: string;
-  date: string;
-  status: "completed" | "voided";
-  total: string;
-  paidUsd: string;
-  creditUsd: string;
-  customerName: string | null;
-  cashier: string | null;
-  createdAt?: string;
-}
-
 function TodaySales() {
   const t = useT();
   const today = todayLocal();
   const q = useQuery<SaleListRow[]>({ queryKey: ["/api/sales", { from: today, to: today }] });
+  // The figures are the "Aujourd'hui" card's (Sales, dashboard, Caisse du jour): net of returns and refunds, and
+  // the credit an avoir covered apart from what is still owed. Each sale below reads as on the Sales list.
+  const daily = useQuery<Daily>({ queryKey: ["/api/reports/daily", { date: today }] });
+  const fig = daily.data ? dailyFigures(daily.data) : null;
   const sales = q.data ?? [];
-  const live = sales.filter((s) => s.status !== "voided");
-  const total = live.reduce((s, x) => s.plus(d(x.total)), d(0));
-  const credit = live.reduce((s, x) => s.plus(d(x.creditUsd)), d(0));
-  const paid = live.reduce((s, x) => s.plus(d(x.paidUsd)), d(0));
+  const dash = "—";
 
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard label={t("Sales", "Ventes")} value={live.length} sub={fmtDate(today)} />
-        <StatCard label={t("Total", "Total")} value={usd(total.toFixed(2))} />
-        <StatCard label={t("Paid", "Encaissé")} value={usd(paid.toFixed(2))} tone="good" />
-        <StatCard label={t("On credit", "À crédit")} value={usd(credit.toFixed(2))} tone={credit.gt(0) ? "bad" : "neutral"} />
+        <StatCard label={t("Sales", "Ventes")} value={fig ? fig.count : dash} sub={fmtDate(today)} />
+        <StatCard
+          label={t("Total", "Total")}
+          value={fig ? usd(fig.total.toFixed(2)) : dash}
+          sub={daily.data && d(daily.data.returnsTotal).gt(0) ? `${t("returns", "retours")} −${usd(daily.data.returnsTotal)}` : undefined}
+        />
+        <StatCard
+          label={t("Paid", "Encaissé")}
+          value={fig ? usd(fig.paid.toFixed(2)) : dash}
+          tone="good"
+          sub={fig?.refunded.gt(0) ? `${t("of which refunded", "dont remboursé")} −${usd(fig.refunded.toFixed(2))}` : undefined}
+        />
+        <StatCard
+          label={t("On credit", "À crédit")}
+          value={fig ? usd(fig.owedCredit.toFixed(2)) : dash}
+          tone={fig?.owedCredit.gt(0) ? "bad" : "neutral"}
+          sub={fig?.onAvoir.gt(0) ? <span className="text-emerald-800 dark:text-emerald-400">{t("from customers' credit", "sur l'avoir")} {usd(fig.onAvoir.toFixed(2))}</span> : undefined}
+        />
       </div>
-      <ErrorText error={q.error} />
+      <ErrorText error={q.error ?? daily.error} />
       {q.isLoading ? (
         <Loading />
       ) : sales.length === 0 ? (
@@ -513,24 +516,35 @@ function TodaySales() {
       ) : (
         <Card>
           <CardContent className="divide-y p-0 text-sm">
-            {sales.map((s) => (
-              <Link key={s.id} href={`/sales/${s.id}`} className="flex items-center justify-between gap-2 px-4 py-3 hover:bg-muted/50">
-                <span className="min-w-0">
-                  <span className="font-medium">{s.number}</span>
-                  <span className="block truncate text-xs text-muted-foreground">
-                    {s.customerName ?? t("walk-in", "de passage")}{s.cashier ? ` · ${s.cashier}` : ""}
+            {sales.map((s) => {
+              const voided = s.status === "voided";
+              const n = netOf(s);
+              const c = creditSplit(s);
+              return (
+                <Link key={s.id} href={`/sales/${s.id}`} className="flex items-center justify-between gap-2 px-4 py-3 hover:bg-muted/50">
+                  <span className="min-w-0">
+                    <span className="font-medium">{s.number}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {s.customerName ?? t("walk-in", "de passage")}{s.cashier ? ` · ${s.cashier}` : ""}
+                    </span>
                   </span>
-                </span>
-                <span className="flex shrink-0 flex-col items-end gap-0.5">
-                  <Num className={s.status === "voided" ? "text-muted-foreground line-through" : "font-medium"}>{usd(s.total)}</Num>
-                  {s.status === "voided" ? (
-                    <Badge variant="destructive">{t("Cancelled", "Annulée")}</Badge>
-                  ) : d(s.creditUsd).gt(0) ? (
-                    <span className="text-xs text-amber-800 dark:text-amber-400">{t("credit", "crédit")} {usd(s.creditUsd)}</span>
-                  ) : null}
-                </span>
-              </Link>
-            ))}
+                  <span className="flex shrink-0 flex-col items-end gap-0.5">
+                    <Num className={voided ? "text-muted-foreground line-through" : "font-medium"}>{usd((voided ? d(s.total) : n.total).toFixed(2))}</Num>
+                    {voided ? (
+                      <Badge variant="destructive">{t("Cancelled", "Annulée")}</Badge>
+                    ) : (
+                      <>
+                        {/* One figure a line, so the customer's name keeps its room on a phone. */}
+                        {n.returned.gt(0) && <span className="whitespace-nowrap text-xs text-muted-foreground">{t("returns", "retours")} −{usd(n.returned.toFixed(2))}</span>}
+                        {n.refunded.gt(0) && <span className="whitespace-nowrap text-xs text-muted-foreground">{t("refunded", "remboursé")} −{usd(n.refunded.toFixed(2))}</span>}
+                        {c.onAvoir.gt(0) && <span className="whitespace-nowrap text-xs text-emerald-800 dark:text-emerald-400">{t("from credit", "sur l'avoir")} {usd(c.onAvoir.toFixed(2))}</span>}
+                        {c.owed.gt(0) && <span className="whitespace-nowrap text-xs text-amber-800 dark:text-amber-400">{t("credit", "crédit")} {usd(c.owed.toFixed(2))}</span>}
+                      </>
+                    )}
+                  </span>
+                </Link>
+              );
+            })}
           </CardContent>
         </Card>
       )}

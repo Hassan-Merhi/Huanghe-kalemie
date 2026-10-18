@@ -16,6 +16,9 @@ export interface CheckLine {
 
 const isAmount = (s: string) => /^\d+(\.\d+)?$/.test(s.trim());
 
+/** Above this many dollars (francs at the voucher's rate), a first payment to an account is asked about. */
+export const FIRST_PAYMENT_ASK = 1000;
+
 /**
  * The checks a payment or receipt voucher goes through before it is posted, shared by the voucher form and by
  * "Valider" on a pending voucher, so both ask the same questions:
@@ -56,11 +59,13 @@ export function useVoucherChecks(input: { kind: string; day: string; accountId: 
     queries: lineAccounts.map((id) => ({ queryKey: [`/api/accounts/${id}/ledger`, { from: yearAgo, to: input.day }], enabled: enabled && /^\d{4}-\d\d-\d\d$/.test(input.day), staleTime: 60_000 })),
   });
   const largestPaid = new Map<number, Decimal>();
+  // Accounts whose past year was read and holds no payment at all.
+  const firstPaid = new Set<number>();
   lineAccounts.forEach((id, i) => {
     const rows = (history[i]?.data as { rows?: { debit: string }[] } | undefined)?.rows ?? [];
     const paid = rows.map((r) => d(r.debit)).filter((x) => x.gt(0));
-    // A first payment to an account has nothing to compare with.
     if (paid.length) largestPaid.set(id, Decimal.max(...paid));
+    else if (history[i]?.isSuccess) firstPaid.add(id);
   });
 
   const unusual: string[] = [];
@@ -68,6 +73,13 @@ export function useVoucherChecks(input: { kind: string; day: string; accountId: 
     for (const l of lines) {
       const most = l.accountId && !l.partyId ? largestPaid.get(l.accountId) : undefined;
       const u = toUsd(d(l.amount));
+      // A first payment to an account has nothing to compare with: above FIRST_PAYMENT_ASK it is asked about
+      // all the same ("Électricité et eau" 4 500 $ when 450 $ was meant).
+      if (!most && u && l.accountId && !l.partyId && firstPaid.has(l.accountId) && u.gt(FIRST_PAYMENT_ASK)) {
+        const name = balances.data?.find((a) => a.id === l.accountId)?.name ?? "";
+        unusual.push(t(`${name}: ${typed(d(l.amount))}, a large first payment to this account (none in the past 12 months)`, `${name}\u00a0: ${typed(d(l.amount))}, un montant élevé pour un premier paiement sur ce compte (aucun sur les 12 derniers mois)`));
+        continue;
+      }
       // Three times the most ever paid there: a rent that went up is not questioned, a zero too many is.
       if (!most || !u || !u.gt(most.times(3))) continue;
       const name = balances.data?.find((a) => a.id === l.accountId)?.name ?? "";

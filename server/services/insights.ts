@@ -20,6 +20,7 @@ import type { Tx } from "../db";
 import { notFound } from "../errors";
 import { monthRange, pnlByAccount, summarizePnl } from "./periods";
 import { accountBalances, netPosition, salesByProduct } from "./reports";
+import { avoirUsedSql, creditLeftSql } from "./sales";
 
 // ---------------------------------------------------------------- Accounts
 
@@ -256,7 +257,15 @@ export async function analytics(tx: Tx, from: string, to: string) {
     .orderBy(asc(journals.date));
 
   const [salesCount] = await tx
-    .select({ count: sql<number>`count(*)::int`, total: sql<string>`coalesce(sum(${sales.total}), 0)`, credit: sql<string>`coalesce(sum(${sales.creditUsd}), 0)` })
+    .select({
+      count: sql<number>`count(*)::int`,
+      total: sql<string>`coalesce(sum(${sales.total}), 0)`,
+      credit: sql<string>`coalesce(sum(${sales.creditUsd}), 0)`,
+      // As the Sales list reads it: the credit left after returns, less what customers' avoirs covered (owed),
+      // and that avoir part apart, so "Ventes à crédit" matches "Accordé à crédit" and "Sur l'avoir" there.
+      creditLeft: sql<string>`coalesce(sum(${creditLeftSql()}), 0)`,
+      onAvoir: sql<string>`coalesce(sum(${avoirUsedSql()}), 0)`,
+    })
     .from(sales)
     .where(and(gte(sales.date, from), lte(sales.date, to), eq(sales.status, "completed")));
 
@@ -308,7 +317,13 @@ export async function analytics(tx: Tx, from: string, to: string) {
     from,
     to,
     totals,
-    sales: { count: salesCount.count, total: dec(salesCount.total).toFixed(2), credit: dec(salesCount.credit).toFixed(2) },
+    sales: {
+      count: salesCount.count,
+      total: dec(salesCount.total).toFixed(2),
+      credit: dec(salesCount.credit).toFixed(2),
+      creditOwed: dec(salesCount.creditLeft).minus(dec(salesCount.onAvoir)).toFixed(2),
+      creditOnAvoir: dec(salesCount.onAvoir).toFixed(2),
+    },
     daily: daily.map((d) => ({
       date: d.date,
       revenue: dec(d.revenue).toFixed(2),
