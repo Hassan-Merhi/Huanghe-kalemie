@@ -558,6 +558,12 @@ export default function POS() {
     }
     if (!typedNumberOk(l.lineDiscount)) problems.push(t(`Correct the discount on ${l.variant.productName}`, `Corrigez la remise sur ${l.variant.productName}`));
     if (lineAmount(l).lt(0)) problems.push(t(`The discount on ${l.variant.productName} is bigger than the line`, `La remise sur ${l.variant.productName} dépasse la ligne`));
+    // More than this location holds: the server refuses the sale, so it is said here before paying.
+    if (typedNumberOk(l.qty) && qtyInCart(l.variant.id).gt(available(l.variant.id, l.variant.locationQty))) {
+      const inCart = fmtQty(qtyInCart(l.variant.id).toString());
+      const here = fmtQty(available(l.variant.id, l.variant.locationQty).toString());
+      problems.push(t(`${l.variant.productName}: ${inCart} in the cart, only ${here} in stock here`, `${l.variant.productName}\u00a0: ${inCart} au panier, seulement ${here} en stock ici`));
+    }
     if (l.variant.tracksSerials && !l.unitId) problems.push(t(`Choose the chassis number for ${l.variant.productName}`, `Choisissez le numéro de châssis pour ${l.variant.productName}`));
   }
   if (maxDiscountPct && subtotal.gt(0)) {

@@ -399,7 +399,7 @@ function OnTheWayTab() {
                         <Link href={`/containers/${head.containerId}`} className="font-medium hover:underline" onClick={(e) => e.stopPropagation()}>{head.containerNumber}</Link>
                         <ContainerStatusBadge status={head.status} />
                       </span>
-                      <span className="block truncate text-xs text-muted-foreground">
+                      <span className="block break-words text-xs text-muted-foreground">
                         {head.supplierName ?? "—"}
                         {head.shipDate ? ` · ${t("shipped", "expédié")} ${fmtDate(head.shipDate)}` : ""}
                         {head.arrivalDate ? ` · ${t("arrival", "arrivée")} ${fmtDate(head.arrivalDate)}` : ""}

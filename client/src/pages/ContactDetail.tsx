@@ -299,7 +299,9 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
   // Dollars paid for yuan: what the yuan owed are worth at the rate on file, and the rate this payment implies.
   const cnyRate = useRate(day).data?.cnyPerUsd ?? null;
   const cnyForeign = foreign.find((x) => x.currency === "CNY");
-  const cnyRef = cnyRate && d(cnyRate).gt(0) ? d(cnyRate) : cnyForeign && !d(cnyForeign.usd).isZero() ? d(cnyForeign.native).abs().dividedBy(d(cnyForeign.usd).abs()) : null;
+  // With no yuan rate on file, the debt's own rate as booked (the invoices'), and the hints say so.
+  const cnyOnFile = !!cnyRate && d(cnyRate).gt(0);
+  const cnyRef = cnyOnFile ? d(cnyRate!) : cnyForeign && !d(cnyForeign.usd).isZero() ? d(cnyForeign.native).abs().dividedBy(d(cnyForeign.usd).abs()) : null;
   const cnyOwedUsd = cnyOwed && cnyRef ? cnyOwed.dividedBy(cnyRef) : null;
   const impliedCny = cnyOwed && d(settleCny).gt(0) && d(amount).gt(0) ? d(settleCny).dividedBy(d(amount)) : null;
   const impliedGap = impliedCny && cnyRef ? impliedCny.minus(cnyRef).abs().dividedBy(cnyRef).times(100) : null;
@@ -484,13 +486,13 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
               hint={
                 <>
                   {t(
-                    `Owed: ${money(cnyOwed.toString(), "CNY")}${cnyOwedUsd ? ` ≈ ${usd(cnyOwedUsd.toFixed(2))} at the rate on file` : ""}. The difference with the invoice value is an exchange gain or loss.`,
-                    `Dû\u00a0: ${money(cnyOwed.toString(), "CNY")}${cnyOwedUsd ? ` ≈ ${usd(cnyOwedUsd.toFixed(2))} au taux enregistré` : ""}. L'écart avec la valeur de la facture est un gain ou une perte de change.`,
+                    `Owed: ${money(cnyOwed.toString(), "CNY")}${cnyOwedUsd ? ` ≈ ${usd(cnyOwedUsd.toFixed(2))} ${cnyOnFile ? "at the rate on file" : "at the invoices' rate"}` : ""}. The difference with the invoice value is an exchange gain or loss.`,
+                    `Dû\u00a0: ${money(cnyOwed.toString(), "CNY")}${cnyOwedUsd ? ` ≈ ${usd(cnyOwedUsd.toFixed(2))} ${cnyOnFile ? "au taux enregistré" : "au taux de la facture"}` : ""}. L'écart avec la valeur de la facture est un gain ou une perte de change.`,
                   )}
                   {impliedCny && !yuanMismatch && (
                     <span className={cn("block", impliedGap && impliedGap.gt(5) && "font-medium text-amber-800 dark:text-amber-400")}>
                       {t(`This payment: ${fmtNumber(impliedCny.toString(), 2)} ¥ for $1`, `Ce paiement\u00a0: ${fmtNumber(impliedCny.toString(), 2)}\u00a0¥ pour 1\u00a0$`)}
-                      {cnyRef && t(` (on file ${fmtNumber(cnyRef.toString(), 2)})`, ` (enregistré\u00a0: ${fmtNumber(cnyRef.toString(), 2)})`)}
+                      {cnyRef && (cnyOnFile ? t(` (on file ${fmtNumber(cnyRef.toString(), 2)})`, ` (enregistré\u00a0: ${fmtNumber(cnyRef.toString(), 2)})`) : t(` (invoices' rate ${fmtNumber(cnyRef.toString(), 2)})`, ` (taux de la facture\u00a0: ${fmtNumber(cnyRef.toString(), 2)})`))}
                       {impliedGap && impliedGap.gt(5) && t(": check the amounts", "\u00a0: vérifiez les montants")}
                     </span>
                   )}

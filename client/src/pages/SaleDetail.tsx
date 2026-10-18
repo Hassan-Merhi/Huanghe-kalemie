@@ -172,7 +172,8 @@ function ReturnDialog({ sale, onClose, onDone }: { sale: SaleFull; onClose: () =
             </div>
           ) : (
             <div className="flex justify-between rounded-md bg-muted p-3 font-medium">
-              <span>{t("Refund total", "Total remboursé")}</span>
+              {/* No cash goes out when the return comes off the customer's debt. */}
+              <span>{mode === "credit" ? t("Taken off the debt", "Déduit de la dette") : t("Refund total", "Total remboursé")}</span>
               <Num>{usd(refund.toFixed(2))}</Num>
             </div>
           )}
@@ -509,7 +510,9 @@ export default function SaleDetail() {
         {voided ? <Badge variant="destructive">{t("Cancelled", "Annulée")}</Badge> : <Badge variant="secondary">{t("Completed", "Terminée")}</Badge>}
         {sale.returns.length > 0 && <Badge variant="outline">{t("Has returns", "Avec retours")}</Badge>}
         {!voided && <SaleFlags zeroPrice={sale.lines.some((l) => d(l.unitPrice).lte(0))} total={sale.total} cogs={sale.cogs} />}
-        {credit.gt(0) &&
+        {/* A cancelled sale owes nothing: its credit went back with it. */}
+        {voided && credit.gt(0) && <Badge variant="outline" className="text-muted-foreground">{t("Credit cancelled", "Crédit annulé")} {usd(sale.creditUsd)}</Badge>}
+        {credit.gt(0) && !voided &&
           (avoir.used.gt(0) && !owedReduced ? (
             <>
               <Badge variant="outline">{t("Settled from the customer's credit", "Réglé sur l'avoir")} {usd(avoir.used.toFixed(2))}</Badge>
@@ -539,11 +542,11 @@ export default function SaleDetail() {
             {d(sale.discount).gt(0) && <p className="text-xs text-muted-foreground">{t("Sale discount", "Remise")} {usd(sale.discount)}</p>}
           </CardContent>
         </Card>
-        <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Paid", "Payé")}</p><p className="text-xl font-semibold tabular">{usd(paidNet.toFixed(2))}</p>{!voided && refunded.gt(0) && <p className="text-xs text-muted-foreground">{t("refunded", "remboursé")} −{usd(refunded.toFixed(2))} · {t("of", "sur")} {usd(d(sale.paidUsd).plus(d(sale.saleFcRoundingUsd ?? 0)).toFixed(2))}</p>}{francRounding && <p className="text-xs text-muted-foreground" data-testid="sale-fc-rounding">{sale.returns.length ? t("FC rounding (sale + returns)", "Arrondi FC (vente + retours)") : t("FC rounding", "Arrondi FC")} {francRounding.figure} · {francRounding.words}</p>}<p className="text-xs text-muted-foreground">{/* The avoir's part is not credit: 250 $ with 198 $ on the avoir is 52 $ on credit. */}{avoir.used.gt(0)
+        <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Paid", "Payé")}</p><p className={`text-xl font-semibold tabular${voided ? " text-muted-foreground line-through" : ""}`}>{usd(paidNet.toFixed(2))}</p>{voided && <p className="text-xs text-muted-foreground" data-testid="sale-voided-paid">{[t("cancelled", "annulé"), paidNet.gt(0) ? t("refunded", "remboursé") : null, credit.gt(0) ? `${t("credit cancelled", "crédit annulé")} ${usd(sale.creditUsd)}` : null].filter(Boolean).join(" · ")}</p>}{!voided && refunded.gt(0) && <p className="text-xs text-muted-foreground">{t("refunded", "remboursé")} −{usd(refunded.toFixed(2))} · {t("of", "sur")} {usd(d(sale.paidUsd).plus(d(sale.saleFcRoundingUsd ?? 0)).toFixed(2))}</p>}{francRounding && <p className="text-xs text-muted-foreground" data-testid="sale-fc-rounding">{sale.returns.length ? t("FC rounding (sale + returns)", "Arrondi FC (vente + retours)") : t("FC rounding", "Arrondi FC")} {francRounding.figure} · {francRounding.words}</p>}{/* No credit line on a cancelled sale (said above) nor on one paid in full. */}{!voided && (credit.gt(0) || avoir.used.gt(0)) && <p className="text-xs text-muted-foreground">{/* The avoir's part is not credit: 250 $ with 198 $ on the avoir is 52 $ on credit. */}{avoir.used.gt(0)
                 ? avoir.toPay.gt(0)
                   ? `${t("On credit", "À crédit")} ${usd(avoir.toPay.toFixed(2))} · ${t("from the customer's credit", "sur l'avoir")} ${usd(avoir.used.toFixed(2))}`
                   : `${t("From the customer's credit", "Sur l'avoir")} ${usd(avoir.used.toFixed(2))}`
-                : `${t("Credit", "Crédit")} ${usd(sale.creditUsd)}`}{owedReduced ? ` · ${t("after returns", "après retours")} ${usd(stillOwed.toFixed(2))}` : ""}</p></CardContent></Card>
+                : `${t("Credit", "Crédit")} ${usd(sale.creditUsd)}`}{owedReduced ? ` · ${t("after returns", "après retours")} ${usd(stillOwed.toFixed(2))}` : ""}</p>}</CardContent></Card>
         <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Customer", "Client")}</p>{sale.customer ? <p className="font-medium">{sale.customer.name}</p> : <p className="text-muted-foreground">{t("Walk-in", "De passage")}</p>}{sale.customer?.phone && <p className="text-xs text-muted-foreground">{sale.customer.phone}</p>}</CardContent></Card>
         {showCost && sale.cogs !== undefined && !voided && (
           <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Cost / profit", "Coût / marge")}</p><p className="text-xl font-semibold tabular">{usd(profit.toFixed(2))}</p><p className="text-xs text-muted-foreground">{t("Cost of goods", "Coût des articles")} {usd(d(sale.cogs).minus(returnedCost).toFixed(2))}{returnedTotal.gt(0) ? ` · ${t("after returns", "après retours")}` : ""}</p></CardContent></Card>
@@ -605,7 +608,9 @@ export default function SaleDetail() {
                     ? t(`No payment: ${usd(avoir.used.toFixed(2))} from the customer's credit, ${usd(avoir.toPay.toFixed(2))} on credit`, `Aucun paiement\u00a0: ${usd(avoir.used.toFixed(2))} sur l'avoir, ${usd(avoir.toPay.toFixed(2))} à crédit`)
                     : avoir.used.gt(0)
                       ? t("No payment: settled from the customer's credit", "Aucun paiement\u00a0: réglé sur l'avoir")
-                      : t("No payment: fully on credit", "Aucun paiement\u00a0: tout à crédit")
+                      : voided
+                        ? t("No payment: the credit was cancelled with the sale", "Aucun paiement\u00a0: le crédit est annulé avec la vente")
+                        : t("No payment: fully on credit", "Aucun paiement\u00a0: tout à crédit")
                 }
               />
             ) : (
@@ -616,10 +621,16 @@ export default function SaleDetail() {
                     <Num className="font-medium">{paymentText(p)}</Num>
                   </div>
                 ))}
-                {credit.gt(0) && <CreditRows creditedReturns={creditedReturns} stillOwed={stillOwed} owes={customerOwes} avoir={avoir} />}
+                {credit.gt(0) && !voided && <CreditRows creditedReturns={creditedReturns} stillOwed={stillOwed} owes={customerOwes} avoir={avoir} />}
+                {credit.gt(0) && voided && (
+                  <div className="flex justify-between gap-2 py-2 text-muted-foreground" data-testid="credit-cancelled">
+                    <span>{t("Credit cancelled with the sale", "Crédit annulé avec la vente")}</span>
+                    <Num className="line-through">{usd(sale.creditUsd)}</Num>
+                  </div>
+                )}
               </div>
             )}
-            {sale.payments.length === 0 && (creditReduced || creditedReturns.gt(0) || avoir.used.gt(0)) && (
+            {sale.payments.length === 0 && !voided && (creditReduced || creditedReturns.gt(0) || avoir.used.gt(0)) && (
               <div className="mt-2 divide-y text-sm">
                 <CreditRows creditedReturns={creditedReturns} stillOwed={stillOwed} owes={customerOwes} avoir={avoir} />
               </div>

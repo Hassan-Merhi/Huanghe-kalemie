@@ -599,7 +599,9 @@ export async function dashboard(tx: Tx, today: string) {
       status: containers.status,
       arrivalDate: containers.arrivalDate,
       // Purchase value at the container's rate; it reaches the books (stock and supplier debt) on offload.
-      purchaseUsd: sql<string>`coalesce((select round(sum(l.quantity * l.unit_price) * ${containers.rateToUsd}, 2) from container_lines l where l.container_id = ${containers.id}), 0)::text`,
+      // The outer columns are named in full: a select from one table renders ${containers.id} as a bare "id",
+      // which inside the subquery would be the line's own id.
+      purchaseUsd: sql<string>`coalesce((select round(sum(l.quantity * l.unit_price) * "containers"."rate_to_usd", 2) from container_lines l where l.container_id = "containers"."id"), 0)::text`,
     })
     .from(containers)
     .where(ne(containers.status, "finalized"))
