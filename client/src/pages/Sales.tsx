@@ -312,6 +312,8 @@ export default function Sales() {
     onAvoir: sumOf((r) => creditSplit(r).onAvoir),
     cogs: sumOf((r) => netOf(r).cogs),
     qty: sumOf((r) => d(r.qty).minus(d(r.returnedQty))),
+    // Litres and pieces do not add up: the card counts the items on the sales instead.
+    items: sumOf((r) => r.lineCount ?? 0),
   };
   const profit = totals.total.minus(totals.cogs);
 
@@ -341,7 +343,7 @@ export default function Sales() {
 
       {live.length > 0 && (
         <div className={cn("mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3", showCost ? "xl:grid-cols-5" : "xl:grid-cols-4")}>
-          <StatCard label={t("Sales", "Ventes")} value={live.length} sub={`${fmtQty(totals.qty.toString())} ${t("units sold", "unités vendues")}`} />
+          <StatCard label={t("Sales", "Ventes")} value={live.length} sub={`${fmtQty(totals.items.toString())} ${totals.items.eq(1) ? t("item", "article") : t("items", "articles")}`} />
           <StatCard label={t("Paid", "Payé")} value={usd(totals.paid.toFixed(2))} sub={totals.refunded.gt(0) ? `${t("refunded", "remboursé")} −${usd(totals.refunded.toFixed(2))}` : undefined} />
           <StatCard label={t("Total", "Total")} value={usd(totals.total.toFixed(2))} sub={totals.returned.gt(0) ? `${t("returns", "retours")} −${usd(totals.returned.toFixed(2))}` : undefined} />
           {/* Credit given on these sales (less returns), not what is still owed: payments made later are on each

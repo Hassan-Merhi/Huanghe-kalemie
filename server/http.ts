@@ -11,13 +11,65 @@ export function asyncHandler(fn: (req: Request, res: Response, next: NextFunctio
   };
 }
 
+/** Field names as a person reads them, with whether they are feminine (for "supérieur(e)"). */
+const FIELDS_FR: Record<string, [string, boolean]> = {
+  amount: ["le montant", false],
+  qty: ["la quantité", true],
+  qtyChange: ["la quantité", true],
+  unitPrice: ["le prix", false],
+  unitCost: ["le coût", false],
+  sellPrice: ["le prix de vente", false],
+  lineDiscount: ["la remise", true],
+  discount: ["la remise", true],
+  rate: ["le taux", false],
+  cdfPerUsd: ["le taux", false],
+  date: ["la date", true],
+  accountId: ["le compte", false],
+  partyId: ["le contact", false],
+  nativeAmount: ["le montant en FC", false],
+  debit: ["le débit", false],
+  credit: ["le crédit", false],
+};
+const LISTS_FR: Record<string, string> = { lines: "Ligne", payments: "Paiement", variants: "Variante" };
+
+/**
+ * A validation error in words: "Ligne 1 : le montant doit être supérieur à zéro." rather than the field
+ * path "(lines.0.amount)". Null when the field or the rule is not one of the common ones.
+ */
+export function zodIssueFr(issue: { path: PropertyKey[]; message: string } | undefined): string | null {
+  if (!issue) return null;
+  let where = "";
+  let field: [string, boolean] | undefined;
+  for (let i = 0; i < issue.path.length; i++) {
+    const key = issue.path[i];
+    const next = issue.path[i + 1];
+    if (typeof key === "string" && LISTS_FR[key] && typeof next === "number") {
+      where = `${LISTS_FR[key]} ${next + 1}`;
+      i++;
+    } else if (typeof key === "string") field = FIELDS_FR[key];
+  }
+  if (!field) return null;
+  const e = field[1] ? "e" : "";
+  const rules: Record<string, string> = {
+    "Must be greater than zero": `doit être supérieur${e} à zéro`,
+    "Must be a number": "doit être un nombre",
+    "Cannot be negative": `ne peut pas être négati${field[1] ? "ve" : "f"}`,
+    [tooLarge]: `doit être inférieur${e} à 1\u00a0000\u00a0000\u00a0000\u00a0000`,
+    "Must be less than 1 000 000": `doit être inférieur${e} à 1\u00a0000\u00a0000`,
+    "Use a date like 2026-10-12": "doit être une date comme 2026-10-12",
+  };
+  const rule = rules[issue.message] ?? `est manquant${e} ou invalide`;
+  const subject = where ? `${where} : ${field[0]}` : field[0].charAt(0).toUpperCase() + field[0].slice(1);
+  return `${subject} ${rule}.`;
+}
+
 export function errorHandler(err: unknown, req: Request, res: Response, _next: NextFunction) {
   if (err instanceof ZodError) {
     const first = err.issues[0];
     const where = first?.path.length ? `${first.path.join(".")}: ` : "";
     return res.status(400).json({
       message: `${where}${first?.message ?? "Invalid input"}`,
-      messageFr: `Saisie incomplète ou invalide${first?.path.length ? ` (${first.path.join(".")})` : ""}. Vérifiez les champs et réessayez.`,
+      messageFr: frenchSpacing(zodIssueFr(first) ?? "Saisie incomplète ou invalide. Vérifiez les champs et réessayez."),
       code: "VALIDATION",
       issues: err.issues,
     });

@@ -252,7 +252,7 @@ export async function receiveFromCustomer(tx: Tx, input: PartyPaymentInput, user
   return postJournal(tx, {
     date: input.date,
     type: "customer_receipt",
-    memo: input.memo ?? `Paiement de ${party.name}`,
+    memo: input.memo ?? `Paiement ${de(party.name)}`,
     userId,
     lines: [
       { accountId: leg.accountId, debit: leg.usd, nativeAmount: leg.nativeAmount, rate: leg.rate },
