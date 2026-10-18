@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
-import { AccountSelect, MoneyAccountSelect, MonthSelect, PartySelect, RateInput, useRateField } from "@/components/pickers";
+import { AccountSelect, MoneyAccountSelect, MonthSelect, PartySelect, RateInput, useAccounts, useRateField } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useI18n, useT, count } from "@/lib/i18n";
@@ -721,6 +721,16 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
     .filter((l) => l.amount.gt(0));
   const total = lines.reduce((s, l) => s.plus(l.amount), d(0));
   const frMonth = monthText(month, "fr");
+  // The drawer's balance before and after, as on the vouchers form; a payment it cannot cover is stopped here.
+  const { can } = useAuth();
+  const balances = useAccounts("/api/accounts/balances", { enabled: can("manager", "partner") }).data;
+  const drawer = account ? balances?.find((a) => a.id === account.id) : undefined;
+  const drawerNow = drawer ? d(isCdf ? drawer.nativeBalance : drawer.balance) : null;
+  const drawerAfter = drawerNow ? drawerNow.minus(total) : null;
+  const balanceText = (x: Decimal) => money(x.toFixed(isCdf ? 0 : 2), account!.currency);
+  const drawerShort = drawerNow && drawerAfter?.lt(0)
+    ? t(`Not enough money: balance ${balanceText(drawerNow)} → after ${balanceText(drawerAfter)}`, `Fonds insuffisants\u00a0: solde ${balanceText(drawerNow)} → après ${balanceText(drawerAfter)}`)
+    : null;
 
   const pay = useApiMutation<Record<string, unknown>, { id: number; total: string }>("POST", "/api/vouchers/payment", {
     success: t("Salaries paid", "Salaires payés"),
@@ -764,7 +774,13 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
         ) : (
           <div className="space-y-4">
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
-              <Field label={t("Pay from", "Payer depuis")} className="sm:col-span-1" required>
+              <Field
+                label={t("Pay from", "Payer depuis")}
+                className="sm:col-span-1"
+                hint={drawerNow && drawerAfter ? `${t("Balance", "Solde")} ${balanceText(drawerNow)} → ${t("after", "après")} ${balanceText(drawerAfter)}` : undefined}
+                error={drawerShort}
+                required
+              >
                 <MoneyAccountSelect value={account?.id ?? null} onChange={(_, a) => setAccount(a)} />
               </Field>
               <Field label={t("Date", "Date")}>
@@ -826,7 +842,9 @@ function PaySalariesDialog({ month, run, employees, onClose }: { month: string; 
                       ? t("Correct the amounts that cannot be read", "Corrigez les montants illisibles")
                       : isCdf && rows.some((e) => francDecimalsError(t, "CDF", amountOf(e)))
                         ? t("Remove the centimes from the franc amounts", "Retirez les centimes des montants en FC")
-                      : lines.length === 0 && t("Enter at least one amount above zero", "Saisissez au moins un montant supérieur à zéro")
+                      : lines.length === 0
+                        ? t("Enter at least one amount above zero", "Saisissez au moins un montant supérieur à zéro")
+                        : drawerShort
               }
               pending={pay.isPending}
             >

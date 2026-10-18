@@ -91,6 +91,25 @@ describe.skipIf(!hasDb)("Thirteenth UI audit", async () => {
     for (const s of [short.body, over.body, detail]) expect(list.find((r) => r.id === s.id).fcRoundingUsd).toBe(s.fcRoundingUsd);
   });
 
+  it("counts a sale's franc change as money out of the drawer, as it does dollar change", async () => {
+    const other = "2026-08-05";
+    // 27 $ is 75 816 FC: 100 000 FC handed over, 24 200 FC given back, from the same box.
+    const sale = await call("POST", "/api/sales", { date: other, locationId, lines: [{ variantId, qty: "1", unitPrice: "27" }], payments: [{ accountId: cashCdf, amount: "100000", rate: "2808" }], change: { accountId: cashCdf, amount: "24200", rate: "2808" } });
+    expect(sale.status, JSON.stringify(sale.body)).toBe(201);
+    const daily = (await call("GET", `/api/reports/daily?date=${other}`)).body;
+    const box = daily.drawer.find((a: any) => a.accountId === cashCdf);
+    expect(box.byType.find((b: any) => b.type === "sale")).toMatchObject({ in: "100000.00", out: "24200.00" });
+    expect([box.totalIn, box.totalOut]).toEqual(["100000.00", "24200.00"]);
+    expect(Number(box.closing) - Number(box.opening)).toBe(75800);
+  });
+
+  it("elides \"de\" before a name that starts with a vowel in the stock refusal", async () => {
+    const product = await call("POST", "/api/products", { name: "Amortisseur avant", unit: "pcs", variants: [{ attributes: {}, sellPrice: "40" }] });
+    const sale = await call("POST", "/api/sales", { date: day, locationId, lines: [{ variantId: product.body.variants[0].id, qty: "1", unitPrice: "40" }], payments: [{ accountId: cashUsd, amount: "40" }] });
+    expect(sale.status).toBe(409);
+    expect(sale.body.messageFr).toMatch(/^Stock insuffisant d'Amortisseur avant/);
+  });
+
   it("shows supplier advances apart from what we owe, and customer avoirs apart from their debts", async () => {
     const huanghe = (await call("POST", "/api/parties", { type: "supplier", name: "Huanghe Group" })).body.id;
     const transit = (await call("POST", "/api/parties", { type: "supplier", name: "Transit Uvira" })).body.id;
@@ -110,5 +129,11 @@ describe.skipIf(!hasDb)("Thirteenth UI audit", async () => {
     expect(after.contactBalances.customerAvoirs).toBe("30.00");
     expect(after.contactBalances.customersOwe).toBe("46.00");
     expect(after.receivables).toBe("16.00");
+    // A salary advance to an employee sits on payables too, but is not an advance to a supplier.
+    const amani = (await call("POST", "/api/parties", { type: "employee", name: "Amani" })).body.id;
+    expect((await call("POST", "/api/vouchers/payment", { date: day, accountId: cashUsd, lines: [{ partyId: amani, amount: "75" }] })).status).toBe(201);
+    const paid = (await call("GET", "/api/reports/dashboard")).body;
+    expect([paid.contactBalances.supplierAdvances, paid.contactBalances.salaryAdvances, paid.contactBalances.weOweSuppliers, paid.contactBalances.salariesOwed]).toEqual(["120.00", "75.00", "500.00", "0.00"]);
+    expect(paid.payables).toBe("305.00");
   });
 });

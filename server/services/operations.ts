@@ -757,7 +757,7 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
       const q = change.abs();
       if (v.tracksSerials) {
         const ids = line.unitIds ?? [];
-        if (ids.length !== q.toNumber()) throw badRequest(`Pick which ${q.toString()} motorcycle(s) of ${v.name} are removed`, `Choisissez quelle(s) ${q.toString()} moto(s) de ${v.name} sont retirées`);
+        if (ids.length !== q.toNumber()) throw badRequest(`Pick which ${q.toString()} motorcycle(s) of ${v.name} are removed`, `Choisissez quelle(s) ${q.toString()} moto(s) ${de(v.name)} sont retirées`);
         const units = await tx.select().from(motorcycleUnits).where(inArray(motorcycleUnits.id, ids)).for("update");
         if (units.length !== ids.length || units.some((u) => u.variantId !== v.variant.id || u.status !== "in_stock" || u.locationId !== input.locationId)) {
           throw badRequest("One of the motorcycles picked is not in stock here", "Une des motos choisies n'est pas en stock ici");

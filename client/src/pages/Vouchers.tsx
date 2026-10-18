@@ -467,11 +467,20 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
                     {checks.partyOf(l.partyId) && (() => {
                       const pty = checks.partyOf(l.partyId)!;
                       const fcBooked = pty.foreign?.find((f) => f.currency === "CDF");
+                      // Yuan owed are settled from the contact page's "Payer", which pays them to the yuan.
+                      const cnyBooked = pty.foreign?.find((f) => f.currency === "CNY" && !d(f.native).isZero());
                       const all = checks.settleAll(l.partyId);
                       return (
                         <p className="mt-1 flex flex-wrap items-center gap-x-1.5 px-1 text-xs" data-testid="line-owed">
                           <BalanceWords balance={pty.balance} />
                           {fcBooked && !d(fcBooked.native).isZero() && <span className="text-muted-foreground">({t("of which", "dont")} {cdf(d(fcBooked.native).abs().toFixed(0))})</span>}
+                          {cnyBooked && <span className="text-muted-foreground">({t("of which", "dont")} {money(d(cnyBooked.native).abs().toFixed(2), "CNY")})</span>}
+                          {cnyBooked && (
+                            <span className="w-full text-muted-foreground" data-testid="line-owed-cny">
+                              {t("Yuan are settled with ", "Les yuans se règlent avec «\u00a0Payer\u00a0» sur ")}
+                              <Link href={`/contacts/${pty.id}`} className="underline underline-offset-2">{t("“Pay” on the contact page", "la fiche du contact")}</Link>.
+                            </span>
+                          )}
                           {all && (
                             <span className={cn("inline-flex items-center gap-1.5", all.fc.gt(0) && !isCdf && "w-full")}>
                               {all.fc.gt(0) && !isCdf && <span className="text-muted-foreground">{t(`All of it at today's rate: ${usd(all.amount)}`, `Le tout au taux du jour\u00a0: ${usd(all.amount)}`)}</span>}
