@@ -163,10 +163,10 @@ function creditOf(r: SaleListRow): string {
   return r.creditLeftUsd ?? r.creditUsd;
 }
 
-/** Of that credit, what the customer's avoir covered and what is still owed, as the sale page splits it. */
+/** Of that credit, what the customer's avoir covered (at most the credit left, from the server) and what is still owed, as the sale page splits it. */
 function creditSplit(r: SaleListRow) {
   const left = d(creditOf(r));
-  const onAvoir = Decimal.min(d(r.avoirUsedUsd ?? 0), left);
+  const onAvoir = d(r.avoirUsedUsd ?? 0);
   return { onAvoir, owed: left.minus(onAvoir) };
 }
 

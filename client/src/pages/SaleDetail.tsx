@@ -447,6 +447,7 @@ export default function SaleDetail() {
   // Francs change and refunds go in 100 FC steps, so "Payé" can differ from the total by a few cents: the
   // "Arrondi FC" of the books, the same figure and sign as on the Sales list, the till's and the refunds' together.
   const francRounding = voided ? null : fcRounding(t, sale.fcRoundingUsd ?? 0);
+  // The avoir used comes capped at the credit left after returns, so the credit rows add up (see avoirUsedSql).
   const avoir = avoirSplit(sale);
   // Columns only when a line uses them, so the margin stays in view at 1024 px.
   const hasChassis = sale.lines.some((l) => l.chassisNo || l.engineNo);

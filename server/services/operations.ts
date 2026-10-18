@@ -402,11 +402,16 @@ export async function payablesLines(
     const dayRate = await cnyRateFor(tx, input.date);
     let native = new Decimal(0);
     if (available.gt(0) && dayRate) {
-      native = cents(available.times(dayRate));
-      cnyUsd = available;
-      if (native.gte(owedNative)) {
+      // The dollars shown for all the yuan owed settle all of them (as with francs, see contactLines): the
+      // yuan they buy, rounded to the fen, would leave a few worth less than a cent. Yuan worth under half
+      // a cent show as 0 $; the journal clears them with no money (see costForeignOutflows).
+      const allUsd = cents(owedNative.dividedBy(dayRate));
+      if (available.gte(allUsd)) {
         native = owedNative;
-        cnyUsd = Decimal.min(cents(owedNative.dividedBy(dayRate)), available);
+        cnyUsd = allUsd;
+      } else {
+        native = Decimal.min(cents(available.times(dayRate)), owedNative);
+        cnyUsd = available;
       }
     } else if (available.gt(0)) {
       cnyUsd = Decimal.min(available, cny.usd.abs());
@@ -465,7 +470,16 @@ export async function payParty(tx: Tx, input: PartyPaymentInput, userId: number)
     // day when one is on file, else with what those yuan cost.
     const day = await cnyRateFor(tx, input.date);
     const reference = day ? day : cny.usd.isZero() ? null : cny.native.abs().dividedBy(cny.usd.abs());
-    if (reference) {
+    if (reference && owed.dividedBy(reference).lt("0.005")) {
+      // Left by an older posting: worth nothing to pay, they are cleared by the next entry on this contact.
+      throw badRequest(
+        `The ${owed.toFixed(2)} CNY left are worth under half a cent: there is nothing to pay. Pay in dollars without yuan to settle, and they are cleared.`,
+        `Les ${frMoney(owed, "CNY")} restants valent moins d'un demi-centime : il n'y a rien à payer. Payez en dollars sans yuans à solder, et ils seront soldés.`,
+      );
+    }
+    // The dollars shown for the yuan settled always pass: on a few yuan, a cent's rounding is far more than
+    // 5 % (0,04 ¥ shown as 0,01 $), while a typo in either amount changes the dollars shown.
+    if (reference && !cents(settle.dividedBy(reference)).equals(cents(leg.usd))) {
       const tolerance = Decimal.max(await rateTolerancePct(tx), 5);
       await assertImpliedRate(tx, input.date, settle.dividedBy(leg.usd), reference, "CNY", tolerance);
     }

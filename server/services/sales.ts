@@ -390,11 +390,12 @@ export function avoirPartSql() {
 }
 
 /**
- * The same, as the sale page shows it: none on a cancelled sale, which gave it back (the Sales list reads it
- * the same way). Selects from `sales`.
+ * The same, as the sale page and the Sales list show it: none on a cancelled sale, which gave it back, and
+ * never more than the credit left after returns (see creditLeftSql), so "Accordé à crédit − retours − réglé
+ * sur l'avoir = reste à crédit" adds up. Selects from `sales`.
  */
 export function avoirUsedSql() {
-  return sql<string>`(case when ${sales.status} <> 'voided' then ${avoirPartSql()} else 0 end)::numeric(20,2)`;
+  return sql<string>`(case when ${sales.status} <> 'voided' then least(${avoirPartSql()}, ${creditLeftSql()}) else 0 end)::numeric(20,2)`;
 }
 
 export async function getSale(tx: Tx, id: number) {
@@ -477,11 +478,15 @@ export async function getSale(tx: Tx, id: number) {
   // A credit sale to a customer holding an avoir (paid ahead) owes nothing new: the credit comes off that avoir.
   // Read from the customer's balance just after this sale was posted, so the receipt and the sale page say
   // what was covered then, and what avoir was left: the customer's receivable alone, in date order then
-  // posting order. A cancelled sale gave its avoir back, so it used none.
-  let avoir: { usedUsd: string; leftUsd: string } | null = null;
+  // posting order. A cancelled sale gave its avoir back, so it used none. The receipt shows it as it was then;
+  // the sale page, after returns (at most the credit left, as the Sales list reads it).
+  let avoir: { usedUsd: string; atSaleUsd: string; leftUsd: string } | null = null;
   if (sale.customerId && sale.journalId && dec(sale.creditUsd).gt(0) && sale.status !== "voided") {
-    const [read] = await tx.select({ used: avoirUsedSql(), after: sql<string>`${receivableAfterSaleSql()}::text` }).from(sales).where(eq(sales.id, sale.id));
-    if (dec(read.used).gt(0)) avoir = { usedUsd: dec(read.used).toFixed(2), leftUsd: Decimal.max(dec(read.after).negated(), 0).toFixed(2) };
+    const [read] = await tx
+      .select({ used: avoirUsedSql(), atSale: avoirPartSql(), after: sql<string>`${receivableAfterSaleSql()}::text` })
+      .from(sales)
+      .where(eq(sales.id, sale.id));
+    if (dec(read.atSale).gt(0)) avoir = { usedUsd: dec(read.used).toFixed(2), atSaleUsd: dec(read.atSale).toFixed(2), leftUsd: Decimal.max(dec(read.after).negated(), 0).toFixed(2) };
   }
   const refunded = sum(returns.map((r) => r.refundUsd ?? 0));
   const [left] = await tx.select({ usd: sql<string>`${creditLeftSql()}::text` }).from(sales).where(eq(sales.id, sale.id));
@@ -490,8 +495,9 @@ export async function getSale(tx: Tx, id: number) {
     paidKeptUsd: paidKept(sale, saleFcRounding, refunded),
     saleFcRoundingUsd: saleFcRounding.toFixed(2),
     fcRoundingUsd: fcRounding.toFixed(2),
-    /** The part of the credit covered by the customer's avoir at the time of the sale, and the avoir left after it. */
+    /** The part of the credit covered by the customer's avoir, after returns (see avoirUsedSql); at the time of the sale; and the avoir left after it. */
     avoirUsedUsd: avoir?.usedUsd ?? null,
+    avoirAtSaleUsd: avoir?.atSaleUsd ?? null,
     avoirLeftUsd: avoir?.leftUsd ?? null,
     /** Credit still on the sale after returns, as the Sales list reads it (see creditLeftSql). */
     creditLeftUsd: dec(left?.usd ?? sale.creditUsd).toFixed(2),

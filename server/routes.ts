@@ -931,9 +931,9 @@ export function registerRoutes(app: Express) {
         // "Payé" can sit a few cents off the total, and is not money on the customer's account. A cancelled
         // sale's reversal takes its rounding back, so it nets to zero.
         fcRoundingUsd: sql<string>`(select coalesce(sum(jl.credit - jl.debit), 0)::numeric(20,2)::text from journal_lines jl join accounts a on a.id = jl.account_id and a.system_key = 'fx' where jl.memo = 'Arrondi FC' and (jl.journal_id = ${sales.journalId} or jl.journal_id = ${sales.voidJournalId} or jl.journal_id in (select sr.journal_id from sale_returns sr where sr.sale_id = ${sales.id})))`,
-        // The part of the credit the customer's avoir covered when the sale was posted (as the sale page reads it):
-        // their receivable alone, in date then posting order; none on a cancelled sale, which gave it back.
-        avoirUsedUsd: sql<string>`(case when ${sales.creditUsd} > 0 and ${sales.customerId} is not null and ${sales.journalId} is not null and ${sales.status} <> 'voided' then least(${sales.creditUsd}, greatest(${sales.creditUsd} - (select coalesce(sum(jl.debit - jl.credit), 0) from journal_lines jl join journals j on j.id = jl.journal_id join accounts a on a.id = jl.account_id and a.system_key = 'receivables' where jl.party_id = ${sales.customerId} and (j.date < ${sales.date} or (j.date = ${sales.date} and j.id <= ${sales.journalId}))), 0)) else 0 end)::numeric(20,2)::text`,
+        // The part of the credit the customer's avoir covered when the sale was posted, as the sale page reads it:
+        // none on a cancelled sale, which gave it back, and at most the credit left after returns (see avoirUsedSql).
+        avoirUsedUsd: sql<string>`${salesSvc.avoirUsedSql()}::text`,
         // The till's rounding alone: with it, "Payé" is the cash the shop really kept (see paidKeptUsd).
         saleFcRoundingUsd: sql<string>`(select coalesce(sum(jl.credit - jl.debit), 0)::numeric(20,2)::text from journal_lines jl join accounts a on a.id = jl.account_id and a.system_key = 'fx' where jl.memo = 'Arrondi FC' and jl.journal_id = ${sales.journalId})`,
         lineCount: sql<number>`(select count(*)::int from sale_lines sl where sl.sale_id = ${sales.id})`,

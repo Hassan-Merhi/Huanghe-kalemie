@@ -135,7 +135,8 @@ describe.skipIf(!hasDb)("Guards found by the twenty-first audit", async () => {
     expect(await owed(s2, "CDF")).toEqual(["0.00", "0.00"]);
     expect(await owed(s2, "USD")).toEqual(["0.00", "0.00"]);
 
-    // 13 FC worth nothing in dollars, left on a balance the old way: one cent clears them, paid or refunded.
+    // 13 FC worth nothing in dollars, left on a balance the old way. Since A27 no cent goes out for them:
+    // the next entry on the contact clears them with no money (see guards22, L1).
     // 13 of 100 001 FC owed left on the balance, with all their dollars gone.
     const residue = async (accountId: number, partyId: number) => {
       const [, usd] = await owed(partyId, "CDF", accountId);
@@ -157,20 +158,16 @@ describe.skipIf(!hasDb)("Guards found by the twenty-first audit", async () => {
     expect((await call("POST", "/api/expenses", { date: today, accountId: rentId, description: "Loyer N1c", amount: "100001", currency: "CDF", payablePartyId: s3 }, "gerant")).status).toBe(201);
     await residue(payables, s3);
     expect(await owed(s3, "CDF")).toEqual(["-13.00", "0.00"]);
-    // In francs it is still refused as worth less than a cent; a cent settles it.
+    // In francs it is still refused as worth less than a cent; a cent paid is a dollar advance, and the francs are cleared.
     expect((await call("POST", "/api/money/party-payment", { date: today, partyId: s3, accountId: cashCdf, amount: "13" }, "gerant")).status).toBe(400);
     expect((await call("POST", "/api/money/party-payment", { date: today, partyId: s3, accountId: cashUsd, amount: "0.01" }, "gerant")).status).toBe(201);
     expect(await owed(s3, "CDF")).toEqual(["0.00", "0.00"]);
-    expect(await owed(s3, "USD")).toEqual(["0.00", "0.00"]);
+    expect(await owed(s3, "USD")).toEqual(["0.00", "0.01"]);
     const c2 = await customer("Client N1b");
     expect((await call("POST", "/api/money/customer-receipt", { date: today, partyId: c2, accountId: cashCdf, amount: "100001" }, "gerant")).status).toBe(201);
     await residue(receivables, c2);
     expect(await owed(c2, "CDF", receivables)).toEqual(["-13.00", "0.00"]);
-    const cent = await call("POST", "/api/vouchers/payment", { date: today, accountId: cashUsd, lines: [{ partyId: c2, amount: "0.01" }] }, "gerant");
-    expect(cent.status, JSON.stringify(cent.body)).toBe(201);
-    expect(await owed(c2, "CDF", receivables)).toEqual(["0.00", "0.00"]);
-    expect(await owed(c2, "USD", receivables)).toEqual(["0.00", "0.00"]);
-    // Nothing is held for them any more, so a second cent is a payment nobody approved.
+    // Nothing is held for them in dollars, so a cent is a payment nobody approved.
     expect((await call("POST", "/api/vouchers/payment", { date: today, accountId: cashUsd, lines: [{ partyId: c2, amount: "0.01" }] }, "gerant")).status).toBe(403);
   });
 
