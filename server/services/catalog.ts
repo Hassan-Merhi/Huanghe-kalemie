@@ -77,7 +77,8 @@ async function insertVariant(tx: Tx, productId: number, v: VariantInput) {
 }
 
 /**
- * A blank brand is "Huanghe" when typed on the item form (it says so); the stock import passes
+ * A blank brand is "Huanghe" when a new item is typed on the item form (it says so); editing keeps a blank one
+ * blank (updateProduct). The stock import passes
  * `defaultBrand: ""` so a sheet's empty "Marque" stays empty rather than reading "Huanghe · litres".
  */
 export async function createProduct(tx: Tx, input: ProductInput & { variants: VariantInput[] }, opts: { defaultBrand?: string } = {}) {
@@ -149,7 +150,8 @@ export async function updateProduct(tx: Tx, id: number, input: Partial<ProductIn
     .set({
       ...(input.name !== undefined && { name: input.name.trim() }),
       ...(input.categoryId !== undefined && { categoryId: input.categoryId }),
-      ...(input.brand !== undefined && { brand: input.brand?.trim() || "Huanghe" }),
+      // Emptied (or left blank) on the edit form, a brand stays empty: only a new item from the form is "Huanghe".
+      ...(input.brand !== undefined && { brand: input.brand?.trim() ?? "" }),
       ...(input.unit !== undefined && { unit: input.unit?.trim() || "pcs" }),
       ...(input.description !== undefined && { description: input.description }),
       ...(input.tracksSerials !== undefined && { tracksSerials: input.tracksSerials }),

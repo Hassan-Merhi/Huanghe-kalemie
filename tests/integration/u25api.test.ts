@@ -3,7 +3,7 @@ import type { Server } from "http";
 import type { AddressInfo } from "net";
 import { hasDb, resetDatabase } from "./helpers";
 
-/** U25: the daily report's net figure (the dashboard's), and a stock import's blank brand left blank. */
+/** U25: the daily report's net figure (the dashboard's), and a stock import's blank brand left blank, also on edit. */
 describe.skipIf(!hasDb)("Twentieth UI audit", async () => {
   const { createApp } = await import("../../server/index");
   let server: Server;
@@ -64,5 +64,14 @@ describe.skipIf(!hasDb)("Twentieth UI audit", async () => {
     expect(brand("Huile de frein U20")).toBe("");
     expect(brand("Chaîne 428")).toBe("KMC");
     expect(brand("Pneu 3.00-18")).toBe("Huanghe");
+    // Editing the imported item as the form sends it (blank brand as null) keeps the brand blank.
+    const oil = products.find((p) => p.name === "Huile de frein U20");
+    const edit = await call("PATCH", `/api/products/${oil.id}`, { name: "Huile de frein U20", brand: null, unit: "litre" });
+    expect(edit.status, JSON.stringify(edit.body)).toBe(200);
+    expect(edit.body.brand).toBe("");
+    expect((await call("PATCH", `/api/products/${oil.id}`, { brand: "  " })).body.brand).toBe("");
+    // A brand typed in is kept, and can be emptied again.
+    expect((await call("PATCH", `/api/products/${oil.id}`, { brand: " Total " })).body.brand).toBe("Total");
+    expect((await call("PATCH", `/api/products/${oil.id}`, { brand: "" })).body.brand).toBe("");
   });
 });
