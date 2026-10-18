@@ -3,6 +3,7 @@ import {
   accounts,
   exchangeRates,
   expenses,
+  journalLines,
   journals,
   motorcycleUnits,
   parties,
@@ -41,7 +42,7 @@ import {
 } from "./ledger";
 import { issueStock, linkMovementsToJournal, lockVariants, receiveStock } from "./stock";
 import { variantColour } from "./catalog";
-import { de, frMoney, frNumber } from "@shared/french";
+import { de, frDate, frMoney, frNumber } from "@shared/french";
 
 async function requireParty(tx: Tx, id: number | null | undefined, types: string[]) {
   if (!id) throw badRequest("Choose who this is for", "Choisissez le bénéficiaire");
@@ -583,6 +584,16 @@ export async function settledFxTakebackLines(
   return yuanTrueUpLines(tx, { payables: input.payables, partyId: input.partyId, bill: input.billJournalId, native: input.native, usd: dec(input.usd), rate: input.rate });
 }
 
+/** The date of a contact's first yuan owed to them dated after `date`, if any. Read only. */
+async function yuanDebtAfter(tx: Tx, payables: number, partyId: number, date: string): Promise<string | null> {
+  const [row] = await tx
+    .select({ date: sql<string | null>`min(${journals.date})::text` })
+    .from(journalLines)
+    .innerJoin(journals, eq(journals.id, journalLines.journalId))
+    .where(and(eq(journalLines.accountId, payables), eq(journalLines.partyId, partyId), eq(journalLines.currency, "CNY"), sql`${journalLines.nativeAmount} < 0`, sql`${journals.date} > ${date}`));
+  return row?.date ?? null;
+}
+
 /** Pay a supplier or agent (container invoice, clearing agent, transporter, unpaid bills). */
 export async function payParty(tx: Tx, input: PartyPaymentInput, userId: number) {
   const party = await requireParty(tx, input.partyId, ["supplier", "agent", "employee"]);
@@ -599,7 +610,14 @@ export async function payParty(tx: Tx, input: PartyPaymentInput, userId: number)
     const cny = await foreignBalance(tx, payables, party.id, "CNY", input.date);
     const owed = cny.native.negated().minus(sum(advanceLines.filter((l) => l.currency === "CNY").map((l) => dec(l.nativeAmount!))));
     const settle = cents(input.settleNative);
-    if (owed.lte(0)) throw badRequest(`${party.name} is not owed anything in yuan${advanceLines.length ? " once their advance is counted" : ""}`, `${party.name} n'a rien à recevoir en yuans${advanceLines.length ? " une fois son avance déduite" : ""}`);
+    if (owed.lte(0)) {
+      // Measured on the payment's date: a back-dated payment says so, and when the yuan debt starts.
+      const start = await yuanDebtAfter(tx, payables, party.id, input.date);
+      throw badRequest(
+        `${party.name} is not owed anything in yuan on ${input.date}${advanceLines.length ? " once their advance is counted" : ""}${start ? ` (their yuan debt starts on ${start})` : ""}`,
+        `${party.name} n'a rien à recevoir en yuans au ${frDate(input.date)}${advanceLines.length ? " une fois son avance déduite" : ""}${start ? ` (sa dette en yuans commence le ${frDate(start)})` : ""}`,
+      );
+    }
     if (settle.gt(owed)) throw badRequest(`${party.name} is owed only ${owed.toFixed(2)} CNY`, `${party.name} n'attend que ${frMoney(owed, "CNY")}`);
     if (leg.currency !== "USD") throw badRequest("Pay a yuan invoice from a dollar account", "Payez une facture en yuans depuis un compte en dollars");
     // The yuan settled must be worth roughly what the dollars paid: compare with the yuan rate of the
