@@ -186,12 +186,15 @@ describe.skipIf(!hasDb)("Guards found by the thirtieth audit", async () => {
     await refundCloses(s, "4166.67", fx0, cash0);
   });
 
-  it("N4: a reversal dated before the payment, then the payment undone, leaves no dollars on no yuan", async () => {
+  it("N4: a reversal dated before the payment is refused (A36); on its day, then the payment undone, it leaves no dollars on no yuan", async () => {
     const fx0 = await fxNow();
     const s = await contact("supplier", "Fournisseur N4");
     const box = await container(s, 3000);
     const payment = await pay(s, "403.52", "3000");
-    await reverse(box, `${prev}-24`);
+    const back = await call("POST", `/api/containers/${box}/reverse`, { date: `${prev}-24` });
+    expect(back.status).toBe(409);
+    expect(back.body.code).toBe("YUAN_DATE_ORDER");
+    await reverse(box, in28);
     expect(await owed(s, "CNY", payables)).toEqual(["3000.00", "403.52"]);
     await undo(payment);
     expect(await owed(s, "CNY", payables)).toEqual(["0.00", "0.00"]);
@@ -247,11 +250,13 @@ describe.skipIf(!hasDb)("Guards found by the thirtieth audit", async () => {
   });
 
   // Closes last month: keep it last.
-  it("N4: a claim a month-end close revalued, its reversal dated before the payment, then the payment undone, leaves nothing", async () => {
+  it("N4: a claim a month-end close revalued, its reversal on the payment's day, then the payment undone, leaves nothing", async () => {
     const s = await contact("supplier", "Fournisseur N4 clôture");
     const box = await container(s, 3000);
     const payment = await pay(s, "403.52", "3000");
-    await reverse(box, `${prev}-24`);
+    // Dated before the payment it is refused (A36, see assertYuanInOrder).
+    expect((await call("POST", `/api/containers/${box}/reverse`, { date: `${prev}-24` })).status).toBe(409);
+    await reverse(box, in28);
     expect(await owed(s, "CNY", payables)).toEqual(["3000.00", "403.52"]);
     const close = await call("POST", `/api/periods/${prev}/close`, {});
     expect(close.status, JSON.stringify(close.body)).toBe(200);

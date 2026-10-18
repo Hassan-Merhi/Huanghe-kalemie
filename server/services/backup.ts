@@ -6,6 +6,7 @@ import { db, type Tx } from "../db";
 import { AppError } from "../errors";
 import { todayIso } from "../http";
 import { log } from "../log";
+import { markSystemLines } from "./ledger";
 
 /*
  * Full backups: every table in one consistent snapshot, users included (with their password hashes,
@@ -210,6 +211,8 @@ export async function restore(tx: Tx, file: BackupFile, opts: { replace: boolean
       await tx.execute(sql`insert into ${sql.identifier(t)} (${list}) select ${list} from json_populate_recordset(null::${sql.identifier(t)}, ${chunk}::json)`);
     }
     rowCount += rows.length;
+    // A backup made before lines kept their kind: the lines the books wrote get it back.
+    if (t === "journal_lines" && !cols.includes("kind")) await markSystemLines(tx);
     if (have.has("id")) {
       await tx.execute(sql`select setval(pg_get_serial_sequence(${t}, 'id'), coalesce((select max(id) from ${sql.identifier(t)}), 1), (select count(*) > 0 from ${sql.identifier(t)}))`);
     }

@@ -188,9 +188,13 @@ describe.skipIf(!hasDb)("Guards found by the twenty-ninth audit", async () => {
     expect((await checks.selfCheck(db)).ok).toBe(true);
   });
 
-  it("M3: a reversal dated back before the discounted payment still takes its discount back", async () => {
+  it("M3: a reversal dated back before the discounted payment is refused (A36); on the payment's day it takes its discount back", async () => {
     const { s, box } = await container("Fournisseur M3 antidaté", "403.00");
-    await reverse(box, `${prev}-24`);
+    // Their yuan cannot move dated before the payment (see assertYuanInOrder).
+    const back = await call("POST", `/api/containers/${box}/reverse`, { date: `${prev}-24` });
+    expect(back.status).toBe(409);
+    expect(back.body.code).toBe("YUAN_DATE_ORDER");
+    await reverse(box, in28);
     expect(await owed(s, "CNY", payables)).toEqual(["3000.00", "403.00"]);
     expect((await receive(s, "403.00")).status).toBe(201);
     expect(await owed(s, "CNY", payables)).toEqual(["0.00", "0.00"]);

@@ -7,11 +7,13 @@ import {
   exchangeRates,
   journalLines,
   journals,
+  parties,
   periods,
   settings,
   users,
   type Currency,
   type LineCurrency,
+  type LineKind,
   type JournalType,
 } from "@shared/schema";
 import { cents, dec, sum, Decimal, type DecimalInput } from "@shared/money";
@@ -227,6 +229,10 @@ export interface PostLine {
   /** Currency of nativeAmount on a non-money line (money accounts use their own currency). */
   currency?: ForeignCurrency | null;
   memo?: string | null;
+  /** Only on a line the books write themselves (see LineKind); a person's line has none, whatever its memo. */
+  kind?: LineKind | null;
+  /** Only on a reversal's copy of a line valued at average cost: the opposite of what that one moved (see fxUsd). */
+  fxUsd?: DecimalInput | null;
 }
 
 export interface PostJournalInput {
@@ -341,7 +347,7 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
   const accountRows = await tx.select().from(accounts).where(inArray(accounts.id, ids));
   const byId = new Map(accountRows.map((a) => [a.id, a]));
 
-  const values = lines.map((l) => {
+  const values: PendingLine[] = lines.map((l) => {
     const account = byId.get(l.accountId);
     if (!account) throw badRequest(`Account ${l.accountId} does not exist`, `Le compte ${l.accountId} n'existe pas`);
     if (!account.active) throw badRequest(`Account ${account.name} is inactive`, `Le compte ${account.name} est inactif`);
@@ -369,12 +375,17 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
       nativeAmount,
       rate,
       memo: l.memo ?? null,
+      kind: l.kind ?? null,
+      fxUsd: l.fxUsd != null ? cents(l.fxUsd) : null,
     };
   });
 
   // Every contact the journal writes to, before its francs and yuan (see lockBalances). A period close
   // holds the periods lock alone, so nothing else is posting.
-  if (!input.skipPeriodCheck) await lockBalances(tx, { parties: values.map((v) => v.partyId) });
+  if (!input.skipPeriodCheck) {
+    await lockBalances(tx, { parties: values.map((v) => v.partyId) });
+    await assertYuanInOrder(tx, values, input.date);
+  }
   if (!input.exactValues) await costForeignOutflows(tx, values, input.date, byId, !input.skipPeriodCheck);
   if (input.clearRevalued && !input.skipPeriodCheck) {
     const emptied = values.filter((v) => v.currency !== "USD" && v.nativeAmount && !byId.get(v.accountId)?.isMoney);
@@ -404,7 +415,7 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
   for (const id of paidFrom) await tx.execute(sql`select pg_advisory_xact_lock(hashtext(${`money:${id}`}))`);
 
   await tx.insert(journalLines).values(
-    values.map((v) => ({ ...v, debit: v.debit.toFixed(2), credit: v.credit.toFixed(2), journalId: journal.id })),
+    values.map((v) => ({ ...v, debit: v.debit.toFixed(2), credit: v.credit.toFixed(2), fxUsd: v.fxUsd ? v.fxUsd.toFixed(2) : null, journalId: journal.id })),
   );
   for (const id of paidFrom) await assertNotOverdrawn(tx, byId.get(id)!, input.date);
   // Every posting is in the activity log, written in the same transaction so neither exists without the other.
@@ -461,13 +472,59 @@ async function assertNotOverdrawn(tx: Tx, account: typeof accounts.$inferSelect,
   }
 }
 
+/**
+ * Refuse moving a contact's yuan (a payment, a refund, a reversal, an offload) dated before the latest
+ * entry already on their yuan. Yuan taken out are valued at their average cost as of the posting's date
+ * (see costForeignOutflows), while what a container's reversal takes back follows the order postings were
+ * made in (see yuanPool): dated back, a payment would be costed against yuan a later entry already took,
+ * and leave dollars on no yuan. On the same day or later, the two orders are one. Everyone, the owner too:
+ * an entry for an earlier day is dated on the day of the latest one instead. The caller holds the
+ * contacts' locks, so no later one is posted in between.
+ */
+async function assertYuanInOrder(tx: Tx, values: { accountId: number; partyId: number | null; currency: LineCurrency; nativeAmount: string | null }[], date: string): Promise<void> {
+  // Only lines that move yuan: a month-end revaluation, dated on the last day of the month it closes,
+  // moves dollars alone.
+  const moves = (v: (typeof values)[number]) => v.currency === "CNY" && !!v.partyId && !dec(v.nativeAmount ?? 0).isZero();
+  if (!values.some(moves)) return;
+  const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
+  const ids = Array.from(new Set(values.filter((v) => moves(v) && v.accountId === payables).map((v) => v.partyId!)));
+  if (!ids.length) return;
+  const [late] = await tx
+    .select({ partyId: journalLines.partyId, date: sql<string>`max(${journals.date})::text`, name: parties.name })
+    .from(journalLines)
+    .innerJoin(journals, eq(journals.id, journalLines.journalId))
+    .innerJoin(parties, eq(parties.id, journalLines.partyId))
+    .where(and(eq(journalLines.accountId, payables), eq(journalLines.currency, "CNY"), inArray(journalLines.partyId, ids)))
+    .groupBy(journalLines.partyId, parties.name)
+    .having(sql`max(${journals.date}) > ${date}`)
+    .limit(1);
+  if (!late) return;
+  throw new AppError(
+    409,
+    `${late.name} already has a yuan entry dated ${late.date}: their yuan cannot move dated earlier. Date this on ${late.date} or later.`,
+    "YUAN_DATE_ORDER",
+    `${late.name} a déjà une écriture en yuans datée du ${frDate(late.date)} : ses yuans ne peuvent pas bouger à une date antérieure. Datez celle-ci du ${frDate(late.date)} ou après.`,
+  );
+}
+
 /** Memo of the exchange difference booked when foreign units leave a balance at its average cost. */
 export const COST_FX_MEMO = "Écart de change (coût moyen des devises)";
 
 /** Memo of the line that clears francs or yuan worth under half a cent left on a contact (see costForeignOutflows). */
 export const RESIDUE_MEMO = "Reste de moins d'un demi-centime soldé en écart de change";
 
-type PendingLine = { accountId: number; debit: Decimal; credit: Decimal; partyId: number | null; currency: LineCurrency; nativeAmount: string | null; rate: string | null; memo: string | null };
+type PendingLine = {
+  accountId: number;
+  debit: Decimal;
+  credit: Decimal;
+  partyId: number | null;
+  currency: LineCurrency;
+  nativeAmount: string | null;
+  rate: string | null;
+  memo: string | null;
+  kind?: LineKind | null;
+  fxUsd?: Decimal | null;
+};
 type AccountRow = typeof accounts.$inferSelect;
 
 /**
@@ -526,6 +583,7 @@ async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string, 
     }
     const native = dec(v.nativeAmount);
     const given = v.debit.minus(v.credit);
+    v.fxUsd = new Decimal(0);
     const reduces = !bal.native.isZero() && !native.isZero() && bal.native.isNegative() !== native.isNegative();
     const own = cameIn.get(key);
     if (v.partyId === null && reduces && own && !own.isZero() && own.isNegative() !== native.isNegative() && native.abs().lte(own.abs())) {
@@ -539,6 +597,9 @@ async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string, 
         fxDebit = fxDebit.minus(value.minus(v.debit));
         v.debit = value;
       }
+      // Each line's own share, so a journal settling two contacts' yuan (or paid from a franc drawer) keeps
+      // apart what each was given (see yuanPool).
+      v.fxUsd = v.debit.minus(v.credit).minus(given);
     } else if (v.partyId === null) cameIn.set(key, (cameIn.get(key) ?? new Decimal(0)).plus(native));
     bal.native = bal.native.plus(native);
     bal.usd = bal.usd.plus(v.debit.minus(v.credit));
@@ -569,6 +630,7 @@ async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string, 
       nativeAmount: bal.native.negated().toFixed(2),
       rate: rate.toFixed(4),
       memo: RESIDUE_MEMO,
+      kind: "residue",
     });
     fxDebit = fxDebit.plus(bal.usd);
   }
@@ -582,6 +644,7 @@ async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string, 
       nativeAmount: null,
       rate: null,
       memo: COST_FX_MEMO,
+      kind: "cost_fx",
     });
   }
 }
@@ -598,14 +661,56 @@ export const SETTLED_FX_MEMO = "Écart de change du règlement repris à l'annul
 type RevaluedKey = { accountId: number; partyId: number | null; currency: ForeignCurrency };
 
 /**
+ * Mark the lines the books wrote before lines kept their kind (a backup made before then, restored): by
+ * their memo and their shape, never in a journal typed by hand. The same as migration 0015.
+ */
+export async function markSystemLines(tx: Tx): Promise<void> {
+  await tx.execute(sql`
+    update journal_lines l set kind = case
+        when l.memo = ${COST_FX_MEMO} then 'cost_fx'
+        when l.memo = ${RESIDUE_MEMO} then 'residue'
+        when l.memo = ${SETTLED_FX_MEMO} then 'settled_fx'
+        else 'revalued' end
+      from journals j, accounts a
+      where j.id = l.journal_id and a.id = l.account_id and l.kind is null and j.type not in ('manual', 'opening') and (
+        (l.memo = ${COST_FX_MEMO} and a.system_key = 'fx')
+        or (l.memo = ${RESIDUE_MEMO} and abs(l.debit - l.credit) <= 0.01)
+        or (l.memo = ${SETTLED_FX_MEMO} and j.type in ('container_reversal', 'reversal')
+            and (a.system_key = 'fx' or (l.currency = 'CNY' and l.native_amount = 0)))
+        or (l.memo = ${REVALUED_MEMO} and j.type not in ('payment', 'receipt')
+            and (a.system_key = 'fx' or l.native_amount is null or l.native_amount = 0 or (l.rate > 0 and abs(l.native_amount) / l.rate < 0.006)))
+      )`);
+}
+
+/** The labels of the lines the books write themselves (see LineKind). */
+const RESERVED_MEMOS = [COST_FX_MEMO, RESIDUE_MEMO, REVALUED_MEMO, SETTLED_FX_MEMO];
+
+/**
+ * Refuse a line memo typed as one of the books' own labels. Nothing goes by a memo any more (a line the
+ * books write has its kind), but the daybook and the statements would show the typed line as theirs.
+ * Whatever the case, accents or spacing.
+ */
+export function assertMemoNotReserved(memo: string | null | undefined, line: number): void {
+  if (!memo) return;
+  const fold = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[\s\u00a0]+/g, " ").replace(/[’`]/g, "'").trim().toLowerCase();
+  const typed = fold(memo);
+  if (!RESERVED_MEMOS.some((m) => fold(m) === typed)) return;
+  throw badRequest(
+    `Line ${line}: "${memo.trim()}" is the label of an entry the books make themselves. Write another note.`,
+    `Ligne ${line} : « ${memo.trim()} » est le libellé d'une écriture que la comptabilité passe elle-même. Écrivez une autre note.`,
+  );
+}
+
+/**
  * A reversal gives francs or yuan back at the dollars they were booked at. When a month-end revaluation
  * restated them in between, or the rate moved between the postings it undoes and those it leaves, a
  * balance can be left with no francs or yuan but some dollars. These lines move them to exchange
  * differences, as the next revaluation would have done. Only for balances of `keys` with no francs or
  * yuan once `pending` (the lines of the journal being posted, if any) is added (in that journal, off a
  * drawer, francs or yuan worth under half a cent count as none and are cleared with the dollars), and
- * nothing dated after `date`; and only the dollars exchange explains, counted since the balance last stood
- * at no francs or yuan, in the order posted (dollars left from before are not this posting's):
+ * nothing dated after `date` (yuan left at none whatever is dated after: see assertYuanInOrder); and only
+ * the dollars exchange explains, counted since the balance last stood at no francs or yuan, in the order
+ * posted (dollars left from before are not this posting's):
  * - those revaluations booked on it, net of the reversals that undid them;
  * - on a contact (or another account that is not money), what its own francs or yuan can be worth apart at
  *   the rates they were posted at: half of them at the lowest rate against half at the highest, plus half a
@@ -639,7 +744,7 @@ export async function revaluedDollarLines(tx: Tx, keys: RevaluedKey[], date: str
         native: journalLines.nativeAmount,
         usd: sql<string>`${journalLines.debit} - ${journalLines.credit}`,
         rate: journalLines.rate,
-        memo: journalLines.memo,
+        kind: journalLines.kind,
       })
       .from(journalLines)
       .innerJoin(journals, eq(journals.id, journalLines.journalId))
@@ -651,18 +756,19 @@ export async function revaluedDollarLines(tx: Tx, keys: RevaluedKey[], date: str
         ),
       )
       .orderBy(journals.id, journalLines.id);
-    if (rows.some((r) => r.date > date)) continue;
     const own = pending.filter((v) => keyOf(v) === keyOf(k));
+    // A yuan balance left at no yuan is cleared whatever is dated after: no yuan of a contact moves dated
+    // before their latest (see assertYuanInOrder), so what is dated later cannot be settled differently.
+    const noYuanLeft = k.currency === "CNY" && sum([...rows.map((r) => dec(r.native ?? 0)), ...own.map((v) => dec(v.nativeAmount ?? 0))]).isZero();
+    if (!noYuanLeft && rows.some((r) => r.date > date)) continue;
     // Every line, by journal in the order they were posted, the journal being posted last: a reversal
     // dated back before a payment it follows must not start the window after that payment.
     // A revaluation and the reversal that undid it (a month reopened) count as one, so closing and
     // reopening a month again and again cannot widen what revaluations explain.
-    // Only as a container's reversal books them, not a hand-typed memo.
     // A container's reversal takes them back, and undoing what paid or billed the yuan gives them back
-    // (see yuanTrueUpLines). Never a journal typed by hand.
-    const takenBack = (r: { type: string; memo: string | null }) => r.type !== "manual" && r.type !== "opening" && r.memo === SETTLED_FX_MEMO;
-    const posted = rows.map((r) => ({ group: r.journalId, origin: r.reverses ?? r.journalId, revaluation: r.type === "revaluation", cleared: r.memo === REVALUED_MEMO || takenBack(r), takenBack: takenBack(r), native: dec(r.native ?? 0), usd: dec(r.usd), rate: r.rate }));
-    const all = [...posted, ...own.map((v) => ({ group: 0, origin: 0, revaluation: false, cleared: v.memo === SETTLED_FX_MEMO, takenBack: v.memo === SETTLED_FX_MEMO, native: dec(v.nativeAmount ?? 0), usd: v.debit.minus(v.credit), rate: v.rate }))];
+    // (see yuanTrueUpLines): only the lines the books wrote as such (their kind), never a memo typed by hand.
+    const posted = rows.map((r) => ({ group: r.journalId, origin: r.reverses ?? r.journalId, revaluation: r.type === "revaluation", cleared: r.kind === "revalued" || r.kind === "settled_fx", takenBack: r.kind === "settled_fx", native: dec(r.native ?? 0), usd: dec(r.usd), rate: r.rate }));
+    const all = [...posted, ...own.map((v) => ({ group: 0, origin: 0, revaluation: false, cleared: v.kind === "settled_fx", takenBack: v.kind === "settled_fx", native: dec(v.nativeAmount ?? 0), usd: v.debit.minus(v.credit), rate: v.rate }))];
     const revaluedIn = (some: typeof all) => {
       const net = new Map<number, Decimal>();
       for (const r of some) if (r.revaluation) net.set(r.origin, (net.get(r.origin) ?? new Decimal(0)).plus(r.usd));
@@ -729,6 +835,7 @@ export async function revaluedDollarLines(tx: Tx, keys: RevaluedKey[], date: str
       nativeAmount: restated ? "0.00" : native.negated().toFixed(2),
       rate: dayRate ?? rate,
       memo: REVALUED_MEMO,
+      kind: "revalued",
     });
   }
   if (!lines.length) return [];
@@ -741,6 +848,7 @@ export async function revaluedDollarLines(tx: Tx, keys: RevaluedKey[], date: str
     nativeAmount: null,
     rate: null,
     memo: REVALUED_MEMO,
+    kind: "revalued",
   });
   return lines;
 }
@@ -873,14 +981,17 @@ class YuanPool {
   }
 }
 
-/** Lines moved by the takeback model, not by the yuan they settle (see yuanPool). */
-const POOL_SKIPPED_MEMOS = new Set([REVALUED_MEMO, RESIDUE_MEMO, SETTLED_FX_MEMO]);
+/** Lines the books write that move dollars on a supplier's yuan, not the yuan they settle (see yuanPool). */
+const POOL_SKIPPED_KINDS = new Set<string>(["revalued", "residue", "settled_fx"]);
+const poolSkipped = (l: { kind: string | null }) => !!l.kind && POOL_SKIPPED_KINDS.has(l.kind);
 
 /**
  * Replay a supplier's yuan on `payables` into a YuanPool, every journal in the order it was posted.
- * A payment's exchange difference is the one its journal booked when its only francs or yuan are this
- * supplier's (another balance's difference in the same journal cannot be told apart, so none is counted:
- * its yuan are claimed back at their book cost).
+ * A payment's exchange difference is the one its journal booked on this supplier's own yuan lines (each
+ * line keeps its own, so a voucher that also pays another supplier's yuan, or pays from a franc drawer,
+ * still counts this one's). A journal posted before lines kept theirs counts the one its journal booked
+ * when its only francs or yuan are this supplier's (another balance's difference in the same journal
+ * cannot be told apart, so none is counted: its yuan are claimed back at their book cost).
  */
 async function yuanPool(tx: Tx, payables: number, partyId: number) {
   const rows = await tx
@@ -893,26 +1004,41 @@ async function yuanPool(tx: Tx, payables: number, partyId: number) {
       native: journalLines.nativeAmount,
       usd: sql<string>`${journalLines.debit} - ${journalLines.credit}`,
       rate: journalLines.rate,
-      memo: journalLines.memo,
+      kind: journalLines.kind,
+      fxUsd: journalLines.fxUsd,
     })
     .from(journalLines)
     .innerJoin(journals, eq(journals.id, journalLines.journalId))
     .where(and(eq(journalLines.accountId, payables), eq(journalLines.partyId, partyId), eq(journalLines.currency, "CNY")))
     .orderBy(journals.id, journalLines.id);
-  const ids = Array.from(new Set(rows.map((r) => r.journalId)));
-  const others = ids.length
-    ? await tx
-        .select({ journalId: journalLines.journalId, accountId: journalLines.accountId, partyId: journalLines.partyId, currency: journalLines.currency, usd: sql<string>`${journalLines.credit} - ${journalLines.debit}`, memo: journalLines.memo })
-        .from(journalLines)
-        .where(inArray(journalLines.journalId, ids))
-    : [];
+  // The lines of each journal, gathered once (in posting order, as the rows come).
+  const byJournal = new Map<number, typeof rows>();
+  for (const r of rows) {
+    const list = byJournal.get(r.journalId);
+    if (list) list.push(r);
+    else byJournal.set(r.journalId, [r]);
+  }
+  // The other lines only of the journals posted before lines kept their own exchange difference.
+  const legacy = [...byJournal].filter(([, own]) => own.every((r) => r.fxUsd == null)).map(([id]) => id);
+  const others = new Map<number, { accountId: number; partyId: number | null; currency: string; usd: string; kind: string | null }[]>();
+  for (let i = 0; i < legacy.length; i += 5000) {
+    const found = await tx
+      .select({ journalId: journalLines.journalId, accountId: journalLines.accountId, partyId: journalLines.partyId, currency: journalLines.currency, usd: sql<string>`${journalLines.credit} - ${journalLines.debit}`, kind: journalLines.kind })
+      .from(journalLines)
+      .where(inArray(journalLines.journalId, legacy.slice(i, i + 5000)));
+    for (const l of found) {
+      const list = others.get(l.journalId);
+      if (list) list.push(l);
+      else others.set(l.journalId, [l]);
+    }
+  }
   const fx = await systemAccountId(tx, SYSTEM_ACCOUNTS.fx);
   const pool = new YuanPool();
   const refunds = new Set<number>(); // receipts: the supplier's refunds of yuan they owed back
   const kinds = new Map<number, { kind: "lot" | "bill"; native: Decimal; usd: Decimal; rate: string }>();
   const liveBill = new Map<number, number>(); // container -> the journal that billed it
-  for (const id of ids) {
-    const own = rows.filter((r) => r.journalId === id && !POOL_SKIPPED_MEMOS.has(r.memo ?? ""));
+  for (const [id, lines] of byJournal) {
+    const own = lines.filter((r) => !poolSkipped(r));
     if (!own.length) continue;
     const j = own[0];
     const native = sum(own.map((r) => dec(r.native ?? 0)));
@@ -934,8 +1060,14 @@ async function yuanPool(tx: Tx, payables: number, partyId: number) {
       continue;
     }
     if (native.isZero()) continue;
-    const clean = !others.some((l) => l.journalId === id && l.currency !== "USD" && !(l.accountId === payables && l.partyId === partyId && l.currency === "CNY"));
-    const gain = clean ? sum(others.filter((l) => l.journalId === id && l.accountId === fx && l.memo === COST_FX_MEMO).map((l) => dec(l.usd))) : new Decimal(0);
+    const kept = own.some((r) => r.fxUsd != null);
+    const rest = others.get(id) ?? [];
+    const clean = kept || !rest.some((l) => l.currency !== "USD" && !(l.accountId === payables && l.partyId === partyId && l.currency === "CNY"));
+    const gain = kept
+      ? sum(own.map((r) => dec(r.fxUsd ?? 0)))
+      : clean
+        ? sum(rest.filter((l) => l.accountId === fx && l.kind === "cost_fx").map((l) => dec(l.usd)))
+        : new Decimal(0);
     const rate = own.find((r) => r.rate && dec(r.rate).gt(0))?.rate;
     if (!rate) continue;
     if (native.gt(0)) {
@@ -957,7 +1089,7 @@ async function yuanPool(tx: Tx, payables: number, partyId: number) {
 async function yuanSuppliersOf(tx: Tx, lines: (typeof journalLines.$inferSelect)[]) {
   const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
   const suppliers = Array.from(
-    new Set(lines.filter((l) => l.accountId === payables && l.partyId && l.currency === "CNY" && !dec(l.nativeAmount ?? 0).isZero() && !POOL_SKIPPED_MEMOS.has(l.memo ?? "")).map((l) => l.partyId!)),
+    new Set(lines.filter((l) => l.accountId === payables && l.partyId && l.currency === "CNY" && !dec(l.nativeAmount ?? 0).isZero() && !poolSkipped(l)).map((l) => l.partyId!)),
   );
   return { payables, suppliers };
 }
@@ -971,9 +1103,11 @@ async function yuanSuppliersOf(tx: Tx, lines: (typeof journalLines.$inferSelect)
  */
 export async function assertUndoKeepsRefunds(tx: Tx, journalId: number): Promise<void> {
   const lines = await tx.select().from(journalLines).where(eq(journalLines.journalId, journalId));
+  // Every contact the undoing writes to, all at once and in id order (see lockBalances): the reversal
+  // takes them again, and a supplier's lock alone first would take a lower one after it.
+  await lockBalances(tx, { parties: lines.map((l) => l.partyId) });
   const { payables, suppliers } = await yuanSuppliersOf(tx, lines);
-  if (!suppliers.length) return;
-  await lockBalances(tx, { parties: suppliers });
+  await assertUndoKeepsAdvanceRefunds(tx, journalId, lines, payables);
   for (const partyId of suppliers) {
     const { pool, kinds, refunds } = await yuanPool(tx, payables, partyId);
     if (kinds.get(journalId)?.kind !== "lot") continue;
@@ -983,6 +1117,49 @@ export async function assertUndoKeepsRefunds(tx: Tx, journalId: number): Promise
       `The supplier has refunded ${refunded.toFixed(2)} CNY of this payment's yuan since a container was undone. Undo that refund first (or offload the container again), then this payment.`,
       `Le fournisseur a remboursé ${frMoney(refunded, "CNY")} des yuans de ce paiement depuis l'annulation d'un conteneur. Annulez d'abord ce remboursement (ou déchargez de nouveau le conteneur), puis ce paiement.`,
     );
+  }
+}
+
+/**
+ * Refuse undoing a dollar advance to a supplier, agent or employee (dollars paid that they owe back) once
+ * a receipt from them since was taken off it: a receipt settles the dollars they owe first (see
+ * payablesReceiptLines), so with the advance undone the shop would owe them those dollars back, while the
+ * yuan or francs the receipt settled beyond them stay settled. The receipt is undone first, then the
+ * advance. Counted in the order they were posted: a receipt meets the advance only while the advance
+ * still stands.
+ */
+async function assertUndoKeepsAdvanceRefunds(tx: Tx, journalId: number, lines: (typeof journalLines.$inferSelect)[], payables: number): Promise<void> {
+  const own = new Map<number, Decimal>();
+  for (const l of lines) {
+    if (l.accountId !== payables || !l.partyId || l.currency !== "USD") continue;
+    own.set(l.partyId, (own.get(l.partyId) ?? new Decimal(0)).plus(dec(l.debit)).minus(dec(l.credit)));
+  }
+  for (const [partyId, paid] of own) {
+    if (!paid.gt(0)) continue;
+    const rows = await tx
+      .select({ journalId: journalLines.journalId, number: journals.number, type: journals.type, reversedBy: journals.reversedByJournalId, usd: sql<string>`sum(${journalLines.debit} - ${journalLines.credit})` })
+      .from(journalLines)
+      .innerJoin(journals, eq(journals.id, journalLines.journalId))
+      .where(and(eq(journalLines.accountId, payables), eq(journalLines.partyId, partyId), eq(journalLines.currency, "USD")))
+      .groupBy(journalLines.journalId, journals.number, journals.type, journals.reversedByJournalId)
+      .orderBy(journalLines.journalId);
+    const before = sum(rows.filter((r) => r.journalId < journalId).map((r) => dec(r.usd)));
+    // The part of the payment that went beyond what the shop owed them: their advance.
+    if (!Decimal.max(before.plus(paid), 0).minus(Decimal.max(before, 0)).gt(0)) continue;
+    let balance = before.plus(paid);
+    for (const r of rows.filter((x) => x.journalId > journalId)) {
+      const usd = dec(r.usd);
+      // What the receipt took off the dollars they owed beyond what it would have without this advance.
+      const covered = (b: Decimal) => Decimal.min(usd.abs(), Decimal.max(b, 0));
+      const taken = covered(balance).minus(covered(balance.minus(paid)));
+      if (r.type === "receipt" && !r.reversedBy && usd.isNegative() && taken.gt(0)) {
+        throw conflict(
+          `A receipt since (${r.number}) took ${taken.toFixed(2)} $ off this advance. Undo that receipt first, then this advance.`,
+          `Un encaissement depuis (${r.number}) a déjà soldé ${frMoney(taken)} de cette avance. Annulez d'abord ce remboursement, puis cette avance.`,
+        );
+      }
+      balance = balance.plus(usd);
+    }
   }
 }
 
@@ -1038,8 +1215,8 @@ export async function yuanTrueUpLines(
   if ((native.gt(0) && !usd.gt(0)) || (native.lt(0) && !usd.lt(0))) return [];
   const fx = await systemAccountId(tx, SYSTEM_ACCOUNTS.fx);
   return [
-    { accountId: payables, partyId, debit: extra.isPositive() ? extra : 0, credit: extra.isNegative() ? extra.abs() : 0, currency: "CNY", nativeAmount: "0.00", rate, memo: SETTLED_FX_MEMO },
-    { accountId: fx, debit: extra.isNegative() ? extra.abs() : 0, credit: extra.isPositive() ? extra : 0, memo: SETTLED_FX_MEMO },
+    { accountId: payables, partyId, debit: extra.isPositive() ? extra : 0, credit: extra.isNegative() ? extra.abs() : 0, currency: "CNY", nativeAmount: "0.00", rate, memo: SETTLED_FX_MEMO, kind: "settled_fx" },
+    { accountId: fx, debit: extra.isNegative() ? extra.abs() : 0, credit: extra.isPositive() ? extra : 0, memo: SETTLED_FX_MEMO, kind: "settled_fx" },
   ];
 }
 
@@ -1063,8 +1240,9 @@ export async function reverseJournal(
   // with them (see yuanTrueUpLines). A period close's own reversals move no yuan.
   const trueUp: PostLine[] = [];
   if (!opts.skipPeriodCheck) {
+    // Every contact it writes to, in id order, before the suppliers' yuan are read (see lockBalances).
+    await lockBalances(tx, { parties: lines.map((l) => l.partyId) });
     const { payables, suppliers } = await yuanSuppliersOf(tx, lines);
-    if (suppliers.length) await lockBalances(tx, { parties: suppliers });
     for (const partyId of suppliers) trueUp.push(...(await yuanTrueUpLines(tx, { payables, partyId, undo: journalId })));
   }
 
@@ -1088,6 +1266,8 @@ export async function reverseJournal(
       rate: l.rate,
       currency: l.currency === "USD" ? null : (l.currency as ForeignCurrency),
       memo: l.memo,
+      kind: l.kind,
+      fxUsd: l.fxUsd != null ? dec(l.fxUsd).negated() : null,
     })).concat(trueUp),
   });
   if (!reversalId) throw new AppError(500, "Nothing to reverse", "LEDGER", "Rien à contre-passer");

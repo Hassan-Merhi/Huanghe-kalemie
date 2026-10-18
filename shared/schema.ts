@@ -36,6 +36,13 @@ export const CURRENCIES = ["USD", "CDF"] as const;
 export type Currency = (typeof CURRENCIES)[number];
 /** Journal lines also carry yuan: a supplier's balance from a CNY container invoice. */
 export type LineCurrency = Currency | "CNY";
+/**
+ * Lines the books write themselves: the exchange difference of foreign units taken out at average cost,
+ * a residue under half a cent cleared, the dollars a reversal moves to exchange differences, and a yuan
+ * takeback (or its giving back).
+ */
+export const LINE_KINDS = ["cost_fx", "residue", "revalued", "settled_fx"] as const;
+export type LineKind = (typeof LINE_KINDS)[number];
 
 // ---------------------------------------------------------------- Users & settings
 
@@ -371,6 +378,17 @@ export const journalLines = pgTable(
     nativeAmount: money("native_amount"),
     rate: numeric("rate", { precision: 14, scale: 4 }),
     memo: text("memo"),
+    /**
+     * Set on the lines the books write themselves (see LineKind in the ledger), never by a person: the
+     * memo of such a line is only its label, so a hand-typed copy of it is an ordinary line.
+     */
+    kind: varchar("kind", { length: 16 }).$type<LineKind>(),
+    /**
+     * On a franc or yuan line valued at its balance's average cost: what that moved to exchange
+     * differences (its debit minus credit as booked, less as given); on a reversal's copy of it, the
+     * opposite. Null on lines that were not.
+     */
+    fxUsd: money("fx_usd"),
   },
   (t) => ({
     journalIdx: index("journal_lines_journal_idx").on(t.journalId),
