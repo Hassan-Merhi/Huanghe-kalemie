@@ -150,10 +150,12 @@ export interface ImportStockRow extends ImportItemRow {
 /**
  * Create the items in the file and, for rows with a quantity, book them as opening stock
  * (Dr inventory, Cr opening balances) in one stock adjustment.
+ * A quantity on an item that existed before this import is refused unless the caller says
+ * `addToExisting`: importing the same file twice must not count its opening stock twice.
  */
 export async function importItems(
   tx: Tx,
-  input: { date: string; locationId: number; updatePrices?: boolean; rows: ImportStockRow[] },
+  input: { date: string; locationId: number; updatePrices?: boolean; addToExisting?: boolean; rows: ImportStockRow[] },
   userId: number,
 ) {
   if (!input.rows.length) throw badRequest("The file has no rows", "Le fichier ne contient aucune ligne");
@@ -162,17 +164,25 @@ export async function importItems(
   const caches = await loadCaches(tx);
   const results: RowResult[] = [];
   const stockLines: { variantId: number; qtyChange: string; unitCost: string | null }[] = [];
+  const createdHere = new Set<number>();
   for (const [i, r] of input.rows.entries()) {
     const n = i + 2; // header is row 1
     try {
       const res = await resolveRow(tx, caches, r, n, true);
       results.push(res);
+      if (res.status !== "existing") createdHere.add(res.variantId!);
       if (res.status === "existing" && input.updatePrices && r.sellPrice != null && r.sellPrice !== "") {
         await tx.update(variants).set({ sellPrice: cents(r.sellPrice).toFixed(2) }).where(eq(variants.id, res.variantId!));
       }
       const q = r.qty != null && r.qty !== "" ? dec(r.qty, `row ${n} quantity`) : null;
       if (q && !q.isZero()) {
         if (q.isNegative()) throw badRequest(`Row ${n}: the quantity cannot be negative`, `Ligne ${n} : la quantité ne peut pas être négative`);
+        if (!input.addToExisting && !createdHere.has(res.variantId!)) {
+          throw conflict(
+            `Row ${n}: ${res.sku} already exists. Its quantity would be added to the stock already there; confirm adding it, or remove the quantity.`,
+            `Ligne ${n} : ${res.sku} existe déjà. Sa quantité s'ajouterait au stock existant ; confirmez l'ajout, ou retirez la quantité.`,
+          );
+        }
         const cost = r.unitCost != null && r.unitCost !== "" ? dec(r.unitCost, `row ${n} cost`) : null;
         if (!cost) throw badRequest(`Row ${n}: give the cost per unit for the opening quantity`, `Ligne ${n} : indiquez le coût unitaire de la quantité d'ouverture`);
         stockLines.push({ variantId: res.variantId!, qtyChange: q.toString(), unitCost: cost.toString() });

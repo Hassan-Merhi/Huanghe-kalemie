@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, SubmitButton, unclearAmount } from "@/components/common";
-import { MoneyAccountSelect, PARTY_LABELS, RateInput, useAccounts, useRate, useRateField } from "@/components/pickers";
+import { MoneyAccountSelect, PARTY_LABELS, RateInput, useAccounts, useRate, useRateField, useRateTooFar } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
@@ -268,6 +268,7 @@ function PaymentDialog({ party, balance, foreign: foreignNow, rows, onClose }: {
   const [amount, setAmount] = useState("");
   const [memo, setMemo] = useState("");
   const { rate, setRate } = useRateField(day);
+  const rateFar = useRateTooFar(day, rate);
   const isCdf = account?.currency === "CDF";
   const usdEquivalent = isCdf && d(rate).gt(0) && !francDecimalsError(t, "CDF", amount) ? d(amount).dividedBy(d(rate)).toFixed(2) : null;
   const mutation = useApiMutation("POST", isCustomer ? "/api/money/customer-receipt" : "/api/money/party-payment", {
@@ -459,6 +460,8 @@ function PaymentDialog({ party, balance, foreign: foreignNow, rows, onClose }: {
       ? t("Enter an amount above zero", "Saisissez un montant supérieur à zéro")
       : isCdf && !d(rate).gt(0)
         ? t("Enter the exchange rate", "Saisissez le taux de change")
+        : isCdf && rateFar
+          ? rateFar
         : cnyOwed && settleCny && !d(settleCny).lte(cnyOwed)
           ? t("The yuan settled are more than what is owed", "Les yuans réglés dépassent ce qui est dû")
           : yuanMismatch

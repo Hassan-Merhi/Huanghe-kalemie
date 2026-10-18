@@ -479,7 +479,7 @@ export function registerErpRoutes(
     res.json(await db.transaction((tx) => imports.previewItems(tx, body.rows)));
   }));
   app.post("/api/import/items", requireRole(...STAFF), asyncHandler(async (req, res) => {
-    const body = z.object({ date: isoDate, locationId: id, updatePrices: z.boolean().optional(), rows: z.array(stockRow).min(1).max(5000) }).parse(req.body);
+    const body = z.object({ date: isoDate, locationId: id, updatePrices: z.boolean().optional(), addToExisting: z.boolean().optional(), rows: z.array(stockRow).min(1).max(5000) }).parse(req.body);
     // Quantities in the file become opening stock (Cr opening balances), which only the owner may enter.
     if (req.user!.role !== "owner" && body.rows.some((r) => r.qty && !dec(r.qty).isZero())) {
       throw forbidden("Only the owner can import opening stock. Remove the quantities to import the items only.", "Seul le propriétaire peut importer du stock d'ouverture. Retirez les quantités pour importer seulement les articles.");
