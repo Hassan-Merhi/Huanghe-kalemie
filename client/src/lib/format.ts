@@ -220,11 +220,13 @@ export function qtyTotal(rows: { qty: unknown; unit?: string | null }[]): string
   return `${qty(total.toNumber())}${unit ? ` ${unit}` : ""}`;
 }
 
-/** Unit costs keep more precision. */
+/**
+ * Unit costs keep more precision, by one rule whatever their size: cents always, and up to four decimals
+ * when the cost is not whole cents, trailing zeros trimmed (4,125 $ and 0,125 $; 12,00 $ and 0,50 $).
+ */
 export function unitCost(value: unknown): string {
   const n = num(value);
-  const decimals = Math.abs(n) < 1 && n !== 0 ? 4 : 2;
-  return withDollar(n, nf(decimals, decimals).format(Math.abs(n)));
+  return withDollar(n, nf(2, 4).format(Math.abs(n)));
 }
 
 export function date(value: string | null | undefined): string {

@@ -49,6 +49,8 @@ interface Daily {
   date: string;
   count: number;
   total: string;
+  netCount?: number;
+  netTotal?: string;
   credit: string;
   /** The part of that credit a customer's avoir covered: nothing new is owed for it. */
   creditOnAvoirUsd?: string;
@@ -71,7 +73,7 @@ function DailySummary() {
       <CardContent className="p-4">
         <div className="flex flex-wrap items-baseline justify-between gap-2">
           <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">{t("Today", "Aujourd'hui")} · {fmtDate(data?.date ?? today)}</p>
-          {data && <p className="text-sm text-muted-foreground">{count(t, data.count, ["sale", "sales"], ["vente", "ventes"])}</p>}
+          {data && <p className="text-sm text-muted-foreground">{count(t, data.netCount ?? data.count, ["sale", "sales"], ["vente", "ventes"])}</p>}
         </div>
         {q.error ? (
           <ErrorText error={q.error} />
@@ -80,8 +82,8 @@ function DailySummary() {
         ) : (
           <div className="mt-2 grid gap-4 sm:grid-cols-[auto_1fr]">
             <div>
-              {/* Sold today, less what was cancelled and what was brought back today. */}
-              <p className="text-3xl font-semibold tabular">{usd(d(data.total).minus(data.voidsTotal).minus(d(data.returnsTotal)).toFixed(2))}</p>
+              {/* Today's sales still standing, less what was brought back today: the dashboard's and the daily report's figure. */}
+              <p className="text-3xl font-semibold tabular">{usd(data.netTotal ?? d(data.total).minus(data.voidsTotal).minus(d(data.returnsTotal)).toFixed(2))}</p>
               {data.voidsCount > 0 && (
                 <p className="text-sm text-muted-foreground">
                   {count(t, data.voidsCount, ["sale cancelled", "sales cancelled"], ["vente annulée", "ventes annulées"])} (−{usd(data.voidsTotal)})
@@ -345,7 +347,8 @@ export default function Sales() {
 
       {live.length > 0 && (
         <div className={cn("mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3", showCost ? "xl:grid-cols-5" : "xl:grid-cols-4")}>
-          <StatCard label={t("Sales", "Ventes")} value={live.length} sub={`${fmtQty(totals.items.toString())} ${totals.items.eq(1) ? t("item", "article") : t("items", "articles")}`} />
+          {/* Lines, not pieces: the Qté total under the table is the quantity (115), these the rows of the sales (52). */}
+          <StatCard label={t("Sales", "Ventes")} value={live.length} sub={`${fmtQty(totals.items.toString())} ${totals.items.eq(1) ? t("line", "ligne") : t("lines", "lignes")}`} />
           <StatCard label={t("Paid", "Payé")} value={usd(totals.paid.toFixed(2))} sub={totals.refunded.gt(0) ? `${t("refunded", "remboursé")} −${usd(totals.refunded.toFixed(2))}` : undefined} />
           <StatCard label={t("Total", "Total")} value={usd(totals.total.toFixed(2))} sub={totals.returned.gt(0) ? `${t("returns", "retours")} −${usd(totals.returned.toFixed(2))}` : undefined} />
           {/* Credit given on these sales (less returns), not what is still owed: payments made later are on each

@@ -16,7 +16,7 @@ import { VariantSearch } from "@/components/pickers";
 import { useAuth } from "@/lib/auth";
 import { useI18n, useT, count } from "@/lib/i18n";
 import { d, date as fmtDate, money, qty, qtyTotal, todayLocal, unitCost, usd, variantText } from "@/lib/format";
-import { qtyWithUnit } from "@/lib/units";
+import { qtyWithUnit, unitKey } from "@/lib/units";
 import { downloadCsv } from "@/lib/sheets";
 import type { VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -55,9 +55,16 @@ interface OnTheWayRow {
   attributes: Record<string, string>;
   productName: string;
   categoryName: string | null;
+  unit?: string | null;
   quantity: string;
   unitPrice: string;
   fobUsd: string;
+}
+
+/** What lines on the way add up to, with their unit ("103 pièces"), or null when units differ (litres and pieces). */
+function onTheWayQty(t: (en: string, fr: string) => string, rows: OnTheWayRow[]): string | null {
+  if (rows.length === 0 || new Set(rows.map((r) => unitKey(r.unit))).size > 1) return null;
+  return qtyWithUnit(t, rows.reduce((s, r) => s.plus(r.quantity), d(0)).toString(), rows[0].unit);
 }
 
 interface AsOfData {
@@ -352,7 +359,7 @@ function OnTheWayTab() {
     })
     .filter((g) => g.lines.length > 0);
 
-  const kpiQty = all.reduce((s, r) => s.plus(r.quantity), d(0));
+  const kpiQty = onTheWayQty(t, all);
   const kpiFob = all.reduce((s, r) => s.plus(r.fobUsd), d(0));
   const kpiItems = new Set(all.map((r) => r.variantId)).size;
 
@@ -372,7 +379,7 @@ function OnTheWayTab() {
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard label={t("Containers", "Conteneurs")} value={groups.length} />
         <StatCard label={t("Items", "Articles")} value={kpiItems} />
-        <StatCard label={t("Quantity", "Quantité")} value={qty(kpiQty.toString())} />
+        <StatCard label={t("Quantity", "Quantité")} value={kpiQty ?? "—"} sub={kpiQty ? undefined : t("several units", "plusieurs unités")} />
         <StatCard label={t("FOB value", "Valeur FOB")} value={usd(kpiFob.toFixed(2))} sub="USD" />
       </div>
       <div className="flex flex-wrap items-center gap-2">
@@ -387,7 +394,7 @@ function OnTheWayTab() {
         <div className="space-y-3">
           {shown.map(({ head, lines }) => {
             const isOpen = open.has(head.containerId) || !!search.trim();
-            const gQty = lines.reduce((s, l) => s.plus(l.quantity), d(0));
+            const gQty = onTheWayQty(t, lines);
             const gFob = lines.reduce((s, l) => s.plus(l.fobUsd), d(0));
             return (
               <Card key={head.containerId}>
@@ -408,7 +415,7 @@ function OnTheWayTab() {
                   </span>
                   <span className="text-right text-sm">
                     <Num className="block font-semibold">{usd(gFob.toFixed(2))}</Num>
-                    <span className="block text-xs text-muted-foreground">{count(t, lines.length, ["line", "lines"], ["ligne", "lignes"])} · {qty(gQty.toString())} {t("pcs", "pcs")}</span>
+                    <span className="block text-xs text-muted-foreground">{count(t, lines.length, ["line", "lines"], ["ligne", "lignes"])}{gQty ? ` · ${gQty}` : ""}</span>
                   </span>
                 </button>
                 {isOpen && (
@@ -431,7 +438,7 @@ function OnTheWayTab() {
                               {l.categoryName && <span className="block text-xs text-muted-foreground">{l.categoryName}</span>}
                             </TableCell>
                             <TableCell className="hidden font-mono text-xs sm:table-cell">{l.sku}</TableCell>
-                            <TableCell className="text-right"><Num>{qty(l.quantity)}</Num></TableCell>
+                            <TableCell className="text-right"><Num>{qtyWithUnit(t, l.quantity, l.unit)}</Num></TableCell>
                             <TableCell className="hidden text-right sm:table-cell"><Num>{money(l.unitPrice, l.currency)}{l.currency !== "USD" && l.currency !== "CDF" ? ` ${l.currency}` : ""}</Num></TableCell>
                             <TableCell className="text-right"><Num>{usd(l.fobUsd)}</Num></TableCell>
                           </TableRow>

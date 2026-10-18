@@ -131,6 +131,7 @@ export async function onTheWay(tx: Tx) {
       attributes: variants.attributes,
       productName: products.name,
       categoryName: categories.name,
+      unit: products.unit,
       quantity: containerLines.quantity,
       unitPrice: containerLines.unitPrice,
     })

@@ -536,15 +536,29 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
             <AlertDialogTitle>
               {checks.unusual.length || !checks.overDebt.length
                 ? t("An unusual amount?", "Un montant inhabituel\u00a0?")
-                : kind === "payment"
-                  ? t("Pay more than is owed?", "Payer plus que ce qui est dû\u00a0?")
-                  : t("Receive more than is owed?", "Recevoir plus que ce qui est dû\u00a0?")}
+                : checks.overGrows === checks.overDebt.length
+                  // Nothing is over what is owed: the money goes the way that makes the contact's debt (or ours) grow.
+                  ? kind === "payment"
+                    ? checks.overGrowsCustomers
+                      ? t("Pay money to a customer who already owes?", "Verser de l'argent à un client qui doit déjà\u00a0?")
+                      : t("Pay money to a contact who already owes us?", "Verser de l'argent à un contact qui nous doit déjà\u00a0?")
+                    : t("Receive money from a contact we already owe?", "Recevoir de l'argent d'un contact à qui nous devons déjà\u00a0?")
+                  : kind === "payment"
+                    ? t("Pay more than is owed?", "Payer plus que ce qui est dû\u00a0?")
+                    : t("Receive more than is owed?", "Recevoir plus que ce qui est dû\u00a0?")}
             </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2">
                 {unusual.map((u) => <p key={u}>{u}.</p>)}
-                {checks.overDebt.length > 0 && (
+                {checks.overDebt.length > checks.overGrows && (
                   <p>{t("What is over stays on the contact's account and is deducted next time.", "Le surplus reste au compte du contact et sera déduit la prochaine fois.")}</p>
+                )}
+                {checks.overGrows > 0 && (
+                  <p>
+                    {kind === "payment"
+                      ? t("This increases what they owe us.", "Cela augmente sa dette envers nous.")
+                      : t("This increases what we owe them.", "Cela augmente notre dette envers lui.")}
+                  </p>
                 )}
                 <p>{t("Check for an extra zero before saving.", "Vérifiez qu'il n'y a pas un zéro de trop avant d'enregistrer.")}</p>
                 {confirmUnusual === "draft" && (

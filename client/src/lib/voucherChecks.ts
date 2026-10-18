@@ -22,7 +22,8 @@ const isAmount = (s: string) => /^\d+(\.\d+)?$/.test(s.trim());
  * - `unusual`: an account line far above what that account was paid in the past year ("Loyer" 14 000 $ when it
  *   was 1 400 $), or a payment taking most of the drawer at once;
  * - `overDebt`: a contact line for more than is owed, which becomes an advance or credit (the contact page's
- *   "Payer plus que ce qui est dû ?");
+ *   "Payer plus que ce qui est dû ?"), or paid to a contact who already owes the other way, whose debt it adds to
+ *   (`overGrows` counts those lines);
  * - `short`: a payment the drawer cannot cover (the server refuses it).
  * They are questions, not refusals: a deliberate advance is still saved once confirmed.
  */
@@ -102,6 +103,10 @@ export function useVoucherChecks(input: { kind: string; day: string; accountId: 
   const byParty = new Map<number, Decimal>();
   for (const l of lines) if (l.partyId) byParty.set(l.partyId, (byParty.get(l.partyId) ?? d(0)).plus(d(l.amount).toDecimalPlaces(2)));
   const overDebt: string[] = [];
+  // Over-debt lines whose contact already owes the other way (a customer who owes us paid money): nothing is
+  // "deducted next time", the debt grows. The confirmation's title and note say which.
+  let overGrows = 0;
+  let growsOnlyCustomers = true;
   const cnyRate = dayRate?.cnyPerUsd && d(dayRate.cnyPerUsd).gt(0) ? d(dayRate.cnyPerUsd) : null;
   if (kind && enabled && account && (!isCdf || rate.gt(0))) {
     for (const [id, amount] of Array.from(byParty)) {
@@ -132,8 +137,19 @@ export function useVoucherChecks(input: { kind: string; day: string; accountId: 
       const booked = Decimal.max(kind === "receipt" ? d(p.balance) : d(p.balance).negated(), 0);
       const atRate = split.some((x) => x.kind === "cdf" || x.kind === "cny") && !owedUsd.toDecimalPlaces(2).eq(booked.toDecimalPlaces(2));
       const owedText = `${usd(owedUsd.toFixed(2))}${atRate ? t(" at today's rate", " au taux du jour") : ""}`;
+      // What they already owe the other way: owed by them on a payment, owed to them on a receipt.
+      const against = some ? d(0) : Decimal.max(kind === "payment" ? d(p.balance) : d(p.balance).negated(), 0);
+      if (against.gt(0)) {
+        overGrows++;
+        if (!customer) growsOnlyCustomers = false;
+      }
+      const already = usd(against.toFixed(2));
       overDebt.push(
-        kind === "receipt"
+        against.gt(0)
+          ? kind === "payment"
+            ? t(`We pay ${paid} to ${p.name}; they already owe us ${already}: all of it adds to their debt`, `Nous versons ${paid} à ${p.name}\u00a0; il nous doit déjà ${already}\u00a0: tout s'ajoute à sa dette`)
+            : t(`${p.name} pays ${paid}; we already owe them ${already}: all of it adds to what we owe them`, `${p.name} verse ${paid}\u00a0; nous lui devons déjà ${already}\u00a0: tout s'ajoute à notre dette envers lui`)
+          : kind === "receipt"
           ? customer
             ? some
               ? t(`${p.name} pays ${paid}; they owe ${owedText}: ${over} will become credit for them`, `${p.name} paie ${paid} ; il doit ${owedText} : ${over} deviendront un avoir`)
@@ -158,5 +174,5 @@ export function useVoucherChecks(input: { kind: string; day: string; accountId: 
   const others = input.lines.filter((l) => l.partyId || l.accountId).length - 1;
   const fallbackMemo = firstName ? `${firstName}${others > 0 ? ` + ${others} ${t(others > 1 ? "others" : "other", others > 1 ? "autres" : "autre")}` : ""}` : null;
 
-  return { unusual, overDebt, short, partyOf, settleAll, total, currency, account, fallbackMemo };
+  return { unusual, overDebt, overGrows, overGrowsCustomers: overGrows > 0 && growsOnlyCustomers, short, partyOf, settleAll, total, currency, account, fallbackMemo };
 }

@@ -76,7 +76,12 @@ async function insertVariant(tx: Tx, productId: number, v: VariantInput) {
   return row;
 }
 
-export async function createProduct(tx: Tx, input: ProductInput & { variants: VariantInput[] }) {
+/**
+ * A blank brand is "Huanghe" when a new item is typed on the item form (it says so); editing keeps a blank one
+ * blank (updateProduct). The stock import passes
+ * `defaultBrand: ""` so a sheet's empty "Marque" stays empty rather than reading "Huanghe · litres".
+ */
+export async function createProduct(tx: Tx, input: ProductInput & { variants: VariantInput[] }, opts: { defaultBrand?: string } = {}) {
   if (!input.name.trim()) throw badRequest("Name is required", "Le nom est obligatoire");
   if (input.variants.length === 0) throw badRequest("Add at least one variant (use one with no size if the item has none)", "Ajoutez au moins une variante (une sans taille si l'article n'en a pas)");
   if (input.categoryId) {
@@ -88,7 +93,7 @@ export async function createProduct(tx: Tx, input: ProductInput & { variants: Va
     .values({
       name: input.name.trim(),
       categoryId: input.categoryId ?? null,
-      brand: input.brand?.trim() || "Huanghe",
+      brand: input.brand?.trim() || (opts.defaultBrand ?? "Huanghe"),
       unit: input.unit?.trim() || "pcs",
       description: input.description ?? null,
       tracksSerials: input.tracksSerials ?? false,
@@ -145,7 +150,8 @@ export async function updateProduct(tx: Tx, id: number, input: Partial<ProductIn
     .set({
       ...(input.name !== undefined && { name: input.name.trim() }),
       ...(input.categoryId !== undefined && { categoryId: input.categoryId }),
-      ...(input.brand !== undefined && { brand: input.brand?.trim() || "Huanghe" }),
+      // Emptied (or left blank) on the edit form, a brand stays empty: only a new item from the form is "Huanghe".
+      ...(input.brand !== undefined && { brand: input.brand?.trim() ?? "" }),
       ...(input.unit !== undefined && { unit: input.unit?.trim() || "pcs" }),
       ...(input.description !== undefined && { description: input.description }),
       ...(input.tracksSerials !== undefined && { tracksSerials: input.tracksSerials }),
