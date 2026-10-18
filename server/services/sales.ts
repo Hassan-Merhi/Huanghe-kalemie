@@ -368,10 +368,11 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
  * "Payé" on the sale page and the Sales list: the cash the shop really kept, the payments at their rates less
  * the refunds at theirs. The booked `paidUsd` leaves out the till's franc rounding ("Arrondi FC", + when the
  * shop kept a few cents), so it is added back; then Payé − Total is the "Arrondi FC" shown beside it.
- * A cancelled sale keeps its booked figure.
+ * `saleFcRoundingUsd` is the rounding on the sale's own journal (not its cancellation's). A cancelled sale shows
+ * what its receipt said was kept (26,99 $ for 27 $ paid in francs, 16 FC short), all of it given back.
  */
 export function paidKept(sale: { status: string; paidUsd: string }, saleFcRoundingUsd: DecimalInput | null, refundedUsd: DecimalInput | null): string {
-  if (sale.status === "voided") return dec(sale.paidUsd).toFixed(2);
+  if (sale.status === "voided") return dec(sale.paidUsd).plus(saleFcRoundingUsd ?? 0).toFixed(2);
   return dec(sale.paidUsd).plus(saleFcRoundingUsd ?? 0).minus(refundedUsd ?? 0).toFixed(2);
 }
 
@@ -503,6 +504,8 @@ export async function getSale(tx: Tx, id: number) {
         .where(and(eq(journalLines.accountId, fx), eq(journalLines.memo, "Arrondi FC"), inArray(journalLines.journalId, [...tillJournals, ...returnRows.map((r) => r.journalId).filter((x): x is number => !!x)])))
     : [];
   const saleFcRounding = sum(roundingRows.filter((r) => tillJournals.includes(r.journalId)).map((r) => r.usd));
+  // The sale's own journal alone, before a cancellation took it back: what "Payé" kept (see paidKept).
+  const tillFcRounding = sum(roundingRows.filter((r) => r.journalId === sale.journalId).map((r) => r.usd));
   const fcRounding = sum(roundingRows.map((r) => r.usd));
   // A credit sale to a customer holding an avoir (paid ahead) owes nothing new: the credit comes off that avoir.
   // Read from the customer's balance just after this sale was posted, so the receipt and the sale page say
@@ -521,7 +524,7 @@ export async function getSale(tx: Tx, id: number) {
   const [left] = await tx.select({ usd: sql<string>`${creditLeftSql()}::text` }).from(sales).where(eq(sales.id, sale.id));
   return {
     ...sale,
-    paidKeptUsd: paidKept(sale, saleFcRounding, refunded),
+    paidKeptUsd: paidKept(sale, tillFcRounding, refunded),
     saleFcRoundingUsd: saleFcRounding.toFixed(2),
     fcRoundingUsd: fcRounding.toFixed(2),
     /** The part of the credit covered by the customer's avoir, after returns (see avoirUsedSql); at the time of the sale; and the avoir left after it. */

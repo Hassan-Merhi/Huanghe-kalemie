@@ -447,6 +447,10 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
             {outstanding && (
               <> · {isCustomer ? t(`owes us ${usd(outstanding.toFixed(2))}`, `nous doit ${usd(outstanding.toFixed(2))}`) : t(`we owe ${usd(outstanding.toFixed(2))}`, `nous devons ${usd(outstanding.toFixed(2))}`)}</>
             )}
+            {/* The other side too, in the statement's words: a customer's avoir, a supplier holding our money. */}
+            {!outstanding && !b.isZero() && (
+              <> · {isCustomer ? t(`credit ${usd(b.abs().toFixed(2))}`, `avoir ${usd(b.abs().toFixed(2))}`) : t(`owes us ${usd(b.toFixed(2))}`, `nous doit ${usd(b.toFixed(2))}`)}</>
+            )}
           </DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">

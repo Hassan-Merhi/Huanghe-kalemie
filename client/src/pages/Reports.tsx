@@ -370,7 +370,7 @@ function DailyCash() {
       [t("On credit ($)", "À crédit ($)"), owedCredit.toFixed(2)],
       [t("From customers' credit ($)", "Sur l'avoir ($)"), onAvoir.toFixed(2)],
       [],
-      [t("Received into", "Reçu dans"), t("Currency", "Devise"), t("Handed over", "Reçu"), t("Change given", "Monnaie rendue"), t("Refunds", "Remboursements"), t("Kept", "Gardé"), t("Value in $", "Valeur en $")],
+      [t("Received into", "Reçu dans"), t("Currency", "Devise"), t("Handed over", "Reçu"), t("Change given", "Monnaie rendue"), t("Refunds", "Remboursements"), t("Kept", "Gardé"), t("Value in $ (rates used)", "Valeur en $ (taux appliqués)")],
       ...r.byAccount.map((a) => [sys.account(a.name), curLabel(a.currency), a.received_native ?? a.native, a.change_native ?? "0", a.refund_native ?? "0", a.native, a.usd]),
       [t("Total kept", "Total gardé"), "$", "", "", "", "", paidUsd.toFixed(2)],
     ];
@@ -439,7 +439,7 @@ function DailyCash() {
                     <TableHead className="text-right">{t("Change given", "Monnaie rendue")}</TableHead>
                     <TableHead className="text-right">{t("Refunds", "Remboursements")}</TableHead>
                     <TableHead className="text-right">{t("Kept", "Gardé")}</TableHead>
-                    <TableHead className="text-right">{t("Value in $", "Valeur en $")}</TableHead>
+                    <TableHead className="text-right">{t("Value in $ (rates used)", "Valeur en $ (taux appliqués)")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>

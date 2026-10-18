@@ -58,7 +58,8 @@ function DailySummary() {
                 <div key={a.account_id} className="rounded-md border px-3 py-2 text-sm">
                   <p className="text-xs text-muted-foreground">{a.name}</p>
                   <p className="font-medium tabular">{a.currency === "CDF" ? cdf(a.native) : usd(a.usd)}</p>
-                  {a.currency === "CDF" && <p className="text-xs text-muted-foreground tabular">≈ {usd(a.usd)}</p>}
+                  {/* The francs at the rates the sales and refunds took (the rows' figures), not at today's rate nor at their cost. */}
+                  {a.currency === "CDF" && <p className="text-xs text-muted-foreground"><span className="tabular">≈ {usd(a.usd)}</span> {t("at the rates used", "aux taux appliqués")}</p>}
                   {d(a.refund_native).gt(0) && (
                     <p className="text-xs text-muted-foreground tabular">
                       {t("of which refunded", "dont remboursé")} −{a.currency === "CDF" ? cdf(a.refund_native) : usd(a.refund_native)}
@@ -124,7 +125,7 @@ function CreditText({ r }: { r: SaleListRow }) {
  * figure and sign as the sale page (+ when the shop kept them): they are on no account, and a walk-in customer
  * has none.
  */
-function OnAccount({ r }: { r: SaleListRow }) {
+export function OnAccount({ r }: { r: SaleListRow }) {
   const t = useT();
   if (r.status === "voided") return null;
   const n = netOf(r);
@@ -206,7 +207,7 @@ function SaleCard({ r, showCost }: { r: SaleListRow; showCost: boolean }) {
       </p>
       <div className="mt-1.5 flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <p className="min-w-0 tabular">
-          {t("Qty", "Qté")} {fmtQty(d(r.qty).minus(d(r.returnedQty)).toString())} · {t("Paid", "Payé")} <span className={cn(voided && "line-through")}>{usd((voided ? d(r.paidUsd) : n.paid).toFixed(2))}</span>
+          {t("Qty", "Qté")} {fmtQty(d(r.qty).minus(d(r.returnedQty)).toString())} · {t("Paid", "Payé")} <span className={cn(voided && "line-through")}>{usd((voided ? d(r.paidKeptUsd ?? r.paidUsd) : n.paid).toFixed(2))}</span>
           {!voided && <CreditText r={r} />}
           <OnAccount r={r} />
           {/* What came back, under the figures so the items above keep their line. */}
@@ -281,7 +282,7 @@ export default function Sales() {
       {live.length > 0 && (
         <div className={cn("mb-4 grid grid-cols-2 gap-3 sm:grid-cols-3", showCost ? "xl:grid-cols-5" : "xl:grid-cols-4")}>
           {/* Lines, not pieces: the Qté total under the table is the quantity (115), these the rows of the sales (52). */}
-          <StatCard label={t("Sales", "Ventes")} value={live.length} sub={`${fmtQty(totals.items.toString())} ${totals.items.eq(1) ? t("line", "ligne") : t("lines", "lignes")}`} />
+          <StatCard label={t("Sales", "Ventes")} value={live.length} sub={`${fmtQty(totals.items.toString())} ${t(totals.items.eq(1) ? "line" : "lines", totals.items.lt(2) ? "ligne" : "lignes")}`} />
           <StatCard label={t("Paid", "Payé")} value={usd(totals.paid.toFixed(2))} sub={totals.refunded.gt(0) ? `${t("refunded", "remboursé")} −${usd(totals.refunded.toFixed(2))}` : undefined} />
           <StatCard label={t("Total", "Total")} value={usd(totals.total.toFixed(2))} sub={totals.returned.gt(0) ? `${t("returns", "retours")} −${usd(totals.returned.toFixed(2))}` : undefined} />
           {/* Credit given on these sales (less returns), not what is still owed: payments made later are on each
@@ -350,10 +351,10 @@ export default function Sales() {
                         </TableCell>
                         <TableCell className="text-right">
                           <Num>{r.qty !== undefined ? fmtQty(d(r.qty).minus(d(r.returnedQty)).toString()) : ""}</Num>
-                          {d(r.returnedQty).gt(0) && <div className="whitespace-nowrap text-xs text-muted-foreground">{fmtQty(r.returnedQty)} {t("returned", "retourné")}</div>}
+                          {d(r.returnedQty).gt(0) && <div className="whitespace-nowrap text-xs text-muted-foreground">{fmtQty(r.returnedQty)} {t("returned", d(r.returnedQty).gte(2) ? "retournés" : "retourné")}</div>}
                         </TableCell>
                         <TableCell className="text-right">
-                          <Num className={cn(voided && "line-through")}>{usd((voided ? d(r.paidUsd) : n.paid).toFixed(2))}</Num>
+                          <Num className={cn(voided && "line-through")}>{usd((voided ? d(r.paidKeptUsd ?? r.paidUsd) : n.paid).toFixed(2))}</Num>
                           {!voided && <Refunded value={n.refunded} />}
                           <OnAccount r={r} />
                           {/* What was not paid: owed by the customer, apart from what their avoir covered. */}
