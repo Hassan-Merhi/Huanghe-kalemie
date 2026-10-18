@@ -123,7 +123,7 @@ async function resolveRow(tx: Tx, caches: Caches, r: ImportItemRow, n: number, c
     unit: r.unit?.trim() || null,
     tracksSerials: !!r.motorcycle,
     variants: [{ sku, barcode, attributes, sellPrice: price?.toFixed(2) ?? null, reorderLevel: r.reorderLevel || null }],
-  });
+  }, { defaultBrand: "" });
   caches.products.set(norm(name), { id: created.id, tracksSerials: !!r.motorcycle });
   const [v] = await tx.select({ id: variants.id, sku: variants.sku }).from(variants).where(eq(variants.productId, created.id));
   return { row: n, variantId: v.id, sku: v.sku, status: "new_item" };

@@ -353,10 +353,12 @@ function PriceCell({ row }: { row: Row }) {
 function BulkPriceDialog({ rows, onClose }: { rows: Row[]; onClose: () => void }) {
   const t = useT();
   const { toast } = useToast();
-  const [pct, setPct] = useState("");
+  const [typedPct, setPct] = useState("");
+  // The hint writes "−5" with the true minus sign: typed (or pasted) that way, it reads as "-5".
+  const pct = typedPct.trim().replace(/^[\u2212\u2013]/, "-");
   const [round, setRound] = useState("0.01");
   const [progress, setProgress] = useState<{ done: number; failed: number } | null>(null);
-  const valid = /^-?\d+(\.\d+)?$/.test(pct.trim()) && !d(pct).isZero() && d(pct).gt(-100);
+  const valid = /^-?\d+(\.\d+)?$/.test(pct) && !d(pct).isZero() && d(pct).gt(-100);
   const step = d(round);
 
   const changes = useMemo(() => {
@@ -397,20 +399,21 @@ function BulkPriceDialog({ rows, onClose }: { rows: Row[]; onClose: () => void }
           </DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 sm:grid-cols-2">
-          <Field label={t("Change (%)", "Variation (%)")} hint={t("e.g. 10 to raise, -5 to lower", "ex. 10 pour augmenter, -5 pour baisser")}
-            error={pct.trim() && !valid ? t("Enter a number other than 0, above -100", "Saisissez un nombre différent de 0 et supérieur à -100") : null}
+          <Field label={t("Change (%)", "Variation (%)")} hint={t(`e.g. 10 to raise, ${MINUS}5 to lower`, `ex. 10 pour augmenter, ${MINUS}5 pour baisser`)}
+            error={pct.trim() && !valid ? t(`Enter a number other than 0, above ${MINUS}100`, `Saisissez un nombre différent de 0 et supérieur à ${MINUS}100`) : null}
             required
           >
-            <Input inputMode="decimal" value={pct} onChange={(e) => setPct(e.target.value)} disabled={running} placeholder="10" />
+            <Input inputMode="decimal" value={typedPct} onChange={(e) => setPct(e.target.value)} disabled={running} placeholder="10" />
           </Field>
           <Field label={t("Round to", "Arrondir à")}>
             <Select value={round} onValueChange={setRound} disabled={running}>
               <SelectTrigger><SelectValue /></SelectTrigger>
               <SelectContent>
-                <SelectItem value="0.01">$0.01</SelectItem>
-                <SelectItem value="0.5">$0.50</SelectItem>
-                <SelectItem value="1">$1</SelectItem>
-                <SelectItem value="5">$5</SelectItem>
+                {/* Written as the prices are ("0,50 $"), whole dollars without cents. */}
+                <SelectItem value="0.01">{usd("0.01")}</SelectItem>
+                <SelectItem value="0.5">{usd("0.5")}</SelectItem>
+                <SelectItem value="1">{t("$1", "1\u00a0$")}</SelectItem>
+                <SelectItem value="5">{t("$5", "5\u00a0$")}</SelectItem>
               </SelectContent>
             </Select>
           </Field>

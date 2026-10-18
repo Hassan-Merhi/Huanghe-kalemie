@@ -263,9 +263,10 @@ export default function VoucherPrint() {
           </div>
 
           <div className="grid grid-cols-3 gap-3 pt-4">
-            {/* A validated pending voucher names who prepared and who approved it; the signatures stay blank. */}
+            {/* Every voucher names who prepared it (the owner saving one directly too), a validated pending voucher
+                also who approved it; the signatures stay blank. */}
             {[
-              { label: t("Prepared by", "Préparé par"), name: v.validatedByName ? v.createdByName : null },
+              { label: t("Prepared by", "Préparé par"), name: v.createdByName ?? null },
               { label: t("Approved by", "Approuvé par"), name: v.validatedByName ?? null },
               { label: t("Received by", "Reçu par"), name: null },
             ].map(({ label, name }) => (

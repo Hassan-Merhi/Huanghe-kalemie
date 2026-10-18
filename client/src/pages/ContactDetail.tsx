@@ -378,8 +378,19 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
           )
         : t(`We pay ${paidText}; we owe nothing: all of it will become an advance`, `Nous payons ${paidText}\u00a0; nous ne devons rien\u00a0: tout deviendra une avance`);
   const [confirmOver, setConfirmOver] = useState(false);
-  /** The dollar amount looks like the yuan figure (50 550 typed for 50 550 ¥): far more dollars than the yuan are worth. */
-  const looksLikeYuan = !!cnyOwedUsd && d(amount).gt(cnyOwedUsd.times(2)) && (!impliedGap || impliedGap.gt(20));
+  // Everything owed to this supplier in dollars: the dollars owed, the francs owed as booked and the yuan at the
+  // rate shown, what the yuan check compares with and the "Tout" beside the amount fills in.
+  const dollarsOwed = Decimal.max(dollarBalance.negated(), 0);
+  const fcOwedUsd = fcOwed ? d(foreign.find((x) => x.currency === "CDF")?.usd ?? 0).abs() : d(0);
+  const allOwedUsd = cnyOwedUsd ? dollarsOwed.plus(fcOwedUsd).plus(cnyOwedUsd) : null;
+  /**
+   * The dollar amount looks like the yuan figure (50 550 typed for 50 550 ¥): far more dollars than everything owed
+   * is worth. Against the yuan alone, 13 000 $ for 10 450 $ and 45 050 ¥ (6 300,70 $) would read as yuan typed.
+   */
+  const looksLikeYuan = !!allOwedUsd && d(amount).gt(allOwedUsd.times(2)) && (!impliedGap || impliedGap.gt(20));
+  // With no francs owed, dollars paid settle the dollars owed, then the yuan at the rate shown (paymentSplit):
+  // the dollars owed plus the yuan's worth, in cents, settle all of it with nothing left as an advance.
+  const cnyAll = cnyOwed && cnyOwedUsd && !fcOwed ? dollarsOwed.plus(cnyOwedUsd.toDecimalPlaces(2, Decimal.ROUND_HALF_UP)) : null;
   const blocked = !account
     ? t("Choose an account", "Choisissez un compte")
     : unclearAmount(t, amount, account.currency) ?? (cnyOwed ? unclearAmount(t, settleCny, "CNY") : null) ?? (!d(amount).gt(0)
@@ -434,8 +445,12 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
             error={
               looksLikeYuan
                 ? t(
-                    `That is far more dollars than the ${money(cnyOwed!.toString(), "CNY")} owed are worth (≈ ${usd(cnyOwedUsd!.toFixed(2))}): type the dollars paid, not the yuan`,
-                    `C'est bien plus de dollars que ne valent les ${money(cnyOwed!.toString(), "CNY")} dus (≈ ${usd(cnyOwedUsd!.toFixed(2))})\u00a0: saisissez les dollars payés, pas les yuans`,
+                    allOwedUsd!.gt(cnyOwedUsd!)
+                      ? `That is far more dollars than everything owed is worth (≈ ${usd(allOwedUsd!.toFixed(2))} with the ${money(cnyOwed!.toString(), "CNY")}): type the dollars paid, not the yuan`
+                      : `That is far more dollars than the ${money(cnyOwed!.toString(), "CNY")} owed are worth (≈ ${usd(cnyOwedUsd!.toFixed(2))}): type the dollars paid, not the yuan`,
+                    allOwedUsd!.gt(cnyOwedUsd!)
+                      ? `C'est bien plus de dollars que ne vaut tout ce qui est dû (≈ ${usd(allOwedUsd!.toFixed(2))} avec les ${money(cnyOwed!.toString(), "CNY")})\u00a0: saisissez les dollars payés, pas les yuans`
+                      : `C'est bien plus de dollars que ne valent les ${money(cnyOwed!.toString(), "CNY")} dus (≈ ${usd(cnyOwedUsd!.toFixed(2))})\u00a0: saisissez les dollars payés, pas les yuans`,
                   )
                 : null
             }
@@ -448,6 +463,12 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
                 // Francs owed count at the day's rate, the figure that settles them all (as the voucher line's "Tout"),
                 // not as booked: 3 290,10 $ would leave 0,19 $ as an advance.
                 <Button type="button" variant="outline" size="sm" className="h-10" onClick={() => setAmount((fcOwed && d(rate).gt(0) ? Decimal.max(isCustomer ? dollarBalance : dollarBalance.negated(), 0).plus(fcOwed.dividedBy(d(rate)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP)) : outstanding).toFixed(2))}>
+                  {t("All", "Tout")}
+                </Button>
+              )}
+              {cnyAll && cnyAll.gt(0) && (
+                // Yuan owed: the whole debt in dollars, with "Yuans réglés" emptied, as yuan typed take every dollar.
+                <Button type="button" variant="outline" size="sm" className="h-10" onClick={() => { setAmount(cnyAll.toFixed(2)); setSettleCny(""); }}>
                   {t("All", "Tout")}
                 </Button>
               )}

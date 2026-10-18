@@ -345,7 +345,7 @@ function SalesByItem() {
 // ---------------------------------------------------------------- (3) Daily cash
 
 interface DrawerRow { accountId: number; name: string; currency: string; opening: string; totalIn: string; totalOut: string; closing: string; byType: { type: string; in: string; out: string }[] }
-interface Daily { date: string; count: number; total: string; credit: string; creditOnAvoirUsd?: string; voidsCount: number; voidsTotal: string; returnsCount: number; returnsTotal: string; byAccount: { account_id: number; name: string; currency: string; usd: string; native: string; received_native?: string; change_native?: string; refund_native?: string }[]; drawer?: DrawerRow[] }
+interface Daily { date: string; count: number; total: string; netCount?: number; netTotal?: string; credit: string; creditOnAvoirUsd?: string; voidsCount: number; voidsTotal: string; returnsCount: number; returnsTotal: string; byAccount: { account_id: number; name: string; currency: string; usd: string; native: string; received_native?: string; change_native?: string; refund_native?: string }[]; drawer?: DrawerRow[] }
 
 function DailyCash() {
   const t = useT();
@@ -362,8 +362,9 @@ function DailyCash() {
     if (!r) return;
     const rows: unknown[][] = [
       [t("Daily cash report", "Rapport de caisse du jour"), r.date],
-      [t("Sales", "Ventes"), r.count],
-      [t("Total sold ($)", "Total vendu ($)"), r.total],
+      [t("Sales", "Ventes"), r.netCount ?? r.count],
+      [t("Total sold, net ($)", "Total vendu net ($)"), r.netTotal ?? r.total],
+      [t("Gross sales, cancelled ones included ($)", "Ventes brutes, annulées comprises ($)"), r.count, r.total],
       [t("Cancellations", "Annulations"), r.voidsCount, r.voidsTotal],
       [t("Returns", "Retours"), r.returnsCount, r.returnsTotal],
       [t("On credit ($)", "À crédit ($)"), owedCredit.toFixed(2)],
@@ -407,11 +408,23 @@ function DailyCash() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div className={cn("grid grid-cols-2 gap-3", onAvoir.gt(0) ? "sm:grid-cols-3 lg:grid-cols-5" : "sm:grid-cols-4")}>
-              <StatCard label={t("Sales", "Ventes")} value={r.count} />
+              {/* Led by the sales still standing less the day's returns, the dashboard's and the Sales list's figure;
+                  the gross sales, cancelled ones included, read below it with the day's cancellations. */}
+              <StatCard
+                label={t("Sales", "Ventes")}
+                value={r.netCount ?? r.count}
+                sub={r.netCount != null && r.count > r.netCount ? `+ ${count(t, r.count - r.netCount, ["cancelled", "cancelled"], ["annulée", "annulées"])}` : undefined}
+              />
               <StatCard
                 label={t("Total sold", "Total vendu")}
-                value={usd(r.total)}
-                sub={r.voidsCount > 0 ? `${count(t, r.voidsCount, ["cancellation", "cancellations"], ["annulation", "annulations"])} −${usd(r.voidsTotal)}` : undefined}
+                value={usd(r.netTotal ?? r.total)}
+                sub={r.netTotal != null && (r.voidsCount > 0 || !d(r.total).eq(r.netTotal)) ? (
+                  <>
+                    <div>{t("gross", "brut")} {usd(r.total)}</div>
+                    {r.voidsCount > 0 && <div>{count(t, r.voidsCount, ["cancellation", "cancellations"], ["annulation", "annulations"])} −{usd(r.voidsTotal)}</div>}
+                    {d(r.returnsTotal).gt(0) && <div>{t("returns", "retours")} −{usd(r.returnsTotal)}</div>}
+                  </>
+                ) : undefined}
               />
               <StatCard label={t("Returns", "Retours")} value={`−${usd(r.returnsTotal)}`} sub={count(t, r.returnsCount, ["return", "returns"], ["retour", "retours"])} />
               <StatCard label={t("On credit", "À crédit")} value={usd(owedCredit.toFixed(2))} />

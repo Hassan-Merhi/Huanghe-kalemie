@@ -1201,11 +1201,19 @@ export function registerRoutes(app: Express) {
         };
       });
     }
+    // The day's sales still standing less the day's returns: the dashboard's "Aujourd'hui" and the Sales list's
+    // figure, which the report leads with; "total" stays the day's sales as made, cancelled ones included.
+    const [standing] = await db
+      .select({ count: sql<number>`count(*)::int`, total: sql<string>`coalesce(sum(${sales.total}), 0)` })
+      .from(sales)
+      .where(and(eq(sales.date, date), eq(sales.status, "completed")));
     const v = voids.rows[0];
     res.json({
       date,
       count: totals.count,
       total: dec(totals.total).toFixed(2),
+      netCount: standing.count,
+      netTotal: dec(standing.total).minus(returns.total).toFixed(2),
       credit: dec(totals.credit).minus(v.credit).minus(creditReturned?.usd ?? 0).toFixed(2),
       creditOnAvoirUsd: dec(creditOnAvoir?.usd ?? 0).minus(avoirVoided?.usd ?? 0).toFixed(2),
       voidsCount: v.count,

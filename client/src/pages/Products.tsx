@@ -112,7 +112,7 @@ export default function Products() {
                       <span>{p.name}</span>
                       {!p.active && <Badge variant="secondary">{t("Inactive", "Inactif")}</Badge>}
                     </div>
-                    <div className="text-xs text-muted-foreground">{p.brand} · {unitLabel(t, p.unit)}</div>
+                    <div className="text-xs text-muted-foreground">{[p.brand, unitLabel(t, p.unit)].filter(Boolean).join(" · ")}</div>
                   </TableCell>
                   <TableCell className="text-muted-foreground">{p.categoryName ?? "—"}</TableCell>
                   <TableCell className="text-right"><Num>{p.variantCount ?? 0}</Num></TableCell>
