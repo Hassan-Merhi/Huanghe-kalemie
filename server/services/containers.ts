@@ -547,7 +547,7 @@ export async function reverseContainer(tx: Tx, containerId: number, date: string
   // Yuan paid for at a discount (or at another rate) come back owed at what was paid for them.
   const takeback =
     invoice.currency === "CNY" && container.finalizeJournalId
-      ? await settledFxTakebackLines(tx, { payables, partyId: container.supplierId, native: invoice.nativeAmount, sinceJournalId: container.finalizeJournalId, date })
+      ? await settledFxTakebackLines(tx, { payables, partyId: container.supplierId, billJournalId: container.finalizeJournalId, native: invoice.nativeAmount, usd: container.fobTotalUsd!, rate: invoice.rate })
       : [];
   let removed = dec(0);
   for (const line of full.lines) {

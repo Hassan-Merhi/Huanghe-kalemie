@@ -59,7 +59,7 @@ import * as reports from "./services/reports";
 import * as checks from "./services/checks";
 import * as backup from "./services/backup";
 import { getSetting } from "./setup";
-import { assertNotFuture, assertPeriodOpen, cnyRateFor, reverseJournal, setExchangeRate } from "./services/ledger";
+import { assertNotFuture, assertPeriodOpen, assertUndoKeepsRefunds, cnyRateFor, reverseJournal, setExchangeRate } from "./services/ledger";
 import { containerNumberKey } from "@shared/containerNumber";
 import { lockVariants, transferStock } from "./services/stock";
 import * as vouchers from "./services/vouchers";
@@ -668,9 +668,10 @@ export function registerRoutes(app: Express) {
     if (!["manual", "opening", "transfer", "customer_receipt", "supplier_payment", "partner_contribution", "partner_withdrawal", "payment", "receipt"].includes(j.type)) {
       throw badRequest("Cancel this from its own screen (sale, expense, container or month close)", "Annulez ceci depuis son propre écran (vente, dépense, conteneur ou clôture du mois)");
     }
-    const reversalId = await db.transaction((tx) =>
-      j.type === "payment" || j.type === "receipt" ? vouchers.reverseVoucher(tx, j.id, body.date, uid(req)) : reverseJournal(tx, j.id, { date: body.date, userId: uid(req) }),
-    );
+    const reversalId = await db.transaction(async (tx) => {
+      await assertUndoKeepsRefunds(tx, j.id);
+      return j.type === "payment" || j.type === "receipt" ? vouchers.reverseVoucher(tx, j.id, body.date, uid(req)) : reverseJournal(tx, j.id, { date: body.date, userId: uid(req) });
+    });
     await audit(req, "reverse", "journal", j.id);
     res.json({ id: reversalId });
   }));
