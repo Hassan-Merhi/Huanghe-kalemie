@@ -4,7 +4,7 @@ import { accounts, auditLog, expenses, journalLines, journals, parties, voucherD
 import { allocateCents, cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, forbidden, notFound } from "../errors";
-import { assertNotFuture, contactLines, foreignBalance, lockBalances, moneyLeg, postJournal, rateFor, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
+import { assertMemoNotReserved, assertNotFuture, contactLines, foreignBalance, lockBalances, moneyLeg, postJournal, rateFor, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
 import * as ops from "./operations";
 
 /*
@@ -66,6 +66,7 @@ async function mergeSettlingLines(tx: Tx, lines: VoucherLineInput[]): Promise<Vo
   for (const [i, l] of lines.entries()) {
     if (cents(l.amount).lte(0)) throw badRequest(`Line ${i + 1}: the amount must be greater than zero`, `Ligne ${i + 1} : le montant doit être supérieur à zéro`);
     if (l.settleNative && dec(l.settleNative).isNegative()) throw badRequest(`Line ${i + 1}: the yuan to settle cannot be negative`, `Ligne ${i + 1} : les yuans à solder ne peuvent pas être négatifs`);
+    assertMemoNotReserved(l.memo, i + 1);
     const key = l.partyId && !l.accountId ? `p${l.partyId}` : l.accountId && !l.partyId && settles.has(l.accountId) ? `a${l.accountId}` : null;
     const seen = key ? byKey.get(key) : undefined;
     if (seen) {

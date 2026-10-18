@@ -18,6 +18,7 @@ import type { Tx } from "../db";
 import { badRequest, conflict, forbidden, notFound, wholeUnitError, francDecimalsError } from "../errors";
 import { wholeUnit } from "@shared/units";
 import {
+  assertMemoNotReserved,
   cnyRateFor,
   contactLines,
   foreignBalance,
@@ -695,6 +696,7 @@ export async function manualJournal(
     throw badRequest(`Debits (${debit.toFixed(2)}) and credits (${credit.toFixed(2)}) must be equal`, `Les débits (${frMoney(debit)}) et les crédits (${frMoney(credit)}) doivent être égaux`);
   }
   if (debit.isZero()) throw badRequest("Enter some amounts", "Saisissez des montants");
+  input.lines.forEach((l, i) => assertMemoNotReserved(l.memo, i + 1));
   const ids = input.lines.map((l) => l.accountId);
   const rows = await tx.select().from(accounts).where(inArray(accounts.id, ids));
   const inventoryId = await systemAccountId(tx, SYSTEM_ACCOUNTS.inventory);
