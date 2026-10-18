@@ -10,7 +10,7 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
 import { useAuth } from "@/lib/auth";
 import { count, useT } from "@/lib/i18n";
-import { cdf, d, date as fmtDate, fcRounding, monthStart, pct, qty as fmtQty, todayLocal, usd } from "@/lib/format";
+import { cdf, d, date as fmtDate, fcRateGap, fcRounding, monthStart, pct, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { creditOf, creditSplit, dailyFigures, netOf, type Daily, type SaleListRow } from "@/lib/saleRows";
 
@@ -59,7 +59,14 @@ function DailySummary() {
                   <p className="text-xs text-muted-foreground">{a.name}</p>
                   <p className="font-medium tabular">{a.currency === "CDF" ? cdf(a.native) : usd(a.usd)}</p>
                   {/* The francs at the rates the sales and refunds took (the rows' figures), not at today's rate nor at their cost. */}
-                  {a.currency === "CDF" && <p className="text-xs text-muted-foreground"><span className="tabular">≈ {usd(a.usd)}</span> {t("at the rates used", "aux taux appliqués")}</p>}
+                  {/* Francs below zero while their dollars are not: refunds at a higher rate than the sales' gave back more francs. */}
+                  {a.currency === "CDF" && (d(a.native).isNegative() && !d(a.usd).isNegative() ? (
+                    <p className="text-xs text-amber-800 dark:text-amber-400" data-testid="daily-rate-gap">
+                      <span className="tabular">≈ {d(a.usd).isZero() ? "" : "+"}{usd(a.usd)}</span> {t("at the rates used (rate difference: more francs handed back than paid)", "aux taux appliqués (écart de taux\u00a0: plus de francs rendus que payés)")}
+                    </p>
+                  ) : (
+                    <p className="text-xs text-muted-foreground"><span className="tabular">≈ {usd(a.usd)}</span> {t("at the rates used", "aux taux appliqués")}</p>
+                  ))}
                   {d(a.refund_native).gt(0) && (
                     <p className="text-xs text-muted-foreground tabular">
                       {t("of which refunded", "dont remboursé")} −{a.currency === "CDF" ? cdf(a.refund_native) : usd(a.refund_native)}
@@ -131,6 +138,8 @@ export function OnAccount({ r }: { r: SaleListRow }) {
   const n = netOf(r);
   const rounding = d(r.fcRoundingUsd ?? 0);
   const roundingText = fcRounding(t, rounding);
+  // More francs handed back than paid (a refund at a higher rate): said in francs, not as cents kept.
+  const rateGap = fcRateGap(t, r.fcNetNative ?? 0);
   const over = n.paid.minus(n.total).minus(rounding);
   return (
     <>
@@ -139,7 +148,11 @@ export function OnAccount({ r }: { r: SaleListRow }) {
           +{usd(over.toFixed(2))} {t("to the customer's account", "sur le compte client")}
         </span>
       )}
-      {roundingText && (
+      {rateGap ? (
+        <span className="block text-xs text-amber-800 dark:text-amber-400" data-testid="paid-rate-gap" title={rateGap.words}>
+          {rateGap.figure}
+        </span>
+      ) : roundingText && (
         <span className="block text-xs text-muted-foreground" data-testid="paid-rounding" title={roundingText.words}>
           {n.returned.gt(0) ? t("FC rounding (sale + returns)", "arrondi FC (vente + retours)") : t("FC rounding", "arrondi FC")}{" "}
           <span className="whitespace-nowrap">{roundingText.figure} {roundingText.short}</span>
@@ -201,10 +214,9 @@ function SaleCard({ r, showCost }: { r: SaleListRow; showCost: boolean }) {
         </div>
         <Num className={cn("shrink-0 text-lg font-semibold", voided && "line-through")}>{usd((voided ? d(r.total) : n.total).toFixed(2))}</Num>
       </div>
-      <p className="mt-0.5 flex min-w-0 text-sm">
-        <span className="max-w-[60%] shrink-0 truncate"><Customer r={r} /></span>
-        {r.firstItem && <><span className="shrink-0 whitespace-pre text-muted-foreground"> · </span><Items r={r} className="text-muted-foreground" /></>}
-      </p>
+      {/* The customer wraps rather than being cut (as on Ventes du jour), the items under it, as in the table. */}
+      <p className="mt-0.5 break-words text-sm"><Customer r={r} /></p>
+      {r.firstItem && <Items r={r} className="text-sm text-muted-foreground" />}
       <div className="mt-1.5 flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <p className="min-w-0 tabular">
           {t("Qty", "Qté")} {fmtQty(d(r.qty).minus(d(r.returnedQty)).toString())} · {t("Paid", "Payé")} <span className={cn(voided && "line-through")}>{usd((voided ? d(r.paidKeptUsd ?? r.paidUsd) : n.paid).toFixed(2))}</span>

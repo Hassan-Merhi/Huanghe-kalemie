@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { de } from "@shared/french";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
@@ -10,14 +10,17 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
-import { MoneyAccountSelect, useMoneyAccounts, useRate } from "@/components/pickers";
+import { MoneyAccountSelect, RateInput, useMoneyAccounts, useRate } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
+import { useToast } from "@/hooks/use-toast";
+import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
-import { cdf, d, date as fmtDate, fcRounding, qty as fmtQty, todayLocal, usd, variantText, unclearQty } from "@/lib/format";
+import { cdf, d, date as fmtDate, fcRateGap, fcRounding, qty as fmtQty, todayLocal, usd, variantText, unclearQty } from "@/lib/format";
 import type { Account, Party, Settings } from "@/lib/types";
 import { wholeUnit } from "@/lib/units";
 import { cn } from "@/lib/utils";
@@ -42,9 +45,42 @@ function ReturnDialog({ sale, owes, onClose, onDone }: { sale: SaleFull; owes: D
     : null;
   const account: Account | null = moneyAccounts.find((a) => a.id === accountId) ?? null;
   const [rate, setRate] = useState<string | null>(null);
-  const rateQ = useRate(date);
-  const effRate = rate ?? rateQ.data?.cdfPerUsd ?? "";
-  const m = useApiMutation<unknown, SaleFull>("POST", `/api/sales/${sale.id}/returns`, { success: t("Return recorded", "Retour enregistré"), onSuccess: (s) => onDone(s) });
+  // Checked again every minute while the dialog is open, as at the till: a staff refund goes at the day's rate.
+  const rateQ = useRate(date, { live: true });
+  const { user } = useAuth();
+  const isOwner = user?.role === "owner";
+  // Staff refunds go at the day's rate (the server refuses another), so only the owner's typed one counts.
+  const effRate = (isOwner ? rate : null) ?? rateQ.data?.cdfPerUsd ?? "";
+  // The owner's rate more than the tolerance from the day's is refused by the server: said before saving.
+  const rateTolerance = d(useQuery<Settings>({ queryKey: ["/api/settings"] }).data?.rateTolerancePct ?? "3");
+  const dayRate = d(rateQ.data?.cdfPerUsd);
+  const rateOff = dayRate.gt(0) && d(effRate).gt(0) && d(effRate).minus(dayRate).abs().dividedBy(dayRate).times(100).gt(rateTolerance);
+  const { toast } = useToast();
+  const sentRate = useRef<string | null>(null);
+  const m = useApiMutation<unknown, SaleFull>("POST", `/api/sales/${sale.id}/returns`, {
+    success: t("Return recorded", "Retour enregistré"),
+    onSuccess: (s) => onDone(s),
+    // Refused at the rate shown (the day's rate changed since the dialog read it): the dialog takes the new
+    // rate and amount at once, said as at the till, so pressing again pays out what it shows.
+    onError: (e) => {
+      const was = sentRate.current;
+      if (!(e instanceof ApiError && e.status === 409) || !was) return false;
+      void rateQ.refetch().then((r) => {
+        const now = r.data?.cdfPerUsd;
+        if (now && !d(now).equals(d(was))) {
+          m.reset();
+          toast({
+            title: t(
+              `The day's rate has changed (${fmtQty(was)} → ${fmtQty(now)} FC): check the amount to hand back`,
+              `Le taux du jour a changé (${fmtQty(was)} → ${fmtQty(now)}\u00a0FC)\u00a0: vérifiez le montant à rendre`,
+            ),
+            variant: "destructive",
+          });
+        } else toast({ title: e.message, variant: "destructive" });
+      });
+      return true;
+    },
+  });
 
   const chosen = sale.lines
     .map((l) => ({ line: l, q: d(qtys[l.id]), max: d(l.qty).minus(l.returnedQty) }))
@@ -67,6 +103,22 @@ function ReturnDialog({ sale, owes, onClose, onDone }: { sale: SaleFull; owes: D
   const toCash = mode === "account" ? refund.minus(toDebt) : d(0);
   // Francs go back rounded down to 100 FC: the customer gets these, worth a few cents less than the goods.
   const payOutFc = isCdf && d(effRate).gt(0) ? toCash.times(d(effRate)).dividedBy(100).toDecimalPlaces(0, Decimal.ROUND_FLOOR).times(100) : null;
+  // The francs the sale took (payments less change), less those handed back on earlier returns. A refund at
+  // a higher rate than the sale's can hand back more than that (70 200 FC paid at 2 808, 71 200 FC back at
+  // 2 850): asked before saving, and the owner may bring it down to what is left.
+  const fcPaid = sale.payments.filter((p) => p.currency === "CDF").reduce((s, p) => s.plus(d(p.amountNative)), d(0));
+  const fcRefunded = sale.returns.filter((r) => r.refundCurrency === "CDF").reduce((s, r) => s.plus(d(r.refundNative)), d(0));
+  const fcLeft = Decimal.max(fcPaid.minus(fcRefunded), 0);
+  const fcOver = payOutFc && fcPaid.gt(0) && payOutFc.gt(fcLeft) ? payOutFc : null;
+  // The rate that hands back at most what is left, offered when the server would take it (within the tolerance).
+  const capRate = fcOver && isOwner && toCash.gt(0) ? fcLeft.dividedBy(toCash).toDecimalPlaces(0, Decimal.ROUND_FLOOR) : null;
+  const capOk = !!capRate && capRate.gt(0) && dayRate.gt(0) && capRate.minus(dayRate).abs().dividedBy(dayRate).times(100).lte(rateTolerance);
+  const fcOverText = fcOver
+    ? fcRefunded.gt(0)
+      ? t(`${cdf(fcLeft.toString())} is left of the francs the customer paid: hand back ${cdf(fcOver.toString())}?`, `Il reste ${cdf(fcLeft.toString())} des francs payés par le client\u00a0: rendre ${cdf(fcOver.toString())}\u00a0?`)
+      : t(`The customer paid ${cdf(fcPaid.toString())}: hand back ${cdf(fcOver.toString())}?`, `Le client avait payé ${cdf(fcPaid.toString())}\u00a0: rendre ${cdf(fcOver.toString())}\u00a0?`)
+    : null;
+  const [confirmOver, setConfirmOver] = useState(false);
   // "1.000" pieces is asked about by its field (1 000 or 1?), never read as 1.
   const unclear = sale.lines.map((l) => unclearQty(t, qtys[l.id])).find(Boolean);
   const blocked = unclear
@@ -83,9 +135,17 @@ function ReturnDialog({ sale, owes, onClose, onDone }: { sale: SaleFull; owes: D
             ? !sale.customerId && t("This sale has no customer", "Cette vente n'a pas de client")
             : !accountId
               ? t("Choose the account to pay back from", "Choisissez le compte de remboursement")
-              : isCdf && !d(effRate).gt(0) && t("Enter the exchange rate", "Saisissez le taux de change");
+              : isCdf && !d(effRate).gt(0)
+                ? t("Enter the exchange rate", "Saisissez le taux de change")
+                : isCdf && rateOff && t(
+                  `The rate is more than ${rateTolerance.toString()}% from the day's rate (${fmtQty(dayRate.toString())}): correct it`,
+                  `Le taux s'écarte de plus de ${rateTolerance.toString()}\u00a0% du taux du jour (${fmtQty(dayRate.toString())})\u00a0: corrigez-le`,
+                );
 
-  function save() {
+  function save(confirmed = false) {
+    if (fcOver && !confirmed) return setConfirmOver(true);
+    setConfirmOver(false);
+    sentRate.current = isCdf ? d(effRate).toString() : null;
     m.mutate({
       date,
       reason: reason.trim(),
@@ -169,8 +229,9 @@ function ReturnDialog({ sale, owes, onClose, onDone }: { sale: SaleFull; owes: D
                   <MoneyAccountSelect value={accountId} onChange={(id) => setAccountId(id)} />
                 </Field>
                 {isCdf && (
-                  <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} hint={`${t("Pay out:", "À rendre\u00a0:")} ${cdf((payOutFc ?? d(0)).toString())} ${t("(rounded down to 100 FC)", "(arrondi à 100\u00a0FC inférieurs)")}`} required>
-                    <Input inputMode="decimal" thousands value={effRate} onChange={(e) => setRate(e.target.value)} />
+                  // Staff see the day's rate as text, as in the voucher and customer-payment dialogs: it is the one the books use.
+                  <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} hint={`${t("Pay out:", "À rendre\u00a0:")} ${cdf((payOutFc ?? d(0)).toString())} ${t("(rounded down to 100 FC)", "(arrondi à 100\u00a0FC inférieurs)")}`} required={isOwner}>
+                    <RateInput day={date} value={effRate} onChange={setRate} ownerOnly />
                   </Field>
                 )}
               </div>
@@ -186,6 +247,16 @@ function ReturnDialog({ sale, owes, onClose, onDone }: { sale: SaleFull; owes: D
                 <span>{t("Handed back", "Rendu")}</span>
                 <Num>{cdf(payOutFc.toString())} ({usd(payOutFc.dividedBy(d(effRate)).toFixed(2))})</Num>
               </div>
+              {fcOverText && (
+                <div className="space-y-1 pt-1 text-sm font-medium text-amber-800 dark:text-amber-400" data-testid="return-fc-over">
+                  <p>{fcOverText}</p>
+                  {capOk && (
+                    <Button type="button" size="sm" variant="outline" className="h-auto whitespace-normal py-1.5 text-left" onClick={() => setRate(capRate!.toString())}>
+                      {t(`Hand back at most ${cdf(fcLeft.toString())} (rate ${fmtQty(capRate!.toString())})`, `Rendre au plus ${cdf(fcLeft.toString())} (taux ${fmtQty(capRate!.toString())})`)}
+                    </Button>
+                  )}
+                </div>
+              )}
             </div>
           ) : mode === "credit" && toAvoir.gt(0) ? (
             <div className="space-y-1 rounded-md bg-muted p-3" data-testid="return-split">
@@ -211,9 +282,21 @@ function ReturnDialog({ sale, owes, onClose, onDone }: { sale: SaleFull; owes: D
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <SubmitButton onClick={save} blocked={blocked} pending={m.isPending}>{t("Record return", "Enregistrer le retour")}</SubmitButton>
+          <SubmitButton onClick={() => save()} blocked={blocked} pending={m.isPending}>{t("Record return", "Enregistrer le retour")}</SubmitButton>
         </DialogFooter>
       </DialogContent>
+      <AlertDialog open={confirmOver} onOpenChange={setConfirmOver}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("More francs than were paid?", "Plus de francs que payés\u00a0?")}</AlertDialogTitle>
+            <AlertDialogDescription>{fcOverText}</AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => save(true)}>{fcOver ? t(`Hand back ${cdf(fcOver.toString())}`, `Rendre ${cdf(fcOver.toString())}`) : t("Save anyway", "Enregistrer quand même")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }
@@ -534,6 +617,12 @@ export default function SaleDetail() {
   // Francs change and refunds go in 100 FC steps, so "Payé" can differ from the total by a few cents: the
   // "Arrondi FC" of the books, the same figure and sign as on the Sales list, the till's and the refunds' together.
   const francRounding = voided ? null : fcRounding(t, sale.fcRoundingUsd ?? 0);
+  // A sale paid in francs alone that handed back more of them (a refund at a higher rate): said in francs, as
+  // on the list (see fcNetNative). With dollars paid too, francs beyond those paid are no rate gap.
+  const francsIn = sale.payments.filter((p) => p.currency === "CDF").reduce((s, p) => s.plus(d(p.amountNative)), d(0));
+  const francsOnly = francsIn.gt(0) && !sale.payments.some((p) => p.currency !== "CDF" && d(p.amountNative).gt(0));
+  const francsNet = francsIn.minus(sale.returns.filter((r) => r.refundCurrency === "CDF").reduce((s, r) => s.plus(d(r.refundNative)), d(0)));
+  const rateGap = voided || !francsOnly ? null : fcRateGap(t, francsNet);
   // The avoir's part as it was at the sale (198 $ of 250 $: 52 $ on credit), so the credit given is the
   // customer's real debt; the avoir used after returns comes capped at the credit left (see avoirUsedSql),
   // so what is still owed is the credit left less it, the one figure of the list, balance and daily report.
@@ -619,7 +708,7 @@ export default function SaleDetail() {
             {d(sale.discount).gt(0) && <p className="text-xs text-muted-foreground">{t("Sale discount", "Remise")} {usd(sale.discount)}</p>}
           </CardContent>
         </Card>
-        <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Paid", "Payé")}</p><p className={`text-xl font-semibold tabular${voided ? " text-muted-foreground line-through" : ""}`}>{usd(paidNet.toFixed(2))}</p>{voided && <p className="text-xs text-muted-foreground" data-testid="sale-voided-paid">{[t("cancelled", "annulé"), paidNet.gt(0) ? t("refunded", "remboursé") : null, credit.gt(0) ? `${t("credit cancelled", "crédit annulé")} ${usd(sale.creditUsd)}` : null].filter(Boolean).join(" · ")}</p>}{!voided && refunded.gt(0) && <p className="text-xs text-muted-foreground">{t("refunded", "remboursé")} −{usd(refunded.toFixed(2))} · {t("of", "sur")} {usd(d(sale.paidUsd).plus(d(sale.saleFcRoundingUsd ?? 0)).toFixed(2))}</p>}{francRounding && <p className="text-xs text-muted-foreground" data-testid="sale-fc-rounding">{sale.returns.length ? t("FC rounding (sale + returns)", "Arrondi FC (vente + retours)") : t("FC rounding", "Arrondi FC")} {francRounding.figure} · {francRounding.words}</p>}{/* No credit line on a cancelled sale (said above) nor on one paid in full. */}{!voided && (credit.gt(0) || avoir.used.gt(0)) && <p className="text-xs text-muted-foreground">{/* The avoir's part is not credit: 250 $ with 198 $ on the avoir is 52 $ on credit. */}{avoir.used.gt(0)
+        <Card><CardContent className="p-4"><p className="text-xs uppercase text-muted-foreground">{t("Paid", "Payé")}</p><p className={`text-xl font-semibold tabular${voided ? " text-muted-foreground line-through" : ""}`}>{usd(paidNet.toFixed(2))}</p>{voided && <p className="text-xs text-muted-foreground" data-testid="sale-voided-paid">{[t("cancelled", "annulé"), paidNet.gt(0) ? t("refunded", "remboursé") : null, credit.gt(0) ? `${t("credit cancelled", "crédit annulé")} ${usd(sale.creditUsd)}` : null].filter(Boolean).join(" · ")}</p>}{!voided && refunded.gt(0) && <p className="text-xs text-muted-foreground">{t("refunded", "remboursé")} −{usd(refunded.toFixed(2))} · {t("of", "sur")} {usd(d(sale.paidUsd).plus(d(sale.saleFcRoundingUsd ?? 0)).toFixed(2))}</p>}{rateGap ? <p className="text-xs text-amber-800 dark:text-amber-400" data-testid="sale-rate-gap" title={rateGap.words}>{rateGap.figure}</p> : francRounding && <p className="text-xs text-muted-foreground" data-testid="sale-fc-rounding">{sale.returns.length ? t("FC rounding (sale + returns)", "Arrondi FC (vente + retours)") : t("FC rounding", "Arrondi FC")} {francRounding.figure} · {francRounding.words}</p>}{/* No credit line on a cancelled sale (said above) nor on one paid in full. */}{!voided && (credit.gt(0) || avoir.used.gt(0)) && <p className="text-xs text-muted-foreground">{/* The avoir's part is not credit: 250 $ with 198 $ on the avoir is 52 $ on credit. */}{avoir.used.gt(0)
                 ? avoir.toPay.gt(0)
                   ? `${t("On credit", "À crédit")} ${usd(avoir.toPay.toFixed(2))} · ${t("from the customer's credit", "sur l'avoir")} ${usd(avoir.used.toFixed(2))}`
                   : `${t("From the customer's credit", "Sur l'avoir")} ${usd(avoir.used.toFixed(2))}`

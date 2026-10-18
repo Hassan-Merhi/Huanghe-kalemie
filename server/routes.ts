@@ -32,6 +32,7 @@ import {
 import { ALLOCATION_METHODS } from "@shared/landedCost";
 import { validatePartnerShares } from "@shared/partnerSplit";
 import { dec } from "@shared/money";
+import { frNumber } from "@shared/french";
 import { db, type Tx } from "./db";
 import { AppError, badRequest, conflict, forbidden, notFound } from "./errors";
 import { checkPassword, hashPassword, requireAuth, requireRole } from "./auth";
@@ -59,7 +60,7 @@ import * as reports from "./services/reports";
 import * as checks from "./services/checks";
 import * as backup from "./services/backup";
 import { getSetting } from "./setup";
-import { assertNotFuture, assertPeriodOpen, assertUndoKeepsRefunds, cnyRateFor, reverseJournal, setExchangeRate } from "./services/ledger";
+import { assertNotFuture, assertPeriodOpen, assertUndoKeepsRefunds, cnyRateFor, rateFor, reverseJournal, setExchangeRate } from "./services/ledger";
 import { containerNumberKey } from "@shared/containerNumber";
 import { lockVariants, transferStock } from "./services/stock";
 import * as vouchers from "./services/vouchers";
@@ -937,6 +938,11 @@ export function registerRoutes(app: Express) {
         avoirUsedUsd: sql<string>`${salesSvc.avoirUsedSql()}::text`,
         // The same at the sale, before returns took it down, as the sale page shows it (none on a cancelled sale).
         avoirAtSaleUsd: sql<string>`(case when ${sales.status} <> 'voided' then ${salesSvc.avoirPartSql()} else 0 end)::text`,
+        // The francs a sale paid in francs alone kept, net: taken at the till (less change) less handed back on
+        // returns. Below zero when a refund at a higher rate gave back more francs than were paid, which the list
+        // says apart from the rounding's dollars (+0,02 $ kept at the refund's rate, the drawer 1 000 FC down).
+        // Null for a sale that took dollars too or no francs: there, francs back beyond those paid are no rate gap.
+        fcNetNative: sql<string | null>`(case when not exists (select 1 from sale_payments sp where sp.sale_id = ${sales.id} and sp.currency <> 'CDF' and sp.amount_native > 0) and (select coalesce(sum(sp.amount_native), 0) from sale_payments sp where sp.sale_id = ${sales.id} and sp.currency = 'CDF') > 0 then ((select coalesce(sum(sp.amount_native), 0) from sale_payments sp where sp.sale_id = ${sales.id} and sp.currency = 'CDF') - (select coalesce(sum(abs(jl.native_amount)), 0) from sale_returns sr join journal_lines jl on jl.journal_id = sr.journal_id and jl.account_id = sr.refund_account_id join accounts a on a.id = jl.account_id and a.currency = 'CDF' where sr.sale_id = ${sales.id}))::numeric(20,2)::text end)`,
         // The till's rounding alone: with it, "Payé" is the cash the shop really kept (see paidKeptUsd).
         saleFcRoundingUsd: sql<string>`(select coalesce(sum(jl.credit - jl.debit), 0)::numeric(20,2)::text from journal_lines jl join accounts a on a.id = jl.account_id and a.system_key = 'fx' where jl.memo = 'Arrondi FC' and jl.journal_id = ${sales.journalId})`,
         lineCount: sql<number>`(select count(*)::int from sale_lines sl where sl.sale_id = ${sales.id})`,
@@ -949,7 +955,7 @@ export function registerRoutes(app: Express) {
       .orderBy(desc(sales.date), desc(sales.id))
       .limit(500);
     const showCost = req.user!.role !== "cashier";
-    res.json(rows.map((r) => ({ ...r.sale, cogs: showCost ? r.sale.cogs : undefined, customerName: r.customerName, cashier: r.cashier, zeroPrice: !!r.zeroPrice, qty: r.qty, returnedQty: r.returnedQty, returnedTotal: r.returnedTotal, returnedCogs: showCost ? r.returnedCogs : undefined, refundedUsd: r.refundedUsd, creditLeftUsd: r.creditLeftUsd, fcRoundingUsd: r.fcRoundingUsd, paidKeptUsd: salesSvc.paidKept(r.sale, r.saleFcRoundingUsd, r.refundedUsd), avoirUsedUsd: r.avoirUsedUsd, avoirAtSaleUsd: r.avoirAtSaleUsd, lineCount: r.lineCount, firstItem: r.firstItem })));
+    res.json(rows.map((r) => ({ ...r.sale, cogs: showCost ? r.sale.cogs : undefined, customerName: r.customerName, cashier: r.cashier, zeroPrice: !!r.zeroPrice, qty: r.qty, returnedQty: r.returnedQty, returnedTotal: r.returnedTotal, returnedCogs: showCost ? r.returnedCogs : undefined, refundedUsd: r.refundedUsd, creditLeftUsd: r.creditLeftUsd, fcRoundingUsd: r.fcRoundingUsd, fcNetNative: r.fcNetNative, paidKeptUsd: salesSvc.paidKept(r.sale, r.saleFcRoundingUsd, r.refundedUsd), avoirUsedUsd: r.avoirUsedUsd, avoirAtSaleUsd: r.avoirAtSaleUsd, lineCount: r.lineCount, firstItem: r.firstItem })));
   }));
   app.get("/api/sales/:id", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
     const sale = await salesSvc.getSale(db, paramId(req));
@@ -994,9 +1000,26 @@ export function registerRoutes(app: Express) {
     const body = z
       .object({ date: isoDate.optional(), reason: z.string().min(1).max(300), refundAccountId: optionalId, rate: optionalRate, lines: z.array(z.object({ saleLineId: id, qty: positiveDecimal })).min(1) })
       .parse(req.body);
-    // Staff hand francs back at the day's rate.
-    if (req.user!.role !== "owner") body.rate = null;
-    const sale = await db.transaction((tx) => salesSvc.returnSale(tx, paramId(req), { ...body, date: body.date ?? todayIso() }, uid(req)));
+    const date = body.date ?? todayIso();
+    const sale = await db.transaction(async (tx) => {
+      // Staff hand francs back at the day's rate. A dialog showing another one (the rate changed since it
+      // opened) is refused rather than paid out at a rate it did not show; no rate sent is the day's.
+      if (req.user!.role !== "owner") {
+        if (body.rate) {
+          const day = await rateFor(tx, date);
+          if (!dec(body.rate).equals(day.rate)) {
+            const was = frNumber(dec(body.rate).toString());
+            const now = frNumber(day.rate.toString());
+            throw conflict(
+              `Refunds go at the day's rate (${now} FC), not ${was}: check the amount to hand back`,
+              `Le remboursement se fait au taux du jour (${now}\u00a0FC), pas à ${was}\u00a0: vérifiez le montant à rendre`,
+            );
+          }
+        }
+        body.rate = null;
+      }
+      return salesSvc.returnSale(tx, paramId(req), { ...body, date }, uid(req));
+    });
     await audit(req, "return", "sale", sale.id, body);
     res.json(sale);
   }));

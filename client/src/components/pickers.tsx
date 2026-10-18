@@ -710,9 +710,13 @@ export function ContainerRateField({ currency, value, onChange, day = todayLocal
   );
 }
 
-/** Rate input state prefilled from the date's rate until the user edits it (a reload never overwrites a typed rate). */
+/**
+ * Rate input state prefilled from the date's rate until the user edits it (a reload never overwrites a typed rate).
+ * Checked again every minute, as at the till: a dialog left open follows a day's rate changed meanwhile, which
+ * the server takes from staff in its place.
+ */
 export function useRateField(day: string) {
-  const rateQ = useRate(day);
+  const rateQ = useRate(day, { live: true });
   const [rate, setRateState] = useState("");
   const [touched, setTouched] = useState(false);
   useEffect(() => {
