@@ -663,8 +663,9 @@ function ExportItems() {
         <ErrorText error={stockQ.error} />
         {stockQ.isLoading ? <Loading /> : <p className="text-sm text-muted-foreground">{count(t, items.length, ["variant", "variants"], ["variante", "variantes"])}</p>}
         <div className="flex flex-wrap gap-2">
-          <Button onClick={() => exportXlsx(false)} disabled={!items.length}><Download className="mr-1 h-4 w-4" /> {t("Export for re-import (no quantities)", "Exporter pour réimport (sans quantités)")}</Button>
-          <Button variant="outline" onClick={() => exportXlsx(true)} disabled={!items.length}><Download className="mr-1 h-4 w-4" /> {t("Export with stock and cost", "Exporter avec stock et coût")}</Button>
+          {/* The long labels wrap on a phone rather than push the card wider than the screen. */}
+          <Button className="max-w-full whitespace-normal" onClick={() => exportXlsx(false)} disabled={!items.length}><Download className="mr-1 h-4 w-4" /> {t("Export for re-import (no quantities)", "Exporter pour réimport (sans quantités)")}</Button>
+          <Button variant="outline" className="max-w-full whitespace-normal" onClick={() => exportXlsx(true)} disabled={!items.length}><Download className="mr-1 h-4 w-4" /> {t("Export with stock and cost", "Exporter avec stock et coût")}</Button>
         </div>
       </CardContent>
     </Card>

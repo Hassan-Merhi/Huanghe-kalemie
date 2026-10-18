@@ -25,6 +25,11 @@ export function capitalize(s: string): string {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
 
+/** A word agreeing with a count the French way: singular below 2 ("0 disponible", "1,5 disponible"), plural from 2 ("77 disponibles"). */
+export function frPlural(count: { toString(): string } | number | string, word: string, plural = `${word}s`): string {
+  return Math.abs(Number(String(count))) < 2 ? word : plural;
+}
+
 const NB = "\u00a0";
 
 /**

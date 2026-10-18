@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { de, frNumber } from "@shared/french";
+import { de, frNumber, frPlural } from "@shared/french";
 import { locations, motorcycleUnits, products, stockLevels, stockMovements, variants, type MovementType } from "@shared/schema";
 import { Decimal, cents, dec, type DecimalInput } from "@shared/money";
 import type { Tx } from "../db";
@@ -158,7 +158,7 @@ export async function issueStock(
   if (available.lt(q)) {
     throw conflict(
       `Not enough stock of ${input.label ?? variant.sku}: ${available.toString()} available, ${q.toString()} needed`,
-      `Stock insuffisant ${de(input.label ?? variant.sku)}\u00a0: ${frNumber(available)} disponible(s), ${frNumber(q)} nécessaire(s)`,
+      `Stock insuffisant ${de(input.label ?? variant.sku)}\u00a0: ${frNumber(available)} ${frPlural(available, "disponible")}, ${frNumber(q)} ${frPlural(q, "nécessaire")}`,
     );
   }
   const totalQty = dec(variant.stockQty);
