@@ -26,7 +26,7 @@ import { useT } from "@/lib/i18n";
 import { cdf, curLabel, d, date as fmtDate, money, number as fmtNumber, qty as fmtQty, todayLocal, typedNumberOk, usd } from "@/lib/format";
 import type { Account, Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { paymentSplit, type PaymentPart } from "@/lib/allocation";
+import { paymentSplit, yuanOnDate, type PaymentPart } from "@/lib/allocation";
 import Decimal from "decimal.js";
 import { BalanceWords, foreignText, PartyDialog, type ForeignBalance } from "@/pages/Contacts";
 import { useSystemText } from "@/lib/systemText";
@@ -254,13 +254,13 @@ export default function ContactDetail() {
         </CardContent>
       </Card>
 
-      {paying && <PaymentDialog party={party} balance={balance} foreign={foreign} onClose={() => setPaying(false)} />}
+      {paying && <PaymentDialog party={party} balance={balance} foreign={foreign} rows={rows} onClose={() => setPaying(false)} />}
       {editing && <PartyDialog type={party.type} party={{ ...party, balance }} onClose={() => setEditing(false)} />}
     </div>
   );
 }
 
-function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement["party"]; balance: string; foreign: ForeignBalance[]; onClose: () => void }) {
+function PaymentDialog({ party, balance, foreign: foreignNow, rows, onClose }: { party: Statement["party"]; balance: string; foreign: ForeignBalance[]; rows: StatementRow[]; onClose: () => void }) {
   const t = useT();
   const isCustomer = party.type === "customer";
   const [day, setDay] = useState(todayLocal());
@@ -286,6 +286,13 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
   const drawerShort = !isCustomer && drawerAfter?.lt(0)
     ? t(`Not enough money: the balance would be ${money(drawerAfter.toFixed(2), account!.currency)}`, `Fonds insuffisants\u00a0: le solde serait de ${money(drawerAfter.toFixed(2), account!.currency)}`)
     : null;
+  // The yuan owed as on the payment's date, as the server measures them (payParty): back-dated before the offload
+  // that starts the yuan debt, nothing is owed in yuan, and "Dû" and "Tout" say so before saving.
+  const yuan = !isCustomer && /^\d{4}-\d{2}-\d{2}$/.test(day) ? yuanOnDate(rows, day) : null;
+  const yuanBackDated = !!yuan?.latest && day < yuan.latest;
+  const foreign: ForeignBalance[] = yuanBackDated
+    ? [...foreignNow.filter((f) => f.currency !== "CNY"), ...(d(yuan!.native).isZero() ? [] : [{ currency: "CNY" as const, native: yuan!.native, usd: yuan!.usd }])]
+    : foreignNow;
   const b = d(balance);
   const outstanding = isCustomer ? (b.gt(0) ? b : null) : b.isNegative() ? b.abs() : null;
   // What is owed in francs (or yuan) in the direction of this payment.
@@ -298,6 +305,28 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
   const fcOwed = owedIn("CDF");
   const cnyOwed = !isCustomer && account?.currency === "USD" ? owedIn("CNY") : null;
   const [settleCny, setSettleCny] = useState("");
+  // Yuan owed today but not on that date, or owed then but moved since: no yuan can move dated before their
+  // latest entry (the server's YUAN_DATE_ORDER), so the date to choose is said here.
+  const cnyOwedNow = !isCustomer && foreignNow.some((f) => f.currency === "CNY" && d(f.native).isNegative());
+  const yuanLate = yuanBackDated ? fmtDate(yuan!.latest!) : "";
+  const yuanStart = yuanBackDated && yuan!.startsAfter ? fmtDate(yuan!.startsAfter) : "";
+  const yuanNotYet = yuanBackDated && cnyOwedNow && !owedIn("CNY")
+    ? yuanStart && yuanStart !== yuanLate
+      ? t(
+          `On ${fmtDate(day)}, nothing is owed in yuan: the yuan debt starts on ${yuanStart}, and their yuan last moved on ${yuanLate}. To settle yuan, date this payment ${yuanLate} or later.`,
+          `Au ${fmtDate(day)}, rien n'est dû en yuans\u00a0: la dette en yuans commence le ${yuanStart}, et ses yuans ont bougé le ${yuanLate}. Pour régler des yuans, datez ce paiement du ${yuanLate} ou après.`,
+        )
+      : t(
+          `On ${fmtDate(day)}, nothing is owed in yuan: the yuan debt starts on ${yuanStart || yuanLate}. To settle yuan, date this payment ${yuanLate} or later.`,
+          `Au ${fmtDate(day)}, rien n'est dû en yuans\u00a0: la dette en yuans commence le ${yuanStart || yuanLate}. Pour régler des yuans, datez ce paiement du ${yuanLate} ou après.`,
+        )
+    : null;
+  const yuanTooEarly = yuanBackDated && cnyOwed
+    ? t(
+        `${party.name} already has a yuan entry dated ${yuanLate}: their yuan cannot move dated earlier. Date this payment ${yuanLate} or later.`,
+        `${party.name} a déjà une écriture en yuans datée du ${yuanLate}\u00a0: ses yuans ne peuvent pas bouger à une date antérieure. Datez ce paiement du ${yuanLate} ou après.`,
+      )
+    : null;
   // Dollars paid for yuan: what the yuan owed are worth at the rate on file, and the rate this payment implies.
   const cnyRate = useRate(day).data?.cnyPerUsd ?? null;
   const cnyForeign = foreign.find((x) => x.currency === "CNY");
@@ -318,7 +347,7 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
       )
     : null;
   // Which debts this payment reduces, in the server's order (payablesLines, contactLines, payParty).
-  const dollarBalance = d(balance).minus(foreign.reduce((x, f) => x.plus(d(f.usd)), d(0)));
+  const dollarBalance = d(balance).minus(foreignNow.reduce((x, f) => x.plus(d(f.usd)), d(0)));
   const split = account && d(amount).gt(0) && !francSlip && (isCdf ? d(rate).gt(0) : account.currency === "USD")
     ? paymentSplit({
         usd: isCdf ? d(amount).dividedBy(d(rate)) : d(amount),
@@ -422,7 +451,9 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
           ? t("The yuan settled are more than what is owed", "Les yuans réglés dépassent ce qui est dû")
           : yuanMismatch
             ? t("The dollars do not match the yuan settled", "Les dollars ne correspondent pas aux yuans réglés")
-            : drawerShort);
+            : yuanTooEarly && (d(settleCny).gt(0) || split.some((p) => p.kind === "cny"))
+              ? t("Date this payment on or after the latest yuan entry", "Datez ce paiement du jour de la dernière écriture en yuans ou après")
+              : drawerShort);
 
   function save() {
     if (!account) return;
@@ -526,6 +557,7 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
                   )}
             </p>
           ) : null}
+          {yuanNotYet && <p role="alert" className="text-xs font-medium text-amber-800 dark:text-amber-400 sm:col-span-2" data-testid="yuan-not-yet">{yuanNotYet}</p>}
           {cnyOwed && (
             <Field
               label={t("Yuan settled by this payment (¥)", "Yuans réglés par ce paiement (¥)")}
@@ -544,7 +576,7 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
                   )}
                 </>
               }
-              error={d(settleCny).gt(cnyOwed) ? t("More than what is owed", "Plus que ce qui est dû") : yuanMismatch}
+              error={d(settleCny).gt(cnyOwed) ? t("More than what is owed", "Plus que ce qui est dû") : yuanMismatch ?? yuanTooEarly}
               className="sm:col-span-2"
             >
               <div className="flex gap-2">

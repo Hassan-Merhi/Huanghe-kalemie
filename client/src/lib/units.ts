@@ -1,4 +1,4 @@
-import { unitKey } from "@shared/units";
+import { unitKey, wholeUnit } from "@shared/units";
 import { num, qty } from "./format";
 
 type T = (en: string, fr: string) => string;
@@ -28,4 +28,20 @@ export function unitLabel(t: T, u: string | null | undefined, n = 2): string {
 export function qtyWithUnit(t: T, value: unknown, u: string | null | undefined): string {
   const label = unitLabel(t, u, num(value));
   return label ? `${qty(value)} ${label}` : qty(value);
+}
+
+/**
+ * What a cart holds, as the till's footer says it: its lines, and the pieces of counted units when they are more
+ * than the lines (5 × Pneu: "1 ligne · 5 pièces", as the sales list says Qté 5). Litres, metres and kilos stay
+ * lines; counted units of several kinds are "unités".
+ */
+export function cartCount(t: T, lines: { qty: unknown; unit: string | null | undefined }[]): string {
+  const n = lines.length;
+  const text = t(`${n} ${n === 1 ? "line" : "lines"}`, `${n} ${n < 2 ? "ligne" : "lignes"}`);
+  const counted = lines.filter((l) => wholeUnit(l.unit) && Number.isInteger(num(l.qty)) && num(l.qty) > 0);
+  const pieces = counted.reduce((s, l) => s + num(l.qty), 0);
+  if (pieces <= counted.length) return text;
+  const kinds = new Set(counted.map((l) => unitKey(l.unit || "pcs")));
+  const label = kinds.size === 1 ? unitLabel(t, Array.from(kinds)[0], pieces) : t("units", "unités");
+  return `${text} · ${qty(pieces)} ${label}`;
 }

@@ -18,7 +18,7 @@ import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
 import { cdf, curLabel, d, date as fmtDate, fcRounding, frenchPunctuation, MINUS, money, pct as fmtPct, qty as fmtQty, todayLocal, typedNumberOk, unclearQty, usd, variantText } from "@/lib/format";
-import { unitLabel, wholeUnit } from "@/lib/units";
+import { cartCount, unitLabel, wholeUnit } from "@/lib/units";
 import type { Account, MotorcycleUnit, Party, Settings, VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
@@ -1217,7 +1217,7 @@ export default function POS() {
       {!receipt && (
         <div className="fixed inset-x-0 bottom-0 z-40 flex items-center gap-3 border-t bg-background/95 px-4 py-3 shadow-[0_-4px_12px_rgba(0,0,0,0.08)] backdrop-blur lg:hidden print:hidden">
           <div className="min-w-0 flex-1">
-            <p className="text-xs text-muted-foreground">{t("Total", "Total")} · {lines.length} {lines.length > 1 ? t("items", "articles") : t("item", "article")}</p>
+            <p className="text-xs text-muted-foreground">{t("Total", "Total")} · {cartCount(t, lines.map((l) => ({ qty: l.qty, unit: l.variant.unit })))}</p>
             <p className="truncate text-xl font-bold tabular">{usd(total.toFixed(2))}</p>
             {problems.length > 0 && lines.length > 0 ? (
               // Without this the bar only says "Pay" and the reason is out of sight, at the foot of the payment card.

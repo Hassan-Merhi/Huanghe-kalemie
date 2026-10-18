@@ -104,3 +104,29 @@ export function owedOn(party: { balance: string; foreign?: { currency: string; n
   const native = (cur: "CDF" | "CNY") => toward(new Decimal(foreign.find((f) => f.currency === cur)?.native ?? 0));
   return { usd: toward(dollars), fc: native("CDF"), cny: native("CNY") };
 }
+
+/**
+ * A supplier's yuan as the server measures them for a payment dated `day` (payParty reads them as of its date),
+ * from the statement's lines: what was owed in yuan that day, the latest day their yuan moved (no yuan can move
+ * dated before it, the A36 rule), and the first day after `day` a yuan debt to them was booked. A payment
+ * back-dated to the 15th, for a debt that starts with an offload on the 18th, settles no yuan.
+ */
+export function yuanOnDate(
+  rows: { date: string; currency: string; nativeAmount: string | null; debit: string; credit: string }[],
+  day: string,
+): { native: string; usd: string; latest: string | null; startsAfter: string | null } {
+  let native = new Decimal(0);
+  let usd = new Decimal(0);
+  let latest: string | null = null;
+  let startsAfter: string | null = null;
+  for (const r of rows) {
+    if (r.currency !== "CNY" || !r.nativeAmount || new Decimal(r.nativeAmount).isZero()) continue;
+    const date = r.date.slice(0, 10);
+    if (!latest || date > latest) latest = date;
+    if (date <= day) {
+      native = native.plus(r.nativeAmount);
+      usd = usd.plus(r.debit).minus(r.credit);
+    } else if (new Decimal(r.nativeAmount).isNegative() && (!startsAfter || date < startsAfter)) startsAfter = date;
+  }
+  return { native: native.toFixed(2), usd: usd.toFixed(2), latest, startsAfter };
+}
