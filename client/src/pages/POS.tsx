@@ -575,19 +575,38 @@ export default function POS() {
     if (l.variant.tracksSerials && !l.unitId) problems.push(t(`Choose the chassis number for ${l.variant.productName}`, `Choisissez le numéro de châssis pour ${l.variant.productName}`));
   }
   if (maxDiscountPct && subtotal.gt(0)) {
+    // Said with the most that may be given: on the line, or on the sale discount when only its share takes a
+    // line over ("au plus 2,20 $" on a 22 $ tyre at 10 %), the lowest that keeps every line within the limit.
+    let saleDiscountMax: Decimal | null = null;
     for (const l of lines) {
       const list = c2(d(l.qty).times(d(l.variant.sellPrice)));
       if (list.lte(0)) continue;
       // The sale discount is shared over the lines by their amount, as the server does.
       const sold = lineAmount(l).minus(saleDiscount.times(lineAmount(l)).dividedBy(subtotal));
+      const most = d(l.qty).times(d(l.variant.sellPrice)).times(maxDiscountPct).dividedBy(100).toDecimalPlaces(2, Decimal.ROUND_DOWN);
+      const own = list.minus(lineAmount(l));
       if (list.minus(sold).times(100).gt(list.times(maxDiscountPct).plus("0.5"))) {
+        // The line is within the limit on its own: it is the sale discount's share that takes it over.
+        if (own.lte(most) && saleDiscount.gt(0) && lineAmount(l).gt(0)) {
+          const allowed = most.minus(own).times(subtotal).dividedBy(lineAmount(l)).toDecimalPlaces(2, Decimal.ROUND_DOWN);
+          saleDiscountMax = saleDiscountMax ? Decimal.min(saleDiscountMax, allowed) : allowed;
+          continue;
+        }
         problems.push(
           t(
-            `${l.variant.productName}: the discount is more than the ${maxDiscountPct}% you may give`,
-            `${l.variant.productName}\u00a0: la remise dépasse les ${maxDiscountPct}\u00a0% autorisés`,
+            `${l.variant.productName}: the discount is more than the ${maxDiscountPct}% you may give (at most ${usd(most.toFixed(2))})`,
+            `${l.variant.productName}\u00a0: la remise dépasse les ${maxDiscountPct}\u00a0% autorisés (au plus\u00a0${usd(most.toFixed(2))})`,
           ),
         );
       }
+    }
+    if (saleDiscountMax) {
+      problems.push(
+        t(
+          `The sale discount is more than the ${maxDiscountPct}% you may give (at most ${usd(saleDiscountMax.toFixed(2))})`,
+          `La remise sur la vente dépasse les ${maxDiscountPct}\u00a0% autorisés (au plus\u00a0${usd(saleDiscountMax.toFixed(2))})`,
+        ),
+      );
     }
   }
   if (total.lt(0)) problems.unshift(t(`The total is below zero (${usd(total.toFixed(2))}): the discounts are more than the prices`, `Le total est négatif (${usd(total.toFixed(2))})\u00a0: les remises dépassent les prix`));

@@ -346,6 +346,21 @@ export function axisLines(s: string, max = 18): string[] {
 }
 
 /**
+ * The francs a sale kept, net of its refunds, when they are below zero: a refund at a higher rate than the
+ * sale's gave back more francs than were paid (70 200 FC in, 71 200 FC out), though at the refund's rate the
+ * shop kept a few cents. Said in francs, as the drawer counts it, so it never reads as money kept:
+ * "Francs −1 000 FC (écart de taux)". Null when the francs net to zero or more.
+ */
+export function fcRateGap(t: (en: string, fr: string) => string, netFc: unknown): { figure: string; words: string } | null {
+  const f = d(netFc).toDecimalPlaces(0, Decimal.ROUND_HALF_UP);
+  if (!f.isNegative()) return null;
+  return {
+    figure: t(`Francs ${MINUS}${cdf(f.abs().toString())} (rate difference)`, `Francs ${MINUS}${cdf(f.abs().toString())} (écart de taux)`),
+    words: t("More francs handed back than the customer paid: the refund went at a higher rate than the sale", "Plus de francs rendus que le client n'en a payé\u00a0: le remboursement s'est fait à un taux plus haut que la vente"),
+  };
+}
+
+/**
  * A sale's franc rounding, signed as the books keep it (the "Arrondi FC" lines on exchange differences): +
  * when the shop kept a few francs (the customer handed over a little more, or a refund paid a little less),
  * − when it got a few francs less. The words say which, so the sign is never guessed: "−16 FC (−0,01 $)",

@@ -26,6 +26,8 @@ export interface SaleListRow {
   creditLeftUsd?: string;
   /** Franc rounding of the till and the refunds, + when the shop kept a few cents. */
   fcRoundingUsd?: string;
+  /** A sale paid in francs alone: the francs kept net of its refunds, below zero when a refund at a higher rate gave back more. */
+  fcNetNative?: string | null;
   /** "Payé": the cash really kept, payments and refunds at their own rates (Payé − Total = fcRoundingUsd). */
   paidKeptUsd?: string;
   /** The part of the credit the customer's avoir covered when the sale was made: nothing new is owed for it. */
