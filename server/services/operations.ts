@@ -3,6 +3,7 @@ import {
   accounts,
   exchangeRates,
   expenses,
+  journalLines,
   journals,
   motorcycleUnits,
   parties,
@@ -20,6 +21,7 @@ import { wholeUnit } from "@shared/units";
 import {
   cnyRateFor,
   contactLines,
+  COST_FX_MEMO,
   foreignBalance,
   bookValue,
   lockBalances,
@@ -30,8 +32,10 @@ import {
   resolveRate,
   rateTolerancePct,
   postJournal,
+  RESIDUE_MEMO,
   reverseJournal,
   shopToday,
+  SETTLED_FX_MEMO,
   SYSTEM_ACCOUNTS,
   systemAccountId,
   toUsd,
@@ -448,6 +452,9 @@ export async function payablesLines(
   return lines;
 }
 
+/** Yuan to settle are a count of yuan: fewer than none is a typo, never "none". */
+export const negativeSettleError = () => badRequest("The yuan to settle cannot be negative", "Les yuans à solder ne peuvent pas être négatifs");
+
 /**
  * The payables side of money received from a supplier, agent or employee: payablesLines the other way.
  * When they owe us yuan (a paid yuan bill since undone) and no francs, the money settles, after any
@@ -489,6 +496,7 @@ export async function payablesReceiptLines(
   const claimNative = claimed ? Decimal.max(Decimal.min(cny.native, cnyToday.native), 0) : new Decimal(0);
   // What `native` of those yuan cost on the books, as the journal takes them out (see costForeignOutflows).
   const cost = (native: Decimal) => bookValue(cny, native, new Decimal(0));
+  if (input.settleNative && dec(input.settleNative).isNegative()) throw negativeSettleError();
   const settle = input.settleNative && dec(input.settleNative).gt(0) ? cents(input.settleNative) : null;
   let cnyUsd = new Decimal(0);
   let native = new Decimal(0);
@@ -520,10 +528,10 @@ export async function payablesReceiptLines(
       native = claimNative;
       cnyUsd = allUsd;
     } else if (available.gt(0)) {
-      // As many yuan as the dollars cover at their cost, to the fen: the most whose cost is no more than
-      // the dollars, which is then the dollars themselves (a fen is worth well under a cent).
+      // As many yuan as the dollars cover at their cost, to the fen: the most whose exact cost, before it is
+      // rounded to the cent, is no more than the dollars. Never more: on a cent, rounding the cost half up
+      // would let 0,10 ¥ worth 0,014 $ go for 0,01 $, and a run of cent receipts settle the yuan below cost.
       native = Decimal.min(available.times(cny.native).dividedBy(cny.usd).toDecimalPlaces(2, Decimal.ROUND_FLOOR), claimNative);
-      while (native.lt(claimNative) && cost(native.plus("0.01")).lte(available)) native = native.plus("0.01");
       cnyUsd = available;
     }
   }
@@ -552,6 +560,105 @@ export async function payablesReceiptLines(
   return lines;
 }
 
+/** Journals that settle yuan owed to a supplier, or yuan they owe us with a new bill (see settledFxTakebackLines). */
+const SETTLING_TYPES = new Set(["supplier_payment", "payment", "container_finalize"]);
+
+/**
+ * The lines by which a container's reversal takes back the exchange differences its yuan's payments booked.
+ * Paying yuan settles them at what they cost on the books, and the gap from the dollars paid (a discount
+ * within the 5 % a payment allows, or the rate's move) goes to gains or losses. Once the container is
+ * undone, the supplier owes those yuan back, and a refund settles them at their cost: were they to come
+ * back at the invoice's dollars, refunding exactly what was paid would leave yuan nobody could clear, and
+ * the discount would stay as profit. So the yuan the reversal turns into a claim (`native`, beyond those
+ * still owed) carry what was paid for them: their share, per yuan, of the exchange differences booked by
+ * the journals that settled this supplier's yuan since the container's offload (`sinceJournalId`), less
+ * what an earlier reversal there already took back, moves back from gains or losses to the supplier.
+ * Only journals that paid or billed the yuan (not undone), and whose only francs or yuan are this
+ * supplier's: another balance's difference in the same journal cannot be told apart, so none is taken.
+ * The caller holds the supplier's lock.
+ */
+export async function settledFxTakebackLines(
+  tx: Tx,
+  input: { payables: number; partyId: number; native: Decimal; sinceJournalId: number; date: string },
+): Promise<PostLine[]> {
+  const { payables, partyId } = input;
+  const owed = (await foreignBalance(tx, payables, partyId, "CNY", input.date)).native;
+  const claim = Decimal.min(input.native, Decimal.max(owed.plus(input.native), 0));
+  if (!claim.gt(0)) return [];
+  const rows = await tx
+    .select({
+      journalId: journalLines.journalId,
+      date: journals.date,
+      type: journals.type,
+      undone: sql<boolean>`${journals.reversesJournalId} is not null or ${journals.reversedByJournalId} is not null`,
+      native: journalLines.nativeAmount,
+      usd: sql<string>`${journalLines.debit} - ${journalLines.credit}`,
+      memo: journalLines.memo,
+    })
+    .from(journalLines)
+    .innerJoin(journals, eq(journals.id, journalLines.journalId))
+    .where(and(eq(journalLines.accountId, payables), eq(journalLines.partyId, partyId), eq(journalLines.currency, "CNY"), lte(journals.date, input.date)))
+    .orderBy(journals.date, journals.id, journalLines.id);
+  const inRange = Array.from(new Set(rows.filter((r) => r.journalId >= input.sinceJournalId && !r.undone && SETTLING_TYPES.has(r.type)).map((r) => r.journalId)));
+  const others = inRange.length
+    ? await tx
+        .select({ journalId: journalLines.journalId, accountId: journalLines.accountId, partyId: journalLines.partyId, currency: journalLines.currency, usd: sql<string>`${journalLines.credit} - ${journalLines.debit}`, memo: journalLines.memo })
+        .from(journalLines)
+        .where(inArray(journalLines.journalId, inRange))
+    : [];
+  const fx = await systemAccountId(tx, SYSTEM_ACCOUNTS.fx);
+  let gain = new Decimal(0); // what the settling journals booked to gains (a loss is negative)
+  let settled = new Decimal(0); // the yuan they settled
+  let atCost = new Decimal(0); // what those yuan cost on the books
+  let taken = new Decimal(0); // what earlier reversals took back
+  let running = new Decimal(0);
+  for (let i = 0; i < rows.length; ) {
+    const id = rows[i].journalId;
+    const own = [];
+    while (i < rows.length && rows[i].journalId === id) own.push(rows[i++]);
+    const before = running;
+    running = running.plus(sum(own.map((r) => dec(r.native ?? 0))));
+    if (id < input.sinceJournalId) continue;
+    if (own[0].type === "container_reversal") {
+      taken = taken.plus(sum(own.filter((r) => r.memo === SETTLED_FX_MEMO).map((r) => dec(r.usd).negated())));
+      continue;
+    }
+    if (!inRange.includes(id)) continue;
+    const lines = others.filter((l) => l.journalId === id);
+    if (lines.some((l) => l.currency !== "USD" && !(l.accountId === payables && l.partyId === partyId && l.currency === "CNY"))) continue;
+    // The yuan the journal moved toward none: those it paid, or a new bill's that met yuan owed back.
+    const moved = sum(own.filter((r) => r.memo !== RESIDUE_MEMO).map((r) => dec(r.native ?? 0)));
+    const toward = before.isZero() || moved.isZero() || before.isNegative() === moved.isNegative() ? new Decimal(0) : Decimal.min(moved.abs(), before.abs());
+    if (!toward.gt(0)) continue;
+    const usd = sum(own.filter((r) => r.memo !== RESIDUE_MEMO).map((r) => dec(r.usd)));
+    gain = gain.plus(sum(lines.filter((l) => l.accountId === fx && l.memo === COST_FX_MEMO).map((l) => dec(l.usd))));
+    settled = settled.plus(toward);
+    atCost = atCost.plus(usd.abs().times(toward).dividedBy(moved.abs()));
+  }
+  if (!settled.gt(0) || gain.isZero()) return [];
+  const share = cents(gain.times(Decimal.min(claim, settled)).dividedBy(settled));
+  // Never more, all reversals together, than the journals booked.
+  const room = gain.minus(taken);
+  const back = gain.isPositive() ? Decimal.min(share, Decimal.max(room, 0)) : Decimal.max(share, Decimal.min(room, 0));
+  if (back.isZero()) return [];
+  const paid = atCost.minus(gain);
+  const rate = paid.gt(0) ? settled.dividedBy(paid).toFixed(4) : null;
+  if (!rate) return [];
+  return [
+    {
+      accountId: payables,
+      partyId,
+      credit: back.isPositive() ? back : 0,
+      debit: back.isNegative() ? back.abs() : 0,
+      currency: "CNY",
+      nativeAmount: "0.00",
+      rate,
+      memo: SETTLED_FX_MEMO,
+    },
+    { accountId: fx, debit: back.isPositive() ? back : 0, credit: back.isNegative() ? back.abs() : 0, memo: SETTLED_FX_MEMO },
+  ];
+}
+
 /** Pay a supplier or agent (container invoice, clearing agent, transporter, unpaid bills). */
 export async function payParty(tx: Tx, input: PartyPaymentInput, userId: number) {
   const party = await requireParty(tx, input.partyId, ["supplier", "agent", "employee"]);
@@ -560,6 +667,7 @@ export async function payParty(tx: Tx, input: PartyPaymentInput, userId: number)
   const leg = await moneyLeg(tx, input);
   const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
   let partyLines: PostLine[];
+  if (input.settleNative && dec(input.settleNative).isNegative()) throw negativeSettleError();
   if (input.settleNative && dec(input.settleNative).gt(0)) {
     // Dollars paid against an invoice in yuan: the yuan settled leave at their book cost.
     // A dollar advance goes to the yuan first; only what is left is owed.

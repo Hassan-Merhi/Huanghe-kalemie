@@ -123,8 +123,8 @@ describe.skipIf(!hasDb)("Guards found by the twenty-seventh audit", async () => 
     const s = await owing("Fournisseur N1 A");
     const fx0 = await fxNow();
     expect((await receive(s, "410")).status).toBe(201);
-    // 410 $ of 422,54 $: the yuan they cover at their cost, 2 911 ¥; 89 ¥ left at 12,54 $.
-    expect(await owed(s, "CNY", payables)).toEqual(["89.00", "12.54"]);
+    // 410 $ of 422,54 $: the yuan their dollars cover at their exact cost, 2 910,96 ¥ (A33); 89,04 ¥ left at 12,54 $.
+    expect(await owed(s, "CNY", payables)).toEqual(["89.04", "12.54"]);
     expect((await receive(s, "12.54")).status).toBe(201);
     expect(await owed(s, "CNY", payables)).toEqual(["0.00", "0.00"]);
     expect(await owed(s, "USD", payables)).toEqual(["0.00", "0.00"]);

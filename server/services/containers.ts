@@ -17,8 +17,8 @@ import { de, frNumber } from "@shared/french";
 import type { Tx } from "../db";
 import { badRequest, conflict, notFound, wholeUnitError, francDecimalsError } from "../errors";
 import { wholeUnit } from "@shared/units";
-import { moneyLeg, postJournal, rateFor, rateTolerancePct, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type ForeignCurrency } from "./ledger";
-import { applyAdvances, assertSameCurrency, reverseAdvances } from "./operations";
+import { lockBalances, moneyLeg, postJournal, rateFor, rateTolerancePct, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, toUsd, type ForeignCurrency } from "./ledger";
+import { applyAdvances, assertSameCurrency, reverseAdvances, settledFxTakebackLines } from "./operations";
 import { issueStock, linkMovementsToJournal, lockVariants, receiveStock, stockQty } from "./stock";
 import { variantColour } from "./catalog";
 
@@ -539,7 +539,16 @@ export async function reverseContainer(tx: Tx, containerId: number, date: string
     }
   }
 
+  // The supplier's balances before the advances go back (see settledFxTakebackLines).
+  await lockBalances(tx, { parties: [container.supplierId] });
   await reverseAdvances(tx, { type: "container", id: containerId }, date, userId);
+  const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
+  const invoice = supplierInvoiceNative(container.currency, full.lines, container.fobTotalUsd!);
+  // Yuan paid for at a discount (or at another rate) come back owed at what was paid for them.
+  const takeback =
+    invoice.currency === "CNY" && container.finalizeJournalId
+      ? await settledFxTakebackLines(tx, { payables, partyId: container.supplierId, native: invoice.nativeAmount, sinceJournalId: container.finalizeJournalId, date })
+      : [];
   let removed = dec(0);
   for (const line of full.lines) {
     const value = await issueStock(tx, {
@@ -565,16 +574,12 @@ export async function reverseContainer(tx: Tx, containerId: number, date: string
     sourceId: containerId,
     exactValues: true,
     // The yuan or francs owed go back at the invoice's value: what a month-end revaluation, or the rate's
-    // moves since, left in dollars on them goes with them.
+    // moves since, left in dollars on them goes with them. Those paid for come back at what was paid.
     clearRevalued: true,
     userId,
     lines: [
-      {
-        accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.payables),
-        debit: container.fobTotalUsd!,
-        partyId: container.supplierId,
-        ...supplierInvoiceNative(container.currency, full.lines, container.fobTotalUsd!),
-      },
+      { accountId: payables, debit: container.fobTotalUsd!, partyId: container.supplierId, ...invoice },
+      ...takeback,
       { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.goodsInTransit), debit: container.expensesTotalUsd! },
       { accountId: await systemAccountId(tx, SYSTEM_ACCOUNTS.inventory), credit: removed.toFixed(2) },
       {

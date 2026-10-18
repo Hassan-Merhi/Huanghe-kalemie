@@ -589,6 +589,9 @@ async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string, 
 /** Memo of the lines that move to exchange differences the dollars left on a balance a reversal emptied (see revaluedDollarLines). */
 export const REVALUED_MEMO = "Écart de change à l'annulation";
 
+/** Memo of the lines by which a container's reversal takes back what its yuan's payments booked to exchange differences (see settledFxTakebackLines). */
+export const SETTLED_FX_MEMO = "Écart de change du règlement repris à l'annulation";
+
 type RevaluedKey = { accountId: number; partyId: number | null; currency: ForeignCurrency };
 
 /**
@@ -603,7 +606,9 @@ type RevaluedKey = { accountId: number; partyId: number | null; currency: Foreig
  * - those revaluations booked on it, net of the reversals that undid them;
  * - on a contact (or another account that is not money), what its own francs or yuan can be worth apart at
  *   the rates they were posted at: half of them at the lowest rate against half at the highest, plus half a
- *   cent per line for its rounding.
+ *   cent per line for its rounding;
+ * - what a container's reversal took back from the exchange differences of its yuan's payments (see
+ *   settledFxTakebackLines), which undoing such a payment as well gives back once more.
  * A balance the reversal leaves holding francs or yuan whose dollars have the other sign has its dollars
  * restated to them at the day's rate instead, within the same bound, moving no francs or yuan.
  * Dollars booked on it by hand with no francs or yuan, or more than that, are for a person to correct
@@ -648,8 +653,10 @@ export async function revaluedDollarLines(tx: Tx, keys: RevaluedKey[], date: str
     // Every line, by journal in date order, the journal being posted last.
     // A revaluation and the reversal that undid it (a month reopened) count as one, so closing and
     // reopening a month again and again cannot widen what revaluations explain.
-    const posted = rows.map((r) => ({ group: r.journalId, origin: r.reverses ?? r.journalId, revaluation: r.type === "revaluation", cleared: r.memo === REVALUED_MEMO, native: dec(r.native ?? 0), usd: dec(r.usd), rate: r.rate }));
-    const all = [...posted, ...own.map((v) => ({ group: 0, origin: 0, revaluation: false, cleared: false, native: dec(v.nativeAmount ?? 0), usd: v.debit.minus(v.credit), rate: v.rate }))];
+    // Only as a container's reversal books them, not a hand-typed memo.
+    const takenBack = (r: { type: string; memo: string | null }) => r.type === "container_reversal" && r.memo === SETTLED_FX_MEMO;
+    const posted = rows.map((r) => ({ group: r.journalId, origin: r.reverses ?? r.journalId, revaluation: r.type === "revaluation", cleared: r.memo === REVALUED_MEMO || takenBack(r), takenBack: takenBack(r), native: dec(r.native ?? 0), usd: dec(r.usd), rate: r.rate }));
+    const all = [...posted, ...own.map((v) => ({ group: 0, origin: 0, revaluation: false, cleared: false, takenBack: false, native: dec(v.nativeAmount ?? 0), usd: v.debit.minus(v.credit), rate: v.rate }))];
     const revaluedIn = (some: typeof all) => {
       const net = new Map<number, Decimal>();
       for (const r of some) if (r.revaluation) net.set(r.origin, (net.get(r.origin) ?? new Decimal(0)).plus(r.usd));
@@ -703,7 +710,8 @@ export async function revaluedDollarLines(tx: Tx, keys: RevaluedKey[], date: str
       const apart = posts.length
         ? sum(posts.map((r) => r.native.abs())).dividedBy(2).times(new Decimal(1).dividedBy(Decimal.min(...rates)).minus(new Decimal(1).dividedBy(Decimal.max(...rates))))
         : new Decimal(0);
-      if (moved.abs().gt(revalued.plus(apart).plus(new Decimal("0.005").times(posts.length)))) continue;
+      const takenBackUsd = sum(since.filter((r) => r.takenBack).map((r) => r.usd.abs()));
+      if (moved.abs().gt(revalued.plus(apart).plus(takenBackUsd).plus(new Decimal("0.005").times(posts.length)))) continue;
     }
     gain = gain.plus(moved);
     lines.push({
