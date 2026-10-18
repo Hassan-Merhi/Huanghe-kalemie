@@ -20,7 +20,7 @@ import { useToast } from "@/hooks/use-toast";
 import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
-import { cdf, d, date as fmtDate, fcRateGap, fcRounding, qty as fmtQty, todayLocal, usd, variantText, unclearQty } from "@/lib/format";
+import { cdf, d, date as fmtDate, fcRateGap, fcRefundCap, fcRounding, qty as fmtQty, todayLocal, usd, variantText, unclearQty } from "@/lib/format";
 import type { Account, Party, Settings } from "@/lib/types";
 import { wholeUnit } from "@/lib/units";
 import { cn } from "@/lib/utils";
@@ -110,9 +110,11 @@ function ReturnDialog({ sale, owes, onClose, onDone }: { sale: SaleFull; owes: D
   const fcRefunded = sale.returns.filter((r) => r.refundCurrency === "CDF").reduce((s, r) => s.plus(d(r.refundNative)), d(0));
   const fcLeft = Decimal.max(fcPaid.minus(fcRefunded), 0);
   const fcOver = payOutFc && fcPaid.gt(0) && payOutFc.gt(fcLeft) ? payOutFc : null;
-  // The rate that hands back at most what is left, offered when the server would take it (within the tolerance).
-  const capRate = fcOver && isOwner && toCash.gt(0) ? fcLeft.dividedBy(toCash).toDecimalPlaces(0, Decimal.ROUND_FLOOR) : null;
-  const capOk = !!capRate && capRate.gt(0) && dayRate.gt(0) && capRate.minus(dayRate).abs().dividedBy(dayRate).times(100).lte(rateTolerance);
+  // The highest rate that hands back at most what is left once rounded down to 100 FC, offered when the server
+  // would take it (within the tolerance), and labelled with the francs it really gives.
+  const cap = fcOver && isOwner ? fcRefundCap(toCash, fcLeft) : null;
+  const capRate = cap?.rate ?? null;
+  const capOk = !!capRate && dayRate.gt(0) && capRate.minus(dayRate).abs().dividedBy(dayRate).times(100).lte(rateTolerance);
   const fcOverText = fcOver
     ? fcRefunded.gt(0)
       ? t(`${cdf(fcLeft.toString())} is left of the francs the customer paid: hand back ${cdf(fcOver.toString())}?`, `Il reste ${cdf(fcLeft.toString())} des francs payés par le client\u00a0: rendre ${cdf(fcOver.toString())}\u00a0?`)
@@ -252,7 +254,7 @@ function ReturnDialog({ sale, owes, onClose, onDone }: { sale: SaleFull; owes: D
                   <p>{fcOverText}</p>
                   {capOk && (
                     <Button type="button" size="sm" variant="outline" className="h-auto whitespace-normal py-1.5 text-left" onClick={() => setRate(capRate!.toString())}>
-                      {t(`Hand back at most ${cdf(fcLeft.toString())} (rate ${fmtQty(capRate!.toString())})`, `Rendre au plus ${cdf(fcLeft.toString())} (taux ${fmtQty(capRate!.toString())})`)}
+                      {t(`Hand back ${cdf(cap!.francs.toString())} (rate ${fmtQty(capRate!.toString())})`, `Rendre ${cdf(cap!.francs.toString())} (taux ${fmtQty(capRate!.toString())})`)}
                     </Button>
                   )}
                 </div>
@@ -546,7 +548,7 @@ function ExtraReturned({ extra, owes }: { extra: Decimal; owes: Decimal | null }
     if (kept.isZero()) {
       text = owes.gt(0)
         ? t(`The extra ${x} reduces what the customer still owes (${usd(owes.toFixed(2))}).`, `Les ${x} en plus réduisent sa dette restante (${usd(owes.toFixed(2))}).`)
-        : t(`The extra ${x} paid off what the customer still owed.`, `Les ${x} en plus ont réduit sa dette restante : il ne doit plus rien.`);
+        : t(`The extra ${x} paid off what the customer still owed.`, `Les ${x} en plus ont soldé sa dette restante.`);
     } else if (toDebt.isZero()) {
       text = t(`The extra ${x} is kept as credit for the customer.`, `Les ${x} en plus restent en avoir pour le client.`);
     } else {

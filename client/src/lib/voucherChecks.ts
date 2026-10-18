@@ -159,23 +159,23 @@ export function useVoucherChecks(input: { kind: string; day: string; accountId: 
       overDebt.push(
         against.gt(0)
           ? kind === "payment"
-            ? t(`We pay ${paid} to ${p.name}; they already owe us ${already}: all of it adds to their debt`, `Nous versons ${paid} à ${p.name}\u00a0; il nous doit déjà ${already}\u00a0: tout s'ajoute à sa dette`)
-            : t(`${p.name} pays ${paid}; we already owe them ${already}: all of it adds to what we owe them`, `${p.name} verse ${paid}\u00a0; nous lui devons déjà ${already}\u00a0: tout s'ajoute à notre dette envers lui`)
+            ? t(`We pay ${paid} to ${p.name}; they already owe us ${already}: all of it adds to their debt`, `Nous versons ${paid} à ${p.name}, qui nous doit déjà ${already}\u00a0: tout s'ajoute à sa dette`)
+            : t(`${p.name} pays ${paid}; we already owe them ${already}: all of it adds to what we owe them`, `${p.name} verse ${paid}\u00a0; nous lui devons déjà ${already}\u00a0: tout s'ajoute à ce que nous lui devons`)
           : kind === "receipt"
           ? customer
             ? some
-              ? t(`${p.name} pays ${paid}; they owe ${owedText}: ${over} will become credit for them`, `${p.name} paie ${paid} ; il doit ${owedText} : ${over} deviendront un avoir`)
-              : t(`${p.name} pays ${paid}; they owe nothing: all of it will become credit for them`, `${p.name} paie ${paid} ; il ne doit rien : tout deviendra un avoir`)
+              ? t(`${p.name} pays ${paid}; they owe ${owedText}: ${over} will become credit for them`, `${p.name} paie ${paid} pour une dette de ${owedText}\u00a0: ${over} deviendront un avoir`)
+              : t(`${p.name} pays ${paid}; they owe nothing: all of it will become credit for them`, `${p.name} paie ${paid} sans rien devoir\u00a0: tout deviendra un avoir`)
             : some
-              ? t(`${p.name} pays back ${paid}; they owe us ${owedText}: ${over} will be owed to them`, `${p.name} rembourse ${paid} ; il nous doit ${owedText} : ${over} deviendront une dette envers lui`)
-              : t(`${p.name} pays back ${paid}; they owe us nothing: all of it will be owed to them`, `${p.name} rembourse ${paid} ; il ne nous doit rien : tout deviendra une dette envers lui`)
+              ? t(`${p.name} pays back ${paid}; they owe us ${owedText}: ${over} will be owed to them`, `${p.name} rembourse ${paid} pour une dette de ${owedText}\u00a0: nous lui devrons ${over}`)
+              : t(`${p.name} pays back ${paid}; they owe us nothing: all of it will be owed to them`, `${p.name} rembourse ${paid} sans rien nous devoir\u00a0: nous lui devrons tout`)
           : customer
             ? some
-              ? t(`We pay ${paid} to ${p.name}; their credit is ${owedText}: ${over} will be owed by them`, `Nous versons ${paid} à ${p.name} ; son avoir est de ${owedText} : ${over} deviendront une dette du client`)
-              : t(`We pay ${paid} to ${p.name}; they have no credit: all of it will be owed by them`, `Nous versons ${paid} à ${p.name} ; il n'a pas d'avoir : tout deviendra une dette du client`)
+              ? t(`We pay ${paid} to ${p.name}; their credit is ${owedText}: ${over} will be owed by them`, `Nous versons ${paid} à ${p.name}, dont l'avoir est de ${owedText}\u00a0: ${over} deviendront une dette du client`)
+              : t(`We pay ${paid} to ${p.name}; they have no credit: all of it will be owed by them`, `Nous versons ${paid} à ${p.name}, qui n'a aucun avoir\u00a0: tout deviendra une dette du client`)
             : some
-              ? t(`We pay ${paid} to ${p.name}; we owe ${owedText}: ${over} will become an advance`, `Nous payons ${paid} à ${p.name} ; nous devons ${owedText} : ${over} deviendront une avance`)
-              : t(`We pay ${paid} to ${p.name}; we owe nothing: all of it will become an advance`, `Nous payons ${paid} à ${p.name} ; nous ne devons rien : tout deviendra une avance`),
+              ? t(`We pay ${paid} to ${p.name}; we owe ${owedText}: ${over} will become an advance`, `Nous payons ${paid} à ${p.name}\u00a0; nous devons ${owedText}\u00a0: ${over} deviendront une avance`)
+              : t(`We pay ${paid} to ${p.name}; we owe nothing: all of it will become an advance`, `Nous payons ${paid} à ${p.name}\u00a0; nous ne devons rien\u00a0: tout deviendra une avance`),
       );
     }
   }
