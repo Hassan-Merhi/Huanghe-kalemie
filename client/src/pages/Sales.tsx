@@ -139,6 +139,8 @@ function Profit({ value, muted }: { value: string; muted?: boolean }) {
         "rounded px-2 py-0.5 font-medium max-[1100px]:px-1.5",
         !muted && v.gt(0) && "bg-green-500/15 text-green-800 dark:text-green-400",
         !muted && v.lt(0) && "bg-red-500/15 text-red-700 dark:text-red-400",
+        // A cancelled sale made no margin: struck through like its total.
+        muted && "line-through",
       )}
     >
       {usd(v.toFixed(2))}
@@ -269,7 +271,7 @@ function SaleCard({ r, showCost }: { r: SaleListRow; showCost: boolean }) {
       </p>
       <div className="mt-1.5 flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <p className="min-w-0 tabular">
-          {t("Qty", "Qté")} {fmtQty(d(r.qty).minus(d(r.returnedQty)).toString())} · {t("Paid", "Payé")} {usd((voided ? d(r.paidUsd) : n.paid).toFixed(2))}
+          {t("Qty", "Qté")} {fmtQty(d(r.qty).minus(d(r.returnedQty)).toString())} · {t("Paid", "Payé")} <span className={cn(voided && "line-through")}>{usd((voided ? d(r.paidUsd) : n.paid).toFixed(2))}</span>
           {!voided && <CreditText r={r} />}
           <OnAccount r={r} />
           {/* What came back, under the figures so the items above keep their line. */}
@@ -415,12 +417,12 @@ export default function Sales() {
                           {d(r.returnedQty).gt(0) && <div className="whitespace-nowrap text-xs text-muted-foreground">{fmtQty(r.returnedQty)} {t("returned", "retourné")}</div>}
                         </TableCell>
                         <TableCell className="text-right">
-                          <Num>{usd((voided ? d(r.paidUsd) : n.paid).toFixed(2))}</Num>
+                          <Num className={cn(voided && "line-through")}>{usd((voided ? d(r.paidUsd) : n.paid).toFixed(2))}</Num>
                           {!voided && <Refunded value={n.refunded} />}
                           <OnAccount r={r} />
                           {/* What was not paid: owed by the customer, apart from what their avoir covered. */}
                           {voided
-                            ? d(r.creditUsd).gt(0) && <div className="whitespace-nowrap text-xs">{t("credit", "crédit")} {usd(r.creditUsd)}</div>
+                            ? d(r.creditUsd).gt(0) && <div className="whitespace-nowrap text-xs">{t("credit cancelled", "crédit annulé")}</div>
                             : (
                                 <>
                                   {creditSplit(r).onAvoir.gt(0) && <div className="whitespace-nowrap text-xs text-emerald-800 dark:text-emerald-400">{t("from credit", "sur l'avoir")} {usd(creditSplit(r).onAvoir.toFixed(2))}</div>}
