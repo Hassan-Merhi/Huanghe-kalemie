@@ -451,51 +451,85 @@ export async function payablesLines(
 /**
  * The payables side of money received from a supplier, agent or employee: payablesLines the other way.
  * When they owe us yuan (a paid yuan bill since undone) and no francs, the money settles, after any
- * dollars they owe, the yuan: all of them when it is worth them within the tolerance of a payment that
- * settles yuan (see payParty), at the yuan rate on file (else at what the yuan cost), else as many as
- * it buys at that rate. The yuan leave at their cost when posted and the difference goes to gains or
- * losses, so no yuan are left that no money account could ever settle. Only what is left goes through
- * the usual dollar and franc balances (see contactLines). Every line is a credit: nothing goes out.
+ * dollars they owe, the yuan it covers at what those yuan cost on the books (so no rate entered for the
+ * day changes how many it settles, and no exchange difference comes of it): all of them when it covers
+ * their cost, else as many as it buys at that cost. Never more yuan than they owe both on the receipt's
+ * date and today (a receipt dated back cannot settle yuan a later one already settled). Settling all the
+ * yuan named by `settleNative` for less than their cost writes the difference off to gains or losses:
+ * only on that explicit request, within 1 % (the owner: within the rate tolerance, 3 % at most). Only what
+ * is left goes through the usual dollar and franc balances (see contactLines). Every line is a credit:
+ * nothing goes out.
  */
 export async function payablesReceiptLines(
   tx: Tx,
-  input: { payables: number; partyId: number; usd: DecimalInput; money: { currency: string; nativeAmount: string | null; rate: string | null }; date: string; memo?: string | null },
+  input: {
+    payables: number;
+    partyId: number;
+    usd: DecimalInput;
+    money: { currency: string; nativeAmount: string | null; rate: string | null };
+    date: string;
+    memo?: string | null;
+    settleNative?: string | null;
+    name?: string;
+    owner?: boolean;
+  },
 ): Promise<PostLine[]> {
   const { payables, partyId } = input;
+  const name = input.name ?? "This contact";
   // The yuan, francs and dollars owed decide the split, so one posting at a time per contact.
   await lockBalances(tx, { parties: [partyId] });
   const cny = await foreignBalance(tx, payables, partyId, "CNY", input.date);
+  const cnyToday = await foreignBalance(tx, payables, partyId, "CNY");
   const fcClaim = (await foreignBalance(tx, payables, partyId, "CDF", input.date)).native;
   const usdClaim = Decimal.max((await foreignBalance(tx, payables, partyId, "USD", input.date)).usd, 0);
   const total = cents(input.usd);
   const memo = input.memo ?? null;
+  const claimed = cny.native.gt(0) && cny.usd.gt(0);
+  // The yuan they owe on the receipt's date and still owe today.
+  const claimNative = claimed ? Decimal.max(Decimal.min(cny.native, cnyToday.native), 0) : new Decimal(0);
+  // What `native` of those yuan cost on the books, as the journal takes them out (see costForeignOutflows).
+  const cost = (native: Decimal) => bookValue(cny, native, new Decimal(0));
+  const settle = input.settleNative && dec(input.settleNative).gt(0) ? cents(input.settleNative) : null;
   let cnyUsd = new Decimal(0);
+  let native = new Decimal(0);
   const lines: PostLine[] = [];
-  if (cny.native.gt(0) && cny.usd.gt(0) && !fcClaim.gt(0)) {
-    const claimNative = cny.native;
-    const available = Decimal.max(total.minus(usdClaim), 0);
-    // Yuan per dollar: the rate on file, else what the yuan cost.
-    const reference = (await cnyRateFor(tx, input.date)) ?? claimNative.dividedBy(cny.usd);
-    let native = new Decimal(0);
-    if (available.gt(0)) {
-      const allUsd = cents(claimNative.dividedBy(reference));
-      const tolerance = Decimal.max(await rateTolerancePct(tx), 5);
-      if (available.gte(allUsd)) {
-        native = claimNative;
-        cnyUsd = allUsd;
-      } else if (claimNative.dividedBy(available).minus(reference).abs().dividedBy(reference).times(100).lte(tolerance)) {
-        // Close enough to all of them (the dollars paid for them coming back at another day's rate).
-        native = claimNative;
-        cnyUsd = available;
-      } else {
-        native = Decimal.min(cents(available.times(reference)), claimNative);
-        cnyUsd = available;
+  if (settle) {
+    if (claimNative.lte(0)) throw badRequest(`${name} owes nothing in yuan on that date and today`, `${name} ne doit rien en yuans à cette date et aujourd'hui`);
+    if (settle.gt(claimNative)) throw badRequest(`${name} owes only ${claimNative.toFixed(2)} CNY on that date and today`, `${name} ne doit que ${frMoney(claimNative, "CNY")} à cette date et aujourd'hui`);
+    if (input.money.currency !== "USD") throw badRequest("Receive yuan owed into a dollar account", "Encaissez des yuans dus sur un compte en dollars");
+    const value = cost(settle);
+    if (total.lt(value)) {
+      // Less than what the yuan cost: the rest is a loss shared by the partners, so only a small one.
+      // Staff get 1 %, below the 3 % franc tolerance: the yuan's cost moves with no rate anybody enters,
+      // so only a bank's fee or rounding can explain a gap.
+      const limit = input.owner ? Decimal.min(await rateTolerancePct(tx), 3) : Decimal.min(await rateTolerancePct(tx), 1);
+      const gap = value.minus(total).dividedBy(value).times(100);
+      if (gap.gt(limit)) {
+        throw badRequest(
+          `${total.toFixed(2)} $ is ${gap.toFixed(2)} % less than the ${value.toFixed(2)} $ the ${settle.toFixed(2)} CNY cost: at most ${limit.toFixed(0)} % can be written off. Receive it without settling all the yuan.`,
+          `${frMoney(total)} est ${frNumber(gap, 2)} % en dessous des ${frMoney(value)} qu'ont coûté les ${frMoney(settle, "CNY")} : au plus ${frNumber(limit, 0)} % peuvent être passés en perte. Encaissez sans solder tous les yuans.`,
+        );
       }
+      cnyUsd = total;
+    } else cnyUsd = value;
+    native = settle;
+  } else if (claimNative.gt(0) && !fcClaim.gt(0)) {
+    const available = Decimal.max(total.minus(usdClaim), 0);
+    const allUsd = cost(claimNative);
+    if (available.gte(allUsd)) {
+      native = claimNative;
+      cnyUsd = allUsd;
+    } else if (available.gt(0)) {
+      // As many yuan as the dollars cover at their cost, to the fen: the most whose cost is no more than
+      // the dollars, which is then the dollars themselves (a fen is worth well under a cent).
+      native = Decimal.min(available.times(cny.native).dividedBy(cny.usd).toDecimalPlaces(2, Decimal.ROUND_FLOOR), claimNative);
+      while (native.lt(claimNative) && cost(native.plus("0.01")).lte(available)) native = native.plus("0.01");
+      cnyUsd = available;
     }
-    if (cnyUsd.gt(0) && native.gt(0)) {
-      lines.push({ accountId: payables, partyId, credit: cnyUsd, currency: "CNY", nativeAmount: native, rate: native.dividedBy(cnyUsd).toFixed(4), memo });
-    } else cnyUsd = new Decimal(0);
   }
+  if (cnyUsd.gt(0) && native.gt(0)) {
+    lines.push({ accountId: payables, partyId, credit: cnyUsd, currency: "CNY", nativeAmount: native, rate: native.dividedBy(cnyUsd).toFixed(4), memo });
+  } else cnyUsd = new Decimal(0);
   const rest = total.minus(cnyUsd);
   if (rest.gt(0)) {
     const restNative = input.money.nativeAmount

@@ -41,7 +41,8 @@ export function registerErpRoutes(
     accountId: id,
     rate: optionalRate,
     memo: z.string().max(300).optional().nullable(),
-    lines: z.array(z.object({ partyId: optionalId, accountId: optionalId, amount: positiveDecimal, memo: z.string().max(300).optional().nullable() })).min(1).max(100),
+    // settleNative: on a receipt from a supplier, the yuan they owe that the line settles in full (see payablesReceiptLines).
+    lines: z.array(z.object({ partyId: optionalId, accountId: optionalId, amount: positiveDecimal, memo: z.string().max(300).optional().nullable(), settleNative: optionalDecimal })).min(1).max(100),
   });
 
   for (const kind of ["payment", "receipt"] as const) {
