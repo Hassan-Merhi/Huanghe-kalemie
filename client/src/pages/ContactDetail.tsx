@@ -389,9 +389,9 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
       ? owedSettled.gt(0)
         ? t(
             `The customer pays ${paidText}; they owe ${owedText}: ${usd(over.usd)} will become credit for them`,
-            `Le client paie ${paidText}\u00a0; il doit ${owedText}\u00a0: ${usd(over.usd)} deviendront un avoir`,
+            `Le client paie ${paidText} pour une dette de ${owedText}\u00a0: ${usd(over.usd)} deviendront un avoir`,
           )
-        : t(`The customer pays ${paidText}; they owe nothing: all of it will become credit for them`, `Le client paie ${paidText}\u00a0; il ne doit rien\u00a0: tout deviendra un avoir`)
+        : t(`The customer pays ${paidText}; they owe nothing: all of it will become credit for them`, `Le client paie ${paidText} sans rien devoir\u00a0: tout deviendra un avoir`)
       : owedSettled.gt(0)
         ? t(
             `We pay ${paidText}; we owe ${owedText}: ${usd(over.usd)} will become an advance`,

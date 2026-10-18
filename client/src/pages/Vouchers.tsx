@@ -562,7 +562,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
                   <p>
                     {kind === "payment"
                       ? t("This increases what they owe us.", "Cela augmente sa dette envers nous.")
-                      : t("This increases what we owe them.", "Cela augmente notre dette envers lui.")}
+                      : t("This increases what we owe them.", "Cela augmente ce que nous lui devons.")}
                   </p>
                 )}
                 <p>{t("Check for an extra zero before saving.", "Vérifiez qu'il n'y a pas un zéro de trop avant d'enregistrer.")}</p>

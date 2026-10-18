@@ -201,6 +201,17 @@ export function pct(value: unknown, decimals = 1, minDecimals = 0): string {
   return lang === "fr" ? `${body}${NB}%` : `${body}%`;
 }
 
+/**
+ * A gap between two rates as a whole percent ("4 %"), with one decimal (two if need be) when the whole
+ * figure would read as one of `limits` it is not: 5,06 % against a 5 % limit is "5,1 %" and 4,9 % is
+ * "4,9 %", never both "5 %".
+ */
+export function gapPct(gap: Decimal, limits: Decimal[] = []): string {
+  const looksLike = (places: number) => limits.some((l) => !gap.equals(l) && gap.toDecimalPlaces(places, Decimal.ROUND_HALF_UP).equals(l));
+  const places = !looksLike(0) ? 0 : !looksLike(1) ? 1 : 2;
+  return pct(gap.toDecimalPlaces(places, Decimal.ROUND_HALF_UP).toString(), places, places);
+}
+
 /** Short dollar amounts for chart axes: 950 $, 1,2 k$, 15 k$ (or $950, $1.2k, $15k). */
 export function compactUsd(v: number): string {
   const a = Math.abs(v);
@@ -358,6 +369,24 @@ export function fcRateGap(t: (en: string, fr: string) => string, netFc: unknown)
     figure: t(`Francs ${MINUS}${cdf(f.abs().toString())} (rate difference)`, `Francs ${MINUS}${cdf(f.abs().toString())} (écart de taux)`),
     words: t("More francs handed back than the customer paid: the refund went at a higher rate than the sale", "Plus de francs rendus que le client n'en a payé\u00a0: le remboursement s'est fait à un taux plus haut que la vente"),
   };
+}
+
+/**
+ * The highest whole rate at which a franc refund of `toCashUsd`, rounded down to 100 FC as the server pays it
+ * out, is still at most `fcLeft` (the francs the customer paid and has not had back), with the francs it really
+ * gives: 22 $ and 61 800 FC left → 2 813 (61 886 → 61 800 FC), not 2 809 (61 798 → 61 700 FC). Null when no
+ * rate above zero gives anything back within it.
+ */
+export function fcRefundCap(toCashUsd: unknown, fcLeft: unknown): { rate: Decimal; francs: Decimal } | null {
+  const usdBack = d(toCashUsd);
+  const left = d(fcLeft);
+  if (!usdBack.gt(0) || left.lt(100)) return null;
+  // floor(usd × rate / 100) × 100 ≤ left exactly when usd × rate < (floor(left / 100) + 1) × 100.
+  const ceiling = left.dividedBy(100).toDecimalPlaces(0, Decimal.ROUND_FLOOR).plus(1).times(100);
+  const rate = ceiling.dividedBy(usdBack).toDecimalPlaces(0, Decimal.ROUND_CEIL).minus(1);
+  if (!rate.gt(0)) return null;
+  const francs = usdBack.times(rate).dividedBy(100).toDecimalPlaces(0, Decimal.ROUND_FLOOR).times(100);
+  return francs.gt(0) ? { rate, francs } : null;
 }
 
 /**

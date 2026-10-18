@@ -19,7 +19,7 @@ import {
 import type { Settings } from "@/lib/types";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
-import { cdf, d, date, money, pct, qty as fmtQty, todayLocal } from "@/lib/format";
+import { cdf, d, date, gapPct, money, pct, qty as fmtQty, todayLocal } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 
 /** The day's franc (and yuan) rate: shown to everyone, set by managers and the owner. */
@@ -52,7 +52,8 @@ export function RatesCard() {
   // day's own rate, so a day's own mistake (28 100) put right does not warn against itself; "281", far
   // from both, is said against today's 2 810 shown above, not yesterday's 2 812.
   const rows = listQ.data ?? [];
-  const before = rows.find((r) => r.date < day)?.cdfPerUsd ?? (current && current.source !== day ? current.cdfPerUsd : null);
+  const beforeRow = rows.find((r) => r.date < day) ?? (current && current.source !== day ? { date: current.source, cdfPerUsd: current.cdfPerUsd } : null);
+  const before = beforeRow?.cdfPerUsd ?? null;
   const own = rows.find((r) => r.date === day)?.cdfPerUsd ?? null;
   const nearer = (refs: (string | null)[], x: string) =>
     refs.filter((r): r is string => !!r && d(r).gt(0)).reduce<string | null>((best, r) => (!best || d(r).minus(d(x)).abs().lt(d(best).minus(d(x)).abs()) ? r : best), null);
@@ -68,9 +69,20 @@ export function RatesCard() {
   const refCdf = cdfFar ? own ?? refNear : refNear;
   const cdfGap = gapOf(value, refCdf);
   const cnyGap = cny ? gapOf(cny, refCny) : null;
+  // Far from both, the check itself went by the nearer one (2 950 is 5,06 % from today's 2 808 but 4,9 % from
+  // yesterday's 2 812, so a manager may save it): the confirmation names that one too, with its own gap.
+  const checkedApart = cdfFar && refNear && refCdf !== refNear ? refNear : null;
+  // The day's own rate, or the last one before it, named with its date so the two never read as one.
+  const refName = (ref: string) =>
+    ref === own && ref !== before
+      ? t(`the rate already set for ${date(day)} (${fmtQty(ref)} FC)`, `du taux déjà saisi pour le ${date(day)} (${fmtQty(ref)}\u00a0FC)`)
+      : beforeRow && /^\d{4}-/.test(beforeRow.date)
+        ? t(`the last rate (${fmtQty(ref)} FC on ${date(beforeRow.date)})`, `du dernier taux (${fmtQty(ref)}\u00a0FC le ${date(beforeRow.date)})`)
+        : t(`the last rate (${fmtQty(ref)} FC)`, `du dernier taux (${fmtQty(ref)}\u00a0FC)`);
   // A manager cannot save a past day's rate, nor one far from the last (the server refuses both): said
   // here, without offering "save anyway". The owner may save any rate after confirming.
   const managerLimit = Decimal.max(tolerance, 5);
+  const gapText = (gap: Decimal) => gapPct(gap, [tolerance, managerLimit]);
   const ownerOnly = isOwner
     ? null
     : day && day < today
@@ -95,8 +107,8 @@ export function RatesCard() {
   const farHint = (gap: Decimal, ref: string, sign: string): ReactNode => (
     <span className="font-medium text-amber-800 dark:text-amber-400">
       {t(
-        `Far from the rate on file (1 $ = ${fmtQty(ref)} ${sign}, ${pct(gap.toDecimalPlaces(0).toString(), 0)} apart): check it`,
-        `Loin du taux enregistré (1\u00a0$ = ${fmtQty(ref)}\u00a0${sign}, ${pct(gap.toDecimalPlaces(0).toString(), 0)} d'écart)\u00a0: vérifiez-le`,
+        `Far from the rate on file (1 $ = ${fmtQty(ref)} ${sign}, ${gapText(gap)} apart): check it`,
+        `Loin du taux enregistré (1\u00a0$ = ${fmtQty(ref)}\u00a0${sign}, ${gapText(gap)} d'écart)\u00a0: vérifiez-le`,
       )}
     </span>
   );
@@ -157,18 +169,23 @@ export function RatesCard() {
                 <div className="space-y-2">
                   {cdfFar && refCdf && (
                     <p>
-                      {t(
-                        `1 $ = ${fmtQty(value)} FC is ${pct(cdfGap!.toDecimalPlaces(0).toString(), 0)} away from the last rate (${fmtQty(refCdf)} FC).`,
-                        `1\u00a0$ = ${fmtQty(value)}\u00a0FC s'écarte de ${pct(cdfGap!.toDecimalPlaces(0).toString(), 0)} du dernier taux (${fmtQty(refCdf)}\u00a0FC).`,
-                      )}
+                      {checkedApart
+                        ? t(
+                          `1 $ = ${fmtQty(value)} FC is ${gapText(cdfGap!)} away from ${refName(refCdf)} and ${gapText(nearGap!)} from ${refName(checkedApart)}, the nearer.`,
+                          `1\u00a0$ = ${fmtQty(value)}\u00a0FC s'écarte de ${gapText(cdfGap!)} ${refName(refCdf)} et de ${gapText(nearGap!)} ${refName(checkedApart)}, le plus proche.`,
+                        )
+                        : t(
+                          `1 $ = ${fmtQty(value)} FC is ${gapText(cdfGap!)} away from ${refName(refCdf)}.`,
+                          `1\u00a0$ = ${fmtQty(value)}\u00a0FC s'écarte de ${gapText(cdfGap!)} ${refName(refCdf)}.`,
+                        )}
                     </p>
                   )}
                   {cnyOdd && <p>{t(`1 $ = ${fmtQty(cny)} ¥ is far from the usual rate (about 7.1 ¥).`, `1\u00a0$ = ${fmtQty(cny)}\u00a0¥ est loin du taux habituel (environ 7,1\u00a0¥).`)}</p>}
                   {cnyFar && refCny && (
                     <p>
                       {t(
-                        `1 $ = ${fmtQty(cny)} ¥ is ${pct(cnyGap!.toDecimalPlaces(0).toString(), 0)} away from the last yuan rate (${fmtQty(refCny)} ¥).`,
-                        `1\u00a0$ = ${fmtQty(cny)}\u00a0¥ s'écarte de ${pct(cnyGap!.toDecimalPlaces(0).toString(), 0)} du dernier taux du yuan (${fmtQty(refCny)}\u00a0¥).`,
+                        `1 $ = ${fmtQty(cny)} ¥ is ${gapText(cnyGap!)} away from the last yuan rate (${fmtQty(refCny)} ¥).`,
+                        `1\u00a0$ = ${fmtQty(cny)}\u00a0¥ s'écarte de ${gapText(cnyGap!)} du dernier taux du yuan (${fmtQty(refCny)}\u00a0¥).`,
                       )}
                     </p>
                   )}

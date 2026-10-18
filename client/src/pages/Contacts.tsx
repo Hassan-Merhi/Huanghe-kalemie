@@ -29,13 +29,13 @@ export interface ForeignBalance {
   usd: string;
 }
 /**
- * "56 000 FC que nous lui devons", "1 200 ¥ qu'il nous doit" (one contact, so singular)… Negative native = we owe the
+ * "56 000 FC que nous lui devons", "1 200 ¥ qui nous sont dus" (no pronoun, so it fits any contact)… Negative native = we owe the
  * contact; for a customer that is an avoir, "56 000 FC d'avoir", as the till and the receipt say.
  */
 export function foreignText(f: ForeignBalance, t: (en: string, fr: string) => string, customer = false) {
   const amount = money(d(f.native).abs().toString(), f.currency);
   if (d(f.native).isNegative()) return customer ? t(`${amount} of credit`, `${amount} d'avoir`) : t(`${amount} owed to them`, `${amount} que nous lui devons`);
-  return t(`${amount} they owe`, `${amount} qu'il nous doit`);
+  return t(`${amount} they owe`, `${amount} qui nous sont dus`);
 }
 
 
