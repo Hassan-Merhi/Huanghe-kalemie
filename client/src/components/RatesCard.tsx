@@ -141,7 +141,7 @@ export function RatesCard() {
               <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
             </Field>
             <Field label={t("FC per $1", "FC pour 1\u00a0$")} required className="min-w-[7rem] flex-1" hint={ownerOnly ? <span className="font-medium text-amber-800 dark:text-amber-400">{ownerOnly}</span> : cdfFar && refCdf ? farHint(cdfGap!, refCdf, "FC") : undefined}>
-              <Input inputMode="decimal" thousands value={value} onChange={(e) => setValue(e.target.value)} />
+              <Input inputMode="decimal" thousands rate value={value} onChange={(e) => setValue(e.target.value)} />
             </Field>
             <Field
               // A short label, on one line like its neighbour, so both fields sit at the same height.
@@ -149,7 +149,7 @@ export function RatesCard() {
               hint={ownerOnlyCny ? <span className="font-medium text-amber-800 dark:text-amber-400">{ownerOnlyCny}</span> : cnyFar && refCny ? farHint(cnyGap!, refCny, "¥") : cnyOdd ? <span className="font-medium text-amber-800 dark:text-amber-400">{t("A dollar buys about 7.1 ¥: check it", "Un dollar vaut environ 7,1\u00a0¥\u00a0: vérifiez-le")}</span> : lastCny ? t("Optional", "Facultatif") : t("Optional, about 7.1", "Facultatif, environ 7,1")}
               className="min-w-[7rem] flex-1"
             >
-              <Input inputMode="decimal" value={cny} onChange={(e) => setCny(e.target.value)} />
+              <Input inputMode="decimal" rate value={cny} onChange={(e) => setCny(e.target.value)} />
             </Field>
             <SubmitButton
               className="w-full sm:flex-col sm:items-stretch [&>button]:w-full"

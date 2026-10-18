@@ -46,6 +46,8 @@ export interface VariantRow {
   tracksSerials: boolean;
   categoryName: string | null;
   locationQty: string;
+  /** One piece at the list price sells below cost: the till warns staff who may not sell below cost. */
+  listBelowCost?: boolean;
 }
 
 export interface ProductVariant {

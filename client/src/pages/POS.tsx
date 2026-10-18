@@ -12,12 +12,12 @@ import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { EmptyState, Field, Num, PageHeader, SubmitButton } from "@/components/common";
+import { EmptyState, Field, Num, PageHeader, SubmitButton, unclearAmount } from "@/components/common";
 import { LocationSelect, MoneyAccountSelect, PartySelect, RateInput, VariantSearch, useAccounts, useMoneyAccounts, useRate } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
-import { cdf, curLabel, d, date as fmtDate, fcRounding, frenchPunctuation, MINUS, money, pct as fmtPct, qty as fmtQty, todayLocal, typedNumberOk, unclearQty, usd, variantText } from "@/lib/format";
+import { cdf, curLabel, d, date as fmtDate, fcRounding, frenchPunctuation, MINUS, money, pct as fmtPct, qty as fmtQty, refusedUnit, todayLocal, typedNumberOk, unclearQty, usd, variantText } from "@/lib/format";
 import { cartCount, unitLabel, wholeUnit } from "@/lib/units";
 import type { Account, MotorcycleUnit, Party, Settings, VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -429,6 +429,18 @@ export default function POS() {
   // ---- totals (exact decimals)
   const lineAmount = (l: CartLine) => c2(d(l.qty).times(d(l.unitPrice))).minus(c2(d(l.lineDiscount)));
   const subtotal = lines.reduce((s, l) => s.plus(lineAmount(l)), d(0));
+  /** Lines sold for less than they cost: allowed (owner, clearance) but worth a second look. */
+  const belowCost = (l: CartLine) => d(l.unitPrice).gt(0) && d(l.variant.avgCost).gt(0) && lineAmount(l).lt(c2(d(l.qty).times(d(l.variant.avgCost))));
+  // The server refuses a line below cost from staff without the right (priceLimits): said on the line before
+  // "Valider", not as a 403 after it. A cashier is not shown the cost, only that the list price is below it.
+  const mayBelowCost = user?.role === "owner" || (user?.role === "manager" && shop?.managerBelowCost === true);
+  const costRefusal = (l: CartLine): "list" | "line" | null => {
+    if (!user || mayBelowCost) return null;
+    const listLow = (stockQ.data?.find((v) => v.id === l.variant.id)?.listBelowCost ?? l.variant.listBelowCost) === true;
+    const atList = lineAmount(l).lte(c2(d(l.qty).times(d(l.variant.sellPrice))));
+    if (listLow && atList) return "list";
+    return user.role !== "cashier" && belowCost(l) ? "line" : null;
+  };
   const saleDiscount = c2(d(discount));
   const total = subtotal.minus(saleDiscount);
   // Shown like the receipt: subtotal before any discount, then all discounts together.
@@ -572,6 +584,8 @@ export default function POS() {
       const here = fmtQty(available(l.variant.id, l.variant.locationQty).toString());
       problems.push(t(`${l.variant.productName}: ${inCart} in the cart, only ${here} in stock here`, `${l.variant.productName}\u00a0: ${inCart} au panier, seulement ${here} en stock ici`));
     }
+    if (costRefusal(l) === "list") problems.push(t(`${l.variant.productName}: price below cost, for the owner to raise`, `${l.variant.productName}\u00a0: prix sous le coût, à relever par le propriétaire`));
+    if (costRefusal(l) === "line") problems.push(t(`${l.variant.productName}: below cost; only the owner can sell below cost`, `${l.variant.productName}\u00a0: sous le coût\u00a0; seul le propriétaire peut vendre à perte`));
     if (l.variant.tracksSerials && !l.unitId) problems.push(t(`Choose the chassis number for ${l.variant.productName}`, `Choisissez le numéro de châssis pour ${l.variant.productName}`));
   }
   if (maxDiscountPct && subtotal.gt(0)) {
@@ -614,7 +628,8 @@ export default function POS() {
   if (saleDiscount.lt(0) || saleDiscount.gt(subtotal)) problems.push(t("The sale discount is bigger than the sale", "La remise dépasse le montant de la vente"));
   for (const p of pays) {
     const acc = accById(p.accountId);
-    if (!typedNumberOk(p.amount)) problems.push(t("Correct the payment amount", "Corrigez le montant du paiement"));
+    // "61800 FC" in a dollar line: the bar says what the field says, not only that it is wrong.
+    if (!typedNumberOk(p.amount)) problems.push((refusedUnit(p.amount, acc?.currency === "CDF" ? "CDF" : "USD") && unclearAmount(t, p.amount, acc?.currency ?? "USD")) || t("Correct the payment amount", "Corrigez le montant du paiement"));
     if (!acc && d(p.amount).gt(0)) problems.push(t("Choose the account for each payment", "Choisissez le compte pour chaque paiement"));
     // An empty payment row is simply ignored when the sale is saved.
     if (acc && d(p.amount).lt(0)) problems.push(t("A payment cannot be negative", "Un paiement ne peut pas être négatif"));
@@ -634,8 +649,6 @@ export default function POS() {
   }
   const valid = problems.length === 0 && todo.length === 0;
   const blockedReason = problems.length ? t("Fix the points above", "Corrigez les points ci-dessus") : todo[0] ?? null;
-  /** Lines sold for less than they cost: allowed (owner, clearance) but worth a second look. */
-  const belowCost = (l: CartLine) => d(l.unitPrice).gt(0) && d(l.variant.avgCost).gt(0) && lineAmount(l).lt(c2(d(l.qty).times(d(l.variant.avgCost))));
   /** A price raised past twice the list price, often a slipped zero (50 $ for 5 $): "+900 %", to confirm before the sale. */
   const priceRise = (l: CartLine) => {
     const list = d(l.variant.sellPrice);
@@ -922,7 +935,7 @@ export default function POS() {
                           </div>
                           <div>
                             <p className="mb-1 text-xs text-muted-foreground">{t("Discount $", "Remise $")}</p>
-                            <Input className="h-9" inputMode="decimal" usd placeholder="0" aria-label={t(`Discount on ${l.variant.productName} ($)`, `Remise sur ${l.variant.productName} ($)`)} value={l.lineDiscount} onChange={(e) => updateLine(l.key, { lineDiscount: e.target.value })} />
+                            <Input className="h-9" inputMode="decimal" usd percentOf={c2(d(l.qty).times(d(l.unitPrice))).toFixed(2)} placeholder="0" aria-label={t(`Discount on ${l.variant.productName} ($)`, `Remise sur ${l.variant.productName} ($)`)} value={l.lineDiscount} onChange={(e) => updateLine(l.key, { lineDiscount: e.target.value })} />
                           </div>
                           <div className="text-right">
                             <p className="mb-1 text-xs text-muted-foreground">{t("Line total", "Total ligne")}</p>
@@ -940,7 +953,14 @@ export default function POS() {
                             {t(`${priceRise(l)} on the list price (${usd(d(l.variant.sellPrice).toFixed(2))}): check the zeros`, `${priceRise(l)} sur le prix de liste (${usd(d(l.variant.sellPrice).toFixed(2))}) — vérifiez les zéros`)}
                           </p>
                         )}
-                        {belowCost(l) && (
+                        {costRefusal(l) ? (
+                          <p className="flex items-center gap-1 text-xs font-medium text-destructive" data-testid="pos-below-cost">
+                            <AlertTriangle className="h-3 w-3 shrink-0" />
+                            {costRefusal(l) === "list"
+                              ? t("List price below cost: the owner must raise the price.", "Prix de catalogue sous le coût\u00a0: le propriétaire doit relever le prix.")
+                              : t(`Below cost (cost ${usd(d(l.variant.avgCost).toFixed(2))} each): only the owner can sell below cost.`, `Sous le coût (coût ${usd(d(l.variant.avgCost).toFixed(2))} l'unité)\u00a0: seul le propriétaire peut vendre à perte.`)}
+                          </p>
+                        ) : belowCost(l) && (
                           <p className="flex items-center gap-1 text-xs font-medium text-amber-800 dark:text-amber-400">
                             <AlertTriangle className="h-3 w-3 shrink-0" />
                             {t(`Sold below cost (cost ${usd(d(l.variant.avgCost).toFixed(2))} each)`, `Vente à perte (coût ${usd(d(l.variant.avgCost).toFixed(2))} l'unité)`)}
@@ -968,7 +988,7 @@ export default function POS() {
                 )}
               </Field>
               <Field label={t("Sale discount ($)", "Remise sur la vente ($)")}>
-                <Input inputMode="decimal" usd placeholder="0" value={discount} onChange={(e) => setDiscount(e.target.value)} />
+                <Input inputMode="decimal" usd percentOf={subtotal.toFixed(2)} placeholder="0" value={discount} onChange={(e) => setDiscount(e.target.value)} />
               </Field>
               <Field label={t("Note", "Note")} className="sm:col-span-2 lg:col-span-1 xl:col-span-2">
                 <Textarea rows={2} value={note} onChange={(e) => setNote(e.target.value)} />
@@ -1020,8 +1040,8 @@ export default function POS() {
                     <div className={cn("grid items-start gap-2", acc?.currency === "CDF" ? "grid-cols-2" : "grid-cols-1")}>
                       <div className="relative">
                         <Input
-                          inputMode="decimal" usd={acc?.currency === "USD"}
-                          thousands={acc?.currency === "CDF"}
+                          inputMode="decimal" currency={acc?.currency ?? "USD"}
+                          switchTo={acc?.currency === "CDF" ? findCash("USD")?.name : findCash("CDF")?.name}
                           className="pr-10"
                           aria-label={acc?.currency === "CDF" ? t("Amount in FC", "Montant en FC") : t("Amount in $", "Montant en $")}
                           placeholder={t("Amount", "Montant")}
@@ -1155,7 +1175,7 @@ export default function POS() {
                 <div className="mt-2 space-y-2">
                   <p className="text-xs text-muted-foreground">{t("Only a helper: record the money kept above, not what the customer handed over.", "Seulement une aide\u00a0: enregistrer ci-dessus l'argent gardé, pas ce que le client a donné.")}</p>
                   <div className="flex gap-2">
-                    <Input inputMode="decimal" usd={handedCur === "USD"} thousands={handedCur === "CDF"} aria-label={t("Cash handed over", "Montant reçu")} placeholder={t("Cash handed over", "Montant reçu")} value={handed} onChange={(e) => setHanded(e.target.value)} />
+                    <Input inputMode="decimal" usd={handedCur === "USD"} thousands={handedCur === "CDF"} switchTo={handedCur === "USD" ? t("FC beside it", "FC à côté") : t("$ beside it", "$ à côté")} aria-label={t("Cash handed over", "Montant reçu")} placeholder={t("Cash handed over", "Montant reçu")} value={handed} onChange={(e) => setHanded(e.target.value)} />
                     <Select value={handedCur} onValueChange={(v) => setHandedCur(v as "USD" | "CDF")}>
                       <SelectTrigger className="w-24" aria-label={t("Currency handed over", "Devise reçue")}><SelectValue /></SelectTrigger>
                       <SelectContent>
@@ -1221,7 +1241,8 @@ export default function POS() {
             <p className="truncate text-xl font-bold tabular">{usd(total.toFixed(2))}</p>
             {problems.length > 0 && lines.length > 0 ? (
               // Without this the bar only says "Pay" and the reason is out of sight, at the foot of the payment card.
-              <p className="truncate text-xs font-medium text-destructive" role="status" data-testid="problem-bar">{problems[0]}</p>
+              // On two lines, so a long one ("Choisissez le numéro de châssis pour …") is read whole at 360 px.
+              <p className="line-clamp-2 text-xs font-medium leading-snug text-destructive" role="status" data-testid="problem-bar">{problems[0]}</p>
             ) : changeAcc && changeNative.gt(0) ? (
               <p className="truncate text-sm font-bold" data-testid="change-due-bar">{t("Give back", "Rendre")}{t(":", "\u00a0:")} {changeText}</p>
             ) : remainingFc && !(credit.gt(0) && customerId) ? (

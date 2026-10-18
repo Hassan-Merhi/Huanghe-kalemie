@@ -502,7 +502,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
                   <LineAccountSelect types={ACCOUNT_TYPES[kind]} value={l.accountId} onChange={(id) => set(l.key, { accountId: id })} />
                 )}
               </div>
-              <Input inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-invalid={(isCdf && isAmount(l.amount) && !d(l.amount).isInteger()) || isTiny(l) || undefined} className="text-right tabular" placeholder={t(`Amount (${curLabel(currency)})`, `Montant (${curLabel(currency)})`)} value={l.amount} onChange={(e) => set(l.key, { amount: e.target.value })} />
+              <Input inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} switchTo={currency === "CDF" ? t("a dollar account", "un compte en $") : t("a franc account", "un compte en FC")} aria-invalid={(isCdf && isAmount(l.amount) && !d(l.amount).isInteger()) || isTiny(l) || undefined} className="text-right tabular" placeholder={t(`Amount (${curLabel(currency)})`, `Montant (${curLabel(currency)})`)} value={l.amount} onChange={(e) => set(l.key, { amount: e.target.value })} />
               <Input placeholder={t("Note (optional)", "Note (facultatif)")} value={l.memo} onChange={(e) => set(l.key, { memo: e.target.value })} />
               <Button variant="ghost" size="icon" className="justify-self-end" disabled={lines.length <= 1} onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} aria-label={t("Remove line", "Retirer la ligne")}>
                 <Trash2 className="h-4 w-4" />
@@ -758,7 +758,7 @@ function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: For
                       <Input inputMode="decimal" thousands value={l.native} onChange={(e) => setNative(l, e.target.value, l.rate)} />
                     </Field>
                     <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} required>
-                      <Input inputMode="decimal" thousands value={l.rate} onChange={(e) => setNative(l, l.native, e.target.value)} />
+                      <Input inputMode="decimal" thousands rate value={l.rate} onChange={(e) => setNative(l, l.native, e.target.value)} />
                     </Field>
                   </div>
                 )}
