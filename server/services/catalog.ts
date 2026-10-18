@@ -1,6 +1,6 @@
 import { and, asc, eq, ilike, inArray, ne, or, sql, type SQL } from "drizzle-orm";
 import { categories, locations, motorcycleUnits, products, stockLevels, variants } from "@shared/schema";
-import { dec } from "@shared/money";
+import { cents, dec } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, notFound } from "../errors";
 import { nextNumber } from "./ledger";
@@ -360,6 +360,9 @@ export async function searchVariants(tx: Tx, opts: { search?: string; locationId
     label: variantLabel(r.attributes),
     avgCost: dec(r.stockQty).isZero() ? "0.000000" : dec(r.stockValue).dividedBy(r.stockQty).toFixed(6),
     keptUnitCost: kept.get(r.id) ?? null,
+    // One piece at the list price is worth less than it costs, as a sale would book it (issueStock): the till
+    // says so to staff the sale's guard refuses, without the cost, which cashiers are not shown.
+    listBelowCost: dec(r.stockQty).gt(0) && cents(r.sellPrice).lt(cents(dec(r.stockValue).dividedBy(r.stockQty))),
   }));
 }
 

@@ -700,6 +700,7 @@ export function ContainerRateField({ currency, value, onChange, day = todayLocal
         inputMode="decimal"
         // A franc rate has no decimals worth typing: "2.808" is 2 808 FC, as at the till.
         thousands={currency === "CDF"}
+        rate
         value={text}
         onChange={(e) => {
           setText(e.target.value);
@@ -758,7 +759,7 @@ export function RateInput({ day, value, onChange, className, ownerOnly }: { day:
           {fmtQty(value)}{"\u00a0"}FC/$
         </p>
       ) : (
-        <Input inputMode="decimal" thousands value={value} onChange={(e) => onChange(e.target.value)} aria-label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} />
+        <Input inputMode="decimal" thousands rate value={value} onChange={(e) => onChange(e.target.value)} aria-label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} />
       )}
       {dayRate.gt(0) && (
         <p className={cn("text-xs", gap.gt(tolerance) ? "text-destructive" : "text-muted-foreground")}>

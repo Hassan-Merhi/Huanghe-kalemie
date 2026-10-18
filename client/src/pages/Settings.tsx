@@ -107,7 +107,7 @@ function ShopTab() {
           error={rate.trim() && !d(rate).gt(0) ? t("Enter a rate above zero", "Saisissez un taux supérieur à zéro") : null}
           required
         >
-          <Input inputMode="decimal" thousands value={rate} onChange={(e) => setRate(e.target.value)} />
+          <Input inputMode="decimal" thousands rate value={rate} onChange={(e) => setRate(e.target.value)} />
         </Field>
         <Field
           label={t("Allowed gap from the day's rate (%)", "Écart permis avec le taux du jour (%)")}
@@ -115,14 +115,14 @@ function ShopTab() {
           error={tolerance.trim() && !toleranceOk ? t("Enter a number from 0 to 99", "Saisissez un nombre de 0 à 99") : null}
           required
         >
-          <Input inputMode="decimal" value={tolerance} onChange={(e) => setTolerance(e.target.value)} />
+          <Input inputMode="decimal" percent value={tolerance} onChange={(e) => setTolerance(e.target.value)} />
         </Field>
         <div className="grid gap-3 sm:grid-cols-2">
           <Field label={t("Cashier: biggest discount (%)", "Caissier\u00a0: remise maximale (%)")} error={pctError(cashierPct)} required>
-            <Input inputMode="decimal" value={cashierPct} onChange={(e) => setCashierPct(e.target.value)} />
+            <Input inputMode="decimal" percent value={cashierPct} onChange={(e) => setCashierPct(e.target.value)} />
           </Field>
           <Field label={t("Manager: biggest discount (%)", "Gérant\u00a0: remise maximale (%)")} error={pctError(managerPct)} required>
-            <Input inputMode="decimal" value={managerPct} onChange={(e) => setManagerPct(e.target.value)} />
+            <Input inputMode="decimal" percent value={managerPct} onChange={(e) => setManagerPct(e.target.value)} />
           </Field>
         </div>
         <p className="text-xs text-muted-foreground">

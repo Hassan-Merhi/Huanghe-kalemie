@@ -2,7 +2,7 @@ import * as React from "react";
 import { CalendarDays } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { ambiguousDollars, ambiguousMeasure, formatLang, inputText, money, parseNumberInput, qty, unusableText } from "@/lib/format";
+import { ambiguousDollars, ambiguousMeasure, type FieldUnit, formatLang, inputText, money, parseNumberInput, percentOf as percentAmount, qty, unitMismatch, unitMismatchText, unitRefusedText, unusableText } from "@/lib/format";
 
 const BASE =
   "flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 aria-[invalid=true]:border-destructive aria-[invalid=true]:ring-destructive/20 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none md:text-sm";
@@ -27,14 +27,35 @@ type InputProps = React.ComponentProps<"input"> & {
   alertClassName?: string;
   /** The page asks the question itself (under the item, say): the field only turns red, so it is asked once. */
   noAlert?: boolean;
+  /** A percentage (a share, a tolerance, a discount limit): "10 %" is fine, a currency sign is refused. */
+  percent?: boolean;
+  /** An exchange rate: "2 850 FC" is fine, "%" is refused. */
+  rate?: boolean;
+  /** A discount: "10 %" becomes that share of this amount (the line, the sale), shown as "= 2,20 $". */
+  percentOf?: string | null;
+  /** Where the other currency is typed, said when one is refused: "choisissez Caisse FC". */
+  switchTo?: string | null;
 };
 
+/**
+ * What a field holds, for the units it refuses (see unitMismatch): francs for `thousands` (franc amounts),
+ * dollars for `usd`, else its `currency`; a plain count when nothing says it is money.
+ */
+function fieldUnit(p: { thousands?: boolean; usd?: boolean; currency?: string | null; percent?: boolean; rate?: boolean }): FieldUnit {
+  if (p.rate) return "rate";
+  if (p.percent) return "pct";
+  if (p.currency === "CDF" || p.currency === "CNY" || p.currency === "USD") return p.currency;
+  if (p.usd) return "USD";
+  if (p.thousands) return "CDF";
+  return "qty";
+}
+
 const Input = React.forwardRef<HTMLInputElement, InputProps>(
-  ({ className, type, thousands, usd, currency, whole, measured, inlineAlert, alertClassName, noAlert, ...props }, ref) => {
+  ({ className, type, thousands, usd, currency, whole, measured, inlineAlert, alertClassName, noAlert, percent, rate, percentOf, switchTo, ...props }, ref) => {
     // Dates are always shown dd/mm/yyyy, whatever language the phone or browser is set to.
     if (type === "date") return <DateInput className={className} {...props} ref={ref} />;
     // Amounts and quantities accept "4,50" as well as "4.50" and read French-style.
-    if ((props.inputMode === "decimal" || props.inputMode === "numeric") && (!type || type === "text")) return <DecimalInput className={className} thousands={thousands} usd={usd} currency={currency} whole={whole} measured={measured} inlineAlert={inlineAlert} alertClassName={alertClassName} noAlert={noAlert} {...props} ref={ref} />;
+    if ((props.inputMode === "decimal" || props.inputMode === "numeric") && (!type || type === "text")) return <DecimalInput className={className} thousands={thousands} usd={usd} currency={currency} whole={whole} measured={measured} inlineAlert={inlineAlert} alertClassName={alertClassName} noAlert={noAlert} percent={percent} rate={rate} percentOf={percentOf} switchTo={switchTo} {...props} ref={ref} />;
     // h-9 to match icon buttons and default buttons.
     return <input type={type} className={cn(BASE, className)} ref={ref} {...props} />;
   },
@@ -130,14 +151,15 @@ const LAYOUT = /^(?:[a-z0-9[\]-]+:)*!?(?:-?m[trblxy]?-|w-|min-w-|max-w-|flex-|ba
  * Text that is not a number is passed on as typed so the page can say what is wrong; in a dollar field an
  * ambiguous "1.200" is passed on as "1.200?" (see unusableText) so that no page saves it as 1,20 $.
  */
-const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className, value, onChange, onBlur, onFocus, thousands: thousandsProp, usd: usdProp, currency, whole, measured: measuredProp, inlineAlert, alertClassName, noAlert, ...props }, ref) => {
+const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className, value, onChange, onBlur, onFocus, thousands: thousandsProp, usd: usdProp, currency, whole, measured: measuredProp, inlineAlert, alertClassName, noAlert, percent, rate, percentOf, switchTo, ...props }, ref) => {
   const thousands = thousandsProp || currency === "CDF";
   const usd = usdProp || (!!currency && currency !== "CDF");
   const cur = usdProp || !currency || currency === "CDF" ? "USD" : currency;
   const fmtUsd = (v: unknown) => money(v, cur);
   const plain = value === undefined || value === null ? "" : String(value);
-  // An ambiguous amount comes back as "1.200?" (see unusableText): show it as typed, so the question is asked again.
-  const shown = (v: string) => inputText(/^[^?]*\d\?$/.test(v) ? v.slice(0, -1) : v);
+  // An ambiguous amount comes back as "1.200?" (see unusableText), a refused unit as "500FC!" (see
+  // unitRefusedText): show it as typed, so the question is asked again.
+  const shown = (v: string) => inputText(/^[^?]*\d\?$/.test(v) || /\d.*!$/.test(v) ? v.slice(0, -1) : v);
   const [text, setText] = React.useState(() => shown(plain));
   // The value this field last sent up: when it comes back unchanged, keep what the person typed ("4," stays "4,").
   const sent = React.useRef<string | null>(null);
@@ -150,13 +172,20 @@ const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className
   const strict = usd || !!whole;
   // Litres and the like: "1.000" only (see ambiguousMeasure).
   const measured = !strict && !!measuredProp;
-  const read = parseNumberInput(text, { thousands, usd: strict, measured });
-  const ambiguous = strict ? ambiguousDollars(text) : measured ? ambiguousMeasure(text) : null;
+  const unit = fieldUnit({ thousands, usd, currency, percent, rate });
+  // "10 %" in a discount is that share of the line; any other unit not the field's own is refused.
+  const fromPercent = (typed: string) => (percentOf != null && unit !== "pct" && unit !== "rate" && unit !== "qty" ? percentAmount(typed, percentOf) : null);
+  const mismatch = (typed: string) => (fromPercent(typed) !== null ? null : unitMismatch(typed, unit));
+  const wrongUnit = mismatch(text);
+  const asPercent = fromPercent(text);
+  const read = wrongUnit ? null : asPercent ?? parseNumberInput(text, { thousands, usd: strict, measured });
+  const ambiguous = wrongUnit || asPercent ? null : strict ? ambiguousDollars(text) : measured ? ambiguousMeasure(text) : null;
   const fmtAmbiguous = (v: unknown) => (usd ? fmtUsd(v) : qty(v));
   const unreadable = text.trim() !== "" && read === null;
   const fr = formatLang() === "fr";
-  // While a dollar amount is typed, say how it is read when that could be in doubt: "= 1 200,00 $".
-  const showRead = usd && focused && !unreadable && !!read && /[.,]|\d{4}/.test(text);
+  // While a dollar amount is typed, say how it is read when that could be in doubt: "= 1 200,00 $", or what
+  // "10 %" of the line comes to: "= 2,20 $".
+  const showRead = (usd || !!asPercent) && focused && !unreadable && !!read && (!!asPercent || /[.,]|\d{4}/.test(text));
   const hintId = React.useId();
   // Size and placement classes go on the wrapper, so the field sits where it did; the rest styles the field.
   const classes = (className ?? "").split(/\s+/).filter(Boolean);
@@ -176,8 +205,10 @@ const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className
         onChange={(e) => {
           const typed = e.target.value;
           setText(typed);
-          const parsed = parseNumberInput(typed, { thousands, usd: strict, measured });
-          const out = parsed === null ? unusableText(typed) : parsed;
+          const pctRead = fromPercent(typed);
+          const refused = pctRead === null && mismatch(typed) !== null;
+          const parsed = refused ? null : pctRead ?? parseNumberInput(typed, { thousands, usd: strict, measured });
+          const out = refused ? unitRefusedText(typed) : parsed === null ? unusableText(typed) : parsed;
           sent.current = out;
           if (out === plain) sent.current = null;
           onChange?.({ ...e, target: { value: out, name: e.target.name }, currentTarget: { value: out, name: e.target.name } } as unknown as React.ChangeEvent<HTMLInputElement>);
@@ -201,17 +232,19 @@ const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className
             "pointer-events-none rounded border border-destructive bg-popover px-2 py-0.5 text-xs font-medium text-destructive shadow-sm",
             inlineAlert ? "mt-1 block text-left" : "absolute left-0 top-full z-20 mt-1",
             // The question wraps within the field's width, so it never runs off a phone's screen.
-            ambiguous ? cn("w-full", !inlineAlert && "min-w-[9rem]") : "whitespace-nowrap",
+            ambiguous || wrongUnit ? cn("w-full", !inlineAlert && "min-w-[9rem]") : "whitespace-nowrap",
             alertClassName,
           )}
         >
-          {ambiguous
-            ? fr
-              ? `${text.trim()}\u00a0: voulez-vous dire ${fmtAmbiguous(ambiguous)} ou ${fmtAmbiguous(Number(ambiguous) / 1000)}\u00a0?`
-              : `${text.trim()}: did you mean ${fmtAmbiguous(ambiguous)} or ${fmtAmbiguous(Number(ambiguous) / 1000)}?`
-            : fr
-              ? "Nombre non reconnu"
-              : "Not a number"}
+          {wrongUnit
+            ? unitMismatchText(wrongUnit, unit, switchTo)
+            : ambiguous
+              ? fr
+                ? `${text.trim()}\u00a0: voulez-vous dire ${fmtAmbiguous(ambiguous)} ou ${fmtAmbiguous(Number(ambiguous) / 1000)}\u00a0?`
+                : `${text.trim()}: did you mean ${fmtAmbiguous(ambiguous)} or ${fmtAmbiguous(Number(ambiguous) / 1000)}?`
+              : fr
+                ? "Nombre non reconnu"
+                : "Not a number"}
         </span>
       )}
       {showRead && (

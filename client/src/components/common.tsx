@@ -5,7 +5,7 @@ import { useT } from "@/lib/i18n";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { ambiguousReadings, money } from "@/lib/format";
+import { ambiguousReadings, money, refusedUnit, unitMismatchText } from "@/lib/format";
 
 export function PageHeader({ title, description, actions }: { title: string; description?: ReactNode; actions?: ReactNode }) {
   // Each page gets its own browser tab title: "Caisse · Huanghe Kalemie".
@@ -150,6 +150,9 @@ export function francDecimalsError(t: (en: string, fr: string) => string, curren
  * "enter an amount above zero": "Précisez le montant : 1 200,00 $ ou 1,20 $".
  */
 export function unclearAmount(t: (en: string, fr: string) => string, value: string | null | undefined, currency: string = "USD"): string | null {
+  // "500 FC" refused by a dollar field: the page says what the field says.
+  const unit = refusedUnit(value, currency === "CDF" || currency === "CNY" ? currency : "USD");
+  if (unit) return unitMismatchText(unit, currency === "CDF" || currency === "CNY" ? currency : "USD");
   const r = ambiguousReadings(value);
   if (!r) return null;
   const [big, small] = r.map((x) => money(x, currency));
