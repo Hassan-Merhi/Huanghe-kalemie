@@ -18,6 +18,7 @@ import type { Tx } from "../db";
 import { notFound } from "../errors";
 import { monthRange, pnlByAccount, summarizePnl } from "./periods";
 import { contactForeignBalances, COST_FX_MEMO, SYSTEM_ACCOUNTS, systemAccountId } from "./ledger";
+import { keptUnitCosts } from "./stock";
 
 /** Debit − credit per account (and native CDF balance) up to a date. */
 export async function accountBalances(tx: Tx, asOf?: string) {
@@ -496,11 +497,12 @@ export async function stockValuation(tx: Tx) {
     // Inactive items still count while they hold stock or value, so the total always equals the ledger.
     .where(or(eq(variants.active, true), ne(variants.stockQty, "0"), ne(variants.stockValue, "0")))
     .orderBy(asc(products.name), asc(variants.sku));
+  const kept = await keptUnitCosts(tx);
   const items = rows.map((r) => {
     const q = dec(r.qty);
     return {
       ...r,
-      avgCost: q.isZero() ? "0.000000" : shownUnitCost(r.value, q).toFixed(6),
+      avgCost: q.isZero() ? "0.000000" : shownUnitCost(r.value, q, kept.get(r.variantId)).toFixed(6),
       retailValue: q.times(r.sellPrice).toFixed(2),
       low: dec(r.reorderLevel).gt(0) && q.lte(r.reorderLevel),
     };

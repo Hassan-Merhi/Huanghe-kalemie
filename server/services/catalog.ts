@@ -4,6 +4,7 @@ import { dec } from "@shared/money";
 import type { Tx } from "../db";
 import { badRequest, conflict, notFound } from "../errors";
 import { nextNumber } from "./ledger";
+import { keptUnitCosts } from "./stock";
 import { wholeUnit } from "@shared/units";
 
 export interface VariantInput {
@@ -203,12 +204,15 @@ export async function getProduct(tx: Tx, id: number) {
   const levels = vs.length
     ? await tx.select().from(stockLevels).where(inArray(stockLevels.variantId, vs.map((v) => v.id)))
     : [];
+  const kept = await keptUnitCosts(tx, vs.map((v) => v.id));
   return {
     ...product,
     variants: vs.map((v) => ({
       ...v,
       label: variantLabel(v.attributes),
       avgCost: dec(v.stockQty).isZero() ? "0.000000" : dec(v.stockValue).dividedBy(v.stockQty).toFixed(6),
+      // The cost per unit shown for it (see shownUnitCost): a cost, so never to a cashier.
+      keptUnitCost: kept.get(v.id) ?? null,
       levels: levels.filter((l) => l.variantId === v.id),
     })),
   };
@@ -350,10 +354,12 @@ export async function searchVariants(tx: Tx, opts: { search?: string; locationId
       asc(variants.sku),
     )
     .limit(opts.limit ?? 50);
+  const kept = await keptUnitCosts(tx, rows.map((r) => r.id));
   return rows.map((r) => ({
     ...r,
     label: variantLabel(r.attributes),
     avgCost: dec(r.stockQty).isZero() ? "0.000000" : dec(r.stockValue).dividedBy(r.stockQty).toFixed(6),
+    keptUnitCost: kept.get(r.id) ?? null,
   }));
 }
 

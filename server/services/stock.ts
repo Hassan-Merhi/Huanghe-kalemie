@@ -1,4 +1,4 @@
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, desc, eq, inArray, sql } from "drizzle-orm";
 import { de, frNumber, frPlural } from "@shared/french";
 import { locations, motorcycleUnits, products, stockLevels, stockMovements, variants, type MovementType } from "@shared/schema";
 import { Decimal, cents, dec, type DecimalInput } from "@shared/money";
@@ -43,6 +43,20 @@ export async function lockVariants(tx: Tx, variantIds: number[]): Promise<void> 
   noteVariantLocks(tx, ids);
   await lockPeriodsShared(tx);
   await tx.select({ id: variants.id }).from(variants).where(inArray(variants.id, ids)).orderBy(asc(variants.id)).for("update");
+}
+
+/**
+ * The cost per unit each item's latest receipt entered at a cost per unit was kept at (see receiveStock), for
+ * shownUnitCost. Items with none are left out.
+ */
+export async function keptUnitCosts(tx: Tx, variantIds?: number[]): Promise<Map<number, string>> {
+  if (variantIds && !variantIds.length) return new Map();
+  const rows = await tx
+    .selectDistinctOn([stockMovements.variantId], { variantId: stockMovements.variantId, unitCost: stockMovements.unitCost })
+    .from(stockMovements)
+    .where(and(sql`${stockMovements.unitCost} is not null`, sql`${stockMovements.qty} > 0`, variantIds ? inArray(stockMovements.variantId, variantIds) : sql`true`))
+    .orderBy(stockMovements.variantId, desc(stockMovements.id));
+  return new Map(rows.map((r) => [r.variantId, r.unitCost!]));
 }
 
 async function lockVariant(tx: Tx, variantId: number) {
@@ -107,13 +121,18 @@ async function addLocationQty(tx: Tx, variantId: number, locationId: number, del
     });
 }
 
-/** Add stock at a known total value. */
+/**
+ * Add stock at a known total value. `unitCost`, the cost per unit it was entered at, is kept on the movement
+ * to six decimals when the value is that cost times the quantity to the cent (see shownUnitCost).
+ */
 export async function receiveStock(
   tx: Tx,
-  input: MovementRef & { variantId: number; locationId: number; qty: DecimalInput; value: DecimalInput },
+  input: MovementRef & { variantId: number; locationId: number; qty: DecimalInput; value: DecimalInput; unitCost?: DecimalInput | null },
 ): Promise<void> {
   const q = stockQty(input.qty);
   const v = cents(input.value);
+  const unit = input.unitCost != null ? dec(input.unitCost).toDecimalPlaces(6) : null;
+  const kept = unit?.gt(0) && cents(unit.times(q)).equals(v) ? unit.toFixed(6) : null;
   if (q.lte(0)) throw badRequest("Quantity must be greater than zero", "La quantité doit être supérieure à zéro");
   if (v.isNegative()) throw badRequest("Stock value cannot be negative", "La valeur du stock ne peut pas être négative");
   await assertLocationOpen(tx, input.locationId, input.type);
@@ -133,6 +152,7 @@ export async function receiveStock(
     type: input.type,
     qty: q.toFixed(3),
     value: v.toFixed(2),
+    unitCost: kept,
     sourceType: input.sourceType ?? null,
     sourceId: input.sourceId ?? null,
     journalId: input.journalId ?? null,
