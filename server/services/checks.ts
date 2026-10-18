@@ -118,8 +118,9 @@ export async function selfCheck(tx: Tx) {
   checks.push({ key: "franc_lines", ok: missing.n === 0, expected: "0", actual: String(missing.n), difference: String(missing.n) });
 
   // 10. No franc or yuan balance of a contact (or another account that is not money) holds dollars for
-  // francs or yuan worth under half a cent: no posting leaves one, and such a residue is only cleared
-  // when its dollars are nil too, so a journal posted by hand that leaves one waits here for a correction.
+  // no francs or yuan, or more than a cent for francs or yuan worth under half a cent: a posting leaves
+  // at most a cent on those (rounded at average cost), cleared with them the next time the contact is
+  // touched, so only a journal posted by hand leaves more, and it waits here for a correction.
   const foreign = await tx.execute<{ account: string; party: string | null; currency: "CDF" | "CNY"; native: string; usd: string }>(sql`
     select a.name as account, p.name as party, l.currency, sum(coalesce(l.native_amount, 0)) as native, sum(l.debit - l.credit) as usd
     from journal_lines l join accounts a on a.id = l.account_id left join parties p on p.id = l.party_id
@@ -131,7 +132,8 @@ export async function selfCheck(tx: Tx) {
   const rates = { CDF: (await rateFor(tx, today)).rate, CNY: await cnyRateFor(tx, today) };
   const mismatched = foreign.rows.filter((r) => {
     const rate = rates[r.currency];
-    return dec(r.native).isZero() || (!!rate && rate.gt(0) && dec(r.native).abs().dividedBy(rate).lt("0.005"));
+    if (dec(r.native).isZero()) return true;
+    return !!rate && rate.gt(0) && dec(r.native).abs().dividedBy(rate).lt("0.005") && dec(r.usd).abs().gt("0.01");
   });
   checks.push({
     key: "foreign_balances",
