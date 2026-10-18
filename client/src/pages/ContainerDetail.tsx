@@ -938,20 +938,26 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
               ? t("Choose the line", "Choisissez la ligne")
               : drawerShort);
 
-  // A cost above the purchase value itself is most often francs typed with the currency left on dollars
-  // (3 370 000 "$" of duty on an 11 243 $ container): said under the amount and confirmed before saving.
+  // A cost above half the purchase value is unusual (9 000 $ of fees on 11 243 $ of goods); above the value
+  // itself it is most often francs typed with the currency left on dollars (3 370 000 "$" of duty on an
+  // 11 243 $ container): said under the amount and confirmed before saving.
   const fob = c.preview ? d(c.preview.fobTotalUsd) : null;
-  const tooBig = fob && fob.gt(0) && usdValue && usdValue.gt(fob) ? usdValue.dividedBy(fob).times(100) : null;
+  const tooBig = fob && fob.gt(0) && usdValue && usdValue.gt(fob.dividedBy(2)) ? usdValue.dividedBy(fob).times(100) : null;
   const bigText = tooBig
     ? isCdf
       ? t(
           `${usd(usdValue!.toFixed(2))} is ${pct(tooBig.toNumber(), 0)} of the purchase value (${usd(fob!.toFixed(2))}): check the amount and the rate`,
           `${usd(usdValue!.toFixed(2))}, c'est ${pct(tooBig.toNumber(), 0)} de la valeur d'achat (${usd(fob!.toFixed(2))})\u00a0: vérifiez le montant et le taux`,
         )
-      : t(
-          `${usd(usdValue!.toFixed(2))} is ${pct(tooBig.toNumber(), 0)} of the purchase value (${usd(fob!.toFixed(2))}): is it an amount in francs?`,
-          `${usd(usdValue!.toFixed(2))}, c'est ${pct(tooBig.toNumber(), 0)} de la valeur d'achat (${usd(fob!.toFixed(2))})\u00a0: est-ce un montant en francs\u00a0?`,
-        )
+      : tooBig.gt(100)
+        ? t(
+            `${usd(usdValue!.toFixed(2))} is ${pct(tooBig.toNumber(), 0)} of the purchase value (${usd(fob!.toFixed(2))}): is it an amount in francs?`,
+            `${usd(usdValue!.toFixed(2))}, c'est ${pct(tooBig.toNumber(), 0)} de la valeur d'achat (${usd(fob!.toFixed(2))})\u00a0: est-ce un montant en francs\u00a0?`,
+          )
+        : t(
+            `${usd(usdValue!.toFixed(2))} is ${pct(tooBig.toNumber(), 0)} of the purchase value (${usd(fob!.toFixed(2))}): check the amount`,
+            `${usd(usdValue!.toFixed(2))}, c'est ${pct(tooBig.toNumber(), 0)} de la valeur d'achat (${usd(fob!.toFixed(2))})\u00a0: vérifiez le montant`,
+          )
     : null;
   const [confirmBig, setConfirmBig] = useState(false);
 
@@ -1096,7 +1102,7 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
       <AlertDialog open={confirmBig} onOpenChange={setConfirmBig}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("A cost above the purchase value?", "Un frais supérieur à la valeur d'achat\u00a0?")}</AlertDialogTitle>
+            <AlertDialogTitle>{tooBig?.gt(100) ? t("A cost above the purchase value?", "Un frais supérieur à la valeur d'achat\u00a0?") : t("An unusual cost?", "Un frais inhabituel\u00a0?")}</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2">
                 <p>{L.type(type)} · {money(amt.toFixed(2), currency)}</p>

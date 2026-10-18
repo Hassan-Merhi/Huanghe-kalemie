@@ -310,6 +310,7 @@ function ItemsImport() {
   const [locationId, setLocationId] = useState<number | null>(null);
   const [day, setDay] = useState(todayLocal());
   const [updatePrices, setUpdatePrices] = useState(false);
+  const [addExisting, setAddExisting] = useState(false);
   const [result, setResult] = useState<ImportResult | null>(null);
 
   function template() {
@@ -328,6 +329,7 @@ function ItemsImport() {
     setResult(null);
     setRows([]);
     setPreview([]);
+    setAddExisting(false);
     try {
       const { rows: raw, found, cells: rawCells } = await readSheet(file, STOCK_FIELDS);
       if (!found.includes("name")) {
@@ -372,8 +374,15 @@ function ItemsImport() {
     return { r, p, err, note, unsure: unsure[i], status: (err ? "error" : p?.status ?? "existing") as PreviewRow["status"] };
   });
   const errors = merged.filter((m) => m.err).length;
+  // A quantity on an item that already exists would be added to its stock: the same file imported twice would
+  // count its opening stock twice. Those rows import without their quantity unless the box below is ticked
+  // (the server refuses them otherwise).
+  const onExisting = merged.filter((m) => !m.err && m.p?.status === "existing" && m.r.qty && !d(m.r.qty).isZero());
+  const onExistingValue = onExisting.reduce((sum, m) => sum.plus(d(m.r.qty).times(d(m.r.unitCost))), d(0));
+  const skipQty = (i: number) => !addExisting && preview[i]?.status === "existing";
+  const sent = rows.map((r, i) => (skipQty(i) ? { ...r, qty: null, unitCost: null } : r));
   // Quantities are opening stock, which only the owner may enter (the server refuses it): said before "Importer".
-  const stockRows = rows.filter((r) => r.qty && !d(r.qty).isZero()).length;
+  const stockRows = sent.filter((r) => r.qty && !d(r.qty).isZero()).length;
   const ownerOnly = user?.role !== "owner" && stockRows > 0;
 
   const run = useApiMutation<unknown, ImportResult>("POST", "/api/import/items", {
@@ -440,6 +449,33 @@ function ItemsImport() {
                 )}
               </p>
             )}
+            {onExisting.length > 0 && (
+              <div className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm" data-testid="import-existing-qty">
+                <p>
+                  {t(
+                    `${onExisting.length === 1 ? "1 row is an item that already exists" : `${onExisting.length} rows are items that already exist`}, with a quantity. Unless you tick the box, ${onExisting.length === 1 ? "it imports" : "they import"} without the quantity, so a file imported twice does not double the stock.`,
+                    `${onExisting.length === 1 ? "1 ligne est un article qui existe déjà" : `${onExisting.length} lignes sont des articles qui existent déjà`}, avec une quantité. Sans la case, ${onExisting.length === 1 ? "elle s'importe" : "elles s'importent"} sans quantité, pour qu'un fichier importé deux fois ne double pas le stock.`,
+                  )}
+                </p>
+                <ul className="list-disc pl-5">
+                  {onExisting.slice(0, 8).map((m) => {
+                    const i = merged.indexOf(m);
+                    return (
+                      <li key={i}>
+                        {t("Row", "Ligne")} {m.p?.row ?? i + 2}{t(":", "\u00a0:")} {m.r.name}{variantOf(m.r) ? ` (${variantOf(m.r)})` : ""}, +{qtyWithUnit(t, m.r.qty, units[i])}
+                      </li>
+                    );
+                  })}
+                  {onExisting.length > 8 && <li>{t(`and ${onExisting.length - 8} more`, `et ${onExisting.length - 8} autres`)}</li>}
+                </ul>
+                <div className="flex items-center gap-2">
+                  <Checkbox id="add-existing" checked={addExisting} onCheckedChange={(v) => setAddExisting(v === true)} />
+                  <Label htmlFor="add-existing" className="font-normal">
+                    {t(`Add these quantities to the existing stock (+${usd(onExistingValue.toFixed(2))})`, `Ajouter ces quantités au stock existant (+${usd(onExistingValue.toFixed(2))})`)}
+                  </Label>
+                </div>
+              </div>
+            )}
             <div className="max-h-[480px] overflow-auto rounded-md border">
               <Table>
                 <TableHeader>
@@ -469,7 +505,7 @@ function ItemsImport() {
                       <TableCell className="font-mono text-xs">{p?.sku ?? r.sku ?? "—"}</TableCell>
                       {/* The unit the quantity is counted in: the item's own when it exists, else the file's. */}
                       <TableCell className="whitespace-nowrap">{unitLabel(t, units[i], 1) || "—"}</TableCell>
-                      <TableCell className="text-right"><Num>{measureCell(r.qty, asked && cells[i]?.qty)}</Num></TableCell>
+                      <TableCell className={skipQty(i) && r.qty ? "text-right text-muted-foreground line-through" : "text-right"} title={skipQty(i) && r.qty ? t("Not added: the item already exists", "Non ajoutée\u00a0: l'article existe déjà") : undefined}><Num>{measureCell(r.qty, asked && cells[i]?.qty)}</Num></TableCell>
                       <TableCell className="text-right"><Num>{amountCell(r.unitCost, cells[i]?.unitCost, 6)}</Num></TableCell>
                       <TableCell className="text-right"><Num>{amountCell(r.sellPrice, cells[i]?.sellPrice, 2)}</Num></TableCell>
                       <TableCell><StatusBadge status={status} /></TableCell>
@@ -495,7 +531,7 @@ function ItemsImport() {
               <SubmitButton
                 blocked={errors > 0 ? t("Fix the errors in the file and load it again", "Corrigez les erreurs dans le fichier et chargez-le à nouveau") : ownerOnly ? t("Opening stock: only the owner can import it", "Stock d'ouverture\u00a0: seul le propriétaire peut l'importer") : !locationId ? t("Choose the location", "Choisissez l'emplacement") : !day && t("Choose the opening stock date", "Choisissez la date du stock d'ouverture")}
                 pending={run.isPending}
-                onClick={() => run.mutate({ date: day, locationId, updatePrices, rows: rows.map(toWire) })}
+                onClick={() => run.mutate({ date: day, locationId, updatePrices, ...(addExisting && onExisting.length ? { addToExisting: true } : {}), rows: sent.map(toWire) })}
               >
                 <Upload className="mr-1 h-4 w-4" /> {t("Import", "Importer")} ({rows.length - errors})
               </SubmitButton>

@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
-import { AccountSelect, MoneyAccountSelect, MonthSelect, PartySelect, RateInput, useAccounts, useRateField } from "@/components/pickers";
+import { AccountSelect, MoneyAccountSelect, MonthSelect, PartySelect, RateInput, useAccounts, useRateField, useRateTooFar } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useI18n, useT, count } from "@/lib/i18n";
@@ -240,6 +240,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
   // The payroll just saved: said at the top of the payment dialog that opens, not by a toast over its title.
   const [justSaved, setJustSaved] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
+  const [confirmFar, setConfirmFar] = useState(false);
   const [currency, setCurrency] = useState<"USD" | "CDF">("USD");
 
   useEffect(() => {
@@ -257,6 +258,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
   const today = todayLocal();
   const effectiveDay = day || (month === today.slice(0, 7) ? today : lastDayOfMonth(month));
   const { rate, setRate } = useRateField(effectiveDay);
+  const rateFar = useRateTooFar(effectiveDay, rate);
   // Francs with centimes (a slip the server refuses) are shown as typed, not rounded to "416 200 FC".
   const fmt = (v: unknown) => (currency === "CDF" && !d(v).isInteger() ? `${number(v, 2)}\u00a0FC` : money(v, currency));
   /** "Les montants en FC sont des nombres entiers" for a franc field typed with centimes ("5000,5"). */
@@ -272,7 +274,9 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
     const penalty = ed.penalty ?? "";
     const include = ed.include ?? true;
     const net = d(salary).plus(d(bonus)).minus(d(withheld)).minus(d(penalty));
-    return { e, salary, bonus, withheld, penalty, include, net };
+    // The usual salary in the run's currency, to question "842 4000" typed for 842 400 FC.
+    const usual = base?.gt(0) ? (currency === "CDF" ? (d(rate).gt(0) ? base.times(d(rate)).toDecimalPlaces(0) : null) : base) : null;
+    return { e, salary, bonus, withheld, penalty, include, net, usual };
   });
   const included = grid.filter((g) => g.include);
   const total = included.reduce((s, g) => s.plus(g.net), d(0));
@@ -282,6 +286,13 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
   const withCents = included.find((g) => [g.salary, g.bonus, g.withheld, g.penalty].some((v) => centsError(v)));
   const gridInvalid = !!withCents || included.some((g) => ![g.salary, g.bonus, g.withheld, g.penalty].every(typedNumberOk));
   const dayInMonth = effectiveDay.slice(0, 7) === month;
+  // A salary more than twice, or under half, the usual one is said and confirmed before saving, never refused.
+  const farOff = included.filter((g) => g.usual && g.salary.trim() && typedNumberOk(g.salary) && (d(g.salary).gt(g.usual.times(2)) || d(g.salary).lt(g.usual.dividedBy(2))));
+  const farOffText = (g: (typeof grid)[number]) => {
+    const ratio = d(g.salary).dividedBy(g.usual!);
+    const hint = ratio.gte(5) ? t(" An extra zero?", " Un zéro de trop\u00a0?") : ratio.lte(0.2) ? t(" A zero missing?", " Un zéro oublié\u00a0?") : "";
+    return t(`${g.e.name}: ${fmt(g.salary)} instead of the usual ${fmt(g.usual!.toString())}.`, `${g.e.name}\u00a0: ${fmt(g.salary)} au lieu de ${fmt(g.usual!.toString())} habituels.`) + hint;
+  };
 
   /** Switching currency converts what was typed at the rate, so 250 $ does not become 250 FC. */
   function changeCurrency(next: "USD" | "CDF") {
@@ -503,10 +514,15 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
             )}
             {withCents && <p className="text-sm text-destructive">{t(`${withCents.e.name}: franc amounts are whole numbers (no centimes)`, `${withCents.e.name}\u00a0: les montants en FC sont des nombres entiers (sans centimes)`)}</p>}
             {negative && <p className="text-sm text-destructive">{t(`${negative.e.name}: deductions are more than the salary`, `${negative.e.name}\u00a0: les retenues dépassent le salaire`)}</p>}
+            {farOff.length > 0 && !gridInvalid && (
+              <div className="space-y-1 text-sm text-amber-800 dark:text-amber-400" data-testid="payroll-far-off">
+                {farOff.map((g) => <p key={g.e.id}>{farOffText(g)}</p>)}
+              </div>
+            )}
             {canEdit && (
               <div className="flex justify-end">
                 <SubmitButton
-                  onClick={submit}
+                  onClick={() => (farOff.length ? setConfirmFar(true) : submit())}
                   blocked={
                     !effectiveAccount
                       ? t("Choose the expense account", "Choisissez le compte de charge")
@@ -514,6 +530,8 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                         ? t("Choose a date inside the month", "Choisissez une date dans le mois")
                         : currency === "CDF" && !d(rate).gt(0)
                           ? t("Enter the exchange rate", "Saisissez le taux de change")
+                        : currency === "CDF" && rateFar
+                          ? rateFar
                           : included.length === 0
                             ? t("Include at least one employee", "Incluez au moins un employé")
                             : included.some((g) => ![g.salary, g.bonus, g.withheld, g.penalty].every(typedNumberOk))
@@ -560,6 +578,30 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
 
       {paying && <PaySalariesDialog month={month} run={run} employees={data.employees} saved={justSaved} onClose={() => { setPaying(false); setJustSaved(false); }} />}
 
+      <AlertDialog open={confirmFar} onOpenChange={setConfirmFar}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{farOff.length === 1 ? t("An unusual salary?", "Un salaire inhabituel\u00a0?") : t(`${farOff.length} unusual salaries?`, `${farOff.length} salaires inhabituels\u00a0?`)}</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                {farOff.map((g) => <p key={g.e.id}>{farOffText(g)}</p>)}
+                <p>{t("The salary saved is what they are owed, and what the payment then offers to pay.", `Le salaire enregistré est ce qui ${farOff.length === 1 ? "lui" : "leur"} est dû, et ce que le paiement proposera ensuite de payer.`)}</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={() => {
+                setConfirmFar(false);
+                submit();
+              }}
+            >
+              {t("Save anyway", "Enregistrer quand même")}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       <AlertDialog open={confirmCancel} onOpenChange={setConfirmCancel}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -653,6 +695,7 @@ function PaySalariesDialog({ month, run, employees, saved, onClose }: { month: s
   const [account, setAccount] = useState<Account | null>(null);
   const [day, setDay] = useState(todayLocal());
   const { rate, setRate } = useRateField(day);
+  const rateFar = useRateTooFar(day, rate);
   const [amounts, setAmounts] = useState<Record<string, string>>({});
   const [doneId, setDoneId] = useState<number | null>(null);
 
@@ -854,6 +897,8 @@ function PaySalariesDialog({ month, run, employees, saved, onClose }: { month: s
                   ? t("Choose the account to pay from", "Choisissez le compte de paiement")
                   : isCdf && !r.gt(0)
                     ? t("Enter the exchange rate", "Saisissez le taux de change")
+                  : isCdf && rateFar
+                    ? rateFar
                     : rows.some((e) => !typedNumberOk(amountOf(e)))
                       ? t("Correct the amounts that cannot be read", "Corrigez les montants illisibles")
                       : isCdf && rows.some((e) => francDecimalsError(t, "CDF", amountOf(e)))
@@ -906,6 +951,7 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
   const [amount, setAmount] = useState("");
   const [day, setDay] = useState(todayLocal());
   const { rate, setRate } = useRateField(day);
+  const rateFar = useRateTooFar(day, rate);
   const [memo, setMemo] = useState("");
   const [doneId, setDoneId] = useState<number | null>(null);
   const isCdf = account?.currency === "CDF";
@@ -988,7 +1034,9 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
                       ? t("Choose the account to pay from", "Choisissez le compte de paiement")
                       : !a.gt(0)
                         ? t("Enter an amount above zero", "Saisissez un montant supérieur à zéro")
-                        : isCdf && !r.gt(0) && t("Enter the exchange rate", "Saisissez le taux de change")
+                        : isCdf && !r.gt(0)
+                          ? t("Enter the exchange rate", "Saisissez le taux de change")
+                          : isCdf && rateFar
                 }
                 pending={give.isPending}
               >

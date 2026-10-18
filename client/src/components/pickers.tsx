@@ -734,6 +734,22 @@ export function useRateField(day: string) {
 }
 
 /**
+ * Why a typed franc rate cannot be saved: more than the tolerance from the day's rate, which the server
+ * refuses. The reason RateInput shows under the field, for the form's button to give too. Null when it can.
+ */
+export function useRateTooFar(day: string, value: string): string | null {
+  const t = useT();
+  const dayRate = d(useRate(day).data?.cdfPerUsd);
+  const tolerance = d(useQuery<Settings>({ queryKey: ["/api/settings"] }).data?.rateTolerancePct ?? "3");
+  const r = d(value);
+  if (!dayRate.gt(0) || !r.gt(0) || !r.minus(dayRate).abs().dividedBy(dayRate).times(100).gt(tolerance)) return null;
+  return t(
+    `More than ${tolerance.toString()}% from the day's rate (${fmtQty(dayRate.toString())}): change the day's rate first`,
+    `Plus de ${tolerance.toString()}\u00a0% d'écart avec le taux du jour (${fmtQty(dayRate.toString())})\u00a0: modifiez d'abord le taux du jour`,
+  );
+}
+
+/**
  * Rate input for a franc amount: starts at the day's rate, says how far a typed rate is from it,
  * and warns before the server refuses one outside the allowed gap. Cashiers cannot change it.
  */
@@ -745,11 +761,9 @@ export function RateInput({ day, value, onChange, className, ownerOnly }: { day:
   const t = useT();
   const { user } = useAuth();
   const dayQ = useRate(day);
-  const settings = useQuery<Settings>({ queryKey: ["/api/settings"] }).data;
   const dayRate = d(dayQ.data?.cdfPerUsd);
-  const tolerance = d(settings?.rateTolerancePct ?? "3");
   const r = d(value);
-  const gap = dayRate.gt(0) && r.gt(0) ? r.minus(dayRate).abs().dividedBy(dayRate).times(100) : d(0);
+  const tooFar = useRateTooFar(day, value);
   const readOnly = user?.role === "cashier" || (!!ownerOnly && user?.role !== "owner");
   return (
     <div className={cn("space-y-1", className)}>
@@ -762,15 +776,11 @@ export function RateInput({ day, value, onChange, className, ownerOnly }: { day:
         <Input inputMode="decimal" thousands rate value={value} onChange={(e) => onChange(e.target.value)} aria-label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} />
       )}
       {dayRate.gt(0) && (
-        <p className={cn("text-xs", gap.gt(tolerance) ? "text-destructive" : "text-muted-foreground")}>
-          {gap.gt(tolerance)
-            ? t(
-                `More than ${tolerance.toString()}% from the day's rate (${fmtQty(dayRate.toString())}): change the day's rate first`,
-                `Plus de ${tolerance.toString()} % d'écart avec le taux du jour (${fmtQty(dayRate.toString())}) : modifiez d'abord le taux du jour`,
-              )
-            : readOnly || r.equals(dayRate)
+        <p className={cn("text-xs", tooFar ? "text-destructive" : "text-muted-foreground")}>
+          {tooFar
+            ?? (readOnly || r.equals(dayRate)
               ? t("Rate of the day", "Taux du jour")
-              : t(`Day's rate: ${fmtQty(dayRate.toString())}`, `Taux du jour : ${fmtQty(dayRate.toString())}`)}
+              : t(`Day's rate: ${fmtQty(dayRate.toString())}`, `Taux du jour : ${fmtQty(dayRate.toString())}`))}
         </p>
       )}
     </div>
