@@ -78,10 +78,16 @@ export function paymentSplit(input: {
   }
   if (cny) parts.push(cny);
   else if (left.gt(0) && input.owedFc.gt(0) && input.rate && input.rate.gt(0)) {
-    const native = cents(left.times(input.rate));
-    const portion = Decimal.min(native, input.owedFc);
-    const portionUsd = portion.equals(native) ? left : cents(left.times(portion).dividedBy(native));
-    if (portionUsd.gt(0)) {
+    // As contactLines: the dollars all the francs owed are worth at the day's rate (3 289,91 $ for 3 260 $ and
+    // 84 000 FC) settle all of them, with no cent left as an advance; less buys whole francs, rounded down.
+    const allUsd = cents(input.owedFc.dividedBy(input.rate));
+    let portion = input.owedFc;
+    let portionUsd = allUsd;
+    if (left.lt(allUsd)) {
+      portion = Decimal.min(left.times(input.rate).toDecimalPlaces(0, Decimal.ROUND_FLOOR), input.owedFc);
+      portionUsd = Decimal.min(cents(portion.dividedBy(input.rate)), left);
+    }
+    if (portionUsd.gt(0) && portion.gt(0)) {
       parts.push({ kind: "cdf", usd: portionUsd.toFixed(2), native: portion.toFixed(2) });
       left = left.minus(portionUsd);
     }

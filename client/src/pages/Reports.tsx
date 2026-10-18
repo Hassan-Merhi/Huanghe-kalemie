@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useState } from "react";
+import Decimal from "decimal.js";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useSearch } from "wouter";
 import { ChevronDown, ChevronRight, Download, Plus, Printer, RotateCcw, Trash2 } from "lucide-react";
@@ -344,7 +345,7 @@ function SalesByItem() {
 // ---------------------------------------------------------------- (3) Daily cash
 
 interface DrawerRow { accountId: number; name: string; currency: string; opening: string; totalIn: string; totalOut: string; closing: string; byType: { type: string; in: string; out: string }[] }
-interface Daily { date: string; count: number; total: string; credit: string; voidsCount: number; voidsTotal: string; returnsCount: number; returnsTotal: string; byAccount: { account_id: number; name: string; currency: string; usd: string; native: string; received_native?: string; change_native?: string; refund_native?: string }[]; drawer?: DrawerRow[] }
+interface Daily { date: string; count: number; total: string; credit: string; creditOnAvoirUsd?: string; voidsCount: number; voidsTotal: string; returnsCount: number; returnsTotal: string; byAccount: { account_id: number; name: string; currency: string; usd: string; native: string; received_native?: string; change_native?: string; refund_native?: string }[]; drawer?: DrawerRow[] }
 
 function DailyCash() {
   const t = useT();
@@ -353,6 +354,9 @@ function DailyCash() {
   const q = useQuery<Daily>({ queryKey: ["/api/reports/daily", { date: day }], enabled: validDate(day) });
   const r = q.data;
   const paidUsd = (r?.byAccount ?? []).reduce((s, a) => s.plus(a.usd), d(0));
+  // Credit an avoir covered is not owed: it reads apart from "À crédit", as on the Sales list and the sale page.
+  const onAvoir = r ? Decimal.max(Decimal.min(d(r.creditOnAvoirUsd ?? 0), d(r.credit)), 0) : d(0);
+  const owedCredit = r ? d(r.credit).minus(onAvoir) : d(0);
 
   function exportCsv() {
     if (!r) return;
@@ -362,7 +366,8 @@ function DailyCash() {
       [t("Total sold ($)", "Total vendu ($)"), r.total],
       [t("Cancellations", "Annulations"), r.voidsCount, r.voidsTotal],
       [t("Returns", "Retours"), r.returnsCount, r.returnsTotal],
-      [t("Sold on credit ($)", "Vendu à crédit ($)"), r.credit],
+      [t("On credit ($)", "À crédit ($)"), owedCredit.toFixed(2)],
+      [t("From customers' credit ($)", "Sur l'avoir ($)"), onAvoir.toFixed(2)],
       [],
       [t("Received into", "Reçu dans"), t("Currency", "Devise"), t("Handed over", "Reçu"), t("Change given", "Monnaie rendue"), t("Refunds", "Remboursements"), t("Kept", "Gardé"), t("Value in $", "Valeur en $")],
       ...r.byAccount.map((a) => [sys.account(a.name), curLabel(a.currency), a.received_native ?? a.native, a.change_native ?? "0", a.refund_native ?? "0", a.native, a.usd]),
@@ -401,7 +406,7 @@ function DailyCash() {
             <CardTitle className="text-base">{t("Daily cash report", "Rapport de caisse du jour")} · {fmtDate(r.date)}</CardTitle>
           </CardHeader>
           <CardContent className="space-y-4">
-            <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <div className={cn("grid grid-cols-2 gap-3", onAvoir.gt(0) ? "sm:grid-cols-3 lg:grid-cols-5" : "sm:grid-cols-4")}>
               <StatCard label={t("Sales", "Ventes")} value={r.count} />
               <StatCard
                 label={t("Total sold", "Total vendu")}
@@ -409,7 +414,8 @@ function DailyCash() {
                 sub={r.voidsCount > 0 ? `${count(t, r.voidsCount, ["cancellation", "cancellations"], ["annulation", "annulations"])} −${usd(r.voidsTotal)}` : undefined}
               />
               <StatCard label={t("Returns", "Retours")} value={`−${usd(r.returnsTotal)}`} sub={count(t, r.returnsCount, ["return", "returns"], ["retour", "retours"])} />
-              <StatCard label={t("Sold on credit", "Vendu à crédit")} value={usd(r.credit)} />
+              <StatCard label={t("On credit", "À crédit")} value={usd(owedCredit.toFixed(2))} />
+              {onAvoir.gt(0) && <StatCard label={t("From customers' credit", "Sur l'avoir")} value={usd(onAvoir.toFixed(2))} sub={t("paid ahead, nothing owed", "payé d'avance, rien de dû")} />}
             </div>
             <div className="overflow-x-auto">
               <Table>

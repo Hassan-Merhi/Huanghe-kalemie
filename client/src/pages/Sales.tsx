@@ -347,10 +347,11 @@ export default function Sales() {
           <StatCard label={t("Paid", "Payé")} value={usd(totals.paid.toFixed(2))} sub={totals.refunded.gt(0) ? `${t("refunded", "remboursé")} −${usd(totals.refunded.toFixed(2))}` : undefined} />
           <StatCard label={t("Total", "Total")} value={usd(totals.total.toFixed(2))} sub={totals.returned.gt(0) ? `${t("returns", "retours")} −${usd(totals.returned.toFixed(2))}` : undefined} />
           {/* Credit given on these sales (less returns), not what is still owed: payments made later are on each
-              customer's statement, so the card is not amber as if all of it were unpaid. */}
-          <StatCard label={t("Given on credit", "Accordé à crédit")} value={usd(totals.credit.toFixed(2))} sub={totals.credit.gt(0) ? (
+              customer's statement, so the card is not amber as if all of it were unpaid. What an avoir covered is
+              not owed: it reads apart from the credit, as on the "Aujourd'hui" card and the daily report. */}
+          <StatCard label={t("Given on credit", "Accordé à crédit")} value={usd(totals.credit.minus(totals.onAvoir).toFixed(2))} sub={totals.credit.gt(0) ? (
               <>
-                {totals.onAvoir.gt(0) && <div className="text-emerald-800 dark:text-emerald-400">{t("of which from customers' credit", "dont sur l'avoir")} {usd(totals.onAvoir.toFixed(2))}</div>}
+                {totals.onAvoir.gt(0) && <div className="text-emerald-800 dark:text-emerald-400">{t("From customers' credit", "Sur l'avoir")} {usd(totals.onAvoir.toFixed(2))}</div>}
                 <div>{t("later payments: see the customer statements", "paiements ultérieurs : voir les relevés clients")}</div>
               </>
             ) : undefined} />

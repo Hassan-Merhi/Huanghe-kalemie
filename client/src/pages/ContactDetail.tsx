@@ -443,7 +443,9 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
               {/* Inside a row with the "All" button, so the field's label is not tied to it: named here. */}
               <Input inputMode="decimal" usd={!isCdf} thousands={isCdf} aria-label={t(`Amount (${curLabel(account?.currency ?? "USD")})`, `Montant (${curLabel(account?.currency ?? "USD")})`)} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
               {outstanding && !isCdf && !cnyOwed && (
-                <Button type="button" variant="outline" size="sm" className="h-10" onClick={() => setAmount(outstanding.toFixed(2))}>
+                // Francs owed count at the day's rate, the figure that settles them all (as the voucher line's "Tout"),
+                // not as booked: 3 290,10 $ would leave 0,19 $ as an advance.
+                <Button type="button" variant="outline" size="sm" className="h-10" onClick={() => setAmount((fcOwed && d(rate).gt(0) ? Decimal.max(isCustomer ? dollarBalance : dollarBalance.negated(), 0).plus(fcOwed.dividedBy(d(rate)).toDecimalPlaces(2, Decimal.ROUND_HALF_UP)) : outstanding).toFixed(2))}>
                   {t("All", "Tout")}
                 </Button>
               )}
