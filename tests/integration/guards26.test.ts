@@ -116,43 +116,41 @@ describe.skipIf(!hasDb)("Guards found by the twenty-sixth audit", async () => {
       expect(paid.status, JSON.stringify(paid.body)).toBe(201);
       expect(await owed(s, "CNY", payables)).toEqual(["0.00", "0.00"]);
       expect((await call("POST", `/api/containers/${box.body.id}/reverse`, { date: today })).status).toBe(200);
-      expect(await owed(s, "CNY", payables)).toEqual(["3000.00", "422.54"]);
+      // A33: they come back owed at the 416,67 $ paid for them, the payment's 5,87 $ gain taken back.
+      expect(await owed(s, "CNY", payables)).toEqual(["3000.00", "416.67"]);
       return s;
     };
     const receive = (partyId: number, amount: string) => call("POST", "/api/vouchers/receipt", { date: today, accountId: cashUsd, lines: [{ partyId, amount }] }, "gerant");
 
-    // The 416,67 $ paid come back (3 000 ¥ at 7,2): on their own they settle only the yuan they cover at
-    // their cost (A32), and settling all of them, 1,39 % short, is beyond what the manager may write off;
-    // the owner may, and the 5,87 $ go to exchange differences; the drawer gets what came in.
+    // The 416,67 $ paid come back (3 000 ¥ at 7,2): they settle all the yuan at their cost, which is now
+    // what was paid (A33), with no write-off and nothing to exchange differences; the drawer gets what came in.
     const s = await owing("Fournisseur F1");
     const fx0 = (await drawer(fx))[1];
     const usd0 = await drawer(cashUsd);
-    const all = (who: string) => call("POST", "/api/vouchers/receipt", { date: today, accountId: cashUsd, lines: [{ partyId: s, amount: "416.67", settleNative: "3000" }] }, who);
-    expect((await all("gerant")).status).toBe(400);
-    const back = await all("admin");
+    const back = await receive(s, "416.67");
     expect(back.status, JSON.stringify(back.body)).toBe(201);
     expect(await owed(s, "CNY", payables)).toEqual(["0.00", "0.00"]);
     expect(await owed(s, "USD", payables)).toEqual(["0.00", "0.00"]);
-    expect((Number((await drawer(fx))[1]) - Number(fx0)).toFixed(2)).toBe("5.87");
+    expect((Number((await drawer(fx))[1]) - Number(fx0)).toFixed(2)).toBe("0.00");
     expect((Number((await drawer(cashUsd))[1]) - Number(usd0[1])).toFixed(2)).toBe("416.67");
     const lines = await linesOf(back.body.id);
     expect(lines.find((l) => l.accountId === cashUsd)?.credit).toBe("0.00");
     expect((await checks.selfCheck(db)).ok).toBe(true);
 
-    // Far less than they are worth (380 $): only the yuan it covers at their cost, 2 698 ¥.
+    // Far less than they are worth (380 $): only the yuan it covers at their cost, 2 735,97 ¥.
     const short = await owing("Fournisseur F1 partiel");
     expect((await receive(short, "380")).status).toBe(201);
-    expect(await owed(short, "CNY", payables)).toEqual(["302.00", "42.54"]);
+    expect(await owed(short, "CNY", payables)).toEqual(["264.03", "36.67"]);
     expect(await owed(short, "USD", payables)).toEqual(["0.00", "0.00"]);
-    // The rest, 42,54 $, their cost: settled too.
-    expect((await receive(short, "42.54")).status).toBe(201);
+    // The rest, 36,67 $, their cost: settled too.
+    expect((await receive(short, "36.67")).status).toBe(201);
     expect(await owed(short, "CNY", payables)).toEqual(["0.00", "0.00"]);
 
-    // More than all of them: the yuan at their cost (422,54 $), the rest is theirs in dollars.
+    // More than all of them: the yuan at their cost (416,67 $), the rest is theirs in dollars.
     const more = await owing("Fournisseur F1 plus");
     expect((await receive(more, "500")).status).toBe(201);
     expect(await owed(more, "CNY", payables)).toEqual(["0.00", "0.00"]);
-    expect(await owed(more, "USD", payables)).toEqual(["0.00", "-77.46"]);
+    expect(await owed(more, "USD", payables)).toEqual(["0.00", "-83.33"]);
     expect((await checks.selfCheck(db)).ok).toBe(true);
   });
 

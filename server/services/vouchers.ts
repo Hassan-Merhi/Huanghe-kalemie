@@ -65,6 +65,7 @@ async function mergeSettlingLines(tx: Tx, lines: VoucherLineInput[]): Promise<Vo
   const byKey = new Map<string, VoucherLineInput>();
   for (const [i, l] of lines.entries()) {
     if (cents(l.amount).lte(0)) throw badRequest(`Line ${i + 1}: the amount must be greater than zero`, `Ligne ${i + 1} : le montant doit être supérieur à zéro`);
+    if (l.settleNative && dec(l.settleNative).isNegative()) throw badRequest(`Line ${i + 1}: the yuan to settle cannot be negative`, `Ligne ${i + 1} : les yuans à solder ne peuvent pas être négatifs`);
     const key = l.partyId && !l.accountId ? `p${l.partyId}` : l.accountId && !l.partyId && settles.has(l.accountId) ? `a${l.accountId}` : null;
     const seen = key ? byKey.get(key) : undefined;
     if (seen) {
