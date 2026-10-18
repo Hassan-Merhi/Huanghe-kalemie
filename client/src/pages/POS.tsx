@@ -98,8 +98,9 @@ export interface SaleFull {
   fcRoundingUsd?: string;
   /** "Payé": the cash really kept, payments and refunds at their own rates; Payé − total = fcRoundingUsd. */
   paidKeptUsd?: string;
-  /** The part of the credit the customer's avoir covered when the sale was made, and the avoir left then. */
+  /** The part of the credit the customer's avoir covered: after returns (at most the credit left), when the sale was made, and the avoir left then. */
   avoirUsedUsd?: string | null;
+  avoirAtSaleUsd?: string | null;
   avoirLeftUsd?: string | null;
   /** Credit still on the sale after returns, however they were refunded. */
   creditLeftUsd?: string;
@@ -171,7 +172,8 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
         .toDecimalPlaces(0, ROUND)
     : null;
   const rounding = paidInFrancs ? fcRounding(t, keptUsd, keptFc) : null;
-  const avoir = avoirSplit(sale);
+  // The receipt shows the sale as it was made, before any return.
+  const avoir = avoirSplit({ ...sale, avoirUsedUsd: sale.avoirAtSaleUsd ?? sale.avoirUsedUsd });
   // The shop's clock (Kalemie), whatever time zone the phone or computer is set to.
   const time = sale.createdAt ? new Date(sale.createdAt).toLocaleTimeString("fr-FR", { hour: "2-digit", minute: "2-digit", timeZone: "Africa/Lubumbashi" }) : "";
   const dash = <div className="my-1.5 border-t border-dashed border-black" />;

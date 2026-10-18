@@ -370,7 +370,7 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
   // Every contact the journal writes to, before its francs and yuan (see lockBalances). A period close
   // holds the periods lock alone, so nothing else is posting.
   if (!input.skipPeriodCheck) await lockBalances(tx, { parties: values.map((v) => v.partyId) });
-  if (!input.exactValues) await costForeignOutflows(tx, values, input.date);
+  if (!input.exactValues) await costForeignOutflows(tx, values, input.date, byId, !input.skipPeriodCheck);
 
   const number = await nextNumber(tx, "journal", "J-");
   const [journal] = await tx
@@ -455,25 +455,59 @@ async function assertNotOverdrawn(tx: Tx, account: typeof accounts.$inferSelect,
 /** Memo of the exchange difference booked when foreign units leave a balance at its average cost. */
 export const COST_FX_MEMO = "Écart de change (coût moyen des devises)";
 
+/** Memo of the line that clears francs or yuan worth under half a cent left on a contact (see costForeignOutflows). */
+export const RESIDUE_MEMO = "Reste de moins d'un demi-centime soldé en écart de change";
+
 type PendingLine = { accountId: number; debit: Decimal; credit: Decimal; partyId: number | null; currency: LineCurrency; nativeAmount: string | null; rate: string | null; memo: string | null };
+type AccountRow = typeof accounts.$inferSelect;
 
 /**
  * Value each foreign-currency line that takes units out of a balance at that balance's average
  * USD cost, and book the difference from the given value as an exchange gain or loss.
+ * Francs or yuan left on a contact (or a balance sheet account settled like one) that are worth under
+ * half a cent at the rate used could never be paid or refunded: the journal that leaves them, or the
+ * next one on that contact, clears them at their book value against exchange differences, with no money.
  */
-async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string) {
+async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string, byId: Map<number, AccountRow>, clearResidues: boolean) {
   const running = new Map<string, { native: Decimal; usd: Decimal }>();
   // Francs this journal itself put into a drawer: a part of them given back in the same journal (a sale's
   // change from the drawer it was paid into) leaves at the journal's own value, as one amount with them.
   const cameIn = new Map<string, Decimal>();
   let fxDebit = new Decimal(0);
+  const keyOf = (k: { accountId: number; partyId: number | null; currency: string }) => `${k.accountId}|${k.partyId ?? ""}|${k.currency}`;
+  const foreign = values.filter((v) => v.currency !== "USD" && v.nativeAmount);
+  // The balances that may hold such a residue: those the journal moves, and the franc and yuan balances of
+  // every contact it touches (a residue left by an older posting), read here only to see whether to lock them.
+  const settled = (accountId: number, partyId: number | null) => {
+    const a = byId.get(accountId);
+    return !!a && !a.isMoney && (partyId !== null || ((a.type === "asset" || a.type === "liability") && !(a.systemKey && PARTY_REQUIRED.includes(a.systemKey))));
+  };
+  const residueKeys = new Map<string, { accountId: number; partyId: number | null; currency: ForeignCurrency }>();
+  if (clearResidues) {
+    for (const v of foreign) if (settled(v.accountId, v.partyId)) residueKeys.set(keyOf(v), { accountId: v.accountId, partyId: v.partyId, currency: v.currency as ForeignCurrency });
+    const read = new Set<string>();
+    const dayRates: Partial<Record<ForeignCurrency, Decimal | null>> = {};
+    for (const v of values) {
+      if (!settled(v.accountId, v.partyId)) continue;
+      for (const currency of ["CDF", "CNY"] as const) {
+        const k = { accountId: v.accountId, partyId: v.partyId, currency };
+        if (residueKeys.has(keyOf(k)) || read.has(keyOf(k))) continue;
+        read.add(keyOf(k));
+        const native = (await foreignBalance(tx, v.accountId, v.partyId, currency, date)).native.abs();
+        if (native.isZero()) continue;
+        if (!(currency in dayRates)) dayRates[currency] = currency === "CDF" ? (await rateFor(tx, date)).rate : await cnyRateFor(tx, date);
+        // Roughly under half a cent (checked again exactly under the lock); a larger balance is left unlocked.
+        const r = dayRates[currency];
+        if (r && native.dividedBy(r).lt("0.006")) residueKeys.set(keyOf(k), k);
+      }
+    }
+  }
   // One posting at a time per balance, so two payments cannot both spend the same francs. All of the
   // journal's balances at once, in key order, so two journals touching the same two cannot cross.
-  const foreign = values.filter((v) => v.currency !== "USD" && v.nativeAmount);
-  if (foreign.length) await lockForeignBalances(tx, foreign);
+  if (foreign.length || residueKeys.size) await lockForeignBalances(tx, [...foreign, ...residueKeys.values()]);
   for (const v of values) {
     if (v.currency === "USD" || !v.nativeAmount) continue;
-    const key = `${v.accountId}|${v.partyId ?? ""}|${v.currency}`;
+    const key = keyOf(v);
     let bal = running.get(key);
     if (!bal) {
       bal = await foreignBalance(tx, v.accountId, v.partyId, v.currency, date);
@@ -497,6 +531,30 @@ async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string) 
     } else if (v.partyId === null) cameIn.set(key, (cameIn.get(key) ?? new Decimal(0)).plus(native));
     bal.native = bal.native.plus(native);
     bal.usd = bal.usd.plus(v.debit.minus(v.credit));
+  }
+  for (const [key, k] of residueKeys) {
+    const bal = running.get(key) ?? (await foreignBalance(tx, k.accountId, k.partyId, k.currency, date));
+    if (bal.native.isZero()) continue;
+    // Worth under half a cent at the rate this journal used for that balance, else the day's rate.
+    const lineRate = foreign.find((v) => keyOf(v) === key && v.rate && dec(v.rate).gt(0))?.rate;
+    const rate = lineRate ? dec(lineRate) : k.currency === "CDF" ? (await rateFor(tx, date)).rate : await cnyRateFor(tx, date);
+    if (!rate || !bal.native.abs().dividedBy(rate).lt("0.005")) continue;
+    // Only a balance with nothing dated after this journal: clearing it on an earlier day would change
+    // what later postings settled.
+    const all = await foreignBalance(tx, k.accountId, k.partyId, k.currency);
+    const asOf = await foreignBalance(tx, k.accountId, k.partyId, k.currency, date);
+    if (!all.native.equals(asOf.native) || !all.usd.equals(asOf.usd)) continue;
+    values.push({
+      accountId: k.accountId,
+      debit: bal.usd.isNegative() ? bal.usd.abs() : new Decimal(0),
+      credit: bal.usd.isPositive() ? bal.usd : new Decimal(0),
+      partyId: k.partyId,
+      currency: k.currency,
+      nativeAmount: bal.native.negated().toFixed(2),
+      rate: rate.toFixed(4),
+      memo: RESIDUE_MEMO,
+    });
+    fxDebit = fxDebit.plus(bal.usd);
   }
   if (!fxDebit.isZero()) {
     values.push({
@@ -787,10 +845,11 @@ export async function contactLines(
   const nativeUsd = Decimal.max(usd.minus(dollarsOwed), 0);
   if (nativeUsd.isZero()) return plain;
   const rate = await resolveRate(tx, input.date);
-  // The dollars shown for all the francs owed (at least a cent, so a few francs left by an earlier rounding
-  // can be cleared) settle all of them: rounding them down to whole francs would leave a few that are
-  // worth less than a cent, which could then never be paid or refunded.
-  const allUsd = Decimal.max(cents(fc.dividedBy(rate)), new Decimal("0.01"));
+  // The dollars shown for all the francs owed settle all of them: rounding them down to whole francs would
+  // leave a few that are worth less than a cent, which could then never be paid or refunded. Francs worth
+  // under half a cent show as 0 $: the dollars all go to the dollar balance, and the journal clears those
+  // francs with no money (see costForeignOutflows).
+  const allUsd = cents(fc.dividedBy(rate));
   let portion = fc;
   let portionUsd = allUsd;
   if (fc.isZero() || nativeUsd.lt(allUsd)) {
