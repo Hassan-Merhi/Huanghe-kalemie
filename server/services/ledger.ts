@@ -595,11 +595,12 @@ type RevaluedKey = { accountId: number; partyId: number | null; currency: Foreig
  * A reversal gives francs or yuan back at the dollars they were booked at. When a month-end revaluation
  * restated them in between, or the rate moved between the postings it undoes and those it leaves, a
  * balance can be left with no francs or yuan but some dollars. These lines move them to exchange
- * differences, as the next revaluation would have done. Only for balances of `keys` with exactly no francs
- * or yuan once `pending` (the lines of the journal being posted, if any) is added, and nothing dated after
- * `date`; and only the dollars exchange explains, counted since the balance last stood at no francs or
- * yuan (dollars left from before are not this posting's):
- * - those revaluations booked on it;
+ * differences, as the next revaluation would have done. Only for balances of `keys` with no francs or
+ * yuan once `pending` (the lines of the journal being posted, if any) is added (in that journal, off a
+ * drawer, francs or yuan worth under half a cent count as none and are cleared with the dollars), and
+ * nothing dated after `date`; and only the dollars exchange explains, counted since the balance last stood
+ * at no francs or yuan (dollars left from before are not this posting's):
+ * - those revaluations booked on it, net of the reversals that undid them;
  * - on a contact (or another account that is not money), what its own francs or yuan can be worth apart at
  *   the rates they were posted at: half of them at the lowest rate against half at the highest, plus half a
  *   cent per line for its rounding.
@@ -624,6 +625,7 @@ export async function revaluedDollarLines(tx: Tx, keys: RevaluedKey[], date: str
         journalId: journalLines.journalId,
         date: journals.date,
         type: journals.type,
+        reverses: journals.reversesJournalId,
         native: journalLines.nativeAmount,
         usd: sql<string>`${journalLines.debit} - ${journalLines.credit}`,
         rate: journalLines.rate,
@@ -642,15 +644,28 @@ export async function revaluedDollarLines(tx: Tx, keys: RevaluedKey[], date: str
     if (rows.some((r) => r.date > date)) continue;
     const own = pending.filter((v) => keyOf(v) === keyOf(k));
     // Every line, by journal in date order, the journal being posted last.
-    const posted = rows.map((r) => ({ group: r.journalId, revaluation: r.type === "revaluation", cleared: r.memo === REVALUED_MEMO, native: dec(r.native ?? 0), usd: dec(r.usd), rate: r.rate }));
-    const all = [...posted, ...own.map((v) => ({ group: 0, revaluation: false, cleared: false, native: dec(v.nativeAmount ?? 0), usd: v.debit.minus(v.credit), rate: v.rate }))];
+    // A revaluation and the reversal that undid it (a month reopened) count as one, so closing and
+    // reopening a month again and again cannot widen what revaluations explain.
+    const posted = rows.map((r) => ({ group: r.journalId, origin: r.reverses ?? r.journalId, revaluation: r.type === "revaluation", cleared: r.memo === REVALUED_MEMO, native: dec(r.native ?? 0), usd: dec(r.usd), rate: r.rate }));
+    const all = [...posted, ...own.map((v) => ({ group: 0, origin: 0, revaluation: false, cleared: false, native: dec(v.nativeAmount ?? 0), usd: v.debit.minus(v.credit), rate: v.rate }))];
+    const revaluedIn = (some: typeof all) => {
+      const net = new Map<number, Decimal>();
+      for (const r of some) if (r.revaluation) net.set(r.origin, (net.get(r.origin) ?? new Decimal(0)).plus(r.usd));
+      return sum([...net.values()].map((u) => u.abs()));
+    };
     const native = sum(all.map((r) => r.native));
     const usd = sum(all.map((r) => r.usd));
-    if (!native.isZero() || usd.isZero()) continue;
+    if (usd.isZero()) continue;
+    const rate = own.find((v) => v.rate)?.rate ?? (k.currency === "CDF" ? (await rateFor(tx, date)).rate.toFixed(4) : (await cnyRateFor(tx, date))?.toFixed(4) ?? null);
+    // Francs or yuan worth under half a cent at that rate count as none, and are cleared with the dollars
+    // (as costForeignOutflows does): a reversal can leave a franc or two that a refund took beyond the
+    // receipt it undoes. Only in the journal being posted, and never on a drawer, whose francs are counted.
+    const residue = !native.isZero();
+    if (residue && (!pending.length || moneyIds.has(k.accountId) || !rate || !native.abs().dividedBy(dec(rate)).lt("0.005"))) continue;
     let moved: Decimal;
     if (moneyIds.has(k.accountId)) {
       // A drawer: only what revaluations booked on it.
-      const revalued = sum(all.filter((r) => r.revaluation).map((r) => r.usd.abs()));
+      const revalued = revaluedIn(all);
       if (usd.abs().gt(revalued)) continue;
       moved = usd;
     } else {
@@ -665,7 +680,7 @@ export async function revaluedDollarLines(tx: Tx, keys: RevaluedKey[], date: str
       moved = sum(since.map((r) => r.usd));
       if (moved.isZero()) continue;
       if (since.some((r) => r.native.isZero() && !r.usd.isZero() && !r.revaluation && !r.cleared)) continue;
-      const revalued = sum(since.filter((r) => r.revaluation).map((r) => r.usd.abs()));
+      const revalued = revaluedIn(since);
       const posts = since.filter((r) => !r.native.isZero() && r.rate && dec(r.rate).gt(0));
       const rates = posts.map((r) => dec(r.rate!));
       const apart = posts.length
@@ -673,7 +688,6 @@ export async function revaluedDollarLines(tx: Tx, keys: RevaluedKey[], date: str
         : new Decimal(0);
       if (moved.abs().gt(revalued.plus(apart).plus(new Decimal("0.005").times(posts.length)))) continue;
     }
-    const rate = own.find((v) => v.rate)?.rate ?? (k.currency === "CDF" ? (await rateFor(tx, date)).rate.toFixed(4) : (await cnyRateFor(tx, date))?.toFixed(4) ?? null);
     gain = gain.plus(moved);
     lines.push({
       accountId: k.accountId,
@@ -681,7 +695,7 @@ export async function revaluedDollarLines(tx: Tx, keys: RevaluedKey[], date: str
       credit: moved.isPositive() ? moved : new Decimal(0),
       partyId: k.partyId,
       currency: k.currency,
-      nativeAmount: "0.00",
+      nativeAmount: native.negated().toFixed(2),
       rate,
       memo: REVALUED_MEMO,
     });

@@ -177,18 +177,13 @@ async function voucherLines(tx: Tx, kind: "payment" | "receipt", input: VoucherI
       }
       const lineMoney = { currency: money.currency, nativeAmount: money.currency === "CDF" ? amount.toFixed(2) : null, rate: money.rate };
       const split =
-        kind === "payment" && p.type !== "customer"
-          ? // Paid like a payment to the contact: what is owed in yuan is settled too.
-            await ops.payablesLines(tx, { payables, partyId: p.id, usd, money: lineMoney, date: input.date, memo: l.memo || p.name })
-          : await contactLines(tx, {
-              accountId: p.type === "customer" ? receivables : payables,
-              partyId: p.id,
-              side: kind === "payment" ? "debit" : "credit",
-              usd,
-              money: lineMoney,
-              memo: l.memo || p.name,
-              date: input.date,
-            });
+        p.type === "customer"
+          ? await contactLines(tx, { accountId: receivables, partyId: p.id, side: kind === "payment" ? "debit" : "credit", usd, money: lineMoney, memo: l.memo || p.name, date: input.date })
+          : kind === "payment"
+            ? // Paid like a payment to the contact: what is owed in yuan is settled too.
+              await ops.payablesLines(tx, { payables, partyId: p.id, usd, money: lineMoney, date: input.date, memo: l.memo || p.name })
+            : // And received the other way: yuan they owe us (a paid yuan bill since undone) are settled too.
+              await ops.payablesReceiptLines(tx, { payables, partyId: p.id, usd, money: lineMoney, date: input.date, memo: l.memo || p.name });
       split.forEach((line, k) => lines.push({ ...line, usd: k === 0 ? usd : "0" }));
     } else {
       const a = accountRows.find((x) => x.id === l.accountId);
