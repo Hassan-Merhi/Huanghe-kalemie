@@ -448,6 +448,76 @@ export async function payablesLines(
   return lines;
 }
 
+/**
+ * The payables side of money received from a supplier, agent or employee: payablesLines the other way.
+ * When they owe us yuan (a paid yuan bill since undone) and no francs, the money settles, after any
+ * dollars they owe, the yuan: all of them when it is worth them within the tolerance of a payment that
+ * settles yuan (see payParty), at the yuan rate on file (else at what the yuan cost), else as many as
+ * it buys at that rate. The yuan leave at their cost when posted and the difference goes to gains or
+ * losses, so no yuan are left that no money account could ever settle. Only what is left goes through
+ * the usual dollar and franc balances (see contactLines). Every line is a credit: nothing goes out.
+ */
+export async function payablesReceiptLines(
+  tx: Tx,
+  input: { payables: number; partyId: number; usd: DecimalInput; money: { currency: string; nativeAmount: string | null; rate: string | null }; date: string; memo?: string | null },
+): Promise<PostLine[]> {
+  const { payables, partyId } = input;
+  // The yuan, francs and dollars owed decide the split, so one posting at a time per contact.
+  await lockBalances(tx, { parties: [partyId] });
+  const cny = await foreignBalance(tx, payables, partyId, "CNY", input.date);
+  const fcClaim = (await foreignBalance(tx, payables, partyId, "CDF", input.date)).native;
+  const usdClaim = Decimal.max((await foreignBalance(tx, payables, partyId, "USD", input.date)).usd, 0);
+  const total = cents(input.usd);
+  const memo = input.memo ?? null;
+  let cnyUsd = new Decimal(0);
+  const lines: PostLine[] = [];
+  if (cny.native.gt(0) && cny.usd.gt(0) && !fcClaim.gt(0)) {
+    const claimNative = cny.native;
+    const available = Decimal.max(total.minus(usdClaim), 0);
+    // Yuan per dollar: the rate on file, else what the yuan cost.
+    const reference = (await cnyRateFor(tx, input.date)) ?? claimNative.dividedBy(cny.usd);
+    let native = new Decimal(0);
+    if (available.gt(0)) {
+      const allUsd = cents(claimNative.dividedBy(reference));
+      const tolerance = Decimal.max(await rateTolerancePct(tx), 5);
+      if (available.gte(allUsd)) {
+        native = claimNative;
+        cnyUsd = allUsd;
+      } else if (claimNative.dividedBy(available).minus(reference).abs().dividedBy(reference).times(100).lte(tolerance)) {
+        // Close enough to all of them (the dollars paid for them coming back at another day's rate).
+        native = claimNative;
+        cnyUsd = available;
+      } else {
+        native = Decimal.min(cents(available.times(reference)), claimNative);
+        cnyUsd = available;
+      }
+    }
+    if (cnyUsd.gt(0) && native.gt(0)) {
+      lines.push({ accountId: payables, partyId, credit: cnyUsd, currency: "CNY", nativeAmount: native, rate: native.dividedBy(cnyUsd).toFixed(4), memo });
+    } else cnyUsd = new Decimal(0);
+  }
+  const rest = total.minus(cnyUsd);
+  if (rest.gt(0)) {
+    const restNative = input.money.nativeAmount
+      ? cnyUsd.isZero()
+        ? dec(input.money.nativeAmount)
+        : dec(input.money.nativeAmount).times(rest).dividedBy(total).toDecimalPlaces(0, Decimal.ROUND_FLOOR)
+      : null;
+    lines.push(
+      ...(await contactLines(tx, {
+        accountId: payables,
+        partyId,
+        side: "credit",
+        usd: rest,
+        money: { currency: input.money.currency, nativeAmount: restNative ? restNative.toFixed(2) : null, rate: input.money.rate },
+        date: input.date,
+        memo,
+      })),
+    );
+  }
+  return lines;
+}
+
 /** Pay a supplier or agent (container invoice, clearing agent, transporter, unpaid bills). */
 export async function payParty(tx: Tx, input: PartyPaymentInput, userId: number) {
   const party = await requireParty(tx, input.partyId, ["supplier", "agent", "employee"]);
