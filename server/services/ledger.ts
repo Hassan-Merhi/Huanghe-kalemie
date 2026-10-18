@@ -246,8 +246,8 @@ export interface PostJournalInput {
    */
   exactValues?: boolean;
   /**
-   * A reversal: dollars a month-end revaluation left on a franc or yuan balance this journal empties go
-   * to exchange differences in it (see revaluedDollarLines).
+   * A reversal: dollars a month-end revaluation, or the rate's moves, left on a franc or yuan balance this
+   * journal empties go to exchange differences in it (see revaluedDollarLines).
    */
   clearRevalued?: boolean;
 }
@@ -593,46 +593,92 @@ type RevaluedKey = { accountId: number; partyId: number | null; currency: Foreig
 
 /**
  * A reversal gives francs or yuan back at the dollars they were booked at. When a month-end revaluation
- * restated them in between, a balance can be left with no francs or yuan but the revaluation's dollars.
- * These lines move them to exchange differences, as the next revaluation would have done. Only for
- * balances of `keys` with exactly no francs or yuan once `pending` (the lines of the journal being
- * posted, if any) is added, nothing dated after `date`, and no more dollars than revaluations booked on
- * them: any other mismatch is for a person to correct (see selfCheck). The callers pass no money account
- * a reversal could empty but the one a cancelled payroll paid from.
+ * restated them in between, or the rate moved between the postings it undoes and those it leaves, a
+ * balance can be left with no francs or yuan but some dollars. These lines move them to exchange
+ * differences, as the next revaluation would have done. Only for balances of `keys` with exactly no francs
+ * or yuan once `pending` (the lines of the journal being posted, if any) is added, and nothing dated after
+ * `date`; and only the dollars exchange explains, counted since the balance last stood at no francs or
+ * yuan (dollars left from before are not this posting's):
+ * - those revaluations booked on it;
+ * - on a contact (or another account that is not money), what its own francs or yuan can be worth apart at
+ *   the rates they were posted at: half of them at the lowest rate against half at the highest, plus half a
+ *   cent per line for its rounding.
+ * Dollars booked on it by hand with no francs or yuan, or more than that, are for a person to correct
+ * (see selfCheck), and stay. The lines move no francs or yuan, so no money leaves a drawer: the callers pass
+ * no money account a reversal could empty but the one a cancelled payroll paid from, and on it only a
+ * revaluation's dollars move.
  */
 export async function revaluedDollarLines(tx: Tx, keys: RevaluedKey[], date: string, pending: PendingLine[] = []): Promise<PendingLine[]> {
   const keyOf = (k: { accountId: number; partyId: number | null; currency: string }) => `${k.accountId}|${k.partyId ?? ""}|${k.currency}`;
   const unique = Array.from(new Map(keys.map((k) => [keyOf(k), { accountId: k.accountId, partyId: k.partyId, currency: k.currency }])).values());
   if (!unique.length) return [];
   await lockForeignBalances(tx, unique);
+  const moneyIds = new Set(
+    (await tx.select({ id: accounts.id }).from(accounts).where(and(inArray(accounts.id, unique.map((k) => k.accountId)), eq(accounts.isMoney, true)))).map((a) => a.id),
+  );
   const lines: PendingLine[] = [];
   let gain = new Decimal(0);
   for (const k of unique) {
-    const where = and(
-      eq(journalLines.accountId, k.accountId),
-      k.partyId ? eq(journalLines.partyId, k.partyId) : sql`${journalLines.partyId} is null`,
-      eq(journalLines.currency, k.currency),
-    );
-    const [r] = await tx
+    const rows = await tx
       .select({
-        native: sql<string>`coalesce(sum(${journalLines.nativeAmount}), 0)`,
-        usd: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)`,
-        later: sql<number>`count(*) filter (where ${journals.date} > ${date})::int`,
-        revalued: sql<string>`coalesce(sum(abs(${journalLines.debit} - ${journalLines.credit})) filter (where ${journals.type} = 'revaluation'), 0)`,
+        journalId: journalLines.journalId,
+        date: journals.date,
+        type: journals.type,
+        native: journalLines.nativeAmount,
+        usd: sql<string>`${journalLines.debit} - ${journalLines.credit}`,
+        rate: journalLines.rate,
+        memo: journalLines.memo,
       })
       .from(journalLines)
       .innerJoin(journals, eq(journals.id, journalLines.journalId))
-      .where(where);
+      .where(
+        and(
+          eq(journalLines.accountId, k.accountId),
+          k.partyId ? eq(journalLines.partyId, k.partyId) : sql`${journalLines.partyId} is null`,
+          eq(journalLines.currency, k.currency),
+        ),
+      )
+      .orderBy(journals.date, journals.id, journalLines.id);
+    if (rows.some((r) => r.date > date)) continue;
     const own = pending.filter((v) => keyOf(v) === keyOf(k));
-    const native = dec(r.native).plus(sum(own.map((v) => dec(v.nativeAmount ?? 0))));
-    const usd = dec(r.usd).plus(sum(own.map((v) => v.debit.minus(v.credit))));
-    if (!native.isZero() || usd.isZero() || r.later > 0 || usd.abs().gt(dec(r.revalued))) continue;
+    // Every line, by journal in date order, the journal being posted last.
+    const posted = rows.map((r) => ({ group: r.journalId, revaluation: r.type === "revaluation", cleared: r.memo === REVALUED_MEMO, native: dec(r.native ?? 0), usd: dec(r.usd), rate: r.rate }));
+    const all = [...posted, ...own.map((v) => ({ group: 0, revaluation: false, cleared: false, native: dec(v.nativeAmount ?? 0), usd: v.debit.minus(v.credit), rate: v.rate }))];
+    const native = sum(all.map((r) => r.native));
+    const usd = sum(all.map((r) => r.usd));
+    if (!native.isZero() || usd.isZero()) continue;
+    let moved: Decimal;
+    if (moneyIds.has(k.accountId)) {
+      // A drawer: only what revaluations booked on it.
+      const revalued = sum(all.filter((r) => r.revaluation).map((r) => r.usd.abs()));
+      if (usd.abs().gt(revalued)) continue;
+      moved = usd;
+    } else {
+      // Since the last journal (before the last one) after which the balance held no francs or yuan.
+      let start = 0;
+      let running = new Decimal(0);
+      for (let i = 0; i < all.length - 1; i++) {
+        running = running.plus(all[i].native);
+        if (all[i + 1].group !== all[i].group && running.isZero()) start = i + 1;
+      }
+      const since = all.slice(start);
+      moved = sum(since.map((r) => r.usd));
+      if (moved.isZero()) continue;
+      if (since.some((r) => r.native.isZero() && !r.usd.isZero() && !r.revaluation && !r.cleared)) continue;
+      const revalued = sum(since.filter((r) => r.revaluation).map((r) => r.usd.abs()));
+      const posts = since.filter((r) => !r.native.isZero() && r.rate && dec(r.rate).gt(0));
+      const rates = posts.map((r) => dec(r.rate!));
+      const apart = posts.length
+        ? sum(posts.map((r) => r.native.abs())).dividedBy(2).times(new Decimal(1).dividedBy(Decimal.min(...rates)).minus(new Decimal(1).dividedBy(Decimal.max(...rates))))
+        : new Decimal(0);
+      if (moved.abs().gt(revalued.plus(apart).plus(new Decimal("0.005").times(posts.length)))) continue;
+    }
     const rate = own.find((v) => v.rate)?.rate ?? (k.currency === "CDF" ? (await rateFor(tx, date)).rate.toFixed(4) : (await cnyRateFor(tx, date))?.toFixed(4) ?? null);
-    gain = gain.plus(usd);
+    gain = gain.plus(moved);
     lines.push({
       accountId: k.accountId,
-      debit: usd.isNegative() ? usd.abs() : new Decimal(0),
-      credit: usd.isPositive() ? usd : new Decimal(0),
+      debit: moved.isNegative() ? moved.abs() : new Decimal(0),
+      credit: moved.isPositive() ? moved : new Decimal(0),
       partyId: k.partyId,
       currency: k.currency,
       nativeAmount: "0.00",

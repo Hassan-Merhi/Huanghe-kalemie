@@ -195,7 +195,7 @@ export async function cancelRun(tx: Tx, month: string, date: string | null | und
 
 /**
  * A cancel reverses the run at its own rate. When a month-end revaluation restated those francs in
- * between, an account or employee can be left with no francs but a few cents of dollars; they are
+ * between (or the rate moved since the advances), an account or employee can be left with no francs but a few cents of dollars; they are
  * moved to the exchange account, as the next revaluation would have done (see revaluedDollarLines).
  * The reversal itself clears the balances it empties; this is for those the advances given back empty.
  */

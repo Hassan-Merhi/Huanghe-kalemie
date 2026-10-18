@@ -564,7 +564,8 @@ export async function reverseContainer(tx: Tx, containerId: number, date: string
     sourceType: "container",
     sourceId: containerId,
     exactValues: true,
-    // The yuan or francs owed go back at the invoice's value: a month-end revaluation's dollars go with them.
+    // The yuan or francs owed go back at the invoice's value: what a month-end revaluation, or the rate's
+    // moves since, left in dollars on them goes with them.
     clearRevalued: true,
     userId,
     lines: [

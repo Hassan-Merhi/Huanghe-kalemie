@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray, isNotNull, lte, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lte, ne, sql } from "drizzle-orm";
 import { accounts, exchangeRates, journalLines, journals, partners, periods } from "@shared/schema";
 import { splitProfit, type PartnerSplitResult } from "@shared/partnerSplit";
 import { dec, sum, Decimal } from "@shared/money";
@@ -6,7 +6,7 @@ import type { Tx } from "../db";
 import { badRequest, conflict } from "../errors";
 import { deMonth, frDate, frNumber, monthText } from "@shared/french";
 import { cents } from "@shared/money";
-import { lockPeriodsExclusive, postJournal, rateFor, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
+import { cnyRateFor, lockPeriodsExclusive, postJournal, rateFor, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
 import { todayIso } from "../http";
 
 export function monthRange(month: string): { from: string; to: string } {
@@ -132,6 +132,79 @@ export async function revaluationLines(
   return { lines, gain, rate, cnyRate };
 }
 
+/** Memo of the lines that take a revaluation off a balance settled after the month's end (see settledRevaluations). */
+export const REVALUATION_SETTLED_MEMO = "Réévaluation soldée\u00a0: devises réglées après la fin du mois";
+
+/** Source of the journals that take a revaluation off the balances settled after the month's end (see settledRevaluations). */
+const SETTLED_SOURCE = "period_settled";
+
+/**
+ * A balance in francs or yuan held at the month's end but settled after it, before the month was
+ * closed, was taken out at what it cost then: the revaluation, dated the month's end, leaves its dollars
+ * on a balance with no francs or yuan. They go to exchange differences on the day it was first emptied,
+ * as the next revaluation would have done, so from that day the balance is what those postings saw. On
+ * contacts and other accounts that are not money only (a drawer keeps its revaluation, see selfCheck);
+ * the balances that still hold their francs or yuan keep it. Posted with the close, undone with it.
+ */
+async function settledRevaluations(tx: Tx, month: string, revaluation: PostLine[], periodId: number, userId: number) {
+  const { to } = monthRange(month);
+  const keyOf = (k: { accountId: number; partyId?: number | null; currency?: string | null }) => `${k.accountId}|${k.partyId ?? ""}|${k.currency}`;
+  const money = new Set((await tx.select({ id: accounts.id }).from(accounts).where(eq(accounts.isMoney, true))).map((a) => a.id));
+  const revalued = revaluation.filter((l) => l.currency && !money.has(l.accountId));
+  if (!revalued.length) return;
+  const balance = { native: sql<string>`coalesce(sum(${journalLines.nativeAmount}), 0)`, usd: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)` };
+  const held = await tx
+    .select({ ...balance, accountId: journalLines.accountId, partyId: journalLines.partyId, currency: journalLines.currency })
+    .from(journalLines)
+    .innerJoin(journals, eq(journals.id, journalLines.journalId))
+    .where(and(inArray(journalLines.currency, ["CDF", "CNY"]), lte(journals.date, to)))
+    .groupBy(journalLines.accountId, journalLines.partyId, journalLines.currency);
+  const after = await tx
+    .select({ ...balance, accountId: journalLines.accountId, partyId: journalLines.partyId, currency: journalLines.currency, date: journals.date })
+    .from(journalLines)
+    .innerJoin(journals, eq(journals.id, journalLines.journalId))
+    .where(and(inArray(journalLines.currency, ["CDF", "CNY"]), gt(journals.date, to)))
+    .groupBy(journalLines.accountId, journalLines.partyId, journalLines.currency, journals.date)
+    .orderBy(journals.date);
+  const byDay = new Map<string, PostLine[]>();
+  for (const l of revalued) {
+    const start = held.find((h) => keyOf(h) === keyOf(l));
+    if (!start || dec(start.native).isZero()) continue;
+    const bal = { native: dec(start.native), usd: dec(start.usd) };
+    const emptied = after.filter((a) => keyOf(a) === keyOf(l)).find((a) => {
+      bal.native = bal.native.plus(a.native);
+      bal.usd = bal.usd.plus(a.usd);
+      return bal.native.isZero();
+    });
+    if (!emptied) continue;
+    // Only the revaluation's dollars still on it that day: a reversal since may have taken them already
+    // (see revaluedDollarLines), when the month is closed again after being reopened.
+    const diff = dec(l.debit ?? 0).minus(dec(l.credit ?? 0));
+    if (bal.usd.isZero() || bal.usd.isNegative() !== diff.isNegative()) continue;
+    const take = bal.usd.abs().lt(diff.abs()) ? bal.usd : diff;
+    byDay.set(emptied.date, [...(byDay.get(emptied.date) ?? []), { ...l, debit: take.isNegative() ? take.abs() : 0, credit: take.isPositive() ? take : 0 }]);
+  }
+  const fx = await systemAccountId(tx, SYSTEM_ACCOUNTS.fx);
+  for (const [date, lines] of byDay) {
+    const cdf = (await rateFor(tx, date)).rate;
+    const cny = await cnyRateFor(tx, date);
+    const gain = sum(lines.map((l) => dec(l.debit ?? 0).minus(dec(l.credit ?? 0))));
+    await postJournal(tx, {
+      date,
+      type: "revaluation",
+      memo: `Réévaluation au ${frDate(to)} soldée\u00a0: ces devises ont été réglées depuis`,
+      sourceType: SETTLED_SOURCE,
+      sourceId: periodId,
+      userId,
+      exactValues: true,
+      lines: [
+        ...lines.map((l) => ({ ...l, rate: l.currency === "CNY" ? (cny ?? l.rate) : cdf, memo: REVALUATION_SETTLED_MEMO })),
+        { accountId: fx, debit: gain.isNegative() ? gain.abs() : 0, credit: gain.isPositive() ? gain : 0, memo: REVALUATION_SETTLED_MEMO },
+      ],
+    });
+  }
+}
+
 export async function activePartners(tx: Tx) {
   return tx.select().from(partners).where(eq(partners.active, true)).orderBy(asc(partners.id));
 }
@@ -245,6 +318,7 @@ export async function closePeriod(tx: Tx, month: string, userId: number) {
         lines: reval.lines,
       })
     : null;
+  if (revaluationJournalId) await settledRevaluations(tx, month, reval.lines, period.id, userId);
 
   const preview = await previewPeriod(tx, month);
   const ps = await sharesFor(tx, period.shares);
@@ -311,6 +385,13 @@ export async function reopenPeriod(tx: Tx, month: string, userId: number) {
       userId,
       skipPeriodCheck: true,
     });
+  }
+  const settled = await tx
+    .select({ id: journals.id, date: journals.date })
+    .from(journals)
+    .where(and(eq(journals.sourceType, SETTLED_SOURCE), eq(journals.sourceId, period.id), isNull(journals.reversedByJournalId), isNull(journals.reversesJournalId)));
+  for (const j of settled) {
+    await reverseJournal(tx, j.id, { date: j.date, type: "revaluation", memo: `Réouverture ${deMonth(month)}\u00a0: annulation de la réévaluation soldée`, userId, skipPeriodCheck: true });
   }
   if (period.revaluationJournalId) {
     await reverseJournal(tx, period.revaluationJournalId, {
