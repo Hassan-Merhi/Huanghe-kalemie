@@ -421,8 +421,8 @@ export function registerRoutes(app: Express) {
   app.get("/api/stock/transfers", requireRole(...READERS), asyncHandler(async (req, res) => {
     const q = z.object({ from: isoDate.optional(), to: isoDate.optional() }).parse(req.query);
     // Each transfer line is stored as a pair of movements: out of one place, then into the other.
-    const rows = await db.execute<{ id: number; date: string; qty: string; note: string | null; sku: string; attributes: Record<string, string>; product_name: string; from_name: string; to_name: string; username: string | null; full_name: string | null }>(sql`
-      select o.id, o.date, i.qty, o.note, v.sku, v.attributes, p.name as product_name, lf.name as from_name, lt.name as to_name, u.username, u.full_name
+    const rows = await db.execute<{ id: number; date: string; qty: string; note: string | null; sku: string; attributes: Record<string, string>; product_name: string; unit: string; from_name: string; to_name: string; username: string | null; full_name: string | null }>(sql`
+      select o.id, o.date, i.qty, o.note, v.sku, v.attributes, p.name as product_name, p.unit, lf.name as from_name, lt.name as to_name, u.username, u.full_name
       from stock_movements o
       join stock_movements i on i.id = o.id + 1 and i.type = 'transfer_in' and i.variant_id = o.variant_id
       join variants v on v.id = o.variant_id
@@ -436,7 +436,7 @@ export function registerRoutes(app: Express) {
       order by o.id desc
       limit 500
     `);
-    res.json(rows.rows.map((r) => ({ id: r.id, date: r.date, qty: r.qty, note: r.note, sku: r.sku, productName: r.product_name, label: catalog.variantLabel(r.attributes), fromName: r.from_name, toName: r.to_name, username: r.username, userName: r.full_name || r.username })));
+    res.json(rows.rows.map((r) => ({ id: r.id, date: r.date, qty: r.qty, note: r.note, sku: r.sku, productName: r.product_name, unit: r.unit, label: catalog.variantLabel(r.attributes), fromName: r.from_name, toName: r.to_name, username: r.username, userName: r.full_name || r.username })));
   }));
   // ---------------------------------------------------------------- Backups (owner only)
 
@@ -934,6 +934,8 @@ export function registerRoutes(app: Express) {
         // The part of the credit the customer's avoir covered when the sale was posted, as the sale page reads it:
         // none on a cancelled sale, which gave it back, and at most the credit left after returns (see avoirUsedSql).
         avoirUsedUsd: sql<string>`${salesSvc.avoirUsedSql()}::text`,
+        // The same at the sale, before returns took it down, as the sale page shows it (none on a cancelled sale).
+        avoirAtSaleUsd: sql<string>`(case when ${sales.status} <> 'voided' then ${salesSvc.avoirPartSql()} else 0 end)::text`,
         // The till's rounding alone: with it, "Payé" is the cash the shop really kept (see paidKeptUsd).
         saleFcRoundingUsd: sql<string>`(select coalesce(sum(jl.credit - jl.debit), 0)::numeric(20,2)::text from journal_lines jl join accounts a on a.id = jl.account_id and a.system_key = 'fx' where jl.memo = 'Arrondi FC' and jl.journal_id = ${sales.journalId})`,
         lineCount: sql<number>`(select count(*)::int from sale_lines sl where sl.sale_id = ${sales.id})`,
@@ -946,7 +948,7 @@ export function registerRoutes(app: Express) {
       .orderBy(desc(sales.date), desc(sales.id))
       .limit(500);
     const showCost = req.user!.role !== "cashier";
-    res.json(rows.map((r) => ({ ...r.sale, cogs: showCost ? r.sale.cogs : undefined, customerName: r.customerName, cashier: r.cashier, zeroPrice: !!r.zeroPrice, qty: r.qty, returnedQty: r.returnedQty, returnedTotal: r.returnedTotal, returnedCogs: showCost ? r.returnedCogs : undefined, refundedUsd: r.refundedUsd, creditLeftUsd: r.creditLeftUsd, fcRoundingUsd: r.fcRoundingUsd, paidKeptUsd: salesSvc.paidKept(r.sale, r.saleFcRoundingUsd, r.refundedUsd), avoirUsedUsd: r.avoirUsedUsd, lineCount: r.lineCount, firstItem: r.firstItem })));
+    res.json(rows.map((r) => ({ ...r.sale, cogs: showCost ? r.sale.cogs : undefined, customerName: r.customerName, cashier: r.cashier, zeroPrice: !!r.zeroPrice, qty: r.qty, returnedQty: r.returnedQty, returnedTotal: r.returnedTotal, returnedCogs: showCost ? r.returnedCogs : undefined, refundedUsd: r.refundedUsd, creditLeftUsd: r.creditLeftUsd, fcRoundingUsd: r.fcRoundingUsd, paidKeptUsd: salesSvc.paidKept(r.sale, r.saleFcRoundingUsd, r.refundedUsd), avoirUsedUsd: r.avoirUsedUsd, avoirAtSaleUsd: r.avoirAtSaleUsd, lineCount: r.lineCount, firstItem: r.firstItem })));
   }));
   app.get("/api/sales/:id", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
     const sale = await salesSvc.getSale(db, paramId(req));

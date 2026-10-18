@@ -1,4 +1,5 @@
 import Decimal from "decimal.js";
+import { shownUnitCost } from "@shared/money";
 
 /**
  * A number typed by a person, French or English style: "4,50", "4.50", "1 234,5", "1.234,5", "1,234.5", "0,1389".
@@ -227,6 +228,12 @@ export function qtyTotal(rows: { qty: unknown; unit?: string | null }[]): string
 export function unitCost(value: unknown): string {
   const n = num(value);
   return withDollar(n, nf(2, 4).format(Math.abs(n)));
+}
+
+/** A variant's average cost by the rule of Stock › Valorisation: its value to the cent over its quantity, 0,125 $ and not 0,1244 $. */
+export function variantUnitCost(v: { avgCost: unknown; stockValue?: string | null; stockQty?: string | null }): string {
+  if (v.stockValue != null && v.stockQty != null && new Decimal(num(v.stockQty)).gt(0)) return unitCost(shownUnitCost(v.stockValue, v.stockQty).toString());
+  return unitCost(v.avgCost);
 }
 
 export function date(value: string | null | undefined): string {

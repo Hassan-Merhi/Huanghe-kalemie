@@ -15,7 +15,7 @@ import {
   stockMovements,
   variants,
 } from "@shared/schema";
-import { dec, sum } from "@shared/money";
+import { dec, shownUnitCost, sum } from "@shared/money";
 import type { Tx } from "../db";
 import { notFound } from "../errors";
 import { monthRange, pnlByAccount, summarizePnl } from "./periods";
@@ -107,7 +107,8 @@ export async function inventoryByLocation(tx: Tx) {
       categoryName: r.categoryName,
       unit: r.unit,
       qty: dec(r.qty).toFixed(3),
-      avgCost: avg.toFixed(6),
+      // Shown by the same rule as Stock › Valorisation (0,125 $, not 0,1244 $); the value stays exact.
+      avgCost: tq.isZero() ? "0.000000" : shownUnitCost(r.totalValue, tq).toFixed(6),
       value: avg.times(r.qty).toFixed(2),
       retailValue: dec(r.qty).times(r.sellPrice).toFixed(2),
     };

@@ -265,6 +265,9 @@ function ReturnSlip({ sale, ret, accName }: { sale: SaleFull; ret: SaleFull["ret
             <div className="flex justify-between gap-2"><span>{t("Taken off the customer's balance", "Déduit du solde du client")}</span><span className="tabular">{usd(ret.refundToBalanceUsd)}</span></div>
           )}
         </>
+      ) : !ret.refundAccountId && ret.offDebtUsd != null ? (
+        // The same split as the return dialog: what cleared the debt, then what is held as an avoir.
+        <ReturnBalanceSplit ret={ret} />
       ) : (
         <p>{ret.refundAccountId ? `${t("Paid back from", "Rendu depuis")} ${accName(ret.refundAccountId)}` : t("Taken off the customer's balance", "Déduit du solde du client")}</p>
       )}
@@ -272,6 +275,23 @@ function ReturnSlip({ sale, ret, accName }: { sale: SaleFull; ret: SaleFull["ret
       {dash}
       <p className="mt-6">{t("Customer signature", "Signature du client")}{"\u00a0"}: ____________</p>
     </div>
+  );
+}
+
+/** "Déduit de la dette 5,00 $ · Mis en avoir du client 17,00 $": where a return with no refund went on the customer's balance. */
+function returnBalanceParts(ret: SaleFull["returns"][number]) {
+  const offDebt = d(ret.offDebtUsd ?? ret.total);
+  return { offDebt, toAvoir: d(ret.total).minus(offDebt) };
+}
+
+function ReturnBalanceSplit({ ret }: { ret: SaleFull["returns"][number] }) {
+  const t = useT();
+  const { offDebt, toAvoir } = returnBalanceParts(ret);
+  return (
+    <>
+      {offDebt.gt(0) && <div className="flex justify-between gap-2"><span>{t("Taken off the debt", "Déduit de la dette")}</span><span className="tabular">{usd(offDebt.toFixed(2))}</span></div>}
+      {toAvoir.gt(0) && <div className="flex justify-between gap-2"><span>{t("Kept as customer credit", "Mis en avoir du client")}</span><span className="tabular">{usd(toAvoir.toFixed(2))}</span></div>}
+    </>
   );
 }
 
@@ -689,7 +709,12 @@ export default function SaleDetail() {
                     <p className="text-xs text-muted-foreground">
                       {r.refundAccountId
                         ? `${t("Refunded from", "Remboursé depuis")} ${accName(r.refundAccountId)}${r.refundCurrency === "CDF" && r.refundNative ? ` · ${cdf(r.refundNative)} (${usd(r.refundUsd ?? "0")})` : ""}`
-                        : t("Taken off the customer's balance", "Déduit du solde du client")}
+                        : r.offDebtUsd != null
+                          ? [
+                              returnBalanceParts(r).offDebt.gt(0) && `${t("Taken off the debt", "Déduit de la dette")} ${usd(returnBalanceParts(r).offDebt.toFixed(2))}`,
+                              returnBalanceParts(r).toAvoir.gt(0) && `${t("Kept as customer credit", "Mis en avoir")} ${usd(returnBalanceParts(r).toAvoir.toFixed(2))}`,
+                            ].filter(Boolean).join(" · ")
+                          : t("Taken off the customer's balance", "Déduit du solde du client")}
                       {r.reason ? ` · ${r.reason}` : ""}
                     </p>
                   </div>

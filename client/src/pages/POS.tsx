@@ -69,6 +69,8 @@ export interface SaleReturnRow {
   refundUsd?: string | null;
   refundCurrency?: "USD" | "CDF" | null;
   refundToBalanceUsd?: string;
+  /** No refund account: the part that cleared the customer's debt, the rest went on their avoir. */
+  offDebtUsd?: string | null;
 }
 
 export interface SaleFull {
@@ -350,6 +352,8 @@ function ChassisPicker({ line, locationId, takenUnitIds, onChange }: { line: Car
 
 /** The server's limit on payment lines per sale (MAX_SALE_PAYMENTS). */
 const MAX_PAYMENTS = 10;
+/** Cash received above this many times the total is asked about before the sale is saved. */
+const UNUSUAL_RECEIVED = 10;
 
 export default function POS() {
   const t = useT();
@@ -428,6 +432,8 @@ export default function POS() {
   // Shown like the receipt: subtotal before any discount, then all discounts together.
   const grossSubtotal = lines.reduce((s, l) => s.plus(c2(d(l.qty).times(d(l.unitPrice)))), d(0));
   const totalDiscount = grossSubtotal.minus(total);
+  /** Discounts above the prices, or a price or discount that cannot be read: no change, "Payé" or "Reste" is worked out from it. */
+  const totalBad = total.lt(0) || !typedNumberOk(discount) || lines.some((l) => !typedNumberOk(l.unitPrice) || !typedNumberOk(l.qty) || !typedNumberOk(l.lineDiscount));
 
   const payUsd = (p: PayRow) => {
     const acc = accById(p.accountId);
@@ -474,7 +480,7 @@ export default function POS() {
   const withinFrancs = (exact: Decimal) => francGap(exact).abs().lte(FRANC_ROUNDING);
   // More than 100 FC handed over too much: change is due, even if under the tolerance in dollars.
   const francsOver = francs && francGap(receivedExact).lt(FRANC_ROUNDING.negated());
-  const changeAcc = accById(changeAccId) ?? (excess.gt(payTolerance) || francsOver ? findCash(payCurrency) ?? findCash("USD") : undefined);
+  const changeAcc = totalBad ? undefined : accById(changeAccId) ?? (excess.gt(payTolerance) || francsOver ? findCash(payCurrency) ?? findCash("USD") : undefined);
   // Francs go back in 100 FC steps (no smaller notes); the few francs over or under are the sale's rounding,
   // which the server accepts up to 100 FC. Dollars go back to the cent.
   const exactExcess = receivedExact.minus(total);
@@ -483,7 +489,7 @@ export default function POS() {
       ? Decimal.max(exactExcess.times(rateNum).dividedBy(100).toDecimalPlaces(0, ROUND).times(100), 0)
       : Decimal.max(c2(exactExcess), 0)
     : d(0);
-  const showChange = excess.gt(payTolerance) || francsOver || !!changeAmt;
+  const showChange = !totalBad && (excess.gt(payTolerance) || francsOver || !!changeAmt);
   const changeNative = showChange && changeAcc ? (changeAmt ? c2(d(changeAmt)) : autoChange) : d(0);
   // Change handed back in francs is rounded too, so it counts like a franc payment (the server does the same).
   const tolerance = francs || (changeAcc?.currency === "CDF" && changeNative.gt(0)) ? francTolerance : d(0);
@@ -508,8 +514,8 @@ export default function POS() {
   const changeExact = changeAcc?.currency === "CDF" ? (rateNum.gt(0) ? changeNative.dividedBy(rateNum) : d(0)) : changeNative;
   /** Within the rounding: under the tolerance in dollars and, when francs are involved, 100 FC at most. */
   const rounded = remaining.abs().lte(tolerance) && (!tolerance.gt(0) || withinFrancs(receivedExact.minus(changeExact)));
-  const overpaid = remaining.lt(0) && !rounded;
-  const credit = remaining.gt(0) && !rounded ? remaining : d(0);
+  const overpaid = !totalBad && remaining.lt(0) && !rounded;
+  const credit = !totalBad && remaining.gt(0) && !rounded ? remaining : d(0);
   /**
    * A few francs over or under, taken as the sale's rounding: shown in francs, not as cents left to pay.
    * Counted in francs even when the dollars round to 0,00 $ (76 000 FC less 200 FC change on 75 816 FC is
@@ -582,6 +588,7 @@ export default function POS() {
       }
     }
   }
+  if (total.lt(0)) problems.unshift(t(`The total is below zero (${usd(total.toFixed(2))}): the discounts are more than the prices`, `Le total est négatif (${usd(total.toFixed(2))})\u00a0: les remises dépassent les prix`));
   if (!typedNumberOk(discount)) problems.push(t("Correct the sale discount", "Corrigez la remise sur la vente"));
   if (saleDiscount.lt(0) || saleDiscount.gt(subtotal)) problems.push(t("The sale discount is bigger than the sale", "La remise dépasse le montant de la vente"));
   for (const p of pays) {
@@ -615,6 +622,34 @@ export default function POS() {
     return `+${fmtPct(d(l.unitPrice).minus(list).dividedBy(list).times(100).toDecimalPlaces(0).toString(), 0)}`;
   };
   const raisedLines = lines.filter((l) => priceRise(l));
+
+  /**
+   * Cash far above the sale (76 800 000 FC on a 32 $ sale: zeros typed twice) or change the drawer does not
+   * hold: asked before saving, as vouchers ask about an unusual amount, never refused. Only staff who see the
+   * balances (not cashiers) get the drawer check.
+   */
+  const balancesQ = useAccounts("/api/accounts/balances", { enabled: can("manager") });
+  const unusualCash: string[] = [];
+  if (!totalBad && total.gt(0) && received.gt(total.times(UNUSUAL_RECEIVED))) {
+    const typed = Array.from(byAccount).map(([id, amount]) => money(amount.toFixed(2), accById(id)!.currency)).join(" + ");
+    const times = received.dividedBy(total).toDecimalPlaces(0, Decimal.ROUND_DOWN).toString();
+    unusualCash.push(t(
+      `${typed} received for a ${usd(total.toFixed(2))} sale: ${fmtQty(times)} times the total. Check the zeros.`,
+      `${typed} reçus pour une vente de ${usd(total.toFixed(2))}\u00a0: ${fmtQty(times)} fois le total. Vérifiez les zéros.`,
+    ));
+  }
+  const changeDrawer = changeAcc && changeNative.gt(0) ? balancesQ.data?.find((a) => a.id === changeAcc.id) : undefined;
+  if (changeAcc && changeDrawer) {
+    // What the drawer holds once this sale's own payment into it is in.
+    const holds = d(changeAcc.currency === "CDF" ? changeDrawer.nativeBalance ?? changeDrawer.balance : changeDrawer.balance).plus(byAccount.get(changeAcc.id) ?? 0);
+    if (changeNative.gt(holds)) {
+      const withPay = byAccount.has(changeAcc.id);
+      unusualCash.push(t(
+        `The change (${changeText}) is more than ${changeAcc.name} holds (${money(holds.toFixed(2), changeAcc.currency)}${withPay ? " with this payment" : ""}).`,
+        `La monnaie (${changeText}) dépasse ce que contient ${changeAcc.name} (${money(holds.toFixed(2), changeAcc.currency)}${withPay ? " avec ce paiement" : ""}).`,
+      ));
+    }
+  }
 
   // ---- payments helpers
   function findCash(currency: "USD" | "CDF") {
@@ -701,11 +736,14 @@ export default function POS() {
   });
   const [confirmCross, setConfirmCross] = useState(false);
   const [confirmPrice, setConfirmPrice] = useState(false);
+  const [confirmCash, setConfirmCash] = useState(false);
   // Each check asks once, the raised prices first; confirmed, the sale goes through as typed.
-  function submit(confirmed: { price?: boolean; cross?: boolean } = {}) {
+  function submit(confirmed: { price?: boolean; cash?: boolean; cross?: boolean } = {}) {
     if (!valid || mutation.isPending || !locationId) return;
     if (raisedLines.length && !confirmed.price) return setConfirmPrice(true);
     setConfirmPrice(false);
+    if (unusualCash.length && !confirmed.cash) return setConfirmCash(true);
+    setConfirmCash(false);
     if (crossChange && !confirmed.cross) return setConfirmCross(true);
     setConfirmCross(false);
     mutation.mutate({
@@ -790,9 +828,10 @@ export default function POS() {
         }
       />
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
+      {/* minmax(0,1fr) and min-w-0 below lg too: an implicit column would grow to a long item name and widen the page. */}
+      <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
         {/* ---------------- Cart */}
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <div ref={searchBox}>
             <VariantSearch autoFocus locationId={locationId} onPick={addVariant} />
           </div>
@@ -816,7 +855,7 @@ export default function POS() {
                       <div key={l.key} className="space-y-2 py-3">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
-                            <p className="truncate font-medium">{l.variant.productName}{l.variant.label !== "Standard" ? ` · ${l.variant.label}` : ""}</p>
+                            <p className="break-words font-medium">{l.variant.productName}{l.variant.label !== "Standard" ? ` · ${l.variant.label}` : ""}</p>
                             <p className="text-xs text-muted-foreground">
                               {l.variant.sku} · {t("in stock here", "en stock ici")}{t(":", "\u00a0:")} <span className={cn(short && "font-semibold text-destructive")}>{fmtQty(avail.toString())}</span>
                             </p>
@@ -908,7 +947,7 @@ export default function POS() {
         </div>
 
         {/* ---------------- Payment */}
-        <div className="space-y-4">
+        <div className="min-w-0 space-y-4">
           <Card className="scroll-mt-4 lg:sticky lg:top-4" ref={payCard}>
             <CardHeader className="p-4 pb-2"><CardTitle className="text-base">{t("Payment", "Paiement")}</CardTitle></CardHeader>
             <CardContent className="space-y-3 p-4 pt-0">
@@ -917,7 +956,7 @@ export default function POS() {
                 {!totalDiscount.isZero() && <div className="flex justify-between text-sm text-muted-foreground"><span>{t("Discount", "Remise")}</span><Num>−{usd(totalDiscount.toFixed(2))}</Num></div>}
                 <div className="flex items-baseline justify-between">
                   <span className="font-medium">{t("Total", "Total")}</span>
-                  <span className="text-3xl font-bold tabular">{usd(total.toFixed(2))}</span>
+                  <span className={cn("text-3xl font-bold tabular", total.lt(0) && "text-destructive")}>{usd(total.toFixed(2))}</span>
                 </div>
                 {/* The francs asked, in 100 FC notes as the change calculator and "Tout en espèces FC" say; the exact figure under it. */}
                 {rateNum.gt(0) && total.gt(0) && (
@@ -1044,7 +1083,8 @@ export default function POS() {
               )}
 
               <Separator />
-              <div className="space-y-1 text-sm">
+              {/* A total below zero or unreadable has nothing to pay or give back: only the mistakes below show. */}
+              {!totalBad && <div className="space-y-1 text-sm">
                 {changeUsd.gt(0) && <div className="flex justify-between"><span>{t("Received ($)", "Reçu ($)")}</span><Num>{usd(received.toFixed(2))}</Num></div>}
                 {changeUsd.gt(0) && <div className="flex justify-between"><span>{t("Change given back", "Monnaie rendue")}</span><Num>−{usd(changeUsd.toFixed(2))}</Num></div>}
                 {/* The money really kept, as the receipt, the sale page and the Sales list say it: within the franc
@@ -1077,9 +1117,9 @@ export default function POS() {
                     {allOnAvoir ? t("Credit left", "Avoir restant") : t("credit left", "avoir restant")} {usd(avoirAvailable!.minus(avoirCovers).toFixed(2))}
                   </p>
                 )}
-              </div>
+              </div>}
 
-              <details className="rounded-md border p-2 text-sm">
+              {!totalBad && <details className="rounded-md border p-2 text-sm">
                 <summary className="cursor-pointer select-none font-medium">{t("Change calculator", "Calcul de la monnaie")}</summary>
                 <div className="mt-2 space-y-2">
                   <p className="text-xs text-muted-foreground">{t("Only a helper: record the money kept above, not what the customer handed over.", "Seulement une aide\u00a0: enregistrer ci-dessus l'argent gardé, pas ce que le client a donné.")}</p>
@@ -1112,7 +1152,7 @@ export default function POS() {
                     </div>
                   )}
                 </div>
-              </details>
+              </details>}
 
               {problems.length > 0 && (
                 <ul className="space-y-0.5 text-xs text-destructive">
@@ -1131,7 +1171,9 @@ export default function POS() {
                   ? t("Finish · from the customer's credit", "Valider · sur l'avoir")
                   : credit.gt(0) && customerId
                     ? t(`Finish · ${usd(onCredit.toFixed(2))} on credit`, `Valider · ${usd(onCredit.toFixed(2))} à crédit`)
-                    : t(`Finish sale ${usd(total.toFixed(2))}`, `Valider la vente ${usd(total.toFixed(2))}`)}
+                    : totalBad
+                      ? t("Finish sale", "Valider la vente")
+                      : t(`Finish sale ${usd(total.toFixed(2))}`, `Valider la vente ${usd(total.toFixed(2))}`)}
               </SubmitButton>
               {blockedReason && (lines.length > 0 || tried) && <p className="text-center text-xs text-muted-foreground lg:hidden" role="status">{blockedReason}</p>}
               <p className="hidden text-center text-xs text-muted-foreground lg:block [@media(pointer:coarse)]:hidden">{t("F9 / Ctrl+Enter", "F9 / Ctrl+Entrée")}</p>
@@ -1186,7 +1228,7 @@ export default function POS() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t("Go back", "Revenir")}</AlertDialogCancel>
-            <AlertDialogAction onClick={() => submit({ price: true, cross: true })}>{t(`Give back ${changeText}`, `Rendre ${changeText}`)}</AlertDialogAction>
+            <AlertDialogAction onClick={() => submit({ price: true, cash: true, cross: true })}>{t(`Give back ${changeText}`, `Rendre ${changeText}`)}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
@@ -1212,6 +1254,24 @@ export default function POS() {
           <AlertDialogFooter>
             <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
             <AlertDialogAction onClick={() => submit({ price: true })}>{t("Sell anyway", "Vendre quand même")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={confirmCash} onOpenChange={setConfirmCash}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("An unusual amount?", "Un montant inhabituel\u00a0?")}</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-left" data-testid="pos-cash-confirm">
+                {unusualCash.map((m) => <p key={m}>{m}</p>)}
+                {changeAcc && changeNative.gt(0) && <p className="font-medium text-foreground">{t("Give back", "Rendre")}{t(":", "\u00a0:")} {changeText}</p>}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => submit({ price: true, cash: true })}>{t("Save anyway", "Enregistrer quand même")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

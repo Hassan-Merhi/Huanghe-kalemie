@@ -21,7 +21,7 @@ import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, Submi
 import { LocationSelect, useLocations, VariantSearch } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api, withQuery } from "@/lib/api";
-import { d, date, monthStart, qty, qtyTotal, todayLocal, unitCost, usd, variantText, unclearQty } from "@/lib/format";
+import { d, date, monthStart, qty, qtyTotal, todayLocal, unitCost, usd, variantText, variantUnitCost, unclearQty } from "@/lib/format";
 import { qtyWithUnit, wholeUnit } from "@/lib/units";
 import { useAuth } from "@/lib/auth";
 import { useT, count } from "@/lib/i18n";
@@ -586,7 +586,7 @@ export function AdjustForm({
                       {l.variant.productName}{l.variant.label !== "Standard" ? ` · ${l.variant.label}` : ""}
                     </p>
                     <p className="text-xs text-muted-foreground">
-                      {l.variant.sku} · {t("here", "ici")} {qty(l.variant.locationQty)} · {t("total", "total")} {qty(l.variant.stockQty)} · {t("avg cost", "coût moyen")} {unitCost(l.variant.avgCost)}
+                      {l.variant.sku} · {t("here", "ici")} {qtyWithUnit(t, l.variant.locationQty, l.variant.unit)} · {t("total", "total")} {qtyWithUnit(t, l.variant.stockQty, l.variant.unit)} · {t("avg cost", "coût moyen")} {variantUnitCost(l.variant)}
                     </p>
                   </div>
                   <Button variant="ghost" size="icon" aria-label={t("Remove", "Retirer")} onClick={() => setLines(lines.filter((x) => x.key !== l.key))}><Trash2 className="h-4 w-4" /></Button>
@@ -595,7 +595,7 @@ export function AdjustForm({
                   {byCount ? (
                     <Field
                       label={t("Quantity counted", "Quantité comptée")}
-                      hint={t(`In the system here: ${qty(l.variant.locationQty)}`, `Dans le système ici\u00a0: ${qty(l.variant.locationQty)}`)}
+                      hint={t(`In the system here: ${qtyWithUnit(t, l.variant.locationQty, l.variant.unit)}`, `Dans le système ici\u00a0: ${qtyWithUnit(t, l.variant.locationQty, l.variant.unit)}`)}
                       required
                     >
                       <DecimalInput inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} measured={!wholeUnit(l.variant.unit)} inlineAlert value={l.counted ?? ""} onChange={(e) => setCounted(l, e.target.value)} />
@@ -608,7 +608,7 @@ export function AdjustForm({
                   {fixedCost && (
                     <div className="text-sm">
                       <p className="mb-1 text-xs text-muted-foreground">{t("Cost per unit", "Coût unitaire")}</p>
-                      <p className="font-medium tabular">{unitCost(l.variant.avgCost)}</p>
+                      <p className="font-medium tabular">{variantUnitCost(l.variant)}</p>
                       <p className="text-xs text-muted-foreground">{t("Stock found goes in at its average cost; only the owner can change it.", "Le stock retrouvé entre à son coût moyen\u00a0; seul le propriétaire peut le changer.")}</p>
                     </div>
                   )}
@@ -633,7 +633,7 @@ export function AdjustForm({
                   {!c.isZero() && (
                     <div className="flex items-end pb-2 text-sm">
                       <span className={c.lt(0) ? "text-destructive" : "text-green-800 dark:text-green-400"}>
-                        {byCount ? `${t("Difference", "Écart")} ` : ""}{c.gt(0) ? "+" : ""}{qty(c.toString())} · ≈ {usd(valueOf(l).toFixed(2))}
+                        {byCount ? `${t("Difference", "Écart")} ` : ""}{c.gt(0) ? "+" : ""}{qtyWithUnit(t, c.toString(), l.variant.unit)} · ≈ {usd(valueOf(l).toFixed(2))}
                       </span>
                     </div>
                   )}
@@ -948,7 +948,7 @@ function TransferForm({ onDone }: { onDone: () => void }) {
                         <div className="font-medium">{l.variant.productName}{l.variant.label !== "Standard" ? ` · ${l.variant.label}` : ""}</div>
                         <div className="text-xs text-muted-foreground">{l.variant.sku}</div>
                       </TableCell>
-                      <TableCell className="text-right"><Num>{qty(l.variant.locationQty)}</Num></TableCell>
+                      <TableCell className="whitespace-nowrap text-right"><Num>{qtyWithUnit(t, l.variant.locationQty, l.variant.unit)}</Num></TableCell>
                       <TableCell><Input className="w-24" aria-label={t(`Quantity to transfer: ${l.variant.productName}`, `Quantité à transférer\u00a0: ${l.variant.productName}`)} inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} measured={!wholeUnit(l.variant.unit)} inlineAlert value={l.qty} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} /></TableCell>
                       <TableCell><Button variant="ghost" size="icon" aria-label={t("Remove", "Retirer")} onClick={() => setLines(lines.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></Button></TableCell>
                     </TableRow>
@@ -984,6 +984,7 @@ interface TransferRow {
   note: string | null;
   sku: string;
   productName: string;
+  unit?: string;
   label: string;
   fromName: string;
   toName: string;
@@ -1043,7 +1044,7 @@ function TransferHistory({ multiLocation }: { multiLocation: boolean }) {
                     <div className="font-medium">{r.productName}{r.label && r.label !== "Standard" ? ` · ${r.label}` : ""}</div>
                     <div className="font-mono text-xs text-muted-foreground">{r.sku}</div>
                   </TableCell>
-                  <TableCell className="text-right"><Num>{qty(r.qty)}</Num></TableCell>
+                  <TableCell className="whitespace-nowrap text-right"><Num>{qtyWithUnit(t, r.qty, r.unit)}</Num></TableCell>
                   <TableCell className="whitespace-nowrap">{r.fromName} <span className="text-muted-foreground">→</span> {r.toName}</TableCell>
                   <TableCell className="max-w-[260px] truncate" title={r.note ?? undefined}>{r.note || <span className="text-muted-foreground">—</span>}</TableCell>
                   <TableCell className="whitespace-nowrap">{r.userName ?? r.username ?? "—"}</TableCell>

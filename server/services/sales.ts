@@ -442,6 +442,19 @@ export async function getSale(tx: Tx, id: number) {
         .from(journalLines)
         .where(and(inArray(journalLines.journalId, returnRows.map((r) => r.journalId).filter((x): x is number => !!x)), eq(journalLines.accountId, receivables)))
     : [];
+  // A return with no refund account goes all on the customer's balance: what it cleared of their debt just
+  // before it, the rest held for them as an avoir (5 $ owed, 22 $ back: 5 $ and 17 $), as the return dialog
+  // split it, for the slip. Read only: either way it is one line on the receivable.
+  const owedBefore = new Map<number, Decimal>();
+  for (const r of returnRows) {
+    if (r.refundAccountId || !r.journalId || !sale.customerId) continue;
+    const [row] = await tx
+      .select({ usd: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)::text` })
+      .from(journalLines)
+      .innerJoin(journals, eq(journals.id, journalLines.journalId))
+      .where(and(eq(journalLines.accountId, receivables), eq(journalLines.partyId, sale.customerId), sql`(${journals.date} < ${r.date} or (${journals.date} = ${r.date} and ${journals.id} < ${r.journalId}))`));
+    owedBefore.set(r.id, dec(row?.usd ?? 0));
+  }
   const returns = returnRows.map((r) => {
     const refund = refundRows.filter((x) => x.journalId === r.journalId && x.accountId === r.refundAccountId);
     // Francs handed back are worth what they were at the refund's rate; the drawer's line carries them at
@@ -457,6 +470,8 @@ export async function getSale(tx: Tx, id: number) {
       refundCurrency,
       /** The part taken off what the customer owes instead of paid out. */
       refundToBalanceUsd: sum(toBalanceRows.filter((x) => x.journalId === r.journalId).map((x) => x.credit)).toFixed(2),
+      /** Of a return with no refund account, the part that cleared the customer's debt; the rest became an avoir. */
+      offDebtUsd: owedBefore.has(r.id) ? Decimal.min(dec(r.total), Decimal.max(owedBefore.get(r.id)!, 0)).toFixed(2) : null,
     };
   });
   const [customer] = sale.customerId ? await tx.select().from(parties).where(eq(parties.id, sale.customerId)) : [];

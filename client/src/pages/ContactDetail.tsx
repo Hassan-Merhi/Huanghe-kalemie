@@ -358,7 +358,7 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
   const advance = split.find((p) => p.kind === "advance");
   const advanceText = advance
     ? isCustomer
-      ? t(`${usd(advance.usd)} stays to the customer's credit`, `${usd(advance.usd)} restent au crédit du client`)
+      ? t(`${usd(advance.usd)} is kept as credit for the customer`, `${usd(advance.usd)} restent en avoir pour le client`)
       : party.type === "employee"
         ? t(`${usd(advance.usd)} is an advance on salary`, `${usd(advance.usd)} constituent une avance sur salaire`)
         : t(`${usd(advance.usd)} is an advance`, `${usd(advance.usd)} constituent une avance`)
