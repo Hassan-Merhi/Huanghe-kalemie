@@ -101,6 +101,8 @@ export interface SaleFull {
   /** The part of the credit the customer's avoir covered when the sale was made, and the avoir left then. */
   avoirUsedUsd?: string | null;
   avoirLeftUsd?: string | null;
+  /** Credit still on the sale after returns, however they were refunded. */
+  creditLeftUsd?: string;
 }
 
 const ROUND = Decimal.ROUND_HALF_UP;

@@ -348,7 +348,7 @@ function AvoirRow({ avoir }: { avoir: ReturnType<typeof avoirSplit> }) {
 /** Credit given on the sale, what the customer's avoir and returns took off it, and what is left. */
 function CreditRows({ credit, creditedReturns, creditLeft, owes, avoir }: { credit: Decimal; creditedReturns: Decimal; creditLeft: Decimal; owes: Decimal | null; avoir: ReturnType<typeof avoirSplit> }) {
   const t = useT();
-  if (creditedReturns.isZero()) {
+  if (!creditLeft.lt(credit) && creditedReturns.isZero()) {
     return (
       <>
         <AvoirRow avoir={avoir} />
@@ -370,8 +370,8 @@ function CreditRows({ credit, creditedReturns, creditLeft, owes, avoir }: { cred
         <Num>{usd(credit.toFixed(2))}</Num>
       </div>
       <div className="flex justify-between gap-2 py-2 text-muted-foreground">
-        <span>{t("Returns taken off the customer's balance", "Retours déduits du solde du client")}</span>
-        <Num>−{usd(creditedReturns.toFixed(2))}</Num>
+        <span>{t("Returns taken off the credit", "Retours déduits du crédit")}</span>
+        <Num>−{usd(credit.minus(creditLeft).toFixed(2))}</Num>
       </div>
       <AvoirRow avoir={avoir} />
       <div className={cn("flex justify-between gap-2 py-2", stillOwed.gt(0) && "text-amber-800 dark:text-amber-400")}>
@@ -433,8 +433,10 @@ export default function SaleDetail() {
   // part first of one paid back from a drawer), read from their journals: it reduces this sale's credit.
   const creditedReturns = sale.returns.reduce((s, r) => s.plus(d(r.refundToBalanceUsd ?? (r.refundAccountId ? 0 : r.total))), d(0));
   const credit = d(sale.creditUsd);
-  const creditLeft = Decimal.max(credit.minus(creditedReturns), 0);
-  const creditReduced = credit.gt(0) && creditedReturns.gt(0);
+  // The credit returns took off, however they were refunded: one given back in cash once the credit was
+  // settled (by an avoir, or a payment since) takes it off too (the server's creditLeftUsd, as on the list).
+  const creditLeft = sale.creditLeftUsd !== undefined ? d(sale.creditLeftUsd) : Decimal.max(credit.minus(creditedReturns), 0);
+  const creditReduced = credit.gt(0) && creditLeft.lt(credit);
   const customerBalance = customers.data?.find((p) => p.id === sale.customerId)?.balance;
   const customerOwes = customerBalance === undefined ? null : d(customerBalance);
   // Cash handed back on returns: "Payé" reads net of it, as on the Sales list, and is the cash really kept

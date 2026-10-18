@@ -787,12 +787,19 @@ export async function contactLines(
   const nativeUsd = Decimal.max(usd.minus(dollarsOwed), 0);
   if (nativeUsd.isZero()) return plain;
   const rate = await resolveRate(tx, input.date);
-  // Whole francs (down, so the dollars never settle more than they buy), and the dollars they are worth:
-  // a part of a franc left owed could never be paid off.
-  const native = nativeUsd.times(rate).toDecimalPlaces(0, Decimal.ROUND_FLOOR);
-  const portion = Decimal.min(native, fc);
-  const portionUsd = portion.equals(native) ? Decimal.min(cents(native.dividedBy(rate)), nativeUsd) : cents(nativeUsd.times(portion).dividedBy(native));
-  if (portionUsd.isZero()) return plain;
+  // The dollars shown for all the francs owed (at least a cent, so a few francs left by an earlier rounding
+  // can be cleared) settle all of them: rounding them down to whole francs would leave a few that are
+  // worth less than a cent, which could then never be paid or refunded.
+  const allUsd = Decimal.max(cents(fc.dividedBy(rate)), new Decimal("0.01"));
+  let portion = fc;
+  let portionUsd = allUsd;
+  if (fc.isZero() || nativeUsd.lt(allUsd)) {
+    // Part of them: whole francs (down, so the dollars never settle more than they buy), and the dollars
+    // they are worth: a part of a franc left owed could never be paid off.
+    portion = Decimal.min(nativeUsd.times(rate).toDecimalPlaces(0, Decimal.ROUND_FLOOR), fc);
+    portionUsd = Decimal.min(cents(portion.dividedBy(rate)), nativeUsd);
+  }
+  if (portionUsd.isZero() || portion.isZero()) return plain;
   fcLine(portionUsd, portion, rate);
   if (usd.gt(portionUsd)) lines.push({ ...base, [input.side]: usd.minus(portionUsd) });
   return lines;
