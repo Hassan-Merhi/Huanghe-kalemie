@@ -183,7 +183,8 @@ export default function OptionalVouchers() {
         <StatCard label={t("Total ($)", "Total ($)")} value={usd(total.toFixed(2))} sub={t("Stock adjustments have no total", "Les ajustements de stock n'ont pas de total")} />
       </div>
 
-      <div className="mb-4 flex flex-wrap items-center gap-2">
+      {/* Du / Au over their fields, so a phone shows the whole "jj/mm/aaaa" and says which date is which. */}
+      <div className="mb-4 flex flex-wrap items-end gap-2">
         <Select value={kind} onValueChange={(v) => setKind(v as "all" | VoucherKind)}>
           <SelectTrigger className="w-full sm:w-52"><SelectValue /></SelectTrigger>
           <SelectContent>
@@ -191,8 +192,14 @@ export default function OptionalVouchers() {
             {VOUCHER_KINDS.map((k) => <SelectItem key={k} value={k}>{voucherKindLabel(k, t)}</SelectItem>)}
           </SelectContent>
         </Select>
-        <Input type="date" className="w-[calc(50%-0.25rem)] sm:w-40" value={from} onChange={(e) => setFrom(e.target.value)} aria-label={t("From", "Du")} />
-        <Input type="date" className="w-[calc(50%-0.25rem)] sm:w-40" value={to} onChange={(e) => setTo(e.target.value)} aria-label={t("To", "Au")} />
+        <label className="w-[calc(50%-0.25rem)] space-y-1 sm:w-40">
+          <span className="block text-xs text-muted-foreground">{t("From", "Du")}</span>
+          <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} aria-label={t("From", "Du")} />
+        </label>
+        <label className="w-[calc(50%-0.25rem)] space-y-1 sm:w-40">
+          <span className="block text-xs text-muted-foreground">{t("To", "Au")}</span>
+          <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} aria-label={t("To", "Au")} />
+        </label>
         <div className="relative w-full sm:w-auto sm:min-w-[14rem] sm:flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input className="pl-9" placeholder={t("Search description", "Chercher dans le libellé")} value={search} onChange={(e) => setSearch(e.target.value)} />

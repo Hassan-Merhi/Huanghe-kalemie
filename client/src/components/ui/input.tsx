@@ -73,8 +73,9 @@ const DateInput = React.forwardRef<HTMLInputElement, React.ComponentProps<"input
         autoComplete="off"
         disabled={disabled}
         placeholder={fr ? "jj/mm/aaaa" : "dd/mm/yyyy"}
-        // Colours and borders given by the page apply to the field itself; margins stay on the wrapper.
-        className={cn(BASE, "pr-9 tabular-nums", className?.split(/\s+/).filter((c) => !/^-?m[trblxy]?-/.test(c)).join(" "))}
+        // Colours and borders given by the page apply to the field itself; margins and widths stay on the
+        // wrapper, which the field fills (a "w-[calc(50%-…)]" on both would halve it again).
+        className={cn(BASE, "pr-9 tabular-nums", className?.split(/\s+/).filter((c) => !/^-?m[trblxy]?-/.test(c) && !/^([a-z0-9-]+:)*(min-|max-)?w-/.test(c)).join(" "))}
         value={text}
         onChange={(e) => {
           setText(e.target.value);

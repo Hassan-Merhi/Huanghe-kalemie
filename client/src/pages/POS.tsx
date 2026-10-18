@@ -661,12 +661,16 @@ export default function POS() {
     const acc = findCash(currency);
     if (!acc) return;
     const kept = pays.filter((p) => p.accountId && d(p.amount).gt(0));
-    const rest = total.minus(kept.reduce((s, p) => s.plus(payUsd(p)), d(0)));
+    // A line already in that drawer is filled again rather than doubled: after a till refused a stale franc
+    // rate, pressing again sets Caisse FC to the francs at the new rate, not a second 2 000 FC line.
+    const same = kept.find((p) => p.accountId === acc.id);
+    const rest = total.minus(kept.filter((p) => p !== same).reduce((s, p) => s.plus(payUsd(p)), d(0)));
     if (rest.lte(0)) return setPays(kept);
     // Francs are asked in 100 FC notes (7 $ at 2 808: 19 700 FC, not 19 656 FC; 22 $: 61 800 FC, not 61 776 FC),
     // like the total, the change and "Reste à payer"; the few francs over or under are the sale's "Arrondi FC",
     // at most 50 FC, which the server takes as rounding (up to 100 FC).
     const amount = currency === "CDF" ? francsFor(rest, true).toFixed(2) : rest.toFixed(2);
+    if (same) return setPays(kept.map((p) => (p === same ? { ...p, amount, rate: null } : p)));
     setPays([...kept, { key: keyRef.current++, accountId: acc.id, amount, rate: null }]);
   }
   /** Dollars in francs at the day's rate; in 100 FC steps for what is asked or prefilled, exact for the secondary figure. */
