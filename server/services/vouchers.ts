@@ -95,8 +95,11 @@ async function capToday(tx: Tx, accountId: number, partyId: number | null, held:
   const cap = (heldUsd: Decimal, francs: { native: Decimal; usd: Decimal }) => {
     const francsHeld = francs.native.negated();
     const dollarsHeld = heldUsd.plus(francs.usd);
+    const usd = Decimal.max(cents(dollarsHeld.plus(francsHeld.dividedBy(rate))), 0);
     return {
-      usd: Decimal.max(cents(dollarsHeld.plus(francsHeld.dividedBy(rate))), 0),
+      // A few francs worth under half a cent are still held: the one cent that clears them all (see
+      // contactLines) may go back, or they could never be refunded.
+      usd: usd.isZero() && francsHeld.gt(0) && dollarsHeld.plus(francsHeld.dividedBy(rate)).gt(0) ? new Decimal("0.01") : usd,
       cdf: Decimal.max(francsHeld.plus(dollarsHeld.times(rate)).toDecimalPlaces(0, Decimal.ROUND_FLOOR), 0),
     };
   };
