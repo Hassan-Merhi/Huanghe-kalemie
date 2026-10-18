@@ -385,7 +385,15 @@ function NameDialog({ url, row, onClose }: { url: string; row: Location | Catego
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[92vh] overflow-y-auto">
-        <DialogHeader><DialogTitle>{row ? t("Rename", "Renommer") : t("Add", "Ajouter")}</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>
+            {row
+              ? t("Rename", "Renommer")
+              : url === "/api/locations"
+                ? t("Add a location", "Ajouter un emplacement")
+                : t("Add a category", "Ajouter une catégorie")}
+          </DialogTitle>
+        </DialogHeader>
         <Field label={t("Name", "Nom")} required><Input autoFocus value={name} onChange={(e) => setName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && name.trim() && save()} /></Field>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>

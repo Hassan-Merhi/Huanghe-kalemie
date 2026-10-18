@@ -626,12 +626,13 @@ export default function POS() {
     const kept = pays.filter((p) => p.accountId && d(p.amount).gt(0));
     const rest = total.minus(kept.reduce((s, p) => s.plus(payUsd(p)), d(0)));
     if (rest.lte(0)) return setPays(kept);
-    // The rest of a mixed payment in francs is asked in 100 FC notes (7 $ at 2 808: 19 700 FC, not 19 656 FC),
-    // like the change and "Reste à payer"; the few francs over are the sale's "Arrondi FC".
-    const amount = currency === "CDF" ? francsFor(rest, kept.length > 0).toFixed(2) : rest.toFixed(2);
+    // Francs are asked in 100 FC notes (7 $ at 2 808: 19 700 FC, not 19 656 FC; 22 $: 61 800 FC, not 61 776 FC),
+    // like the total, the change and "Reste à payer"; the few francs over or under are the sale's "Arrondi FC",
+    // at most 50 FC, which the server takes as rounding (up to 100 FC).
+    const amount = currency === "CDF" ? francsFor(rest, true).toFixed(2) : rest.toFixed(2);
     setPays([...kept, { key: keyRef.current++, accountId: acc.id, amount, rate: null }]);
   }
-  /** Dollars in francs at the day's rate; in 100 FC steps for part of a mixed payment. */
+  /** Dollars in francs at the day's rate; in 100 FC steps for what is asked or prefilled, exact for the secondary figure. */
   function francsFor(value: Decimal, mixed: boolean) {
     const exact = value.times(rateNum);
     return mixed ? Decimal.max(exact.dividedBy(FRANC_ROUNDING).toDecimalPlaces(0, ROUND).times(FRANC_ROUNDING), FRANC_ROUNDING) : exact.toDecimalPlaces(0, ROUND);
@@ -643,7 +644,7 @@ export default function POS() {
     let amount = p.amount;
     if (prev && prev.currency !== acc.currency && d(p.amount).gt(0)) {
       const value = payUsd(p);
-      if (acc.currency === "CDF") amount = rateNum.gt(0) ? francsFor(value, pays.some((x) => x.key !== p.key && x.accountId && d(x.amount).gt(0))).toFixed(0) : "";
+      if (acc.currency === "CDF") amount = rateNum.gt(0) ? francsFor(value, true).toFixed(0) : "";
       else amount = value.gt(0) ? c2(value).toFixed(2) : "";
     }
     updatePay(p.key, { accountId: acc.id, amount, rate: null });
@@ -918,7 +919,13 @@ export default function POS() {
                   <span className="font-medium">{t("Total", "Total")}</span>
                   <span className="text-3xl font-bold tabular">{usd(total.toFixed(2))}</span>
                 </div>
-                {rateNum.gt(0) && <p className="text-right text-xs text-muted-foreground">≈ {cdf(total.times(rateNum).toDecimalPlaces(0, ROUND).toString())} · 1 $ = {fmtQty(rateNum.toString())} FC</p>}
+                {/* The francs asked, in 100 FC notes as the change calculator and "Tout en espèces FC" say; the exact figure under it. */}
+                {rateNum.gt(0) && total.gt(0) && (
+                  <p className="text-right text-xs text-muted-foreground" data-testid="total-fc">
+                    {cdf(francsFor(total, true).toString())} · 1 $ = {fmtQty(rateNum.toString())} FC
+                    {!francsFor(total, true).equals(francsFor(total, false)) && <span className="block">{t("exactly", "exactement")} {cdf(francsFor(total, false).toString())}</span>}
+                  </p>
+                )}
               </div>
 
               <div className="grid grid-cols-2 gap-2">
@@ -1151,7 +1158,7 @@ export default function POS() {
             ) : credit.gt(0) && customerId ? (
               <p className="truncate text-xs font-semibold text-amber-800 dark:text-amber-400">{t(`${usd(onCredit.toFixed(2))} on credit`, `dont ${usd(onCredit.toFixed(2))} à crédit`)}</p>
             ) : (
-              rateNum.gt(0) && total.gt(0) && <p className="truncate text-xs text-muted-foreground">≈ {cdf(total.times(rateNum).toDecimalPlaces(0, ROUND).toString())}</p>
+              rateNum.gt(0) && total.gt(0) && <p className="truncate text-xs text-muted-foreground">{cdf(francsFor(total, true).toString())}</p>
             )}
           </div>
           <SubmitButton

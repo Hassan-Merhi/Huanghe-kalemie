@@ -228,14 +228,16 @@ function Refunded({ value }: { value: { toFixed(n: number): string; gt(n: number
   );
 }
 
-function Items({ r }: { r: SaleListRow }) {
+/** "Huile de frein U21 + 1 autre": only the name is cut short, the "+ N autres" stays in view; the whole on hover. */
+function Items({ r, className }: { r: SaleListRow; className?: string }) {
   const t = useT();
   if (!r.firstItem) return null;
+  const more = (r.lineCount ?? 1) > 1 ? `+\u00a0${count(t, (r.lineCount ?? 1) - 1, ["other", "others"], ["autre", "autres"])}` : null;
   return (
-    <>
-      {r.firstItem}
-      {(r.lineCount ?? 1) > 1 && ` + ${count(t, (r.lineCount ?? 1) - 1, ["other", "others"], ["autre", "autres"])}`}
-    </>
+    <span className={cn("flex min-w-0", className)} title={more ? `${r.firstItem} ${more}` : r.firstItem}>
+      <span className="min-w-0 truncate">{r.firstItem}</span>
+      {more && <span className="shrink-0 whitespace-nowrap">&nbsp;{more}</span>}
+    </span>
   );
 }
 
@@ -267,9 +269,9 @@ function SaleCard({ r, showCost }: { r: SaleListRow; showCost: boolean }) {
         </div>
         <Num className={cn("shrink-0 text-lg font-semibold", voided && "line-through")}>{usd((voided ? d(r.total) : n.total).toFixed(2))}</Num>
       </div>
-      <p className="mt-0.5 min-w-0 truncate text-sm">
-        <Customer r={r} />
-        {r.firstItem && <span className="text-muted-foreground"> · <Items r={r} /></span>}
+      <p className="mt-0.5 flex min-w-0 text-sm">
+        <span className="max-w-[60%] shrink-0 truncate"><Customer r={r} /></span>
+        {r.firstItem && <><span className="shrink-0 whitespace-pre text-muted-foreground"> · </span><Items r={r} className="text-muted-foreground" /></>}
       </p>
       <div className="mt-1.5 flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <p className="min-w-0 tabular">
@@ -413,7 +415,7 @@ export default function Sales() {
                         </TableCell>
                         <TableCell className="min-w-[140px]">
                           <div><Customer r={r} /></div>
-                          {r.firstItem && <div className="max-w-[220px] truncate text-xs text-muted-foreground max-[1100px]:max-w-[150px]"><Items r={r} /></div>}
+                          {r.firstItem && <Items r={r} className="max-w-[220px] text-xs text-muted-foreground max-[1100px]:max-w-[150px]" />}
                         </TableCell>
                         <TableCell className="text-right">
                           <Num>{r.qty !== undefined ? fmtQty(d(r.qty).minus(d(r.returnedQty)).toString()) : ""}</Num>

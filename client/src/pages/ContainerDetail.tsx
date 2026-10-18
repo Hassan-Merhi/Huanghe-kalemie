@@ -914,6 +914,16 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
     success: t("Cost added", "Frais ajoutés"),
     onSuccess: onClose,
   });
+  // The paying account's balance before and after, as on the supplier payment: a cost it cannot cover is
+  // stopped here rather than by the server's "Solde insuffisant" after the confirmations.
+  const { can } = useAuth();
+  const balances = useAccounts("/api/accounts/balances", { enabled: mode === "paid" && can("manager", "partner") }).data;
+  const drawer = mode === "paid" && account ? balances?.find((a) => a.id === account.id) : undefined;
+  const drawerNow = drawer ? d(drawer.currency === "CDF" ? drawer.nativeBalance : drawer.balance) : null;
+  const drawerAfter = drawerNow ? drawerNow.minus(amt.gt(0) && !unclearAmount(t, amount, currency) ? amt : 0) : null;
+  const drawerShort = drawerNow && drawerAfter?.lt(0)
+    ? t(`Not enough money: balance ${money(drawerNow.toFixed(2), currency)} → after ${money(drawerAfter.toFixed(2), currency)}`, `Fonds insuffisants\u00a0: solde ${money(drawerNow.toFixed(2), currency)} → après ${money(drawerAfter.toFixed(2), currency)}`)
+    : null;
   const blocked =
     mode === "paid" && !account
       ? t("Choose the account it was paid from", "Choisissez le compte de paiement")
@@ -926,7 +936,7 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
             ? t("Enter the exchange rate", "Saisissez le taux de change")
             : method === "line" && !targetLineId
               ? t("Choose the line", "Choisissez la ligne")
-              : null);
+              : drawerShort);
 
   // A cost above the purchase value itself is most often francs typed with the currency left on dollars
   // (3 370 000 "$" of duty on an 11 243 $ container): said under the amount and confirmed before saving.
@@ -997,7 +1007,12 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
             </div>
           </div>
           {mode === "paid" ? (
-            <Field label={t("Paid from", "Payé depuis")} required>
+            <Field
+              label={t("Paid from", "Payé depuis")}
+              hint={drawerNow && drawerAfter ? `${t("Balance", "Solde")} ${money(drawerNow.toFixed(2), currency)} → ${t("after", "après")} ${money(drawerAfter.toFixed(2), currency)}` : undefined}
+              error={drawerShort}
+              required
+            >
               <MoneyAccountSelect value={account?.id ?? null} onChange={(_, a) => setAccount(a)} />
             </Field>
           ) : (
