@@ -277,6 +277,7 @@ interface ImportResult {
 function ItemsImport() {
   const t = useT();
   const { lang } = useI18n();
+  const { user } = useAuth();
   const [fileRows, setRows] = useState<StockRow[]>([]);
   const [cells, setCells] = useState<Cells[]>([]);
   const [preview, setPreview] = useState<PreviewRow[]>([]);
@@ -347,6 +348,9 @@ function ItemsImport() {
     return { r, p, err, note, unsure: unsure[i], status: (err ? "error" : p?.status ?? "existing") as PreviewRow["status"] };
   });
   const errors = merged.filter((m) => m.err).length;
+  // Quantities are opening stock, which only the owner may enter (the server refuses it): said before "Importer".
+  const stockRows = rows.filter((r) => r.qty && !d(r.qty).isZero()).length;
+  const ownerOnly = user?.role !== "owner" && stockRows > 0;
 
   const run = useApiMutation<unknown, ImportResult>("POST", "/api/import/items", {
     success: t("Import done", "Importation terminée"),
@@ -404,6 +408,14 @@ function ItemsImport() {
           </CardHeader>
           <CardContent className="space-y-4">
             <PreviewCounts rows={merged} />
+            {ownerOnly && (
+              <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm" data-testid="import-owner-only">
+                {t(
+                  `${stockRows === 1 ? "1 row has" : `${stockRows} rows have`} a quantity: opening stock, which only the owner can import. Remove the quantities from the file to import the items only, or ask the owner.`,
+                  `${stockRows === 1 ? "1 ligne a" : `${stockRows} lignes ont`} une quantité\u00a0: c'est du stock d'ouverture, que seul le propriétaire peut importer. Retirez les quantités du fichier pour importer seulement les articles, ou demandez au propriétaire.`,
+                )}
+              </p>
+            )}
             <div className="max-h-[480px] overflow-auto rounded-md border">
               <Table>
                 <TableHeader>
@@ -452,7 +464,7 @@ function ItemsImport() {
             <div className="flex flex-wrap items-center justify-end gap-2">
               <Button variant="outline" onClick={() => { setRows([]); setPreview([]); }}>{t("Cancel", "Annuler")}</Button>
               <SubmitButton
-                blocked={errors > 0 ? t("Fix the errors in the file and load it again", "Corrigez les erreurs dans le fichier et chargez-le à nouveau") : !locationId ? t("Choose the location", "Choisissez l'emplacement") : !day && t("Choose the opening stock date", "Choisissez la date du stock d'ouverture")}
+                blocked={errors > 0 ? t("Fix the errors in the file and load it again", "Corrigez les erreurs dans le fichier et chargez-le à nouveau") : ownerOnly ? t("Opening stock: only the owner can import it", "Stock d'ouverture\u00a0: seul le propriétaire peut l'importer") : !locationId ? t("Choose the location", "Choisissez l'emplacement") : !day && t("Choose the opening stock date", "Choisissez la date du stock d'ouverture")}
                 pending={run.isPending}
                 onClick={() => run.mutate({ date: day, locationId, updatePrices, rows: rows.map(toWire) })}
               >

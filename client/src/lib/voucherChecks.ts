@@ -2,6 +2,7 @@ import { useQueries, useQuery } from "@tanstack/react-query";
 import Decimal from "decimal.js";
 import { useAccounts, useMoneyAccounts, useRate } from "@/components/pickers";
 import { owedOn, paymentSplit } from "@/lib/allocation";
+import { de } from "@shared/french";
 import { cdf, d, money, pct, usd } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import type { Party } from "@/lib/types";
@@ -73,7 +74,7 @@ export function useVoucherChecks(input: { kind: string; day: string; accountId: 
       unusual.push(t(`${name}: ${typed(d(l.amount))}, far more than usual (at most ${usd(most.toFixed(2))} in the past 12 months)`, `${name} : ${typed(d(l.amount))}, bien plus que d'habitude (au plus ${usd(most.toFixed(2))} sur les 12 derniers mois)`));
     }
     if (current && current.gt(0) && total.gt(current.times(0.5)) && total.lte(current) && account) {
-      unusual.push(t(`This payment takes ${pct(total.dividedBy(current).times(100).toNumber(), 0)} of ${account.name} (${money(current.toFixed(2), currency)})`, `Ce paiement prend ${pct(total.dividedBy(current).times(100).toNumber(), 0)} de ${account.name} (${money(current.toFixed(2), currency)})`));
+      unusual.push(t(`This payment takes ${pct(total.dividedBy(current).times(100).toNumber(), 0)} of ${account.name} (${money(current.toFixed(2), currency)})`, `Ce paiement prend ${pct(total.dividedBy(current).times(100).toNumber(), 0)} ${de(account.name)} (${money(current.toFixed(2), currency)})`));
     }
   }
   const short = kind === "payment" && current && account && total.gt(current)

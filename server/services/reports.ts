@@ -620,13 +620,16 @@ export async function dashboard(tx: Tx, today: string) {
     .orderBy(desc(sales.id))
     .limit(8);
   // Each contact's balance on its own: Transit's advance is not netted against what we owe Huanghe, nor
-  // one customer's avoir against another's debt. Lines with no contact count by their own sign.
+  // one customer's avoir against another's debt. Lines with no contact count by their own sign. Employees'
+  // salaries owed and salary advances sit on payables too: they are said apart from the suppliers'.
   const byParty = await tx
-    .select({ accountId: journalLines.accountId, usd: sql<string>`sum(${journalLines.debit} - ${journalLines.credit})::text` })
+    .select({ accountId: journalLines.accountId, employee: sql<boolean>`coalesce(max(${parties.type}::text) = 'employee', false)`, usd: sql<string>`sum(${journalLines.debit} - ${journalLines.credit})::text` })
     .from(journalLines)
+    .leftJoin(parties, eq(parties.id, journalLines.partyId))
     .where(inArray(journalLines.accountId, [receivablesId, payablesId]))
     .groupBy(journalLines.accountId, journalLines.partyId);
-  const side = (accountId: number, sign: 1 | -1) => sum(byParty.filter((r) => r.accountId === accountId && dec(r.usd).times(sign).gt(0)).map((r) => dec(r.usd).abs())).toFixed(2);
+  const side = (accountId: number, sign: 1 | -1, employees = false) =>
+    sum(byParty.filter((r) => r.accountId === accountId && (accountId !== payablesId || !!r.employee === employees) && dec(r.usd).times(sign).gt(0)).map((r) => dec(r.usd).abs())).toFixed(2);
   return {
     today,
     month,
@@ -635,6 +638,8 @@ export async function dashboard(tx: Tx, today: string) {
       customerAvoirs: side(receivablesId, -1),
       weOweSuppliers: side(payablesId, -1),
       supplierAdvances: side(payablesId, 1),
+      salariesOwed: side(payablesId, -1, true),
+      salaryAdvances: side(payablesId, 1, true),
     },
     todaySales: { count: todaySales.count, total: dec(todaySales.total).minus(returnsToday).toFixed(2), returns: returnsToday.toFixed(2) },
     monthPnl,

@@ -28,10 +28,10 @@ export interface ForeignBalance {
   native: string;
   usd: string;
 }
-/** "56 000 FC owed to them", "1 200 CNY they owe us"… Negative native = we owe the contact. */
+/** "56 000 FC que nous lui devons", "1 200 ¥ qu'il nous doit" (one contact, so singular)… Negative native = we owe the contact. */
 export function foreignText(f: ForeignBalance, t: (en: string, fr: string) => string) {
   const amount = money(d(f.native).abs().toString(), f.currency);
-  return d(f.native).isNegative() ? t(`${amount} owed to them`, `${amount} à leur payer`) : t(`${amount} they owe`, `${amount} qu'ils doivent`);
+  return d(f.native).isNegative() ? t(`${amount} owed to them`, `${amount} que nous lui devons`) : t(`${amount} they owe`, `${amount} qu'il nous doit`);
 }
 
 
