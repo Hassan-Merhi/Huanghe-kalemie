@@ -1124,8 +1124,12 @@ export function registerRoutes(app: Express) {
           from sale_payments p join sales s on s.id = p.sale_id join journals vj on vj.id = s.void_journal_id
           where vj.date = ${date}
         union all
-        -- Refunds of goods brought back that day leave the drawer they were paid from.
-        select l.account_id, l.debit - l.credit, coalesce(l.native_amount, l.debit - l.credit), false, true
+        -- Refunds of goods brought back that day leave the drawer they were paid from. Francs count at the
+        -- refund's rate, as the sale page and the Sales list read them, not at the drawer's average cost (the
+        -- gap is an exchange difference), so the day's figures add up to its rows.
+        select l.account_id,
+          case when l.native_amount is not null and l.rate > 0 then round(l.native_amount / l.rate, 2) else l.debit - l.credit end,
+          coalesce(l.native_amount, l.debit - l.credit), false, true
           from journal_lines l join journals j on j.id = l.journal_id join accounts ma on ma.id = l.account_id
           where j.type = 'sale_return' and ma.is_money and j.date = ${date}
       ) x join accounts a on a.id = x.account_id

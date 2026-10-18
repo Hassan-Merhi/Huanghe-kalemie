@@ -168,7 +168,8 @@ export default function Dashboard() {
                           {m.currency === "CDF" ? (
                             <>
                               <Num className="block font-medium">{cdf(m.nativeBalance)}</Num>
-                              <Num className="block text-xs text-muted-foreground">≈ {usd(m.balance)}</Num>
+                              {/* The books' figure: what the francs cost, not what they fetch at today's rate. */}
+                              <span className="block text-xs text-muted-foreground"><Num>≈ {usd(m.balance)}</Num> {t("at the francs' cost", "au coût des francs")}</span>
                             </>
                           ) : (
                             <Num className="font-medium">{usd(m.balance)}</Num>

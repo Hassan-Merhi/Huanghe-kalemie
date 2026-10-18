@@ -32,6 +32,7 @@ import type { VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { creditSplit, dailyFigures, netOf, type Daily, type SaleListRow } from "@/lib/saleRows";
 import { WIDE_PRINT_CSS } from "@/pages/ContactDetail";
+import { OnAccount } from "@/pages/Sales";
 
 interface StockItem {
   variantId: number;
@@ -522,13 +523,14 @@ function TodaySales() {
               const c = creditSplit(s);
               return (
                 <Link key={s.id} href={`/sales/${s.id}`} className="flex items-center justify-between gap-2 px-4 py-3 hover:bg-muted/50">
-                  <span className="min-w-0">
+                  <span className="min-w-[40%]">
                     <span className="font-medium">{s.number}</span>
-                    <span className="block truncate text-xs text-muted-foreground">
+                    {/* Wraps rather than cut: on a phone the cashier's name is part of what the line says. */}
+                    <span className="block break-words text-xs text-muted-foreground">
                       {s.customerName ?? t("walk-in", "de passage")}{s.cashier ? ` · ${s.cashier}` : ""}
                     </span>
                   </span>
-                  <span className="flex shrink-0 flex-col items-end gap-0.5">
+                  <span className="flex min-w-0 flex-col items-end gap-0.5 text-right">
                     <Num className={voided ? "text-muted-foreground line-through" : "font-medium"}>{usd((voided ? d(s.total) : n.total).toFixed(2))}</Num>
                     {voided ? (
                       <Badge variant="destructive">{t("Cancelled", "Annulée")}</Badge>
@@ -537,6 +539,8 @@ function TodaySales() {
                         {/* One figure a line, so the customer's name keeps its room on a phone. */}
                         {n.returned.gt(0) && <span className="whitespace-nowrap text-xs text-muted-foreground">{t("returns", "retours")} −{usd(n.returned.toFixed(2))}</span>}
                         {n.refunded.gt(0) && <span className="whitespace-nowrap text-xs text-muted-foreground">{t("refunded", "remboursé")} −{usd(n.refunded.toFixed(2))}</span>}
+                        {/* "+4,00 $ sur le compte client", "arrondi FC": as on the Sales list. */}
+                        <OnAccount r={s} />
                         {c.onAvoir.gt(0) && <span className="whitespace-nowrap text-xs text-emerald-800 dark:text-emerald-400">{t("from credit", "sur l'avoir")} {usd(c.onAvoir.toFixed(2))}</span>}
                         {c.owed.gt(0) && <span className="whitespace-nowrap text-xs text-amber-800 dark:text-amber-400">{t("credit", "crédit")} {usd(c.owed.toFixed(2))}</span>}
                       </>

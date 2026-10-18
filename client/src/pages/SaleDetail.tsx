@@ -528,7 +528,8 @@ export default function SaleDetail() {
   // Cash handed back on returns: "Payé" reads net of it, as on the Sales list, and is the cash really kept
   // (the till's francs and the refunds' at their rates), so Payé − Total is the "Arrondi FC" below it.
   const refunded = sale.returns.reduce((s, r) => s.plus(d(r.refundUsd)), d(0));
-  const paidNet = voided ? d(sale.paidUsd) : sale.paidKeptUsd !== undefined ? d(sale.paidKeptUsd) : d(sale.paidUsd).minus(refunded);
+  // A cancelled sale reads what its receipt said was kept (the till's franc rounding in), all of it given back.
+  const paidNet = sale.paidKeptUsd !== undefined ? d(sale.paidKeptUsd) : voided ? d(sale.paidUsd) : d(sale.paidUsd).minus(refunded);
   const netTotal = voided ? d(sale.total) : d(sale.total).minus(returnedTotal);
   // Francs change and refunds go in 100 FC steps, so "Payé" can differ from the total by a few cents: the
   // "Arrondi FC" of the books, the same figure and sign as on the Sales list, the till's and the refunds' together.
