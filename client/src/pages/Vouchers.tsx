@@ -25,7 +25,7 @@ import { AccountSelect, MoneyAccountSelect, PartySelect, RateInput, useAccounts,
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api, invalidateAll } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { curLabel, d, money, number, pct, qty as fmtQty, todayLocal, usd } from "@/lib/format";
+import { cdf, curLabel, d, money, number, pct, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import type { Account, Party, Settings } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -461,12 +461,28 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
                 {l.mode === "party" ? (
                   <>
                     <PartySelect types={PARTY_TYPES[kind]} value={l.partyId} onChange={(id) => set(l.key, { partyId: id })} placeholder={t("Choose contact…", "Choisir le contact…")} />
-                    {/* What is owed, either way, before the amount is typed: "nous doit 1 450,00 $". */}
-                    {checks.partyOf(l.partyId) && (
-                      <p className="mt-1 px-1 text-xs" data-testid="line-owed">
-                        <BalanceWords balance={checks.partyOf(l.partyId)!.balance} />
-                      </p>
-                    )}
+                    {/* What is owed, either way, before the amount is typed: "nous doit 1 450,00 $", with the francs
+                        in it as on the contact page, and "Tout" filling what settles everything: francs owed count at
+                        the day's rate there (3 289,91 $), as the "more than is owed" check reads them, not as booked. */}
+                    {checks.partyOf(l.partyId) && (() => {
+                      const pty = checks.partyOf(l.partyId)!;
+                      const fcBooked = pty.foreign?.find((f) => f.currency === "CDF");
+                      const all = checks.settleAll(l.partyId);
+                      return (
+                        <p className="mt-1 flex flex-wrap items-center gap-x-1.5 px-1 text-xs" data-testid="line-owed">
+                          <BalanceWords balance={pty.balance} />
+                          {fcBooked && !d(fcBooked.native).isZero() && <span className="text-muted-foreground">({t("of which", "dont")} {cdf(d(fcBooked.native).abs().toFixed(0))})</span>}
+                          {all && (
+                            <span className={cn("inline-flex items-center gap-1.5", all.fc.gt(0) && !isCdf && "w-full")}>
+                              {all.fc.gt(0) && !isCdf && <span className="text-muted-foreground">{t(`All of it at today's rate: ${usd(all.amount)}`, `Le tout au taux du jour\u00a0: ${usd(all.amount)}`)}</span>}
+                              <button type="button" className="rounded border px-2 py-1 font-medium hover:bg-muted" onClick={() => set(l.key, { amount: all.amount })}>
+                                {t("All", "Tout")}
+                              </button>
+                            </span>
+                          )}
+                        </p>
+                      );
+                    })()}
                   </>
                 ) : (
                   <LineAccountSelect types={ACCOUNT_TYPES[kind]} value={l.accountId} onChange={(id) => set(l.key, { accountId: id })} />

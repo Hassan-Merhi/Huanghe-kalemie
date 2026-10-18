@@ -82,6 +82,22 @@ export function useVoucherChecks(input: { kind: string; day: string; accountId: 
 
   // Contact lines: the same split as the contact page's payment dialog, one contact at a time.
   const partyOf = (id: number | null) => (id ? parties.data?.find((p) => p.id === id) : undefined);
+  // What settles everything owed to (or by) a contact, for the line's "Tout": in a dollar box the dollars owed
+  // plus the francs owed at the voucher's rate, the figure the server settles all those francs for (contactLines:
+  // "the dollars shown for all the francs owed settle all of them"), so it is the same figure the "more than is
+  // owed" check reads, not the booked badge (3 290,10 $ booked, 3 289,91 $ today). In a franc box, the francs
+  // owed when nothing is owed in dollars. Yuan owed are settled with "Yuans réglés" on the contact page: no "Tout".
+  const settleAll = (id: number | null): { amount: string; usd: Decimal; fc: Decimal } | null => {
+    const p = partyOf(id);
+    if (!p || !kind || !account) return null;
+    const owed = owedOn(p, kind);
+    if (owed.cny.gt(0)) return null;
+    if (isCdf) return owed.fc.gt(0) && owed.usd.isZero() && rate.gt(0) ? { amount: owed.fc.toFixed(0), usd: owed.fc.dividedBy(rate), fc: owed.fc } : null;
+    if (owed.fc.gt(0) && !rate.gt(0)) return null;
+    const all = owed.usd.plus(owed.fc.gt(0) ? owed.fc.dividedBy(rate).toDecimalPlaces(2, Decimal.ROUND_HALF_UP) : 0);
+    return all.gt(0) ? { amount: all.toFixed(2), usd: all, fc: owed.fc } : null;
+  };
+
   const byParty = new Map<number, Decimal>();
   for (const l of lines) if (l.partyId) byParty.set(l.partyId, (byParty.get(l.partyId) ?? d(0)).plus(d(l.amount).toDecimalPlaces(2)));
   const overDebt: string[] = [];
@@ -141,5 +157,5 @@ export function useVoucherChecks(input: { kind: string; day: string; accountId: 
   const others = input.lines.filter((l) => l.partyId || l.accountId).length - 1;
   const fallbackMemo = firstName ? `${firstName}${others > 0 ? ` + ${others} ${t(others > 1 ? "others" : "other", others > 1 ? "autres" : "autre")}` : ""}` : null;
 
-  return { unusual, overDebt, short, partyOf, total, currency, account, fallbackMemo };
+  return { unusual, overDebt, short, partyOf, settleAll, total, currency, account, fallbackMemo };
 }

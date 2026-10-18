@@ -224,7 +224,9 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
           right={rounding.figure}
         />
       )}
-      {sale.payments.length > 0 && <ReceiptRow left={t("Paid", "Payé")} right={usd(sale.paidUsd)} />}
+      {/* The money really kept, as the till, the sale page and the Sales list say "Payé" (26,99 $ for 75 800 FC
+          on 27,00 $): the payment lines above add up to it, and the rounding line explains the cents to the total. */}
+      {sale.payments.length > 0 && <ReceiptRow left={t("Paid", "Payé")} right={usd(paymentsUsd.toFixed(2))} />}
       {/* Credit the customer's avoir covered is not owed: only the rest is "to pay". */}
       {avoir.used.gt(0) && (
         <>
@@ -437,8 +439,16 @@ export default function POS() {
     }
     return amount;
   };
-  const received = pays.reduce((s, p) => s.plus(payUsd(p)), d(0));
   const rateNum = d(saleFcRate);
+  // Payments into one account are one amount, valued once, as the server books them: 20 000 FC and 10 000 FC
+  // into the franc box are 10,68 $, not 7,12 $ + 3,56 $.
+  const byAccount = new Map<number, Decimal>();
+  for (const p of pays) {
+    const acc = accById(p.accountId);
+    if (acc) byAccount.set(acc.id, (byAccount.get(acc.id) ?? d(0)).plus(c2(d(p.amount))));
+  }
+  const fcToUsd = (amount: Decimal) => (rateNum.gt(0) ? c2(amount.dividedBy(rateNum)) : d(0));
+  const received = Array.from(byAccount).reduce((s, [id, amount]) => s.plus(accById(id)!.currency === "CDF" ? fcToUsd(amount) : amount), d(0));
   /** What was handed over, in dollars, before rounding each payment to the cent. */
   const receivedExact = pays.reduce((s, p) => {
     const acc = accById(p.accountId);
@@ -486,7 +496,12 @@ export default function POS() {
     changeAcc?.currency === "USD" && changeNative.gt(0) && !changeNative.isInteger() && cdfCash && rateNum.gt(0)
       ? changeNative.times(rateNum).dividedBy(100).toDecimalPlaces(0, ROUND).times(100)
       : null;
-  const changeUsd = changeAcc?.currency === "CDF" ? (rateNum.gt(0) ? c2(changeNative.dividedBy(rateNum)) : d(0)) : changeNative;
+  // Francs given back from the box they were paid into leave at what the payment is worth less what the box
+  // kept, as the server values them (30 000 FC less 10 300 FC: 10,68 $ − 7,02 $ = 3,66 $, not 3,67 $), so the
+  // change, "Payé" and the rounding read here as on the receipt.
+  const sameBoxFc = changeAcc?.currency === "CDF" ? byAccount.get(changeAcc.id) : undefined;
+  const sameBoxChange = sameBoxFc && sameBoxFc.minus(changeNative).gt(0) ? fcToUsd(sameBoxFc).minus(fcToUsd(sameBoxFc.minus(changeNative))) : null;
+  const changeUsd = changeAcc?.currency === "CDF" ? (sameBoxChange?.gt(0) ? sameBoxChange : fcToUsd(changeNative)) : changeNative;
   const paid = received.minus(changeUsd);
   const remaining = total.minus(paid);
   // Worked out before rounding to the cent, so it is the francs actually over or under (25 FC, not 0,01 $ = 28 FC).
@@ -632,18 +647,22 @@ export default function POS() {
   const typedFc = toPay === paid && !changeUsd.gt(0) && paidRows.length > 0 && paidRows.every((p) => accById(p.accountId)!.currency === "CDF")
     ? paidRows.reduce((s, p) => s.plus(d(p.amount).toDecimalPlaces(0, ROUND)), d(0))
     : null;
-  // Part of the sale (the rest on the avoir) is asked in 100 FC notes, like the rest of a mixed payment.
-  const toPayFc = typedFc ?? (rateNum.gt(0) ? francsFor(toPay, toPay.gt(0) && toPay.lt(total)) : null);
+  // The francs asked are always in 100 FC notes, like the change (27,00 $: 75 800 FC, not 75 816 FC); the few
+  // francs between are the sale's "Arrondi FC". Francs typed as a part payment are those notes already.
+  const toPayFc = typedFc ?? (rateNum.gt(0) && toPay.gt(0) ? francsFor(toPay, true) : null);
   /**
-   * A credit sale with nothing paid and no avoir: nothing is due now, so the calculator says so instead of
-   * the total. With an avoir it still shows the part the avoir leaves, the usual amount asked for.
+   * A credit sale says what is due now (the part paid now, or nothing) and the credit apart, never the credit
+   * as "À payer": with nothing paid, "Rien à payer maintenant", whether an avoir covers part of it or not.
    */
-  const allOnCredit = !!customerId && !paid.gt(0) && !avoirCovers && onCredit.gt(0);
-  // Francs handed over against those francs are counted in francs, so 70 000 FC for 70 000 FC leaves nothing.
-  const changeFcExact = typedFc && handedCur === "CDF" ? d(handed).toDecimalPlaces(0, ROUND).minus(typedFc) : null;
+  const creditSale = !!customerId && onCredit.gt(0);
+  const allOnCredit = creditSale && !paid.gt(0);
+  // Francs handed over are counted in francs against the francs asked, so 75 800 FC for 75 800 FC leaves
+  // nothing and 80 000 FC gives back 4 200 FC, in notes.
+  const changeFcExact = toPayFc && handedCur === "CDF" ? d(handed).toDecimalPlaces(0, ROUND).minus(toPayFc) : null;
   const handedUsd = handedCur === "CDF" ? (rateNum.gt(0) ? d(handed).dividedBy(rateNum) : d(0)) : d(handed);
   const change = changeFcExact ? (changeFcExact.isZero() || !rateNum.gt(0) ? d(0) : changeFcExact.dividedBy(rateNum)) : handedUsd.minus(toPay);
-  const changeFc = changeFcExact ? changeFcExact.abs() : rateNum.gt(0) ? change.abs().times(rateNum).toDecimalPlaces(0, ROUND) : null;
+  // Dollar change is exact to the cent; its franc figure goes in 100 FC steps, as the till gives francs back.
+  const changeFc = changeFcExact ? changeFcExact.abs() : rateNum.gt(0) ? change.abs().times(rateNum).dividedBy(FRANC_ROUNDING).toDecimalPlaces(0, ROUND).times(FRANC_ROUNDING) : null;
 
   // ---- submit
   function reset() {
@@ -997,8 +1016,9 @@ export default function POS() {
               <div className="space-y-1 text-sm">
                 {changeUsd.gt(0) && <div className="flex justify-between"><span>{t("Received ($)", "Reçu ($)")}</span><Num>{usd(received.toFixed(2))}</Num></div>}
                 {changeUsd.gt(0) && <div className="flex justify-between"><span>{t("Change given back", "Monnaie rendue")}</span><Num>−{usd(changeUsd.toFixed(2))}</Num></div>}
-                {/* Within the franc rounding the sale is paid in full, as the receipt says; the rounding line below explains the cents. */}
-                <div className="flex justify-between"><span>{t("Paid ($)", "Payé ($)")}</span><Num className="font-medium">{usd((francRounding ? total : paid).toFixed(2))}</Num></div>
+                {/* The money really kept, as the receipt, the sale page and the Sales list say it: within the franc
+                    rounding the rounding line below explains the cents between it and the total. */}
+                <div className="flex justify-between"><span>{t("Paid ($)", "Payé ($)")}</span><Num className="font-medium">{usd(paid.toFixed(2))}</Num></div>
                 {tillRounding ? (
                   <div className="flex justify-between gap-2 text-muted-foreground" data-testid="franc-rounding">
                     <span>{t("FC rounding", "Arrondi FC")} <span className="whitespace-nowrap">({tillRounding.words})</span></span>
@@ -1049,7 +1069,10 @@ export default function POS() {
                       {t(`Nothing to pay now: ${usd(onCredit.toFixed(2))} on credit. Enter a payment above for a part paid now.`, `Rien à payer maintenant\u00a0: ${usd(onCredit.toFixed(2))} à crédit. Saisissez un paiement ci-dessus pour une partie payée tout de suite.`)}
                     </p>
                   ) : (
-                    <div className="flex justify-between"><span>{t("To pay", "À payer")}</span><Num>{usd(toPay.toFixed(2))}{toPayFc ? ` · ${cdf(toPayFc.toString())}` : ""}</Num></div>
+                    <>
+                      <div className="flex justify-between"><span>{creditSale ? t("To pay now", "À payer maintenant") : t("To pay", "À payer")}</span><Num>{usd(toPay.toFixed(2))}{toPayFc ? ` · ${cdf(toPayFc.toString())}` : ""}</Num></div>
+                      {creditSale && <div className="flex justify-between text-amber-800 dark:text-amber-400" data-testid="calc-credit-part"><span>{t("On credit", "À crédit")}</span><Num>{usd(onCredit.toFixed(2))}</Num></div>}
+                    </>
                   )}
                   {handed && !allOnCredit && (
                     <div className={cn("flex justify-between font-semibold", change.lt(0) && "text-destructive")}>
