@@ -130,12 +130,12 @@ describe.skipIf(!hasDb)("Guards found by the fifteenth audit", async () => {
     const exact = await call("POST", `/api/containers/${c.body.id}/import-lines`, { mode: "append", rows: [{ name: "Écrou M8", unit: "pcs", quantity: "200", unitPrice: 4.125 }] });
     expect(exact.status, JSON.stringify(exact.body)).toBe(200);
     expect(Number(exact.body.container.lines[0].unitPrice)).toBe(4.125);
-    // Typed text that could be 4 125 or 4,125 is refused, not guessed, in either style.
-    for (const typed of ["4.125", "4,125"]) {
+    // Typed text that could be 4 125 or 4,125 is refused, not guessed ("4,125" is decimals: see U28).
+    for (const typed of ["4.125"]) {
       const unsure = await call("POST", `/api/containers/${c.body.id}/import-lines`, { mode: "append", rows: [{ name: "Écrou M8", unit: "pcs", quantity: "200", unitPrice: typed }] });
       expect(unsure.status, typed).toBe(422);
       // Both readings say what to do: 4125 without the separator, or 4,125 as a number cell.
-      expect(unsure.body.messageFr).toBe(`«${NB}${typed}${NB}»${NB}: 4${NB}125 ou 4,125${NB}? Pour 4${NB}125, écrivez 4125 sans séparateur${NB}; pour 4,125, mettez 4,125 dans la cellule comme nombre, pas comme texte.`);
+      expect(unsure.body.messageFr).toBe(`«${NB}${typed}${NB}»${NB}: 4${NB}125 ou 4,125${NB}? Pour 4${NB}125, écrivez 4125 sans séparateur${NB}; pour 4,125, écrivez-le comme nombre dans Excel.`);
     }
     expect((await call("POST", "/api/import/prices", { rows: [{ sku: "X", sellPrice: "1.200" }] })).status).toBe(422);
     // "1,000" kilos or pieces sent as it is (1 000 or 1?) is refused like "1.000".
@@ -151,8 +151,8 @@ describe.skipIf(!hasDb)("Guards found by the fifteenth audit", async () => {
     const { amountCellUnsure, readNumberCell, toWire } = await import("../../client/src/lib/sheets");
     expect(toWire({ name: "Boulon", unitCost: "0.125", unitPrice: "4.125", qty: "100", sku: "0.125" })).toEqual({ name: "Boulon", unitCost: 0.125, unitPrice: 4.125, qty: 100, sku: "0.125" });
     expect(amountCellUnsure("4.125")).toEqual(["4125", "4.125"]);
-    expect(amountCellUnsure("1,200")).toEqual(["1200", "1.2"]);
-    for (const clear of [4.125, "0,125", "0.125", "1 250,125", "12,50", "1.250,00", "12500"]) expect(amountCellUnsure(clear), String(clear)).toBeNull();
+    expect(amountCellUnsure("1,000")).toEqual(["1000", "1"]);
+    for (const clear of [4.125, "4,125", "1,200", "0,125", "0.125", "1 250,125", "12,50", "1.250,00", "12500"]) expect(amountCellUnsure(clear), String(clear)).toBeNull();
     expect(readNumberCell("1,000", true).unsure).toEqual(["1000", "1"]);
     expect(readNumberCell("2,250", true)).toEqual({ value: "2.25", unsure: null });
   });

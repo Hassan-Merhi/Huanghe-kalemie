@@ -637,9 +637,15 @@ export function MonthSelect({
   );
 }
 
-/** CDF per USD for a date (that day's rate, else the latest before it, else the default). */
-export function useRate(date: string) {
-  return useQuery<{ date: string; cdfPerUsd: string; source: string; cnyPerUsd?: string | null }>({ queryKey: [`/api/exchange-rates/for/${date}`] });
+/**
+ * CDF per USD for a date (that day's rate, else the latest before it, else the default). `live` checks it
+ * again every minute, for a page left open while the owner may change the rate (the till).
+ */
+export function useRate(date: string, opts: { live?: boolean } = {}) {
+  return useQuery<{ date: string; cdfPerUsd: string; source: string; cnyPerUsd?: string | null }>({
+    queryKey: [`/api/exchange-rates/for/${date}`],
+    ...(opts.live ? { refetchInterval: 60_000 } : {}),
+  });
 }
 
 // The container rate helpers live with the formatters (tested there); re-exported for the pages that import them here.

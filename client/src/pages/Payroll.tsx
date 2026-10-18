@@ -280,6 +280,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
   /** Francs are paid in 100 FC notes: only a warning, the amount stays as typed. */
   const notRound = currency === "CDF" ? included.find((g) => g.net.gt(0) && !g.net.mod(100).isZero()) : undefined;
   const withCents = included.find((g) => [g.salary, g.bonus, g.withheld, g.penalty].some((v) => centsError(v)));
+  const gridInvalid = !!withCents || included.some((g) => ![g.salary, g.bonus, g.withheld, g.penalty].every(typedNumberOk));
   const dayInMonth = effectiveDay.slice(0, 7) === month;
 
   /** Switching currency converts what was typed at the rate, so 250 $ does not become 250 FC. */
@@ -484,7 +485,8 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                 <TableFooter>
                   <TableRow>
                     <TableCell colSpan={6}>{t("Total", "Total")} · {count(t, included.length, ["employee", "employees"], ["employé", "employés"])}</TableCell>
-                    <TableCell className="text-right"><Num className="font-semibold">{fmt(total.toFixed(2))}</Num></TableCell>
+                    {/* A line that cannot be saved (centimes, an amount unread) makes no total: "—" until it is corrected. */}
+                    <TableCell className="text-right"><Num className="font-semibold">{gridInvalid ? "—" : fmt(total.toFixed(2))}</Num></TableCell>
                     <TableCell />
                   </TableRow>
                 </TableFooter>
@@ -727,6 +729,8 @@ function PaySalariesDialog({ month, run, employees, saved, onClose }: { month: s
     })
     .filter((l) => l.amount.gt(0));
   const total = lines.reduce((s, l) => s.plus(l.amount), d(0));
+  // An amount with centimes or unread makes no total to pay (the button says what to correct).
+  const linesInvalid = rows.some((e) => !typedNumberOk(amountOf(e)) || (isCdf && !!francDecimalsError(t, "CDF", amountOf(e))));
   const frMonth = monthText(month, "fr");
   // The drawer's balance before and after, as on the vouchers form; a payment it cannot cover is stopped here.
   const { can } = useAuth();
@@ -789,7 +793,7 @@ function PaySalariesDialog({ month, run, employees, saved, onClose }: { month: s
               <Field
                 label={t("Pay from", "Payer depuis")}
                 className="sm:col-span-1"
-                hint={drawerNow && drawerAfter ? `${t("Balance", "Solde")} ${balanceText(drawerNow)} → ${t("after", "après")} ${balanceText(drawerAfter)}` : undefined}
+                hint={drawerNow && drawerAfter ? `${t("Balance", "Solde")} ${balanceText(drawerNow)}${total.gt(0) && !linesInvalid ? ` → ${t("after", "après")} ${balanceText(drawerAfter)}` : ""}` : undefined}
                 error={drawerShort}
                 required
               >
@@ -835,7 +839,7 @@ function PaySalariesDialog({ month, run, employees, saved, onClose }: { month: s
             <div className="flex items-center justify-between rounded-md bg-muted/50 p-3 text-sm">
               <span>{t("Total", "Total")} · {count(t, lines.length, ["employee", "employees"], ["employé", "employés"])}</span>
               <Num className="font-semibold">
-                {isCdf ? cdf(total.toFixed(0)) : usd(total.toFixed(2))}
+                {linesInvalid ? "—" : isCdf ? cdf(total.toFixed(0)) : usd(total.toFixed(2))}
               </Num>
             </div>
           </div>
@@ -860,7 +864,7 @@ function PaySalariesDialog({ month, run, employees, saved, onClose }: { month: s
               }
               pending={pay.isPending}
             >
-              {t("Pay", "Payer")} {isCdf ? cdf(total.toFixed(0)) : usd(total.toFixed(2))}
+              {t("Pay", "Payer")}{linesInvalid ? "" : ` ${isCdf ? cdf(total.toFixed(0)) : usd(total.toFixed(2))}`}
             </SubmitButton>
           )}
         </DialogFooter>

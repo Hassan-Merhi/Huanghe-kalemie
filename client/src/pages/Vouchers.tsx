@@ -400,7 +400,8 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
             label={kind === "payment" ? t("Paid from", "Payé depuis") : t("Received into", "Reçu dans")}
             hint={
               current
-                ? amountsBad
+                ? // "→ après" only once an amount is typed: with none it would repeat the balance.
+                  amountsBad || !total.gt(0)
                   ? `${t("Balance", "Solde")} ${money(current.toFixed(2), currency)}`
                   : `${t("Balance", "Solde")} ${money(current.toFixed(2), currency)} → ${t("after", "après")} ${money(after!.toFixed(2), currency)}`
                 : undefined
@@ -416,7 +417,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
             </Field>
           )}
           <Field label={t("Description", "Libellé")} className={isCdf ? "" : "lg:col-span-2"}>
-            <Input value={memo} onChange={(e) => setMemo(e.target.value)} placeholder={kind === "payment" ? t("e.g. supplier payments of the week", "ex. paiements fournisseurs de la semaine") : t("e.g. customer payments", "ex. encaissements clients")} />
+            <Input value={memo} onChange={(e) => setMemo(e.target.value)} placeholder={kind === "payment" ? t("e.g. this week's suppliers", "ex. fournisseurs de la semaine") : t("e.g. customer payments", "ex. encaissements clients")} />
           </Field>
         </CardContent>
       </Card>

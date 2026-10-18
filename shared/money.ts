@@ -129,7 +129,7 @@ export function typedCurrencyMark(value: unknown): "USD" | "CDF" | "CNY" | "mixe
  * A mark that cannot group thousands is a decimal mark whatever follows it: the last of two kinds ("1.250,125"),
  * or a single one after "0" ("0,125"), after more than three digits ("1250,125") or before other than three
  * digits ("0.0049", "1,2500"). Only a single mark between one to three digits and three digits ("4.125", "1,200")
- * is still read as thousands; a price or cost refuses it (see ambiguousTypedAmount).
+ * is still read as thousands; a price or cost reads the comma as decimals or refuses (see parseTypedAmount).
  * With `measured` (litres, metres, kilos, and always weights and volumes), a single "," or "." before three
  * digits is the decimal mark too, as a form field reads it: "2,250" L is 2,25 L and "12,375" kg is 12,375 kg.
  * Only "1.000" stays in doubt there (see ambiguousTypedMeasure); this reads it as 1.
@@ -171,18 +171,31 @@ export function ambiguousTypedMeasure(value: unknown): [string, string] | null {
 }
 
 /**
- * In a price or cost typed as text, "4.125" or "1,200" may be a thousands group (4 125) or three decimals
- * (4,125). Returns both readings (["4125", "4.125"]) when a cell is that ambiguous, else null. A number cell
- * (a JSON number) is never in doubt, and "0,125" or "1 250,125" cannot be a thousands group.
+ * In a price or cost typed as text, "4.125" may be a thousands group (4 125) or three decimals (4,125), and so
+ * may "1,000". Returns both readings (["4125", "4.125"]) when a cell is that ambiguous, else null. A comma
+ * before other digits is the decimal mark, as in a quantity: "4,125" is 4,125 (see parseTypedAmount). A number
+ * cell (a JSON number) is never in doubt, and "0,125" or "1 250,125" cannot be a thousands group.
  */
 export function ambiguousTypedAmount(value: unknown): [string, string] | null {
   if (typeof value !== "string") return null;
   const s = value.replace(/[\s\u00a0\u202f]/g, "").replace(CURRENCY_MARKS, "");
-  const m = /^([-+\u2212]?)([1-9]\d{0,2})[.,](\d{3})$/.exec(s);
-  if (!m) return null;
+  const m = /^([-+\u2212]?)([1-9]\d{0,2})([.,])(\d{3})$/.exec(s);
+  if (!m || (m[3] === "," && m[4] !== "000")) return null;
   const sign = m[1] && m[1] !== "+" ? "-" : "";
-  const fraction = m[3].replace(/0+$/, "");
-  return [`${sign}${m[2]}${m[3]}`, `${sign}${m[2]}${fraction ? `.${fraction}` : ""}`];
+  const fraction = m[4].replace(/0+$/, "");
+  return [`${sign}${m[2]}${m[4]}`, `${sign}${m[2]}${fraction ? `.${fraction}` : ""}`];
+}
+
+/**
+ * A price or cost typed in a spreadsheet: parseTypedNumber, except that a single comma before three digits is
+ * the decimal mark, as a French sheet means it and as a quantity reads it ("4,125" $ is 4,125 $, not 4 125 $).
+ * "1,000" and "4.125" stay in doubt (see ambiguousTypedAmount); this reads them as parseTypedNumber does.
+ */
+export function parseTypedAmount(value: unknown): string | null {
+  if (typeof value === "string" && /^[-+\u2212]?[1-9]\d{0,2},\d{3}$/.test(value.replace(/[\s\u00a0\u202f]/g, "").replace(CURRENCY_MARKS, "")) && !ambiguousTypedAmount(value)) {
+    return parseTypedNumber(value, { measured: true });
+  }
+  return parseTypedNumber(value);
 }
 
 /**

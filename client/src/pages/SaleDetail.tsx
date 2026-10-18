@@ -619,8 +619,9 @@ export default function SaleDetail() {
                   <TableHead className="text-right">{t("Price", "Prix")}</TableHead>
                   {hasDiscount && <TableHead className="text-right">{t("Discount", "Remise")}</TableHead>}
                   <TableHead className="text-right">{t("Total", "Total")}</TableHead>
-                  {showCost && <TableHead className="text-right">{t("Cost", "Coût")}</TableHead>}
-                  {showCost && <TableHead className="text-right">{t("Profit", "Marge")}</TableHead>}
+                  {/* A cancelled sale earned nothing: no cost or profit per line, as none on the cards above. */}
+                  {showCost && !voided && <TableHead className="text-right">{t("Cost", "Coût")}</TableHead>}
+                  {showCost && !voided && <TableHead className="text-right">{t("Profit", "Marge")}</TableHead>}
                 </TableRow>
               </TableHeader>
               <TableBody>
@@ -634,8 +635,8 @@ export default function SaleDetail() {
                     <TableCell className="text-right"><Num>{usd(l.unitPrice)}</Num></TableCell>
                     {hasDiscount && <TableCell className="text-right"><Num>{d(l.lineDiscount).gt(0) ? usd(l.lineDiscount) : ""}</Num></TableCell>}
                     <TableCell className="text-right"><Num className="font-medium">{usd(l.lineTotal)}</Num></TableCell>
-                    {showCost && <TableCell className="text-right"><Num>{l.cogs !== undefined ? usd(l.cogs) : ""}</Num></TableCell>}
-                    {showCost && <TableCell className="text-right"><LineProfit l={l} returned={returnedOf(l)} /></TableCell>}
+                    {showCost && !voided && <TableCell className="text-right"><Num>{l.cogs !== undefined ? usd(l.cogs) : ""}</Num></TableCell>}
+                    {showCost && !voided && <TableCell className="text-right"><LineProfit l={l} returned={returnedOf(l)} /></TableCell>}
                   </TableRow>
                 ))}
               </TableBody>

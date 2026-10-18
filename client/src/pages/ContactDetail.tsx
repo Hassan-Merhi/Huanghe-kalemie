@@ -18,7 +18,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton, unclearAmount } from "@/components/common";
+import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, SubmitButton, unclearAmount } from "@/components/common";
 import { MoneyAccountSelect, PARTY_LABELS, RateInput, useAccounts, useRate, useRateField } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
@@ -269,7 +269,7 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
   const [memo, setMemo] = useState("");
   const { rate, setRate } = useRateField(day);
   const isCdf = account?.currency === "CDF";
-  const usdEquivalent = isCdf && d(rate).gt(0) ? d(amount).dividedBy(d(rate)).toFixed(2) : null;
+  const usdEquivalent = isCdf && d(rate).gt(0) && !francDecimalsError(t, "CDF", amount) ? d(amount).dividedBy(d(rate)).toFixed(2) : null;
   const mutation = useApiMutation("POST", isCustomer ? "/api/money/customer-receipt" : "/api/money/party-payment", {
     success: t("Payment saved", "Paiement enregistré"),
     onSuccess: onClose,
@@ -279,7 +279,9 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
   const balances = useAccounts("/api/accounts/balances", { enabled: can("manager", "partner") }).data;
   const drawer = account ? balances?.find((a) => a.id === account.id) : undefined;
   const drawerNow = drawer ? d(isCdf ? drawer.nativeBalance : drawer.balance) : null;
-  const typedOk = d(amount).gt(0) && !unclearAmount(t, amount, account?.currency ?? "USD");
+  // "250000,5" FC is a slip the server refuses: said on the field, as on the vouchers form, and nothing is previewed.
+  const francSlip = francDecimalsError(t, account?.currency, amount);
+  const typedOk = d(amount).gt(0) && !unclearAmount(t, amount, account?.currency ?? "USD") && !francSlip;
   const drawerAfter = drawerNow ? (isCustomer ? drawerNow.plus(typedOk ? d(amount) : 0) : drawerNow.minus(typedOk ? d(amount) : 0)) : null;
   const drawerShort = !isCustomer && drawerAfter?.lt(0)
     ? t(`Not enough money: the balance would be ${money(drawerAfter.toFixed(2), account!.currency)}`, `Fonds insuffisants\u00a0: le solde serait de ${money(drawerAfter.toFixed(2), account!.currency)}`)
@@ -317,7 +319,7 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
     : null;
   // Which debts this payment reduces, in the server's order (payablesLines, contactLines, payParty).
   const dollarBalance = d(balance).minus(foreign.reduce((x, f) => x.plus(d(f.usd)), d(0)));
-  const split = account && d(amount).gt(0) && (isCdf ? d(rate).gt(0) : account.currency === "USD")
+  const split = account && d(amount).gt(0) && !francSlip && (isCdf ? d(rate).gt(0) : account.currency === "USD")
     ? paymentSplit({
         usd: isCdf ? d(amount).dividedBy(d(rate)) : d(amount),
         francs: isCdf ? d(amount) : null,
@@ -363,17 +365,19 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
         ? t(`${usd(advance.usd)} is an advance on salary`, `${usd(advance.usd)} constituent une avance sur salaire`)
         : t(`${usd(advance.usd)} is an advance`, `${usd(advance.usd)} constituent une avance`)
     : "";
+  const over = advance && (isCdf ? d(advance.usd).times(d(rate)).gte(100) : d(advance.usd).gt(0)) ? advance : null;
+  // An advance big enough to confirm is said once, in the warning below; the split then names only the debts.
+  const splitAdvance = advance && !over;
   const splitText = cnyOwed && d(settleCny).gt(0) && split[0]?.kind === "cny"
     ? t(`These ${usd(split[0].usd)} settle ${money(split[0].native, "CNY")} of the yuan debt.`, `Ces ${usd(split[0].usd)} règlent ${money(split[0].native, "CNY")} de la dette en yuans.`)
     : settled.length
-      ? t(`This payment settles ${settled.map(partText).join(", then ")}${advance ? `; ${advanceText}` : ""}.`, `Ce paiement règle ${settled.map(partText).join(", puis ")}${advance ? `\u00a0; ${advanceText}` : ""}.`)
-      : advance
+      ? t(`This payment settles ${settled.map(partText).join(", then ")}${splitAdvance ? `; ${advanceText}` : ""}.`, `Ce paiement règle ${settled.map(partText).join(", puis ")}${splitAdvance ? `\u00a0; ${advanceText}` : ""}.`)
+      : splitAdvance
         ? t(`Nothing is owed: ${advanceText}.`, `Rien n'est dû\u00a0: ${advanceText}.`)
         : "";
   // More than is owed becomes customer credit (or an advance to the supplier): "47 770 000" typed for a
   // 1 772 $ debt is said in words and confirmed before saving. Under 100 FC left over is the notes' rounding.
   const owedSettled = settled.reduce((s, p) => s.plus(p.usd), d(0));
-  const over = advance && (isCdf ? d(advance.usd).times(d(rate)).gte(100) : d(advance.usd).gt(0)) ? advance : null;
   const paidText = isCdf ? `${cdf(d(amount).toFixed(0))} (${usd(d(usdEquivalent ?? 0).toFixed(2))})` : usd(d(amount).toFixed(2));
   // Francs or yuan owed count here at the payment's rate, the header at the rate they were booked at
   // (84 000 FC: 4 430,10 $ booked, 4 429,91 $ today): the figure says which, so the two do not read as one debt.
@@ -410,7 +414,7 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
   const cnyAll = cnyOwed && cnyOwedUsd && !fcOwed ? dollarsOwed.plus(cnyOwedUsd.toDecimalPlaces(2, Decimal.ROUND_HALF_UP)) : null;
   const blocked = !account
     ? t("Choose an account", "Choisissez un compte")
-    : unclearAmount(t, amount, account.currency) ?? (cnyOwed ? unclearAmount(t, settleCny, "CNY") : null) ?? (!d(amount).gt(0)
+    : unclearAmount(t, amount, account.currency) ?? francSlip ?? (cnyOwed ? unclearAmount(t, settleCny, "CNY") : null) ?? (!d(amount).gt(0)
       ? t("Enter an amount above zero", "Saisissez un montant supérieur à zéro")
       : isCdf && !d(rate).gt(0)
         ? t("Enter the exchange rate", "Saisissez le taux de change")
@@ -451,7 +455,7 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
           </Field>
           <Field
             label={isCustomer ? t("Received into", "Reçu dans") : t("Paid from", "Payé depuis")}
-            hint={drawerNow && drawerAfter ? `${t("Balance", "Solde")} ${money(drawerNow.toFixed(2), account!.currency)} → ${t("after", "après")} ${money(drawerAfter.toFixed(2), account!.currency)}` : undefined}
+            hint={drawerNow && drawerAfter ? `${t("Balance", "Solde")} ${money(drawerNow.toFixed(2), account!.currency)}${typedOk ? ` → ${t("after", "après")} ${money(drawerAfter.toFixed(2), account!.currency)}` : ""}` : undefined}
             error={drawerShort}
             required
           >
@@ -460,7 +464,7 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
           <Field
             label={t(`Amount (${curLabel(account?.currency ?? "USD")})`, `Montant (${curLabel(account?.currency ?? "USD")})`)}
             error={
-              looksLikeYuan
+              francSlip ?? (looksLikeYuan
                 ? t(
                     allOwedUsd!.gt(cnyOwedUsd!)
                       ? `That is far more dollars than everything owed is worth (≈ ${usd(allOwedUsd!.toFixed(2))} with the ${money(cnyOwed!.toString(), "CNY")}): type the dollars paid, not the yuan`
@@ -469,7 +473,7 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
                       ? `C'est bien plus de dollars que ne vaut tout ce qui est dû (≈ ${usd(allOwedUsd!.toFixed(2))} avec les ${money(cnyOwed!.toString(), "CNY")})\u00a0: saisissez les dollars payés, pas les yuans`
                       : `C'est bien plus de dollars que ne valent les ${money(cnyOwed!.toString(), "CNY")} dus (≈ ${usd(cnyOwedUsd!.toFixed(2))})\u00a0: saisissez les dollars payés, pas les yuans`,
                   )
-                : null
+                : null)
             }
             required
           >
@@ -502,7 +506,7 @@ function PaymentDialog({ party, balance, foreign, onClose }: { party: Statement[
           ) : split.length > 0 && !yuanMismatch ? (
             // While the dollars do not match the yuan, what they would settle is not said: the error under the yuan says why.
             <div className="space-y-1 sm:col-span-2">
-              <p className="text-xs text-muted-foreground" data-testid="payment-split">{splitText}</p>
+              {splitText && <p className="text-xs text-muted-foreground" data-testid="payment-split">{splitText}</p>}
               {overText && <p role="alert" className="text-xs font-medium text-amber-800 dark:text-amber-400">{overText}</p>}
             </div>
           ) : fcOwed && !(cnyOwed && d(settleCny).gt(0)) ? (

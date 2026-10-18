@@ -59,6 +59,11 @@ export interface CreateSaleInput {
   /** Change handed back from another drawer, e.g. francs paid and dollars given back. */
   change?: SalePaymentInput | null;
   note?: string | null;
+  /**
+   * The franc rate the till showed while the sale was rung up. Staff francs are valued at the day's rate, so
+   * a till still on an older one is refused rather than booked partly on credit. Left out, nothing is checked.
+   */
+  tillRate?: string | null;
 }
 
 export interface PriceRules {
@@ -204,6 +209,15 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
   }
   const paid = received.minus(changeLeg?.usd ?? 0);
   const francLegs = [...legs, ...(changeLeg ? [changeLeg] : [])].filter((l) => l.currency === "CDF" && l.rate);
+  // 61 800 FC counted at 2 808 are 21,31 $ at 2 900: the cashier checks the payment again at the new rate.
+  if (staffRate && input.tillRate && francLegs.length && !dec(input.tillRate).equals(francLegs[0].rate!)) {
+    const was = frNumber(dec(input.tillRate).toString());
+    const now = frNumber(dec(francLegs[0].rate!).toString());
+    throw conflict(
+      `The day's rate has changed (${was} → ${now} FC): check the payment`,
+      `Le taux du jour a changé (${was} → ${now}\u00a0FC)\u00a0: vérifiez le paiement`,
+    );
+  }
   const tolerance = francLegs.length
     ? Decimal.max(...francLegs.map((l) => FRANC_ROUNDING.dividedBy(l.rate!).toDecimalPlaces(2, Decimal.ROUND_UP)))
     : new Decimal(0);
