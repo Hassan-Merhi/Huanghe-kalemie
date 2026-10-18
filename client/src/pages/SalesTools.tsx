@@ -527,7 +527,7 @@ function TodaySales() {
                     <span className="font-medium">{s.number}</span>
                     {/* Wraps rather than cut: on a phone the cashier's name is part of what the line says. */}
                     <span className="block break-words text-xs text-muted-foreground">
-                      {s.customerName ?? t("walk-in", "de passage")}{s.cashier ? ` · ${s.cashier}` : ""}
+                      {s.customerName ?? t("Walk-in", "De passage")}{s.cashier ? ` · ${s.cashier}` : ""}
                     </span>
                   </span>
                   <span className="flex min-w-0 flex-col items-end gap-0.5 text-right">

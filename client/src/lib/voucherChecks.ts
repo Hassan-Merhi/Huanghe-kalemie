@@ -84,7 +84,7 @@ export function useVoucherChecks(input: { kind: string; day: string; accountId: 
       if (!most || !u || !u.gt(most.times(3))) continue;
       const name = balances.data?.find((a) => a.id === l.accountId)?.name ?? "";
       // Francs typed are compared in dollars, as the past payments are kept: "14 000 000 FC (≈ 5 000,00 $)".
-      unusual.push(t(`${name}: ${typed(d(l.amount))}, far more than usual (at most ${usd(most.toFixed(2))} in the past 12 months)`, `${name} : ${typed(d(l.amount))}, bien plus que d'habitude (au plus ${usd(most.toFixed(2))} sur les 12 derniers mois)`));
+      unusual.push(t(`${name}: ${typed(d(l.amount))}, far more than usual (at most ${usd(most.toFixed(2))} in the past 12 months)`, `${name}\u00a0: ${typed(d(l.amount))}, bien plus que d'habitude (au plus ${usd(most.toFixed(2))} sur les 12 derniers mois)`));
     }
     if (current && current.gt(0) && total.gt(current.times(0.5)) && total.lte(current) && account) {
       unusual.push(t(`This payment takes ${pct(total.dividedBy(current).times(100).toNumber(), 0)} of ${account.name} (${money(current.toFixed(2), currency)})`, `Ce paiement prend ${pct(total.dividedBy(current).times(100).toNumber(), 0)} ${de(account.name)} (${money(current.toFixed(2), currency)})`));

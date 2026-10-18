@@ -6,7 +6,7 @@ import { shownUnitCost } from "@shared/money";
  * Spaces group thousands. With both "," and "." the last one is the decimal mark. With only one kind:
  * one mark is the decimal mark ("2,5" = 2.5, "1.234" = 1.234 as the server writes quantities), several
  * group thousands ("1.234.567"); in English a single "," before exactly three digits groups thousands.
- * A leading "+", "-" or "−" (U+2212) gives the sign.
+ * A leading "+", "-" or "−" (U+2212) gives the sign. Text with no digit at all ("," or ".") is not a number.
  * With `thousands` (franc amounts and franc rates, which have no decimals worth typing), a single "." or ","
  * before exactly three digits groups thousands: "50.000" FC is 50 000 FC and a rate of "2.850" is 2 850.
  * With `usd` (dollar or yuan amounts), "1.200" or "1,200" is refused (null): see ambiguousDollars.
@@ -26,6 +26,8 @@ export function parseNumberInput(value: unknown, opts: { thousands?: boolean; us
     neg = s[0] !== "+";
     s = s.slice(1);
   }
+  // A lone "," or "." (or "-,") has no digit: not a number, never 0.
+  if (!/\d/.test(s)) return null;
   const commas = (s.match(/,/g) ?? []).length;
   const dots = (s.match(/\./g) ?? []).length;
   let out: string;

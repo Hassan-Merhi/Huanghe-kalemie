@@ -32,6 +32,7 @@ import {
 import { ALLOCATION_METHODS } from "@shared/landedCost";
 import { validatePartnerShares } from "@shared/partnerSplit";
 import { dec } from "@shared/money";
+import { frNumber } from "@shared/french";
 import { db, type Tx } from "./db";
 import { AppError, badRequest, conflict, forbidden, notFound } from "./errors";
 import { checkPassword, hashPassword, requireAuth, requireRole } from "./auth";
@@ -59,7 +60,7 @@ import * as reports from "./services/reports";
 import * as checks from "./services/checks";
 import * as backup from "./services/backup";
 import { getSetting } from "./setup";
-import { assertNotFuture, assertPeriodOpen, assertUndoKeepsRefunds, cnyRateFor, reverseJournal, setExchangeRate } from "./services/ledger";
+import { assertNotFuture, assertPeriodOpen, assertUndoKeepsRefunds, cnyRateFor, rateFor, reverseJournal, setExchangeRate } from "./services/ledger";
 import { containerNumberKey } from "@shared/containerNumber";
 import { lockVariants, transferStock } from "./services/stock";
 import * as vouchers from "./services/vouchers";
@@ -994,9 +995,26 @@ export function registerRoutes(app: Express) {
     const body = z
       .object({ date: isoDate.optional(), reason: z.string().min(1).max(300), refundAccountId: optionalId, rate: optionalRate, lines: z.array(z.object({ saleLineId: id, qty: positiveDecimal })).min(1) })
       .parse(req.body);
-    // Staff hand francs back at the day's rate.
-    if (req.user!.role !== "owner") body.rate = null;
-    const sale = await db.transaction((tx) => salesSvc.returnSale(tx, paramId(req), { ...body, date: body.date ?? todayIso() }, uid(req)));
+    const date = body.date ?? todayIso();
+    const sale = await db.transaction(async (tx) => {
+      // Staff hand francs back at the day's rate. A dialog showing another one (the rate changed since it
+      // opened) is refused rather than paid out at a rate it did not show; no rate sent is the day's.
+      if (req.user!.role !== "owner") {
+        if (body.rate) {
+          const day = await rateFor(tx, date);
+          if (!dec(body.rate).equals(day.rate)) {
+            const was = frNumber(dec(body.rate).toString());
+            const now = frNumber(day.rate.toString());
+            throw conflict(
+              `Refunds go at the day's rate (${now} FC), not ${was}: check the amount to hand back`,
+              `Le remboursement se fait au taux du jour (${now}\u00a0FC), pas à ${was}\u00a0: vérifiez le montant à rendre`,
+            );
+          }
+        }
+        body.rate = null;
+      }
+      return salesSvc.returnSale(tx, paramId(req), { ...body, date }, uid(req));
+    });
     await audit(req, "return", "sale", sale.id, body);
     res.json(sale);
   }));
