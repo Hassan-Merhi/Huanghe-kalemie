@@ -222,12 +222,13 @@ export function qtyTotal(rows: { qty: unknown; unit?: string | null }[]): string
 }
 
 /**
- * Unit costs keep more precision, by one rule whatever their size: cents always, and up to four decimals
- * when the cost is not whole cents, trailing zeros trimmed (4,125 $ and 0,125 $; 12,00 $ and 0,50 $).
+ * Unit costs keep more precision where it means something: cents always, and up to four decimals when a
+ * cost under 10 $ is not whole cents, trailing zeros trimmed (4,125 $ and 0,125 $; 12,00 $ and 0,50 $). From
+ * 10 $ up the cent is enough: a motorcycle at 1 098,0495 $ reads 1 098,05 $. Display only: the value stays exact.
  */
 export function unitCost(value: unknown): string {
   const n = num(value);
-  return withDollar(n, nf(2, 4).format(Math.abs(n)));
+  return withDollar(n, (Math.abs(n) >= 10 ? nf(2, 2) : nf(2, 4)).format(Math.abs(n)));
 }
 
 /** A variant's average cost by the rule of Stock › Valorisation: its value to the cent over its quantity, 0,125 $ and not 0,1244 $. */

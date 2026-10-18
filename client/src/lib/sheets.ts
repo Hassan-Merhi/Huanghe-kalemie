@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { ambiguousImportMeasure, ambiguousTypedAmount, Decimal, parseTypedNumber } from "@shared/money";
+import { ambiguousImportMeasure, ambiguousTypedAmount, Decimal, parseTypedAmount, parseTypedNumber } from "@shared/money";
 
 /*
  * Spreadsheet helpers: CSV download, Excel templates and reading an uploaded .xlsx / .xls / .csv.
@@ -64,6 +64,8 @@ export function csvSeparator(text: string): string {
 
 /** Columns that hold numbers: "12,50" and "1 250,00" are read the French way. */
 const NUMBER_FIELDS = new Set(["sellPrice", "reorderLevel", "qty", "unitCost", "quantity", "unitPrice", "weightKg", "volumeCbm"]);
+/** Prices and costs, where "4,125" is 4,125 as the server reads it (see parseTypedAmount). */
+const AMOUNT_FIELDS = new Set(["sellPrice", "unitCost", "unitPrice"]);
 
 async function readWorkbook(file: File) {
   const buf = await file.arrayBuffer();
@@ -105,7 +107,7 @@ export async function readSheet<F extends string>(file: File, fields: Record<F, 
         const v = colOf[f] >= 0 ? r[colOf[f]] : null;
         const empty = v === null || v === undefined || String(v).trim() === "";
         if (!empty && NUMBER_FIELDS.has(f)) raw[f] = typeof v === "number" ? v : String(v).trim();
-        o[f] = empty ? null : NUMBER_FIELDS.has(f) ? parseTypedNumber(v) : String(v).trim();
+        o[f] = empty ? null : AMOUNT_FIELDS.has(f) ? parseTypedAmount(v) : NUMBER_FIELDS.has(f) ? parseTypedNumber(v) : String(v).trim();
       }
       cells.push(raw);
       return o;
@@ -125,7 +127,7 @@ export function readNumberCell(raw: string | number | null | undefined, measured
 }
 
 /**
- * A price or cost cell in doubt: text such as "4.125" or "1,200" may be thousands or three decimals, and the
+ * A price or cost cell in doubt: text such as "4.125" or "1,000" may be thousands or three decimals, and the
  * server refuses it, so the page asks first. A number cell (0.125) never is.
  */
 export function amountCellUnsure(raw: string | number | null | undefined): [string, string] | null {

@@ -2,7 +2,7 @@ import type { Express, Request } from "express";
 import { and, desc, eq, gte, ilike, inArray, lte, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import { accounts, containers, DRAFT_KINDS, expenses, journalLines, journals, parties, partners, saleReturns, users, type DraftKind } from "@shared/schema";
-import { ambiguousImportMeasure, ambiguousTypedAmount, cents, dec, Decimal, MoneyError, parseTypedNumber, sum, typedCurrencyMark } from "@shared/money";
+import { ambiguousImportMeasure, ambiguousTypedAmount, cents, dec, Decimal, MoneyError, parseTypedAmount, parseTypedNumber, sum, typedCurrencyMark } from "@shared/money";
 import { frNumber } from "@shared/french";
 import { COST_FX_MEMO } from "../services/ledger";
 import { db } from "../db";
@@ -406,7 +406,8 @@ export function registerErpRoutes(
         );
       }
     }
-    const out = parseTypedNumber(v, { measured: opts.measured });
+    // A price or cost reads "4,125" as 4,125 (see parseTypedAmount).
+    const out = opts.currency ? parseTypedAmount(v) : parseTypedNumber(v, { measured: opts.measured });
     if (out === null) return null;
     if (!/^-?\d+(\.\d+)?$/.test(out)) {
       throw new MoneyError(
@@ -425,7 +426,7 @@ export function registerErpRoutes(
   const num = rawNumber.transform((v, ctx) => importNumber(v, ctx));
   // Prices and costs: the browser sends a number cell as a JSON number, taken as it is (0.125 $ for a bolt),
   // so the import books what the preview showed. Text that could be thousands or three decimals ("4.125",
-  // "1,200") is refused rather than guessed; "0,125" and "1 250,125" are decimals. Item prices and opening
+  // "1,000") is refused rather than guessed; "4,125", "0,125" and "1 250,125" are decimals. Item prices and opening
   // costs are in dollars; a container's prices are in its invoice currency.
   const priceIn = (currency: Cur, where?: { en: string; fr: string }) =>
     rawNumber.transform((v, ctx) => {
@@ -433,8 +434,8 @@ export function registerErpRoutes(
       if (unsure) {
         const text = String(v).trim();
         throw new MoneyError(
-          `"${text}" could be ${unsure[0]} or ${unsure[1]}: for ${unsure[0]}, write ${unsure[0]} without the separator; for ${unsure[1]}, enter ${unsure[1]} in the cell as a number, not as text`,
-          `«\u00a0${text}\u00a0» : ${frNumber(unsure[0])} ou ${frNumber(unsure[1])} ? Pour ${frNumber(unsure[0])}, écrivez ${unsure[0]} sans séparateur ; pour ${frNumber(unsure[1])}, mettez ${frNumber(unsure[1])} dans la cellule comme nombre, pas comme texte.`,
+          `"${text}" could be ${unsure[0]} or ${unsure[1]}: for ${unsure[0]}, write ${unsure[0]} without the separator; for ${unsure[1]}, write it as a number in Excel`,
+          `«\u00a0${text}\u00a0» : ${frNumber(unsure[0])} ou ${frNumber(unsure[1])} ? Pour ${frNumber(unsure[0])}, écrivez ${unsure[0]} sans séparateur ; pour ${frNumber(unsure[1])}, écrivez-le comme nombre dans Excel.`,
         );
       }
       return importNumber(v, ctx, { currency, where });

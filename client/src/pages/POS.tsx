@@ -305,6 +305,8 @@ interface SaleBody {
   lines: { variantId: number; unitId?: number | null; qty: string; unitPrice: string; lineDiscount?: string }[];
   payments: { accountId: number; amount: string; rate?: string }[];
   change?: { accountId: number; amount: string; rate?: string } | null;
+  /** The franc rate the till showed; the server refuses the sale if the day's rate has moved since. */
+  tillRate?: string;
 }
 
 function ChassisPicker({ line, locationId, takenUnitIds, onChange }: { line: CartLine; locationId: number | null; takenUnitIds: Set<number>; onChange: (unitId: number | null) => void }) {
@@ -385,7 +387,7 @@ export default function POS() {
   const searchBox = useRef<HTMLDivElement>(null);
 
   const { data: moneyAccounts } = useMoneyAccounts();
-  const rateQ = useRate(saleDate);
+  const rateQ = useRate(saleDate, { live: true });
   const dayRate = rateQ.data?.cdfPerUsd ? d(rateQ.data.cdfPerUsd).toString() : "";
   const accById = useCallback((id: number | null) => moneyAccounts.find((a) => a.id === id), [moneyAccounts]);
   /**
@@ -733,6 +735,10 @@ export default function POS() {
       setReceipt(sale);
       reset();
     },
+    // A refused sale may be one the day's rate moved under: the till shows the new rate at once.
+    onError: () => {
+      void rateQ.refetch();
+    },
   });
   const [confirmCross, setConfirmCross] = useState(false);
   const [confirmPrice, setConfirmPrice] = useState(false);
@@ -768,6 +774,8 @@ export default function POS() {
       change: changeAcc && changeNative.gt(0)
         ? { accountId: changeAcc.id, amount: changeNative.toFixed(2), ...(changeAcc.currency === "CDF" ? { rate: rateNum.toString() } : {}) }
         : null,
+      // Staff francs go at the day's rate: the server checks it is still the one the till worked with.
+      ...(user?.role !== "owner" && rateNum.gt(0) ? { tillRate: rateNum.toString() } : {}),
     });
   }
   const submitRef = useRef(submit);

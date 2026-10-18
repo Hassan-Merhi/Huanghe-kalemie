@@ -969,6 +969,8 @@ export function registerRoutes(app: Express) {
         lines: z.array(z.object({ variantId: id, unitId: optionalId, qty: positiveDecimal, unitPrice: nonNegativeDecimal, lineDiscount: optionalDecimal })).min(1),
         payments: z.array(paymentSchema),
         change: paymentSchema.nullish(),
+        // The franc rate the till showed: staff francs go at the day's rate, and a till on an older one is refused.
+        tillRate: optionalRate,
       })
       .parse(req.body);
     // Cashiers always sell today.

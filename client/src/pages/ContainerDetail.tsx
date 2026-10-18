@@ -512,7 +512,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        {editable && <VariantSearch onPick={add} placeholder={t("Add an item: scan or search name, size, SKU", "Ajouter un article\u00a0: scanner ou chercher nom, taille, code")} />}
+        {editable && <VariantSearch onPick={add} placeholder={t("Scan or search an item", "Scanner ou chercher un article")} />}
         {dirty && (
           <Alert className="border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
             <AlertTriangle className="h-4 w-4" />
@@ -1009,7 +1009,7 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
           {mode === "paid" ? (
             <Field
               label={t("Paid from", "Payé depuis")}
-              hint={drawerNow && drawerAfter ? `${t("Balance", "Solde")} ${money(drawerNow.toFixed(2), currency)} → ${t("after", "après")} ${money(drawerAfter.toFixed(2), currency)}` : undefined}
+              hint={drawerNow && drawerAfter ? `${t("Balance", "Solde")} ${money(drawerNow.toFixed(2), currency)}${drawerAfter.equals(drawerNow) ? "" : ` → ${t("after", "après")} ${money(drawerAfter.toFixed(2), currency)}`}` : undefined}
               error={drawerShort}
               required
             >
