@@ -24,7 +24,8 @@ interface DashboardData {
   receivables: string;
   payables: string;
   /** The same two balances contact by contact: what customers owe apart from their avoirs, our debts apart from our advances. */
-  contactBalances?: { customersOwe: string; customerAvoirs: string; weOweSuppliers: string; supplierAdvances: string };
+  /** Suppliers' and agents' sides apart from the employees' (salaries owed, salary advances), never netted. */
+  contactBalances?: { customersOwe: string; customerAvoirs: string; weOweSuppliers: string; supplierAdvances: string; salariesOwed?: string; salaryAdvances?: string };
   stockValue: string;
   lowStockCount: number;
   openContainers: { id: number; number: string; status: string; arrivalDate: string | null; purchaseUsd: string }[];
@@ -117,7 +118,13 @@ export default function Dashboard() {
                 <StatCard
                   label={t("We owe suppliers", "Dettes fournisseurs")}
                   value={usd(data.contactBalances.weOweSuppliers)}
-                  sub={<SideSub other={data.contactBalances.supplierAdvances} otherLabel={t("advances to suppliers", "avances aux fournisseurs")} link={t("See suppliers", "Voir les fournisseurs")} />}
+                  sub={
+                    <>
+                      {d(data.contactBalances.salariesOwed ?? 0).gt(0) && <span className="block">{t("salaries owed", "salaires dus")} {usd(data.contactBalances.salariesOwed!)}</span>}
+                      {d(data.contactBalances.salaryAdvances ?? 0).gt(0) && <span className="block">{t("salary advances", "avances sur salaire")} {usd(data.contactBalances.salaryAdvances!)}</span>}
+                      <SideSub other={data.contactBalances.supplierAdvances} otherLabel={t("advances to suppliers", "avances aux fournisseurs")} link={t("See suppliers", "Voir les fournisseurs")} />
+                    </>
+                  }
                 />
               </>
             ) : (
@@ -296,7 +303,9 @@ function PositionCard({ p, onTheWay, sides }: { p: NonNullable<DashboardData["po
         [t("Customers owe us", "Clients nous doivent"), sides.customersOwe, false],
         ...(d(sides.customerAvoirs).gt(0) ? [[t("Customer credit (we owe)", "Avoirs clients (dus)"), sides.customerAvoirs, true] as [string, string, boolean]] : []),
         ...(d(sides.supplierAdvances).gt(0) ? [[t("Advances to suppliers", "Avances aux fournisseurs"), sides.supplierAdvances, false] as [string, string, boolean]] : []),
+        ...(d(sides.salaryAdvances ?? 0).gt(0) ? [[t("Salary advances", "Avances sur salaire"), sides.salaryAdvances!, false] as [string, string, boolean]] : []),
         [t("We owe", "Nous devons"), sides.weOweSuppliers, true],
+        ...(d(sides.salariesOwed ?? 0).gt(0) ? [[t("Salaries owed", "Salaires dus"), sides.salariesOwed!, true] as [string, string, boolean]] : []),
       ]
     : [
         d(p.receivables).lt(0) ? [t("Customer credit (we owe)", "Avoirs clients (dus)"), d(p.receivables).negated().toFixed(2), true] : [t("Customers owe us", "Clients nous doivent"), p.receivables, false],

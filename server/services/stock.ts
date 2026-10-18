@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { frNumber } from "@shared/french";
+import { de, frNumber } from "@shared/french";
 import { locations, motorcycleUnits, products, stockLevels, stockMovements, variants, type MovementType } from "@shared/schema";
 import { Decimal, cents, dec, type DecimalInput } from "@shared/money";
 import type { Tx } from "../db";
@@ -158,7 +158,7 @@ export async function issueStock(
   if (available.lt(q)) {
     throw conflict(
       `Not enough stock of ${input.label ?? variant.sku}: ${available.toString()} available, ${q.toString()} needed`,
-      `Stock insuffisant de ${input.label ?? variant.sku} : ${frNumber(available)} disponible(s), ${frNumber(q)} nécessaire(s)`,
+      `Stock insuffisant ${de(input.label ?? variant.sku)}\u00a0: ${frNumber(available)} disponible(s), ${frNumber(q)} nécessaire(s)`,
     );
   }
   const totalQty = dec(variant.stockQty);
@@ -204,13 +204,13 @@ export async function transferStock(
   await assertLocationOpen(tx, input.toLocationId, "transfer_in");
   const variant = await lockVariant(tx, input.variantId);
   const available = await availableOn(tx, variant.id, input.fromLocationId, input.date, await locationQty(tx, variant.id, input.fromLocationId));
-  if (available.lt(q)) throw conflict(`Not enough stock of ${variant.sku} to transfer`, `Stock insuffisant de ${variant.sku} pour le transfert`);
+  if (available.lt(q)) throw conflict(`Not enough stock of ${variant.sku} to transfer`, `Stock insuffisant ${de(variant.sku)} pour le transfert`);
   const [product] = await tx.select({ tracksSerials: products.tracksSerials, unit: products.unit, name: products.name }).from(products).where(eq(products.id, variant.productId));
   if (!q.isInteger() && wholeUnit(product?.unit)) throw wholeUnitError(`${product?.name ?? ""} (${variant.sku})`.trim());
   if (product?.tracksSerials) {
     // Motorcycles move with their own records.
     const ids = input.unitIds ?? [];
-    if (!q.isInteger() || ids.length !== q.toNumber()) throw badRequest(`Pick which ${q.toString()} motorcycle(s) of ${variant.sku} are moving`, `Choisissez quelle(s) ${q.toString()} moto(s) de ${variant.sku} sont transférées`);
+    if (!q.isInteger() || ids.length !== q.toNumber()) throw badRequest(`Pick which ${q.toString()} motorcycle(s) of ${variant.sku} are moving`, `Choisissez quelle(s) ${q.toString()} moto(s) ${de(variant.sku)} sont transférées`);
     const units = await tx.select().from(motorcycleUnits).where(inArray(motorcycleUnits.id, ids)).for("update");
     if (units.length !== ids.length || units.some((u) => u.variantId !== variant.id || u.status !== "in_stock" || u.locationId !== input.fromLocationId)) {
       throw badRequest("One of the motorcycles picked is not in stock at that location", "Une des motos choisies n'est pas en stock à cet emplacement");

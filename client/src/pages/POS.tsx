@@ -17,7 +17,7 @@ import { LocationSelect, MoneyAccountSelect, PartySelect, RateInput, VariantSear
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
-import { cdf, curLabel, d, date as fmtDate, fcRounding, frenchPunctuation, MINUS, money, qty as fmtQty, todayLocal, typedNumberOk, unclearQty, usd, variantText } from "@/lib/format";
+import { cdf, curLabel, d, date as fmtDate, fcRounding, frenchPunctuation, MINUS, money, pct as fmtPct, qty as fmtQty, todayLocal, typedNumberOk, unclearQty, usd, variantText } from "@/lib/format";
 import { unitLabel, wholeUnit } from "@/lib/units";
 import type { Account, MotorcycleUnit, Party, Settings, VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -602,6 +602,13 @@ export default function POS() {
   const blockedReason = problems.length ? t("Fix the points above", "Corrigez les points ci-dessus") : todo[0] ?? null;
   /** Lines sold for less than they cost: allowed (owner, clearance) but worth a second look. */
   const belowCost = (l: CartLine) => d(l.unitPrice).gt(0) && d(l.variant.avgCost).gt(0) && lineAmount(l).lt(c2(d(l.qty).times(d(l.variant.avgCost))));
+  /** A price raised past twice the list price, often a slipped zero (50 $ for 5 $): "+900 %", to confirm before the sale. */
+  const priceRise = (l: CartLine) => {
+    const list = d(l.variant.sellPrice);
+    if (!typedNumberOk(l.unitPrice) || !list.gt(0) || !d(l.unitPrice).gt(list.times(2))) return null;
+    return `+${fmtPct(d(l.unitPrice).minus(list).dividedBy(list).times(100).toDecimalPlaces(0).toString(), 0)}`;
+  };
+  const raisedLines = lines.filter((l) => priceRise(l));
 
   // ---- payments helpers
   function findCash(currency: "USD" | "CDF") {
@@ -641,7 +648,8 @@ export default function POS() {
   // 27,01 $ on a 27,00 $ sale, which must still read 75 870 FC like the total.
   // With nothing paid, the customer's avoir takes its part first: a 5 $ sale fully on the avoir leaves nothing to pay.
   const dueAfterAvoir = customerId && avoirCovers ? Decimal.max(total.minus(avoirCovers), 0) : total;
-  const toPay = paid.gt(0) && paid.lt(total) && !withinFrancs(receivedExact.minus(changeUsd)) ? paid : dueAfterAvoir;
+  // A walk-in can't leave anything on credit: what is due is the whole sale, however little is typed above.
+  const toPay = customerId && paid.gt(0) && paid.lt(total) && !withinFrancs(receivedExact.minus(changeUsd)) ? paid : dueAfterAvoir;
   const nothingToPay = !toPay.gt(0) && allOnAvoir;
   // A part payment typed in francs only is that many francs, not its dollars at the rate (70 000 FC, not 70 003 FC).
   const typedFc = toPay === paid && !changeUsd.gt(0) && paidRows.length > 0 && paidRows.every((p) => accById(p.accountId)!.currency === "CDF")
@@ -685,9 +693,13 @@ export default function POS() {
     },
   });
   const [confirmCross, setConfirmCross] = useState(false);
-  function submit(confirmed = false) {
+  const [confirmPrice, setConfirmPrice] = useState(false);
+  // Each check asks once, the raised prices first; confirmed, the sale goes through as typed.
+  function submit(confirmed: { price?: boolean; cross?: boolean } = {}) {
     if (!valid || mutation.isPending || !locationId) return;
-    if (crossChange && !confirmed) return setConfirmCross(true);
+    if (raisedLines.length && !confirmed.price) return setConfirmPrice(true);
+    setConfirmPrice(false);
+    if (crossChange && !confirmed.cross) return setConfirmCross(true);
     setConfirmCross(false);
     mutation.mutate({
       date: backDated ? saleDate : undefined,
@@ -843,6 +855,12 @@ export default function POS() {
                         {typedNumberOk(l.unitPrice) && d(l.unitPrice).lte(0) && (
                           <p className="flex items-center gap-1 text-xs font-medium text-destructive">
                             <AlertTriangle className="h-3 w-3 shrink-0" /> {t("Price is 0 $: enter the selling price", "Prix à 0\u00a0$\u00a0: saisissez le prix de vente")}
+                          </p>
+                        )}
+                        {priceRise(l) && (
+                          <p className="flex items-center gap-1 text-xs font-medium text-amber-800 dark:text-amber-400" data-testid="pos-price-rise">
+                            <AlertTriangle className="h-3 w-3 shrink-0" />
+                            {t(`${priceRise(l)} on the list price (${usd(d(l.variant.sellPrice).toFixed(2))}): check the zeros`, `${priceRise(l)} sur le prix de liste (${usd(d(l.variant.sellPrice).toFixed(2))}) — vérifiez les zéros`)}
                           </p>
                         )}
                         {belowCost(l) && (
@@ -1155,7 +1173,32 @@ export default function POS() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>{t("Go back", "Revenir")}</AlertDialogCancel>
-            <AlertDialogAction onClick={() => submit(true)}>{t(`Give back ${changeText}`, `Rendre ${changeText}`)}</AlertDialogAction>
+            <AlertDialogAction onClick={() => submit({ price: true, cross: true })}>{t(`Give back ${changeText}`, `Rendre ${changeText}`)}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      <AlertDialog open={confirmPrice} onOpenChange={setConfirmPrice}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("Sell at these prices?", "Vendre à ces prix ?")}</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-left" data-testid="pos-price-confirm">
+                {raisedLines.map((l) => (
+                  <p key={l.key} className="font-medium text-amber-800 dark:text-amber-400">
+                    {t(
+                      `${l.variant.productName}: ${usd(c2(d(l.unitPrice)).toFixed(2))} instead of ${usd(d(l.variant.sellPrice).toFixed(2))} (${priceRise(l)}).`,
+                      `${l.variant.productName} : ${usd(c2(d(l.unitPrice)).toFixed(2))} au lieu de ${usd(d(l.variant.sellPrice).toFixed(2))} (${priceRise(l)}).`,
+                    )}
+                  </p>
+                ))}
+                <p>{t("Check for an extra zero before recording the sale.", "Vérifiez les zéros : n'y en a-t-il pas un de trop ?")}</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => submit({ price: true })}>{t("Sell anyway", "Vendre quand même")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

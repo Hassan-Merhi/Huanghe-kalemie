@@ -1163,8 +1163,11 @@ export function registerRoutes(app: Express) {
     // balance, what came in and went out that day by kind of operation, and the expected closing.
     let drawer: unknown = undefined;
     if (req.user!.role !== "cashier") {
-      const moves = await db.execute<{ account_id: number; type: string; debit: string; credit: string; native: string | null }>(sql`
-        select l.account_id, j.type, sum(l.debit) as debit, sum(l.credit) as credit, sum(l.native_amount) as native
+      // Francs in and out are summed apart, as dollars are: a sale's franc change reads as money out
+      // ("+200 000 FC −16 000 FC"), not netted into what came in.
+      const moves = await db.execute<{ account_id: number; type: string; debit: string; credit: string; native_in: string | null; native_out: string | null }>(sql`
+        select l.account_id, j.type, sum(l.debit) as debit, sum(l.credit) as credit,
+          sum(greatest(l.native_amount, 0)) as native_in, sum(greatest(-l.native_amount, 0)) as native_out
         from journal_lines l join journals j on j.id = l.journal_id join accounts a on a.id = l.account_id
         where a.is_money and j.date = ${date}
         group by l.account_id, j.type
@@ -1181,8 +1184,8 @@ export function registerRoutes(app: Express) {
         const o = opening.rows.find((r) => r.account_id === a.id);
         const rows = moves.rows.filter((r) => r.account_id === a.id);
         // For a CDF account the native amount is signed (+ in, − out).
-        const amountIn = (r: (typeof rows)[number]) => (cdf ? dec(r.native ?? 0).isPositive() ? dec(r.native ?? 0) : dec(0) : dec(r.debit));
-        const amountOut = (r: (typeof rows)[number]) => (cdf ? dec(r.native ?? 0).isNegative() ? dec(r.native ?? 0).abs() : dec(0) : dec(r.credit));
+        const amountIn = (r: (typeof rows)[number]) => (cdf ? dec(r.native_in ?? 0) : dec(r.debit));
+        const amountOut = (r: (typeof rows)[number]) => (cdf ? dec(r.native_out ?? 0) : dec(r.credit));
         const openingAmt = dec(cdf ? o?.native ?? 0 : o?.usd ?? 0);
         const totalIn = rows.reduce((s, r) => s.plus(amountIn(r)), dec(0));
         const totalOut = rows.reduce((s, r) => s.plus(amountOut(r)), dec(0));

@@ -13,7 +13,7 @@ import {
 } from "@shared/schema";
 import { computeLandedCost, type AllocationMethod, type LandedCostResult } from "@shared/landedCost";
 import { cents, dec, sum, Decimal, MoneyError } from "@shared/money";
-import { frNumber } from "@shared/french";
+import { de, frNumber } from "@shared/french";
 import type { Tx } from "../db";
 import { badRequest, conflict, notFound, wholeUnitError, francDecimalsError } from "../errors";
 import { wholeUnit } from "@shared/units";
@@ -535,7 +535,7 @@ export async function reverseContainer(tx: Tx, containerId: number, date: string
       .where(and(eq(stockLevels.variantId, line.variantId), eq(stockLevels.locationId, container.locationId)));
     const needed = sum(full.lines.filter((l) => l.variantId === line.variantId).map((l) => l.quantity));
     if (dec(lvl?.qty ?? 0).lt(needed)) {
-      throw conflict(`Not enough ${line.productName} (${line.sku}) left in stock to reverse this container`, `Stock insuffisant de ${line.productName} (${line.sku}) pour annuler ce conteneur`);
+      throw conflict(`Not enough ${line.productName} (${line.sku}) left in stock to reverse this container`, `Stock insuffisant ${de(line.productName)} (${line.sku}) pour annuler ce conteneur`);
     }
   }
 
