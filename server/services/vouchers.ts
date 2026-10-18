@@ -90,7 +90,14 @@ async function mergeSettlingLines(tx: Tx, lines: VoucherLineInput[]): Promise<Vo
 async function capToday(tx: Tx, accountId: number, partyId: number | null, held: { all: Decimal; asOf: Decimal }, date: string) {
   const all = await foreignBalance(tx, accountId, partyId, "CDF");
   const upToDate = await foreignBalance(tx, accountId, partyId, "CDF", date);
-  if (all.native.isZero() && upToDate.native.isZero()) return { usd: Decimal.max(Decimal.min(held.all, held.asOf), 0), cdf: null };
+  // No francs either way: only the dollars count. Dollars a franc balance still shows for no francs (a
+  // month-end revaluation of francs since given back) are worth nothing today, as below, so they are
+  // not held for anyone; owed the other way, they still come off, so the cap is never looser for them.
+  if (all.native.isZero() && upToDate.native.isZero()) {
+    const heldOnly = (heldUsd: Decimal, francs: { usd: Decimal }) => heldUsd.plus(Decimal.min(francs.usd, 0));
+    const usd = Decimal.min(heldOnly(held.all, all), heldOnly(held.asOf, upToDate), heldOnly(held.all, upToDate));
+    return { usd: Decimal.max(usd, 0), cdf: null };
+  }
   const rate = dec((await rateFor(tx, date)).rate);
   const cap = (heldUsd: Decimal, francs: { native: Decimal; usd: Decimal }) => {
     const francsHeld = francs.native.negated();
