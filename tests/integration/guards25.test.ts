@@ -269,4 +269,26 @@ describe.skipIf(!hasDb)("Guards found by the twenty-fifth audit", async () => {
     await byHand(d, "0", "-5.00");
     expect((await checks.selfCheck(db)).ok).toBe(true);
   });
+
+  it("N3a: a return never pays out in cash the dollars on a franc balance with no francs", async () => {
+    const product = await call("POST", "/api/products", { name: `Pièce N3a ${uniq()}`, unit: "pcs", variants: [{ attributes: {}, sellPrice: "100" }] });
+    expect(product.status, JSON.stringify(product.body)).toBe(201);
+    const v = product.body.variants[0].id;
+    const stock = await call("POST", "/api/stock/adjustments", { date: today, locationId, kind: "opening", reason: "Ouverture", lines: [{ variantId: v, qtyChange: "2", unitCost: "40" }] });
+    expect(stock.status, JSON.stringify(stock.body)).toBeLessThan(300);
+    // 100 $ sold on credit, then 0 FC / -71,03 $ on the customer's francs (as a close left one before N3b).
+    const c = await contact("customer", "Client N3a retour");
+    const sale = await call("POST", "/api/sales", { date: today, locationId, customerId: c, lines: [{ variantId: v, qty: "1", unitPrice: "100" }], payments: [] }, "gerant");
+    expect(sale.status, JSON.stringify(sale.body)).toBe(201);
+    await byHand(c, "0", "-71.03");
+    // Brought back: never paid for, it all comes off the 100 $ owed, and no cash goes back.
+    const usd0 = await drawer(cashUsd);
+    const back = await call("POST", `/api/sales/${sale.body.id}/returns`, { date: today, lines: [{ saleLineId: sale.body.lines[0].id, qty: "1" }], refundAccountId: cashUsd, reason: "Retour" }, "gerant");
+    expect(back.status, JSON.stringify(back.body)).toBe(200);
+    expect(back.body.returns[0].refundToBalanceUsd).toBe("100.00");
+    expect(await drawer(cashUsd)).toEqual(usd0);
+    expect(await owed(c, "USD", receivables)).toEqual(["0.00", "0.00"]);
+    await byHand(c, "0", "71.03");
+    expect((await checks.selfCheck(db)).ok).toBe(true);
+  });
 });

@@ -655,13 +655,22 @@ export async function returnSale(tx: Tx, saleId: number, input: ReturnInput, use
       .innerJoin(journals, eq(journals.id, journalLines.journalId))
       .innerJoin(saleReturns, and(eq(journals.sourceType, "sale_return"), eq(journals.sourceId, saleReturns.id)))
       .where(and(eq(saleReturns.saleId, saleId), eq(journalLines.accountId, receivables)));
-    const [owed] = await tx
-      .select({ usd: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)` })
+    const byCurrency = await tx
+      .select({
+        currency: journalLines.currency,
+        native: sql<string>`coalesce(sum(${journalLines.nativeAmount}), 0)`,
+        usd: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)`,
+      })
       .from(journalLines)
       .innerJoin(journals, eq(journals.id, journalLines.journalId))
-      .where(and(eq(journalLines.accountId, receivables), eq(journalLines.partyId, sale.customerId), lte(journals.date, input.date)));
+      .where(and(eq(journalLines.accountId, receivables), eq(journalLines.partyId, sale.customerId), lte(journals.date, input.date)))
+      .groupBy(journalLines.currency);
+    // Dollars a franc or yuan balance still shows for no francs or yuan (a month-end revaluation of francs
+    // since given back) are held for nobody: they never make the debt look smaller, so no more cash goes
+    // back for them (as in the refund cap of a payment voucher). Owed the other way, they still count.
+    const owed = sum(byCurrency.map((r) => (r.currency !== "USD" && dec(r.native).isZero() ? Decimal.max(dec(r.usd), 0) : dec(r.usd))));
     const unpaidOnSale = Decimal.max(dec(sale.creditUsd).minus(prior.usd), 0);
-    toDebt = Decimal.min(total, unpaidOnSale, Decimal.max(dec(owed.usd), 0));
+    toDebt = Decimal.min(total, unpaidOnSale, Decimal.max(owed, 0));
   }
   const toCash = input.refundAccountId ? total.minus(toDebt) : new Decimal(0);
   const refundLines: PostLine[] = [];
