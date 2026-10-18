@@ -185,7 +185,7 @@ function Valuation() {
       <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-center">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input className="pl-9" placeholder={t("Search item, SKU, category, size", "Chercher article, code, catégorie, taille")} value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Input className="pl-9" placeholder={t("Item, SKU, category, size", "Article, code, catégorie, taille")} value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <label className="flex items-center gap-2 text-sm"><Switch checked={lowOnly} onCheckedChange={setLowOnly} /> {t("Low stock only", "Stock bas seulement")}</label>
         <label className="flex items-center gap-2 text-sm"><Switch checked={hideEmpty} onCheckedChange={setHideEmpty} /> {t("Hide zero stock", "Masquer stock zéro")}</label>

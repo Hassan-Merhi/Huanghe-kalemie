@@ -6,8 +6,8 @@ import { hasDb, resetDatabase } from "./helpers";
 import type { Db } from "../../server/db";
 
 /**
- * U28: a till still on an older franc rate is refused rather than booked partly on credit; a price or cost
- * "4,125" typed as text in an import is 4,125, as a quantity "2,250" is 2,25.
+ * U28: a till still on an older franc rate is refused rather than booked partly on credit; a quantity
+ * "2,250" L typed as text in an import is 2,25. (U29: a price or cost typed "4,125" is asked about, not read.)
  */
 describe.skipIf(!hasDb)("Twenty-third UI audit", async () => {
   const { createApp } = await import("../../server/index");
@@ -94,20 +94,18 @@ describe.skipIf(!hasDb)("Twenty-third UI audit", async () => {
     expect(owner.status, JSON.stringify(owner.body)).toBe(201);
   });
 
-  it("reads a cost typed \"4,125\" as 4,125 and still asks about \"4.125\" and \"1,000\"", async () => {
-    expect(parseTypedAmount("4,125")).toBe("4.125");
-    expect(parseTypedAmount("4,125 $")).toBe("4.125");
-    expect(parseTypedAmount("1,200")).toBe("1.2");
+  it("reads a quantity typed \"2,250\" L as 2,25 and asks about a cost typed \"4,125\", \"4.125\" or \"1,000\"", async () => {
     expect(parseTypedAmount("1 250,125")).toBe("1250.125");
     expect(parseTypedAmount("12,50")).toBe("12.50");
     expect(parseTypedAmount("1,415.51")).toBe("1415.51");
     expect(parseTypedAmount(4.125)).toBe("4.125");
-    expect(ambiguousTypedAmount("4,125")).toBeNull();
+    // U29: "4,125" is 4,125 in a French sheet and 4 125 in an English one: asked, like "4.125".
+    expect(ambiguousTypedAmount("4,125")).toEqual(["4125", "4.125"]);
     expect(ambiguousTypedAmount("4.125")).toEqual(["4125", "4.125"]);
     expect(ambiguousTypedAmount("1,000")).toEqual(["1000", "1"]);
 
-    // The audit's file: quantity "2,250" L and cost "4,125" $, both decimals.
-    const ok = await call("POST", "/api/import/items", { date: today, locationId, rows: [{ name: "Huile U28", unit: "litre", qty: "2,250", unitCost: "4,125", sellPrice: "6,500" }] });
+    // The audit's file: quantity "2,250" L as text, cost 4,125 $ and price 6,5 $ as number cells.
+    const ok = await call("POST", "/api/import/items", { date: today, locationId, rows: [{ name: "Huile U28", unit: "litre", qty: "2,250", unitCost: 4.125, sellPrice: 6.5 }] });
     expect(ok.status, JSON.stringify(ok.body)).toBe(201);
     const [v] = await db.transaction((tx) => catalog.searchVariants(tx, { search: "Huile U28" }));
     expect(Number(v.stockQty)).toBe(2.25);

@@ -512,7 +512,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
-        {editable && <VariantSearch onPick={add} placeholder={t("Scan or search an item", "Scanner ou chercher un article")} />}
+        {editable && <VariantSearch onPick={add} placeholder={t("Scan or search an item", "Scanner ou chercher")} />}
         {dirty && (
           <Alert className="border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/40 dark:text-amber-100">
             <AlertTriangle className="h-4 w-4" />
