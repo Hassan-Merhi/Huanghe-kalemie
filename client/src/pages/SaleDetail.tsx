@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
-import { MoneyAccountSelect, useMoneyAccounts, useRate } from "@/components/pickers";
+import { MoneyAccountSelect, RateInput, useMoneyAccounts, useRate } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
@@ -43,7 +43,14 @@ function ReturnDialog({ sale, owes, onClose, onDone }: { sale: SaleFull; owes: D
   const account: Account | null = moneyAccounts.find((a) => a.id === accountId) ?? null;
   const [rate, setRate] = useState<string | null>(null);
   const rateQ = useRate(date);
-  const effRate = rate ?? rateQ.data?.cdfPerUsd ?? "";
+  const { user } = useAuth();
+  const isOwner = user?.role === "owner";
+  // Staff refunds go at the day's rate (the server refuses another), so only the owner's typed one counts.
+  const effRate = (isOwner ? rate : null) ?? rateQ.data?.cdfPerUsd ?? "";
+  // The owner's rate more than the tolerance from the day's is refused by the server: said before saving.
+  const rateTolerance = d(useQuery<Settings>({ queryKey: ["/api/settings"] }).data?.rateTolerancePct ?? "3");
+  const dayRate = d(rateQ.data?.cdfPerUsd);
+  const rateOff = dayRate.gt(0) && d(effRate).gt(0) && d(effRate).minus(dayRate).abs().dividedBy(dayRate).times(100).gt(rateTolerance);
   const m = useApiMutation<unknown, SaleFull>("POST", `/api/sales/${sale.id}/returns`, { success: t("Return recorded", "Retour enregistré"), onSuccess: (s) => onDone(s) });
 
   const chosen = sale.lines
@@ -83,7 +90,12 @@ function ReturnDialog({ sale, owes, onClose, onDone }: { sale: SaleFull; owes: D
             ? !sale.customerId && t("This sale has no customer", "Cette vente n'a pas de client")
             : !accountId
               ? t("Choose the account to pay back from", "Choisissez le compte de remboursement")
-              : isCdf && !d(effRate).gt(0) && t("Enter the exchange rate", "Saisissez le taux de change");
+              : isCdf && !d(effRate).gt(0)
+                ? t("Enter the exchange rate", "Saisissez le taux de change")
+                : isCdf && rateOff && t(
+                  `The rate is more than ${rateTolerance.toString()}% from the day's rate (${fmtQty(dayRate.toString())}): correct it`,
+                  `Le taux s'écarte de plus de ${rateTolerance.toString()}\u00a0% du taux du jour (${fmtQty(dayRate.toString())})\u00a0: corrigez-le`,
+                );
 
   function save() {
     m.mutate({
@@ -169,8 +181,9 @@ function ReturnDialog({ sale, owes, onClose, onDone }: { sale: SaleFull; owes: D
                   <MoneyAccountSelect value={accountId} onChange={(id) => setAccountId(id)} />
                 </Field>
                 {isCdf && (
-                  <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} hint={`${t("Pay out:", "À rendre\u00a0:")} ${cdf((payOutFc ?? d(0)).toString())} ${t("(rounded down to 100 FC)", "(arrondi à 100\u00a0FC inférieurs)")}`} required>
-                    <Input inputMode="decimal" thousands value={effRate} onChange={(e) => setRate(e.target.value)} />
+                  // Staff see the day's rate as text, as in the voucher and customer-payment dialogs: it is the one the books use.
+                  <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} hint={`${t("Pay out:", "À rendre\u00a0:")} ${cdf((payOutFc ?? d(0)).toString())} ${t("(rounded down to 100 FC)", "(arrondi à 100\u00a0FC inférieurs)")}`} required={isOwner}>
+                    <RateInput day={date} value={effRate} onChange={setRate} ownerOnly />
                   </Field>
                 )}
               </div>

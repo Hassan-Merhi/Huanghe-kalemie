@@ -261,7 +261,7 @@ export default function Dashboard() {
                         <Link key={s.id} href={`/sales/${s.id}`} className="flex items-center justify-between gap-2 py-2 hover:bg-muted/50">
                           <span className="min-w-0">
                             <span className="font-medium">{s.number}</span>
-                            <span className="text-muted-foreground"> · {fmtDate(s.date)} · {s.customerName ?? t("walk-in", "de passage")}</span>
+                            <span className="text-muted-foreground"> · {fmtDate(s.date)} · {s.customerName ?? t("Walk-in", "De passage")}</span>
                           </span>
                           <span className="flex shrink-0 items-center gap-2">
                             {voided && <Badge variant="destructive">{t("Cancelled", "Annulée")}</Badge>}

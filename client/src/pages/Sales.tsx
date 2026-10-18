@@ -201,10 +201,9 @@ function SaleCard({ r, showCost }: { r: SaleListRow; showCost: boolean }) {
         </div>
         <Num className={cn("shrink-0 text-lg font-semibold", voided && "line-through")}>{usd((voided ? d(r.total) : n.total).toFixed(2))}</Num>
       </div>
-      <p className="mt-0.5 flex min-w-0 text-sm">
-        <span className="max-w-[60%] shrink-0 truncate"><Customer r={r} /></span>
-        {r.firstItem && <><span className="shrink-0 whitespace-pre text-muted-foreground"> · </span><Items r={r} className="text-muted-foreground" /></>}
-      </p>
+      {/* The customer wraps rather than being cut (as on Ventes du jour), the items under it, as in the table. */}
+      <p className="mt-0.5 break-words text-sm"><Customer r={r} /></p>
+      {r.firstItem && <Items r={r} className="text-sm text-muted-foreground" />}
       <div className="mt-1.5 flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <p className="min-w-0 tabular">
           {t("Qty", "Qté")} {fmtQty(d(r.qty).minus(d(r.returnedQty)).toString())} · {t("Paid", "Payé")} <span className={cn(voided && "line-through")}>{usd((voided ? d(r.paidKeptUsd ?? r.paidUsd) : n.paid).toFixed(2))}</span>
