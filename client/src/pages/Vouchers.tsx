@@ -324,6 +324,8 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
     : tinySlip >= 0
       ? t(`Line ${tinySlip + 1}: the amount is less than one cent.`, `Ligne ${tinySlip + 1}\u00a0: le montant vaut moins d'un centime.`)
       : null;
+  // An amount that cannot be saved as typed ("250000,50" FC, "1.200") previews nothing: no balance after, no dollars.
+  const amountsBad = !!slipText || lines.some((l) => l.amount.trim() && !isAmount(l.amount));
   const bal = balances.data?.find((a) => a.id === accountId);
   const current = bal ? d(isCdf ? bal.nativeBalance : bal.balance) : null;
   const after = current ? (kind === "payment" ? current.minus(total) : current.plus(total)) : null;
@@ -398,7 +400,9 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
             label={kind === "payment" ? t("Paid from", "Payé depuis") : t("Received into", "Reçu dans")}
             hint={
               current
-                ? `${t("Balance", "Solde")} ${money(current.toFixed(2), currency)} → ${t("after", "après")} ${money(after!.toFixed(2), currency)}`
+                ? amountsBad
+                  ? `${t("Balance", "Solde")} ${money(current.toFixed(2), currency)}`
+                  : `${t("Balance", "Solde")} ${money(current.toFixed(2), currency)} → ${t("after", "après")} ${money(after!.toFixed(2), currency)}`
                 : undefined
             }
             error={short}
@@ -407,7 +411,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
             <MoneyAccountSelect value={accountId} onChange={(id) => setAccountId(id)} />
           </Field>
           {isCdf && (
-            <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} hint={totalUsd ? `= ${usd(totalUsd.toFixed(2))}` : undefined} required>
+            <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} hint={totalUsd && !amountsBad ? `= ${usd(totalUsd.toFixed(2))}` : undefined} required>
               <RateInput day={day} value={rateField.rate} onChange={rateField.setRate} ownerOnly />
             </Field>
           )}
@@ -510,9 +514,9 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
             </Button>
             <div className="text-right text-sm">
               <span className="text-muted-foreground">{t("Total", "Total")} </span>
-              <Num className="text-lg font-semibold">{slipText ? "—" : money(total.toFixed(2), currency)}</Num>
+              <Num className="text-lg font-semibold">{amountsBad ? "—" : money(total.toFixed(2), currency)}</Num>
               {slipText && <span className="block text-xs font-medium text-destructive" role="alert">{slipText}</span>}
-              {isCdf && !slipText && <span className="block text-xs text-muted-foreground">{totalUsd ? `≈ ${usd(totalUsd.toFixed(2))}` : t("enter the rate", "saisissez le taux")}</span>}
+              {isCdf && !amountsBad && <span className="block text-xs text-muted-foreground">{totalUsd ? `≈ ${usd(totalUsd.toFixed(2))}` : t("enter the rate", "saisissez le taux")}</span>}
             </div>
           </div>
         </CardContent>

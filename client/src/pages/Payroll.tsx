@@ -80,11 +80,14 @@ function useMonthLabel() {
   return (month: string) => monthText(month, lang);
 }
 
-/** Employee balance in words. Debit-positive: negative = we owe them, positive = an advance they still owe. */
-export function EmployeeBalance({ balance, className }: { balance: string | null | undefined; className?: string }) {
+/**
+ * Employee balance in words. Debit-positive: negative = we owe them, positive = an advance they still owe.
+ * `beforePay`: beside a month not yet recorded, nothing due reads "Aucune avance", never "Soldé" (as if paid).
+ */
+export function EmployeeBalance({ balance, className, beforePay }: { balance: string | null | undefined; className?: string; beforePay?: boolean }) {
   const t = useT();
   const b = d(balance);
-  if (b.isZero()) return <span className={cn("text-muted-foreground", className)}>{t("Settled", "Soldé")}</span>;
+  if (b.isZero()) return <span className={cn("text-muted-foreground", className)}>{beforePay ? t("No advance", "Aucune avance") : t("Settled", "Soldé")}</span>;
   if (b.isNegative()) {
     const x = usd(b.abs().toFixed(2));
     return <span className={cn("font-medium text-blue-700 dark:text-blue-400", className)}>{t(`We owe them ${x}`, `On lui doit ${x}`)}</span>;
@@ -474,7 +477,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                       <TableCell className="text-right">
                         <Num className={cn("font-medium", g.net.isNegative() && "text-destructive")}>{fmt(g.net.toFixed(2))}</Num>
                       </TableCell>
-                      <TableCell className="whitespace-nowrap text-right text-sm"><EmployeeBalance balance={g.e.balance} /></TableCell>
+                      <TableCell className="whitespace-nowrap text-right text-sm"><EmployeeBalance balance={g.e.balance} beforePay /></TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

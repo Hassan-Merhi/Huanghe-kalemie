@@ -300,11 +300,15 @@ export function DuplicatePartyAlert({ text, open, onCancel, onConfirm }: { text:
   );
 }
 
-/** "nous doit 52,00 $", "nous devons 1 450,00 $", "soldé": a contact's balance (debit-positive) in a few words. */
-function partyBalanceText(t: (en: string, fr: string) => string, balance: string | undefined): string | null {
+/**
+ * "nous doit 52,00 $", "nous devons 1 450,00 $", "soldé": a contact's balance (debit-positive) in a few words.
+ * A customer who paid ahead holds an avoir, said so as the till and the sale page say it: "avoir 17,00 $".
+ */
+function partyBalanceText(t: (en: string, fr: string) => string, balance: string | undefined, type?: Party["type"]): string | null {
   if (balance === undefined) return null;
   const b = d(balance);
   if (b.isZero()) return t("settled", "soldé");
+  if (type === "customer" && b.isNegative()) return t(`credit ${usd(b.abs().toFixed(2))}`, `avoir ${usd(b.abs().toFixed(2))}`);
   return b.isPositive() ? t(`owes us ${usd(b.toFixed(2))}`, `nous doit ${usd(b.toFixed(2))}`) : t(`we owe ${usd(b.abs().toFixed(2))}`, `nous devons ${usd(b.abs().toFixed(2))}`);
 }
 
@@ -404,7 +408,7 @@ export function PartySelect({
                   <span className="block truncate">{p.name}</span>
                   {/* Who it is and where they stand, so two "Bahati" (a customer, an employee) read apart. */}
                   <span className="block text-xs text-muted-foreground tabular" data-testid="party-opt-info">
-                    {[types.length > 1 ? t(PARTY_LABELS[p.type][0], PARTY_LABELS[p.type][1]) : null, partyBalanceText(t, p.balance), p.phone].filter(Boolean).join(" · ")}
+                    {[types.length > 1 ? t(PARTY_LABELS[p.type][0], PARTY_LABELS[p.type][1]) : null, partyBalanceText(t, p.balance, p.type), p.phone].filter(Boolean).join(" · ")}
                   </span>
                 </span>
                 {p.id === value && <Check className="h-4 w-4 shrink-0" />}

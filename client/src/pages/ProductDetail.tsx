@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
 import { CategorySelect, useLocations } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
-import { d, date, qty, unitCost, usd } from "@/lib/format";
+import { d, date, qty, usd, variantUnitCost } from "@/lib/format";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
 import type { Category, MotorcycleUnit, Product, ProductVariant } from "@/lib/types";
@@ -145,7 +145,7 @@ export default function ProductDetail() {
                       <Num className={d(v.stockQty).lte(0) ? "text-destructive" : undefined}>{qty(v.stockQty)}</Num>
                       {low && <Badge variant="destructive" className="ml-2">{t("Low", "Bas")}</Badge>}
                     </TableCell>
-                    {showCost && <TableCell className="text-right"><Num>{unitCost(v.avgCost)}</Num></TableCell>}
+                    {showCost && <TableCell className="text-right"><Num>{variantUnitCost(v)}</Num></TableCell>}
                     {showCost && <TableCell className="text-right"><Num>{usd(v.stockValue)}</Num></TableCell>}
                     {usedLocations.length > 1 &&
                       usedLocations.map((l) => (

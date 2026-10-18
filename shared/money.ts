@@ -197,3 +197,21 @@ export function ambiguousImportMeasure(value: unknown): [string, string] | null 
   const sign = m[1] && m[1] !== "+" ? "-" : "";
   return [`${sign}${m[2]}000`, `${sign}${m[2]}`];
 }
+
+/**
+ * The per-unit cost a stock value kept to the cent stands for, for display: 2,25 L at 0,125 $ are kept as
+ * 0,28 $, which divided back reads 0,1244 $. The roundest cost (to the cent, then 0,005, 0,001, 0,0005 and
+ * 0,0001 $) that still gives that value to the cent is shown: 0,125 $. Read only: the value, the ledger and
+ * every cost a sale takes stay value ÷ qty; when no rounder figure gives the value, value ÷ qty is shown.
+ */
+export function shownUnitCost(value: DecimalInput, qty: DecimalInput): Decimal {
+  const q = dec(qty);
+  const v = cents(value);
+  if (!q.gt(0)) return dec(0);
+  const exact = v.dividedBy(q);
+  for (const step of ["0.01", "0.005", "0.001", "0.0005", "0.0001"]) {
+    const near = exact.dividedBy(step).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).times(step);
+    if (near.gt(0) && cents(near.times(q)).equals(v)) return near;
+  }
+  return exact;
+}

@@ -13,7 +13,7 @@ import {
   stockLevels,
   variants,
 } from "@shared/schema";
-import { cents, dec, sum, Decimal, type DecimalInput } from "@shared/money";
+import { cents, dec, shownUnitCost, sum, Decimal, type DecimalInput } from "@shared/money";
 import type { Tx } from "../db";
 import { notFound } from "../errors";
 import { monthRange, pnlByAccount, summarizePnl } from "./periods";
@@ -471,23 +471,8 @@ export async function profitAndLoss(tx: Tx, from: string, to: string) {
   return { from, to, accounts: rows, totals: summarizePnl(rows) };
 }
 
-/**
- * The per-unit cost a stock value kept to the cent stands for, for display: 2,25 L at 0,125 $ are kept as
- * 0,28 $, which divided back reads 0,1244 $. The roundest cost (to the cent, then 0,005, 0,001, 0,0005 and
- * 0,0001 $) that still gives that value to the cent is shown: 0,125 $. Read only: the value, the ledger and
- * every cost a sale takes stay value ÷ qty; when no rounder figure gives the value, value ÷ qty is shown.
- */
-export function shownUnitCost(value: DecimalInput, qty: DecimalInput): Decimal {
-  const q = dec(qty);
-  const v = cents(value);
-  if (!q.gt(0)) return dec(0);
-  const exact = v.dividedBy(q);
-  for (const step of ["0.01", "0.005", "0.001", "0.0005", "0.0001"]) {
-    const near = exact.dividedBy(step).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).times(step);
-    if (near.gt(0) && cents(near.times(q)).equals(v)) return near;
-  }
-  return exact;
-}
+// The display rule for a unit cost lives in shared/money, so the client's count form reads the same figure.
+export { shownUnitCost };
 
 export async function stockValuation(tx: Tx) {
   const rows = await tx

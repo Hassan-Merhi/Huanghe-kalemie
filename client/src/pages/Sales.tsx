@@ -41,6 +41,8 @@ interface SaleListRow {
   paidKeptUsd?: string;
   /** The part of the credit the customer's avoir covered when the sale was made: nothing new is owed for it. */
   avoirUsedUsd?: string;
+  /** The same at the sale, before returns: the sale page's "Réglé sur l'avoir". */
+  avoirAtSaleUsd?: string;
   lineCount?: number;
   firstItem?: string | null;
 }
@@ -171,7 +173,10 @@ function creditOf(r: SaleListRow): string {
 function creditSplit(r: SaleListRow) {
   const left = d(creditOf(r));
   const onAvoir = d(r.avoirUsedUsd ?? 0);
-  return { onAvoir, owed: left.minus(onAvoir) };
+  // Returns took the avoir's part down (23 $ at the sale, 6 $ after a 22 $ tyre came back): said, so the
+  // list's net figure is not read against the sale page's 23 $.
+  const atSale = d(r.avoirAtSaleUsd ?? 0);
+  return { onAvoir, owed: left.minus(onAvoir), avoirBefore: onAvoir.gt(0) && atSale.gt(onAvoir) ? atSale : null };
 }
 
 /** "Crédit 12,00 $" in amber, and "sur l'avoir 10,00 $" in green for the part an avoir covered. */
@@ -181,6 +186,7 @@ function CreditText({ r }: { r: SaleListRow }) {
   return (
     <>
       {c.onAvoir.gt(0) && <span className="text-emerald-800 dark:text-emerald-400"> · {t("from credit", "sur l'avoir")} {usd(c.onAvoir.toFixed(2))}</span>}
+      {c.avoirBefore && <span className="text-muted-foreground"> ({t(`${usd(c.avoirBefore.toFixed(2))} before returns`, `${usd(c.avoirBefore.toFixed(2))} avant retours`)})</span>}
       {c.owed.gt(0) && <span className="text-amber-800 dark:text-amber-400"> · {t("Credit", "Crédit")} {usd(c.owed.toFixed(2))}</span>}
     </>
   );
@@ -431,6 +437,7 @@ export default function Sales() {
                             : (
                                 <>
                                   {creditSplit(r).onAvoir.gt(0) && <div className="whitespace-nowrap text-xs text-emerald-800 dark:text-emerald-400">{t("from credit", "sur l'avoir")} {usd(creditSplit(r).onAvoir.toFixed(2))}</div>}
+                                  {creditSplit(r).avoirBefore && <div className="whitespace-nowrap text-xs text-muted-foreground">{t(`${usd(creditSplit(r).avoirBefore!.toFixed(2))} before returns`, `${usd(creditSplit(r).avoirBefore!.toFixed(2))} avant retours`)}</div>}
                                   {creditSplit(r).owed.gt(0) && <div className="whitespace-nowrap text-xs text-amber-800 dark:text-amber-400">{t("credit", "crédit")} {usd(creditSplit(r).owed.toFixed(2))}</div>}
                                 </>
                               )}
