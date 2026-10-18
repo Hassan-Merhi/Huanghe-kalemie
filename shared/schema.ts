@@ -224,6 +224,12 @@ export const stockMovements = pgTable(
     qty: qty("qty").notNull(),
     /** Signed value moved in or out of stock, in USD. */
     value: money("value").notNull(),
+    /**
+     * On stock added at a cost per unit (an adjustment, opening stock): that cost to six decimals, of which
+     * `value` is the amount to the cent. Shown as the item's cost while it still gives its value (see
+     * shownUnitCost); nothing is valued by it.
+     */
+    unitCost: unitCost("unit_cost"),
     sourceType: varchar("source_type", { length: 30 }),
     sourceId: integer("source_id"),
     journalId: integer("journal_id"),

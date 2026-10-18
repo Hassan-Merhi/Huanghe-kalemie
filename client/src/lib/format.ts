@@ -322,9 +322,9 @@ export function unitCost(value: unknown): string {
   return withDollar(n, (Math.abs(n) >= 10 ? nf(2, 2) : nf(2, 4)).format(Math.abs(n)));
 }
 
-/** A variant's average cost by the rule of Stock › Valorisation: its value to the cent over its quantity, 0,125 $ and not 0,1244 $. */
-export function variantUnitCost(v: { avgCost: unknown; stockValue?: string | null; stockQty?: string | null }): string {
-  if (v.stockValue != null && v.stockQty != null && new Decimal(num(v.stockQty)).gt(0)) return unitCost(shownUnitCost(v.stockValue, v.stockQty).toString());
+/** A variant's average cost by the rule of Stock › Valorisation: its value to the cent over its quantity, 0,125 $ and not 0,1244 $ (nor 0,13 $ for 1 L entered at 0,125 $). */
+export function variantUnitCost(v: { avgCost: unknown; stockValue?: string | null; stockQty?: string | null; keptUnitCost?: string | null }): string {
+  if (v.stockValue != null && v.stockQty != null && new Decimal(num(v.stockQty)).gt(0)) return unitCost(shownUnitCost(v.stockValue, v.stockQty, v.keptUnitCost).toString());
   return unitCost(v.avgCost);
 }
 

@@ -21,6 +21,7 @@ import { notFound } from "../errors";
 import { monthRange, pnlByAccount, summarizePnl } from "./periods";
 import { accountBalances, netPosition, salesByProduct } from "./reports";
 import { avoirUsedSql, creditLeftSql } from "./sales";
+import { keptUnitCosts } from "./stock";
 
 // ---------------------------------------------------------------- Accounts
 
@@ -94,6 +95,7 @@ export async function inventoryByLocation(tx: Tx) {
     .leftJoin(categories, eq(categories.id, products.categoryId))
     .where(sql`${stockLevels.qty} <> 0`)
     .orderBy(asc(locations.name), asc(products.name), asc(variants.sku));
+  const kept = await keptUnitCosts(tx);
   return rows.map((r) => {
     const tq = dec(r.totalQty);
     const avg = tq.isZero() ? dec(0) : dec(r.totalValue).dividedBy(tq);
@@ -109,7 +111,7 @@ export async function inventoryByLocation(tx: Tx) {
       unit: r.unit,
       qty: dec(r.qty).toFixed(3),
       // Shown by the same rule as Stock › Valorisation (0,125 $, not 0,1244 $); the value stays exact.
-      avgCost: tq.isZero() ? "0.000000" : shownUnitCost(r.totalValue, tq).toFixed(6),
+      avgCost: tq.isZero() ? "0.000000" : shownUnitCost(r.totalValue, tq, kept.get(r.variantId)).toFixed(6),
       value: avg.times(r.qty).toFixed(2),
       retailValue: dec(r.qty).times(r.sellPrice).toFixed(2),
     };

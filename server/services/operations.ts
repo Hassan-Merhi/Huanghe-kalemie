@@ -358,10 +358,34 @@ export async function applyAdvances(
   const linesOn = (on: string) => (currency === "CNY" ? advanceToYuanLines(tx, payables, partyId, on) : advanceToFrancLines(tx, payables, partyId, on));
   let on = date;
   let lines = await linesOn(on);
-  // A bill dated before a deposit paid since: the deposit settles it from today.
+  // A bill dated before a deposit paid since: the deposit settles it from the day it was paid (the first
+  // day after the bill on which dollars or francs were paid to the contact and the advance covers it), not
+  // from today, so yuan work dated in between is not refused for a date the books chose (see
+  // assertYuanInOrder). Only a day after which nothing has taken from that advance yet, so what it holds
+  // then is still there; else today, as before. Those days are in open months: the bill's month is open,
+  // and so is every later one.
   if (!lines.length && date < shopToday()) {
-    on = shopToday();
-    lines = await linesOn(on);
+    const days = await tx
+      .select({ date: journals.date, paid: sql<boolean>`bool_or(${journalLines.debit} > 0)`, taken: sql<boolean>`bool_or(${journalLines.credit} > 0)` })
+      .from(journalLines)
+      .innerJoin(journals, eq(journals.id, journalLines.journalId))
+      .where(
+        and(
+          eq(journalLines.accountId, payables),
+          eq(journalLines.partyId, partyId),
+          inArray(journalLines.currency, ["USD", "CDF"]),
+          sql`${journals.date} > ${date}`,
+          lte(journals.date, shopToday()),
+        ),
+      )
+      .groupBy(journals.date)
+      .orderBy(journals.date);
+    const paidOn = days.filter((d, i) => d.paid && !days.slice(i + 1).some((later) => later.taken)).map((d) => String(d.date));
+    for (const d of [...paidOn, shopToday()]) {
+      on = d;
+      lines = await linesOn(on);
+      if (lines.length) break;
+    }
   }
   if (!lines.length) return null;
   return postJournal(tx, { date: on, type: "supplier_payment", memo, userId, lines, sourceType: `advance_${source.type}`, sourceId: source.id });
@@ -867,6 +891,7 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
         locationId: input.locationId,
         qty: change,
         value,
+        unitCost: unit,
         sourceType: "adjustment",
         sourceId: adj.id,
         note: input.reason,
