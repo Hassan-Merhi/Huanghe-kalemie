@@ -2,7 +2,7 @@ import { eq, ne, sql } from "drizzle-orm";
 import { containerExpenses, containers, parties, variants } from "@shared/schema";
 import { cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
-import { SYSTEM_ACCOUNTS, systemAccountId } from "./ledger";
+import { SYSTEM_ACCOUNTS, cnyRateFor, rateFor, shopToday, systemAccountId } from "./ledger";
 import { accountBalances } from "./reports";
 
 /*
@@ -116,6 +116,34 @@ export async function selfCheck(tx: Tx) {
     where a.is_money and a.currency = 'CDF' and (l.native_amount is null or l.rate is null)
   `).then((r) => r.rows);
   checks.push({ key: "franc_lines", ok: missing.n === 0, expected: "0", actual: String(missing.n), difference: String(missing.n) });
+
+  // 10. No franc or yuan balance of a contact (or another account that is not money) holds dollars for
+  // francs or yuan worth under half a cent: no posting leaves one, and such a residue is only cleared
+  // when its dollars are nil too, so a journal posted by hand that leaves one waits here for a correction.
+  const foreign = await tx.execute<{ account: string; party: string | null; currency: "CDF" | "CNY"; native: string; usd: string }>(sql`
+    select a.name as account, p.name as party, l.currency, sum(coalesce(l.native_amount, 0)) as native, sum(l.debit - l.credit) as usd
+    from journal_lines l join accounts a on a.id = l.account_id left join parties p on p.id = l.party_id
+    where not a.is_money and l.currency in ('CDF', 'CNY')
+    group by l.account_id, a.name, l.party_id, p.name, l.currency
+    having abs(sum(l.debit - l.credit)) >= 0.005
+  `);
+  const today = shopToday();
+  const rates = { CDF: (await rateFor(tx, today)).rate, CNY: await cnyRateFor(tx, today) };
+  const mismatched = foreign.rows.filter((r) => {
+    const rate = rates[r.currency];
+    return dec(r.native).isZero() || (!!rate && rate.gt(0) && dec(r.native).abs().dividedBy(rate).lt("0.005"));
+  });
+  checks.push({
+    key: "foreign_balances",
+    ok: mismatched.length === 0,
+    expected: "0",
+    actual: String(mismatched.length),
+    difference: String(mismatched.length),
+    details: mismatched.slice(0, 20).map((r) => ({
+      label: `${r.party ?? r.account} · ${r.currency === "CDF" ? "FC" : "¥"}`,
+      value: `${dec(r.native).toFixed(2)} ${r.currency === "CDF" ? "FC" : "¥"} ≠ ${dec(r.usd).toFixed(2)} $`,
+    })),
+  });
 
   // Points to look at, which do not make the books wrong: sales at 0 $ or for less than their cost.
   const since = new Date(Date.now() - 90 * 86400000).toISOString().slice(0, 10);

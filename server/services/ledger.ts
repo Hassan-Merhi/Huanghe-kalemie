@@ -466,7 +466,9 @@ type AccountRow = typeof accounts.$inferSelect;
  * USD cost, and book the difference from the given value as an exchange gain or loss.
  * Francs or yuan left on a contact (or a balance sheet account settled like one) that are worth under
  * half a cent at the rate used could never be paid or refunded: the journal that leaves them, or the
- * next one on that contact, clears them at their book value against exchange differences, with no money.
+ * next one on that contact, clears them against exchange differences, with no money. Only when their
+ * dollars are under half a cent too, as every posting leaves them: dollars that do not match the francs
+ * or yuan (a journal posted by hand) are a mistake for a person to correct, shown by the self-check.
  */
 async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string, byId: Map<number, AccountRow>, clearResidues: boolean) {
   const running = new Map<string, { native: Decimal; usd: Decimal }>();
@@ -539,6 +541,9 @@ async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string, 
     const lineRate = foreign.find((v) => keyOf(v) === key && v.rate && dec(v.rate).gt(0))?.rate;
     const rate = lineRate ? dec(lineRate) : k.currency === "CDF" ? (await rateFor(tx, date)).rate : await cnyRateFor(tx, date);
     if (!rate || !bal.native.abs().dividedBy(rate).lt("0.005")) continue;
+    // And booked at under half a cent: larger dollars on so few francs or yuan are not an exchange
+    // difference, so they are left where they are for a person to correct (see selfCheck).
+    if (!bal.usd.abs().lt("0.005")) continue;
     // Only a balance with nothing dated after this journal: clearing it on an earlier day would change
     // what later postings settled.
     const all = await foreignBalance(tx, k.accountId, k.partyId, k.currency);
@@ -546,15 +551,14 @@ async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string, 
     if (!all.native.equals(asOf.native) || !all.usd.equals(asOf.usd)) continue;
     values.push({
       accountId: k.accountId,
-      debit: bal.usd.isNegative() ? bal.usd.abs() : new Decimal(0),
-      credit: bal.usd.isPositive() ? bal.usd : new Decimal(0),
+      debit: new Decimal(0),
+      credit: new Decimal(0),
       partyId: k.partyId,
       currency: k.currency,
       nativeAmount: bal.native.negated().toFixed(2),
       rate: rate.toFixed(4),
       memo: RESIDUE_MEMO,
     });
-    fxDebit = fxDebit.plus(bal.usd);
   }
   if (!fxDebit.isZero()) {
     values.push({
