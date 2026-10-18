@@ -925,9 +925,8 @@ export function registerRoutes(app: Express) {
         // Cash handed back on those returns (the refund drawer's line), so "Payé" reads net of refunds.
         // Francs count at the refund's rate, not at the drawer's average cost (the gap is an exchange difference).
         refundedUsd: sql<string>`(select coalesce(sum(case when jl.native_amount is not null and jl.rate > 0 then round(abs(jl.native_amount) / jl.rate, 2) else jl.credit end), 0)::text from sale_returns sr join journal_lines jl on jl.journal_id = sr.journal_id and jl.account_id = sr.refund_account_id where sr.sale_id = ${sales.id})`,
-        // Credit still on the sale after returns: what the return journals took off the customer's
-        // receivable (the same lines the sale page reads), never below zero.
-        creditLeftUsd: sql<string>`greatest(${sales.creditUsd} - (select coalesce(sum(jl.credit), 0) from sale_returns sr join journal_lines jl on jl.journal_id = sr.journal_id join accounts a on a.id = jl.account_id and a.system_key = 'receivables' where sr.sale_id = ${sales.id}), 0)::numeric(20,2)::text`,
+        // Credit still on the sale after returns, as the sale page reads it (see creditLeftSql).
+        creditLeftUsd: sql<string>`${salesSvc.creditLeftSql()}::text`,
         // The till's and the refunds' franc rounding ("Arrondi FC"), + when the shop kept a few cents: it is why
         // "Payé" can sit a few cents off the total, and is not money on the customer's account. A cancelled
         // sale's reversal takes its rounding back, so it nets to zero.
@@ -1141,19 +1140,25 @@ export function registerRoutes(app: Express) {
       .select({ count: sql<number>`count(*)::int`, total: sql<string>`coalesce(sum(${saleReturns.total}), 0)` })
       .from(saleReturns)
       .where(eq(saleReturns.date, date));
-    // Credit on the day's sales that returns have since taken off the customer's receivable (at most
-    // each sale's credit), so "of which on credit" reads after returns, as on the Sales list.
-    const creditReturned = await db.execute<{ usd: string }>(sql`
-      select coalesce(sum(least(s.credit_usd, (select coalesce(sum(jl.credit), 0) from sale_returns sr join journal_lines jl on jl.journal_id = sr.journal_id join accounts a on a.id = jl.account_id and a.system_key = 'receivables' where sr.sale_id = s.id))), 0) as usd
-      from sales s
-      where s.date = ${date} and s.credit_usd > 0
-    `);
-    // The part of that credit a customer's avoir (paid ahead) covered when the sale was posted, read as the sale
-    // page reads it: nothing new is owed for it, so the card says "dont sur l'avoir" apart from "dont à crédit".
-    const [creditOnAvoir] = await db
-      .select({ usd: sql<string>`coalesce(sum(${salesSvc.avoirUsedSql()}), 0)` })
+    // Credit on the day's sales that returns have since taken off (however they were refunded), so "of
+    // which on credit" reads after returns, as on the Sales list (see creditLeftSql).
+    const [creditReturned] = await db
+      .select({ usd: sql<string>`coalesce(sum(${sales.creditUsd} - ${salesSvc.creditLeftSql()}), 0)` })
       .from(sales)
       .where(and(eq(sales.date, date), sql`${sales.creditUsd} > 0`));
+    // The part of that credit a customer's avoir (paid ahead) covered when the sale was posted, read as the sale
+    // page reads it: nothing new is owed for it, so the card says "dont sur l'avoir" apart from "dont à crédit".
+    // Like the credit, a sale keeps it on its own day and a cancellation takes it back on the day it was made;
+    // and like it, it reads after returns (at most the credit left, as the Sales list splits each sale).
+    const [creditOnAvoir] = await db
+      .select({ usd: sql<string>`coalesce(sum(least(${salesSvc.avoirPartSql()}, ${salesSvc.creditLeftSql()})), 0)` })
+      .from(sales)
+      .where(and(eq(sales.date, date), sql`${sales.creditUsd} > 0`));
+    const [avoirVoided] = await db
+      .select({ usd: sql<string>`coalesce(sum(${salesSvc.avoirPartSql()}), 0)` })
+      .from(sales)
+      .innerJoin(journals, eq(journals.id, sales.voidJournalId))
+      .where(and(eq(journals.date, date), sql`${sales.creditUsd} > 0`));
     // Drawer count (not for cashiers, who do not see balances): every money account's opening
     // balance, what came in and went out that day by kind of operation, and the expected closing.
     let drawer: unknown = undefined;
@@ -1198,8 +1203,8 @@ export function registerRoutes(app: Express) {
       date,
       count: totals.count,
       total: dec(totals.total).toFixed(2),
-      credit: dec(totals.credit).minus(v.credit).minus(creditReturned.rows[0]?.usd ?? 0).toFixed(2),
-      creditOnAvoirUsd: dec(creditOnAvoir?.usd ?? 0).toFixed(2),
+      credit: dec(totals.credit).minus(v.credit).minus(creditReturned?.usd ?? 0).toFixed(2),
+      creditOnAvoirUsd: dec(creditOnAvoir?.usd ?? 0).minus(avoirVoided?.usd ?? 0).toFixed(2),
       voidsCount: v.count,
       voidsTotal: dec(v.total).toFixed(2),
       returnsCount: returns.count,

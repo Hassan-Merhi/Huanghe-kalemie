@@ -358,13 +358,31 @@ function receivableAfterSaleSql() {
 }
 
 /**
+ * Credit still on a sale after its returns: what is left once the returns took their part off the customer's
+ * receivable, and never more than what the customer kept of the sale. A return refunded in cash once the
+ * credit was settled (by an avoir, or a payment since) gives that settled credit back in cash, so the
+ * credit goes with the goods however they were refunded. Never below zero. Selects from `sales`.
+ */
+export function creditLeftSql() {
+  return sql<string>`greatest(least(${sales.creditUsd} - (select coalesce(sum(jl.credit), 0) from sale_returns sr join journal_lines jl on jl.journal_id = sr.journal_id join accounts a on a.id = jl.account_id and a.system_key = 'receivables' where sr.sale_id = ${sales.id}), ${sales.total} - (select coalesce(sum(sr.total), 0) from sale_returns sr where sr.sale_id = ${sales.id})), 0)::numeric(20,2)`;
+}
+
+/**
  * The part of a credit sale the customer's avoir (paid ahead) covered when it was posted, read from their
- * receivable just after it (see receivableAfterSaleSql); none on a cancelled sale, which gave it back.
- * One rule for the sale page and the daily report's "dont sur l'avoir" (the Sales list reads it the same way).
+ * receivable just after it (see receivableAfterSaleSql), cancelled or not. The daily report's "dont sur
+ * l'avoir" counts it on the sale's day and takes it back on the day of a cancellation, as it does the credit.
  * Selects from `sales`.
  */
+export function avoirPartSql() {
+  return sql<string>`(case when ${sales.creditUsd} > 0 and ${sales.customerId} is not null and ${sales.journalId} is not null then least(${sales.creditUsd}, greatest(${sales.creditUsd} - ${receivableAfterSaleSql()}, 0)) else 0 end)::numeric(20,2)`;
+}
+
+/**
+ * The same, as the sale page shows it: none on a cancelled sale, which gave it back (the Sales list reads it
+ * the same way). Selects from `sales`.
+ */
 export function avoirUsedSql() {
-  return sql<string>`(case when ${sales.creditUsd} > 0 and ${sales.customerId} is not null and ${sales.journalId} is not null and ${sales.status} <> 'voided' then least(${sales.creditUsd}, greatest(${sales.creditUsd} - ${receivableAfterSaleSql()}, 0)) else 0 end)::numeric(20,2)`;
+  return sql<string>`(case when ${sales.status} <> 'voided' then ${avoirPartSql()} else 0 end)::numeric(20,2)`;
 }
 
 export async function getSale(tx: Tx, id: number) {
@@ -454,6 +472,7 @@ export async function getSale(tx: Tx, id: number) {
     if (dec(read.used).gt(0)) avoir = { usedUsd: dec(read.used).toFixed(2), leftUsd: Decimal.max(dec(read.after).negated(), 0).toFixed(2) };
   }
   const refunded = sum(returns.map((r) => r.refundUsd ?? 0));
+  const [left] = await tx.select({ usd: sql<string>`${creditLeftSql()}::text` }).from(sales).where(eq(sales.id, sale.id));
   return {
     ...sale,
     paidKeptUsd: paidKept(sale, saleFcRounding, refunded),
@@ -462,6 +481,8 @@ export async function getSale(tx: Tx, id: number) {
     /** The part of the credit covered by the customer's avoir at the time of the sale, and the avoir left after it. */
     avoirUsedUsd: avoir?.usedUsd ?? null,
     avoirLeftUsd: avoir?.leftUsd ?? null,
+    /** Credit still on the sale after returns, as the Sales list reads it (see creditLeftSql). */
+    creditLeftUsd: dec(left?.usd ?? sale.creditUsd).toFixed(2),
     customer: customer ?? null,
     cashierName: cashier ? cashier.fullName || cashier.username : null,
     lines: lines.map((l) => ({
