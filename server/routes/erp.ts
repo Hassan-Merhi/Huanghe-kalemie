@@ -406,7 +406,7 @@ export function registerErpRoutes(
         );
       }
     }
-    // A price or cost reads "4,125" as 4,125 (see parseTypedAmount).
+    // A price or cost in doubt ("4,125", "1.350") never gets here: priceIn refuses it first.
     const out = opts.currency ? parseTypedAmount(v) : parseTypedNumber(v, { measured: opts.measured });
     if (out === null) return null;
     if (!/^-?\d+(\.\d+)?$/.test(out)) {
@@ -426,8 +426,9 @@ export function registerErpRoutes(
   const num = rawNumber.transform((v, ctx) => importNumber(v, ctx));
   // Prices and costs: the browser sends a number cell as a JSON number, taken as it is (0.125 $ for a bolt),
   // so the import books what the preview showed. Text that could be thousands or three decimals ("4.125",
-  // "1,000") is refused rather than guessed; "4,125", "0,125" and "1 250,125" are decimals. Item prices and opening
-  // costs are in dollars; a container's prices are in its invoice currency.
+  // "4,125", "1,350", "1,000": 1 000 times apart) is refused rather than guessed; "4,13", "0,125" and
+  // "1 250,125" are decimals. Item prices and opening costs are in dollars; a container's prices are in its
+  // invoice currency.
   const priceIn = (currency: Cur, where?: { en: string; fr: string }) =>
     rawNumber.transform((v, ctx) => {
       const unsure = ambiguousTypedAmount(v);

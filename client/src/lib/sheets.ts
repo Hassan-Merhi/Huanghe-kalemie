@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { ambiguousImportMeasure, ambiguousTypedAmount, Decimal, parseTypedAmount, parseTypedNumber } from "@shared/money";
+import { ambiguousImportMeasure, ambiguousTypedAmount, Decimal, parseTypedAmount, parseTypedNumber, typedWholeCountDoubt } from "@shared/money";
 
 /*
  * Spreadsheet helpers: CSV download, Excel templates and reading an uploaded .xlsx / .xls / .csv.
@@ -64,7 +64,7 @@ export function csvSeparator(text: string): string {
 
 /** Columns that hold numbers: "12,50" and "1 250,00" are read the French way. */
 const NUMBER_FIELDS = new Set(["sellPrice", "reorderLevel", "qty", "unitCost", "quantity", "unitPrice", "weightKg", "volumeCbm"]);
-/** Prices and costs, where "4,125" is 4,125 as the server reads it (see parseTypedAmount). */
+/** Prices and costs, where text such as "4,125" or "1.350" is asked about, as the server refuses it (see ambiguousTypedAmount). */
 const AMOUNT_FIELDS = new Set(["sellPrice", "unitCost", "unitPrice"]);
 
 async function readWorkbook(file: File) {
@@ -117,18 +117,25 @@ export async function readSheet<F extends string>(file: File, fields: Record<F, 
 
 /**
  * A number cell read for what it holds: a measure (litres, metres, kilos, and every weight and volume) reads
- * "2,250" as 2,25 as a form field does, and asks about "1.000" or "1,000" (`unsure`: 1 000 or 1); pieces and money read
- * as parseTypedNumber always has ("1,250" pieces is 1 250).
+ * "2,250" as 2,25 as a form field does, and asks about "1.000" or "1,000" (`unsure`: 1 000 or 1). A count of
+ * whole units asks about text "12,000" or "12.000" too (12 or 12 000?), and "1,500" comes back as `split`
+ * (["1.5", "1500"]: 1,5 in a French sheet, which no piece can be) rather than as 1 500 pieces (see
+ * typedWholeCountDoubt).
  */
-export function readNumberCell(raw: string | number | null | undefined, measured: boolean): { value: string | null; unsure: [string, string] | null } {
+export function readNumberCell(
+  raw: string | number | null | undefined,
+  measured: boolean,
+): { value: string | null; unsure: [string, string] | null; split?: [string, string] } {
   if (raw === null || raw === undefined) return { value: null, unsure: null };
-  if (!measured) return { value: parseTypedNumber(raw), unsure: null };
-  return { value: parseTypedNumber(raw, { measured: true }), unsure: ambiguousImportMeasure(raw) };
+  if (measured) return { value: parseTypedNumber(raw, { measured: true }), unsure: ambiguousImportMeasure(raw) };
+  const doubt = typedWholeCountDoubt(raw);
+  if (doubt && "split" in doubt) return { value: doubt.split, unsure: null, split: [doubt.split, doubt.whole] };
+  return { value: parseTypedNumber(raw), unsure: doubt?.unsure ?? null };
 }
 
 /**
- * A price or cost cell in doubt: text such as "4.125" or "1,000" may be thousands or three decimals, and the
- * server refuses it, so the page asks first. A number cell (0.125) never is.
+ * A price or cost cell in doubt: text such as "4,125", "1.350" or "1,000" may be thousands or three decimals,
+ * and the server refuses it, so the page asks first. A number cell (0.125) never is.
  */
 export function amountCellUnsure(raw: string | number | null | undefined): [string, string] | null {
   return ambiguousTypedAmount(raw);

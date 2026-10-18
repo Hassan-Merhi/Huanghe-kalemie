@@ -441,16 +441,41 @@ function CreditRows({ creditedReturns, stillOwed, owes, avoir }: { creditedRetur
         </span>
         <Num className="font-medium">{usd(stillOwed.toFixed(2))}</Num>
       </div>
-      {extra.gt(0) && (
-        <p className="py-2 text-xs text-muted-foreground">
-          {/* The extra comes off the customer's other debts first; only what is left over is held for them. */}
-          {owes?.gt(0)
-            ? t(`The extra ${usd(extra.toFixed(2))} reduces what the customer still owes (${usd(owes.toFixed(2))}).`, `Les ${usd(extra.toFixed(2))} en plus réduisent sa dette restante (${usd(owes.toFixed(2))}).`)
-            : t(`The extra ${usd(extra.toFixed(2))} is kept as credit for the customer.`, `Les ${usd(extra.toFixed(2))} en plus restent en avoir pour le client.`)}
-        </p>
-      )}
+      {extra.gt(0) && <ExtraReturned extra={extra} owes={owes} />}
     </>
   );
+}
+
+/**
+ * Where a return beyond this sale's credit went: it comes off the customer's other debts first, and only
+ * what is left over is held for them as an avoir. `owes` is their balance now, after the return, so before it
+ * they owed `owes + extra`: 5 $ extra on a balance now at 0 paid off 5 $ of another sale, none of it is avoir.
+ */
+function ExtraReturned({ extra, owes }: { extra: Decimal; owes: Decimal | null }) {
+  const t = useT();
+  const x = usd(extra.toFixed(2));
+  let text: string;
+  if (!owes) {
+    text = t(`The extra ${x} went back on the customer's account.`, `Les ${x} en plus sont revenus sur le compte du client.`);
+  } else {
+    const toDebt = Decimal.min(Decimal.max(owes.plus(extra), 0), extra);
+    const kept = extra.minus(toDebt);
+    if (kept.isZero()) {
+      text = owes.gt(0)
+        ? t(`The extra ${x} reduces what the customer still owes (${usd(owes.toFixed(2))}).`, `Les ${x} en plus réduisent sa dette restante (${usd(owes.toFixed(2))}).`)
+        : t(`The extra ${x} paid off what the customer still owed.`, `Les ${x} en plus ont réduit sa dette restante : il ne doit plus rien.`);
+    } else if (toDebt.isZero()) {
+      text = t(`The extra ${x} is kept as credit for the customer.`, `Les ${x} en plus restent en avoir pour le client.`);
+    } else {
+      const debt = usd(toDebt.toFixed(2));
+      const avoir = usd(kept.toFixed(2));
+      text = t(
+        `Of the extra ${x}, ${debt} paid off what the customer still owed and ${avoir} is kept as credit for them.`,
+        `Des ${x} en plus, ${debt} ont réduit sa dette restante et ${avoir} restent en avoir pour le client.`,
+      );
+    }
+  }
+  return <p className="py-2 text-xs text-muted-foreground" data-testid="return-extra">{text}</p>;
 }
 
 /** A line's margin on what the customer kept, green or red; a returned line says so under it. */

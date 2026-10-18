@@ -127,7 +127,7 @@ export default function Motorcycles() {
       <div className="mb-4 grid gap-3 sm:grid-cols-[1fr_200px_200px]">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input className="pl-9" placeholder={t("Search chassis or engine number", "Chercher n° de châssis ou de moteur")} value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Input className="pl-9" placeholder={t("Chassis or engine number", "N° de châssis ou de moteur")} value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <Select value={status} onValueChange={(v) => setStatus(v as typeof status)}>
           <SelectTrigger><SelectValue /></SelectTrigger>

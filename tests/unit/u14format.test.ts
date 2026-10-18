@@ -38,7 +38,9 @@ describe("ninth UI audit: packing-list measures, Kalemie dates, margins", async 
 
   it("reads a sheet cell for its unit", () => {
     expect(readNumberCell("2,250", true)).toEqual({ value: "2.25", unsure: null });
-    expect(readNumberCell("2,250", false)).toEqual({ value: "2250", unsure: null });
+    // U29: "2,250" pieces is 2,25 in a French sheet, which no piece can be: asked, not read as 2 250.
+    expect(readNumberCell("2,250", false)).toEqual({ value: "2.25", unsure: null, split: ["2.25", "2250"] });
+    expect(readNumberCell("2 250", false)).toEqual({ value: "2250", unsure: null });
     expect(readNumberCell("1.000", true)).toEqual({ value: "1", unsure: ["1000", "1"] });
     expect(readNumberCell(12.375, true)).toEqual({ value: "12.375", unsure: null });
     expect(readNumberCell(undefined, true)).toEqual({ value: null, unsure: null });

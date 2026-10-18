@@ -1,7 +1,17 @@
 import { useMemo, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
-import { CheckCircle2, Download, FileSpreadsheet, Upload } from "lucide-react";
+import { AlertTriangle, CheckCircle2, Download, FileSpreadsheet, Upload } from "lucide-react";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -18,12 +28,12 @@ import { LocationSelect } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { curLabel, d, money, number, qty as fmtQty, todayLocal, usd } from "@/lib/format";
+import { curLabel, d, MINUS, money, number, pct as fmtPct, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import { useI18n, useT, count } from "@/lib/i18n";
 import { amountCellUnsure, downloadXlsx, readNumberCell, readSheet, toWire } from "@/lib/sheets";
-import { knownUnit, unitLabel, wholeUnit } from "@/lib/units";
+import { knownUnit, qtyWithUnit, unitLabel, wholeUnit } from "@/lib/units";
 import type { Product } from "@/lib/types";
-import { typedCurrencyMark } from "@shared/money";
+import { type Decimal, typedCurrencyMark } from "@shared/money";
 
 type T = (en: string, fr: string) => string;
 
@@ -171,11 +181,18 @@ function remeasure<R extends { name: string | null; unit: string | null }>(
     let question: string | null = null;
     for (const f of all) {
       if (cells[i]?.[f.key] === undefined) continue;
-      const { value, unsure: u } = readNumberCell(cells[i][f.key], f.measured);
+      const { value, unsure: u, split } = readNumberCell(cells[i][f.key], f.measured);
       (next as Record<string, string | null>)[f.key] = value;
+      const text = String(cells[i][f.key]).trim();
       if (u && !question) {
-        const text = String(cells[i][f.key]).trim();
         question = t(`${f.en} "${text}": ${fmtQty(u[0])} or ${fmtQty(u[1])}? Correct the file`, `${f.fr} «\u00a0${text}\u00a0»\u00a0: ${fmtQty(u[0])} ou ${fmtQty(u[1])}\u00a0? Corrigez le fichier`);
+      }
+      // "1,500" pieces is 1,5 in a French sheet, not 1 500: asked rather than booked 1 000 times over.
+      if (split && !question) {
+        question = t(
+          `${f.en} "${text}": ${qtyWithUnit(t, split[0], unit)}? Counted in whole units: for ${fmtQty(split[1])}, write ${split[1]} without the comma`,
+          `${f.fr} «\u00a0${text}\u00a0»\u00a0: ${qtyWithUnit(t, split[0], unit)}\u00a0? Se compte en entiers\u00a0: pour ${fmtQty(split[1])}, écrivez ${split[1]} sans la virgule`,
+        );
       }
     }
     unsure.push(question);
@@ -186,15 +203,20 @@ function remeasure<R extends { name: string | null; unit: string | null }>(
 /** A number cell in the preview; while its row asks "1 000 or 1?", the cell is shown as the file has it. */
 const measureCell = (value: string | null, asked: string | number | false | null | undefined) =>
   asked !== undefined && asked !== null && asked !== false && String(asked).trim() ? String(asked).trim() : value ? fmtQty(value) : "—";
-/** A price or cost in the preview; one in doubt ("4.125": 4 125 or 4,125?) is shown as the file has it, not as one reading. */
+/** A price or cost in the preview; one in doubt ("1,350": 1 350 or 1,35?) is shown as the file has it, not as one reading. */
 const amountCell = (value: string | null | undefined, raw: string | number | null | undefined, decimals: number) =>
   amountCellUnsure(raw) ? String(raw).trim() : value ? (/^\d+(\.\d+)?$/.test(value) ? number(value, decimals, 2) : value) : "—";
 /**
  * The question to ask about a price or cost typed as text that could be thousands or three decimals
- * ("4.125": 4 125 or 4,125?). The server refuses such a cell, so the row cannot be imported until the
+ * ("1,350": 1 350 $ or 1,35 $?). The server refuses such a cell, so the row cannot be imported until the
  * file says which.
  */
 const CUR_NAME: Record<string, [string, string]> = { USD: ["US dollars", "dollars US"], CDF: ["francs", "francs"], CNY: ["yuan", "yuans"] };
+/** One reading of a price in doubt, with its currency and up to six decimals: "1 350 $", "1,35 $", "4,125 ¥". */
+const amountIn = (t: T, value: string, currency?: string) => {
+  const n = number(value, 6);
+  return !currency || currency === "USD" ? t(`$${n}`, `${n}\u00a0$`) : `${n}\u00a0${curLabel(currency)}`;
+};
 
 function amountQuestion(t: T, cells: Cells | undefined, fields: { key: string; en: string; fr: string; currency?: string }[]): string | null {
   for (const f of fields) {
@@ -212,11 +234,12 @@ function amountQuestion(t: T, cells: Cells | undefined, fields: { key: string; e
     const u = amountCellUnsure(raw);
     if (!u) continue;
     const text = String(raw).trim();
+    const [many, few] = [amountIn(t, u[0], f.currency), amountIn(t, u[1], f.currency)];
     return t(
-      // Both readings get their own way out: "4.125" or "1,000" typed as text stays in doubt, so the decimals go
-      // in as a number cell.
-      `${f.en} "${text}": ${number(u[0], 6)} or ${number(u[1], 6)}? For ${number(u[0], 6)}, write ${u[0]} without the separator; for ${number(u[1], 6)}, write it as a number in Excel`,
-      `${f.fr} «\u00a0${text}\u00a0»\u00a0: ${number(u[0], 6)} ou ${number(u[1], 6)}\u00a0? Pour ${number(u[0], 6)}, écrivez ${u[0]} sans séparateur\u00a0; pour ${number(u[1], 6)}, écrivez-le comme nombre dans Excel`,
+      // Both readings get their own way out: "4,125" or "1,000" typed as text stays in doubt (a French sheet means
+      // decimals, an English one thousands), so the decimals go in as a number cell.
+      `${f.en} "${text}": ${many} or ${few}? For ${many}, write ${u[0]} without the separator; for ${few}, write it as a number in Excel`,
+      `${f.fr} «\u00a0${text}\u00a0»\u00a0: ${many} ou ${few}\u00a0? Pour ${many}, écrivez ${u[0]} sans séparateur\u00a0; pour ${few}, écrivez-le comme nombre dans Excel`,
     );
   }
   return null;
@@ -424,8 +447,10 @@ function ItemsImport() {
                     <TableHead>{t("Item", "Article")}</TableHead>
                     <TableHead>{t("Variant", "Variante")}</TableHead>
                     <TableHead>{t("SKU", "Code")}</TableHead>
+                    <TableHead>{t("Unit", "Unité")}</TableHead>
                     <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
                     <TableHead className="text-right">{t("Cost", "Coût")}</TableHead>
+                    <TableHead className="text-right">{t("Sell price", "Prix de vente")}</TableHead>
                     <TableHead>{t("Status", "Statut")}</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -441,8 +466,11 @@ function ItemsImport() {
                       </TableCell>
                       <TableCell>{variantOf(r) || "—"}</TableCell>
                       <TableCell className="font-mono text-xs">{p?.sku ?? r.sku ?? "—"}</TableCell>
+                      {/* The unit the quantity is counted in: the item's own when it exists, else the file's. */}
+                      <TableCell className="whitespace-nowrap">{unitLabel(t, units[i], 1) || "—"}</TableCell>
                       <TableCell className="text-right"><Num>{measureCell(r.qty, asked && cells[i]?.qty)}</Num></TableCell>
                       <TableCell className="text-right"><Num>{amountCell(r.unitCost, cells[i]?.unitCost, 6)}</Num></TableCell>
+                      <TableCell className="text-right"><Num>{amountCell(r.sellPrice, cells[i]?.sellPrice, 2)}</Num></TableCell>
                       <TableCell><StatusBadge status={status} /></TableCell>
                     </TableRow>
                   ))}
@@ -488,6 +516,18 @@ function PricesImport() {
   const [cells, setCells] = useState<Cells[]>([]);
   const [fileError, setFileError] = useState<string | null>(null);
   const [updated, setUpdated] = useState<number | null>(null);
+  const [confirming, setConfirming] = useState(false);
+  // Today's prices, to show each row's change before it is saved.
+  const stockQ = useQuery<{ items: StockItem[] }>({ queryKey: ["/api/stock"] });
+  const current = useMemo(() => {
+    const bySku = new Map<string, StockItem>();
+    const byBarcode = new Map<string, StockItem>();
+    for (const i of stockQ.data?.items ?? []) {
+      bySku.set(i.sku.trim().toUpperCase(), i);
+      if (i.barcode?.trim()) byBarcode.set(i.barcode.trim(), i);
+    }
+    return { bySku, byBarcode };
+  }, [stockQ.data]);
 
   function template() {
     downloadXlsx(t("prices-template.xlsx", "modele-prix.xlsx"), [
@@ -522,14 +562,42 @@ function PricesImport() {
     return null;
   };
   const errors = rows.filter((r, i) => problem(r, i)).length;
+  // The item a row updates, found as the server finds it: by SKU when the row has one, else by barcode.
+  const itemOf = (r: PriceRow) => (r.sku?.trim() ? current.bySku.get(r.sku.trim().toUpperCase()) : r.barcode?.trim() ? current.byBarcode.get(r.barcode.trim()) : undefined);
+  // "1,650" read as 1,65 $ for a 1 450 $ motorcycle: a price that more than doubles or falls under half is
+  // asked about before the import, as Outils de vente asks about a price far off.
+  const changes = rows.map((r, i) => {
+    const item = itemOf(r);
+    if (!item || problem(r, i) || !r.sellPrice) return { item, gap: null as Decimal | null, far: false };
+    const old = d(item.sellPrice);
+    const next = d(r.sellPrice);
+    const gap = old.gt(0) ? next.minus(old).dividedBy(old).times(100) : null;
+    const far = old.gt(0) && (next.gt(old.times(2)) || next.lt(old.dividedBy(2)));
+    return { item, gap, far };
+  });
+  const farOff = rows.map((r, i) => ({ r, ...changes[i] })).filter((c) => c.far);
+  // 1 450 $ to 1,65 $ is −99 %, never "−100 %", which would read as a price of zero.
+  const gapText = (gap: Decimal) => {
+    const shown = gap.abs().toDecimalPlaces(0);
+    const n = shown.eq(100) && gap.abs().lt(100) ? "99" : shown.toString();
+    return gap.isZero() ? fmtPct("0", 0) : `${gap.gt(0) ? "+" : MINUS}${fmtPct(n, 0)}`;
+  };
 
   const run = useApiMutation<unknown, { updated: number }>("POST", "/api/import/prices", {
     success: t("Prices updated", "Prix mis à jour"),
     onSuccess: (res) => {
       setUpdated(res.updated);
       setRows([]);
+      setConfirming(false);
     },
   });
+  const submit = (confirmed = false) => {
+    if (!confirmed && farOff.length) {
+      setConfirming(true);
+      return;
+    }
+    run.mutate({ rows: rows.map(toWire) });
+  };
 
   return (
     <div className="space-y-4">
@@ -561,18 +629,35 @@ function PricesImport() {
                     <TableHead className="w-12">#</TableHead>
                     <TableHead>{t("SKU", "Code")}</TableHead>
                     <TableHead>{t("Barcode", "Code-barres")}</TableHead>
+                    <TableHead className="text-right">{t("Current price", "Prix actuel")}</TableHead>
                     <TableHead className="text-right">{t("New price", "Nouveau prix")}</TableHead>
+                    <TableHead className="text-right">{t("Change", "Écart")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
                   {rows.map((r, i) => {
                     const err = problem(r, i);
+                    const { item, gap, far } = changes[i];
                     return (
-                      <TableRow key={i}>
+                      <TableRow key={i} className={far ? "bg-amber-500/10" : undefined}>
                         <TableCell className="text-muted-foreground"><Num>{i + 2}</Num></TableCell>
-                        <TableCell className="font-mono text-xs">{r.sku ?? "—"}{err && <div className="font-sans text-destructive">{err}</div>}</TableCell>
+                        <TableCell className="font-mono text-xs">
+                          {r.sku ?? "—"}
+                          {item && <div className="font-sans text-muted-foreground">{item.productName}</div>}
+                          {err && <div className="font-sans text-destructive">{err}</div>}
+                          {!err && !item && stockQ.data && <div className="font-sans text-amber-800 dark:text-amber-400">{t("No item found with this code", "Aucun article avec ce code")}</div>}
+                        </TableCell>
                         <TableCell className="font-mono text-xs">{r.barcode ?? "—"}</TableCell>
+                        <TableCell className="text-right text-muted-foreground"><Num>{item ? usd(item.sellPrice) : "—"}</Num></TableCell>
                         <TableCell className="text-right"><Num>{amountCellUnsure(cells[i]?.sellPrice) ? String(cells[i]?.sellPrice).trim() : r.sellPrice && !err ? usd(r.sellPrice) : r.sellPrice ?? "—"}</Num></TableCell>
+                        <TableCell className={far ? "text-right font-medium text-amber-800 dark:text-amber-400" : "text-right text-muted-foreground"}>
+                          {gap ? (
+                            <span className="inline-flex items-center gap-1">
+                              {far && <AlertTriangle className="h-3.5 w-3.5" aria-label={t("Big change", "Gros écart")} />}
+                              <Num>{gapText(gap)}</Num>
+                            </span>
+                          ) : "—"}
+                        </TableCell>
                       </TableRow>
                     );
                   })}
@@ -581,13 +666,41 @@ function PricesImport() {
             </div>
             <div className="flex flex-wrap justify-end gap-2">
               <Button variant="outline" onClick={() => setRows([])}>{t("Cancel", "Annuler")}</Button>
-              <SubmitButton blocked={errors > 0 && t("Fix the errors in the file and load it again", "Corrigez les erreurs dans le fichier et chargez-le à nouveau")} pending={run.isPending} onClick={() => run.mutate({ rows: rows.map(toWire) })}>
+              <SubmitButton blocked={errors > 0 && t("Fix the errors in the file and load it again", "Corrigez les erreurs dans le fichier et chargez-le à nouveau")} pending={run.isPending} onClick={() => submit()}>
                 <Upload className="mr-1 h-4 w-4" /> {t("Update prices", "Mettre à jour les prix")} ({rows.length})
               </SubmitButton>
             </div>
           </CardContent>
         </Card>
       )}
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{farOff.length === 1 ? t("A price changes a lot", "Un prix change beaucoup") : t(`${farOff.length} prices change a lot`, `${farOff.length} prix changent beaucoup`)}</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-left">
+                <ul className="max-h-60 space-y-1 overflow-y-auto" data-testid="price-far-off">
+                  {farOff.map(({ r, item, gap }, k) => (
+                    <li key={k}>
+                      <span className="font-medium text-foreground">{item?.productName}</span> <span className="font-mono text-xs">({item?.sku})</span>{" "}
+                      {t(
+                        `from ${usd(item?.sellPrice)} to ${usd(r.sellPrice)}`,
+                        `de ${usd(item?.sellPrice)} à ${usd(r.sellPrice)}`,
+                      )}
+                      {gap && <span className="font-medium text-amber-800 dark:text-amber-400"> ({gapText(gap)})</span>}
+                    </li>
+                  ))}
+                </ul>
+                <p>{t("Check for a missing or extra zero, or a comma read the wrong way, before updating.", "Vérifiez qu'il ne manque pas un zéro, qu'il n'y en a pas un de trop, ou qu'une virgule n'a pas été mal lue.")}</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("Check the file", "Vérifier le fichier")}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => submit(true)}>{t("Update anyway", "Mettre à jour quand même")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
