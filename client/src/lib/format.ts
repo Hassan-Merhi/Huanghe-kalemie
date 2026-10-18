@@ -64,6 +64,84 @@ export function ambiguousDollars(value: string): string | null {
 }
 
 /**
+ * What a number field holds: an amount in dollars, yuan or francs, a percentage, an exchange rate (any
+ * currency sign is fine there: "2 850 FC/$") or a plain count (quantities, weights).
+ */
+export type FieldUnit = "USD" | "CNY" | "CDF" | "pct" | "rate" | "qty";
+type TypedUnit = "USD" | "CNY" | "CDF" | "pct";
+
+/** The units typed with a number ("500 FC", "10 %", "22 $", "¥ 40"), in the order they are written. */
+function typedUnits(value: string): TypedUnit[] {
+  return (String(value).match(/FC|CDF|USD|CNY|RMB|\$|¥|%/gi) ?? []).map((u) => {
+    const k = u.toUpperCase();
+    return k === "FC" || k === "CDF" ? "CDF" : k === "$" || k === "USD" ? "USD" : k === "%" ? "pct" : "CNY";
+  });
+}
+
+/**
+ * A unit typed that is not the field's own: "500 FC" in a dollar field, "20 $" in a franc one, "10 %" in an
+ * amount or a quantity, "5 $" in a percentage. parseNumberInput drops units, so without this "61800 FC" in
+ * "Montant en $" was read as 61 800 $ and "10%" in "Remise $" as 10 $. Returns the unit to refuse, else null.
+ */
+export function unitMismatch(value: string, field: FieldUnit): TypedUnit | null {
+  for (const u of typedUnits(value)) {
+    if (field === "rate") {
+      if (u === "pct") return u;
+    } else if (field === "pct") {
+      if (u !== "pct") return u;
+    } else if (u !== field) return u;
+  }
+  return null;
+}
+
+/**
+ * "10 %" typed in a discount: that share of `base` (the line or the sale), to the cent half up, as plain text
+ * ("2.20" for 10 % of 22 $). Null when the text is not a percentage of a readable number.
+ */
+export function percentOf(value: string, base: unknown): string | null {
+  const s = String(value).replace(/[\s  ]/g, "");
+  if (!/^[^%]*\d[^%]*%$/.test(s) || typedUnits(s).length !== 1) return null;
+  const p = parseNumberInput(s.slice(0, -1));
+  if (!p || p.startsWith("-")) return null;
+  return new Decimal(p).times(new Decimal(num(base))).dividedBy(100).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
+}
+
+/**
+ * What a field says when it refuses a unit (see unitMismatch). `switchTo` names where the other currency is
+ * typed, when the page has one: "Ce champ est en dollars : pour des francs, choisissez Caisse FC".
+ */
+export function unitMismatchText(typed: TypedUnit, field: FieldUnit, switchTo?: string | null): string {
+  const fr = lang === "fr";
+  const names: Record<string, [string, string]> = { USD: ["dollars", "dollars"], CNY: ["yuan", "yuans"], CDF: ["francs", "francs"] };
+  const signs: Record<string, string> = { USD: "$", CNY: "¥", CDF: "FC" };
+  if (field === "pct") return fr ? "Ce champ est en % : écrivez un nombre, sans devise" : "This field is a percentage: type a number, with no currency";
+  if (field === "rate") return fr ? "Pas de % dans un taux : écrivez le nombre de francs ou de yuans pour 1 $" : "No % in a rate: type the francs or yuan for $1";
+  if (field === "qty") return typed === "pct"
+    ? fr ? "Pas de % ici : écrivez un nombre" : "No % here: type a number"
+    : fr ? "Pas de devise ici : écrivez un nombre" : "No currency here: type a number";
+  const [en, fra] = names[field];
+  if (typed === "pct") return fr ? `Pas de % ici : écrivez le montant en ${signs[field]}` : `No % here: type the amount in ${signs[field]}`;
+  const [oen, ofr] = names[typed];
+  return switchTo
+    ? fr ? `Ce champ est en ${fra} : pour des ${ofr}, choisissez ${switchTo}` : `This field is in ${en}: for ${oen}, choose ${switchTo}`
+    : fr ? `Ce champ est en ${fra} : écrivez le montant en ${signs[field]}` : `This field is in ${en}: type the amount in ${signs[field]}`;
+}
+
+/**
+ * What a field passes up when it refuses a unit: the text with a "!" ("500FC!"), which is no plain number and
+ * which d() reads as 0 (without it "500 FC" would read as 500); refusedUnit gives the unit back.
+ */
+export function unitRefusedText(typed: string): string {
+  return `${typed.replace(/[\s  ]/g, "")}!`;
+}
+
+/** The unit a field refused, from what it passed up (see unitRefusedText), for the page's own message. */
+export function refusedUnit(value: string | null | undefined, field: FieldUnit): TypedUnit | null {
+  const v = (value ?? "").trim();
+  return v.endsWith("!") ? unitMismatch(v.slice(0, -1), field) : null;
+}
+
+/**
  * In a quantity of litres, metres or kilos, "1.000" may be 1 000 L (thousands, French-style) or 1 L written
  * with three decimals; read as 1, a supplier's debt and the stock come out a thousand times too small. Only
  * that exact shape is in doubt (one to three digits, a dot, "000"): "1,5", "2.5", "12.75" and "1.250" (1,25)

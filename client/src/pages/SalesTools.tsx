@@ -405,7 +405,7 @@ function BulkPriceDialog({ rows, onClose }: { rows: Row[]; onClose: () => void }
             error={pct.trim() && !valid ? t(`Enter a number other than 0, above ${MINUS}100`, `Saisissez un nombre différent de 0 et supérieur à ${MINUS}100`) : null}
             required
           >
-            <Input inputMode="decimal" value={typedPct} onChange={(e) => setPct(e.target.value)} disabled={running} placeholder="10" />
+            <Input inputMode="decimal" percent value={typedPct} onChange={(e) => setPct(e.target.value)} disabled={running} placeholder="10" />
           </Field>
           <Field label={t("Round to", "Arrondir à")}>
             <Select value={round} onValueChange={setRound} disabled={running}>

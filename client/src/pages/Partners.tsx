@@ -584,7 +584,7 @@ function EditPartnersDialog({ partners, onClose }: { partners: Partner[]; onClos
                 <Input value={r.name} onChange={(e) => set(i, { name: e.target.value })} />
               </Field>
               <Field label={t("Share %", "Part %")} required>
-                <Input inputMode="decimal" value={r.sharePct} onChange={(e) => set(i, { sharePct: e.target.value })} />
+                <Input inputMode="decimal" percent value={r.sharePct} onChange={(e) => set(i, { sharePct: e.target.value })} />
               </Field>
               <label className="col-span-2 flex items-center gap-2 text-sm">
                 <Switch checked={r.bearsOperatingExpenses} onCheckedChange={(v) => set(i, { bearsOperatingExpenses: v })} />

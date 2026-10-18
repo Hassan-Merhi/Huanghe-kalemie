@@ -1045,7 +1045,7 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
               hint={usdValue ? `= ${usd(usdValue.toFixed(2))}` : undefined}
               required
             >
-              <Input inputMode="decimal" thousands value={rate} onChange={(e) => { setRate(e.target.value); setRateTouched(true); }} />
+              <Input inputMode="decimal" thousands rate value={rate} onChange={(e) => { setRate(e.target.value); setRateTouched(true); }} />
             </Field>
           )}
 

@@ -1142,7 +1142,7 @@ function ManualJournalDialog({ onClose }: { onClose: () => void }) {
                       <Input inputMode="decimal" thousands value={l.native} onChange={(e) => setNative(l, e.target.value, l.rate)} />
                     </Field>
                     <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} required>
-                      <Input inputMode="decimal" thousands value={l.rate} onChange={(e) => setNative(l, l.native, e.target.value)} />
+                      <Input inputMode="decimal" thousands rate value={l.rate} onChange={(e) => setNative(l, l.native, e.target.value)} />
                     </Field>
                   </div>
                 )}

@@ -361,19 +361,22 @@ function PaymentDialog({ party, balance, foreign: foreignNow, rows, onClose }: {
       })
     : [];
   /**
-   * "Tout" in a franc box: the francs owed plus the dollars owed at the payment's rate, in whole francs (1 767 $
-   * at 2 808: 4 961 736 FC), offered only when the server's split of it settles both with nothing left over.
-   * Yuan owed are settled from a dollar box ("Yuans réglés"): no franc "Tout" then.
+   * "Tout" in a franc box: the francs owed plus the dollars owed at the payment's rate, rounded up to the
+   * 100 FC that notes can pay (902 $ at 2 808 = 2 532 816 FC: 2 532 900 FC), offered only when the server's
+   * split of it settles both, the few francs over becoming credit (or an advance). Rounded down, 0,01 $ would
+   * stay owed, and no route writes a customer's cents off. Yuan owed are settled from a dollar box ("Yuans
+   * réglés"): no franc "Tout" then.
    */
   const fcAll = (() => {
     if (!isCdf || !d(rate).gt(0) || (!isCustomer && owedIn("CNY"))) return null;
     const owedUsd = Decimal.max(isCustomer ? dollarBalance : dollarBalance.negated(), 0);
     const owedFc = fcOwed ?? d(0);
-    if (!owedUsd.gt(0)) return owedFc.gt(0) ? owedFc : null;
-    const francs = owedFc.plus(owedUsd.times(d(rate)).toDecimalPlaces(0, Decimal.ROUND_HALF_UP));
+    const exact = owedFc.plus(owedUsd.times(d(rate)).toDecimalPlaces(0, Decimal.ROUND_HALF_UP));
+    if (!exact.gt(0)) return null;
+    const francs = exact.dividedBy(100).toDecimalPlaces(0, Decimal.ROUND_UP).times(100);
+    if (!owedUsd.gt(0)) return francs;
     const parts = paymentSplit({ usd: francs.dividedBy(d(rate)), francs, rate: d(rate), owedUsd, owedFc });
-    const settled = !parts.some((x) => x.kind === "advance")
-      && parts.filter((x) => x.kind === "usd").reduce((a, x) => a.plus(x.usd), d(0)).equals(owedUsd)
+    const settled = parts.filter((x) => x.kind === "usd").reduce((a, x) => a.plus(x.usd), d(0)).equals(owedUsd)
       && parts.filter((x) => x.kind === "cdf").reduce((a, x) => a.plus(d(x.kind === "cdf" ? x.native : 0)), d(0)).equals(owedFc);
     return settled ? francs : owedFc.gt(0) ? owedFc : null;
   })();
@@ -394,7 +397,16 @@ function PaymentDialog({ party, balance, foreign: foreignNow, rows, onClose }: {
         ? t(`${usd(advance.usd)} is an advance on salary`, `${usd(advance.usd)} constituent une avance sur salaire`)
         : t(`${usd(advance.usd)} is an advance`, `${usd(advance.usd)} constituent une avance`)
     : "";
-  const over = advance && (isCdf ? d(advance.usd).times(d(rate)).gte(100) : d(advance.usd).gt(0)) ? advance : null;
+  // In francs, less than 200 FC over is the notes' rounding (the debt rounded up to the next 100 FC, and a note
+  // to spare: 2 533 000 FC for 2 532 816 FC), not a zero too many: no question then.
+  const over = advance && (isCdf ? d(advance.usd).times(d(rate)).gte(200) : d(advance.usd).gt(0)) ? advance : null;
+  // Francs a note short of "Tout" (2 532 800 FC for 2 532 816 FC) leave a few cents owed that nothing clears
+  // afterwards: said before saving, with the amount that settles it all.
+  const fcShort = isCdf && fcAll && !advance && d(amount).gt(0) && d(amount).lt(fcAll) && fcAll.minus(d(amount)).lte(100)
+    ? isCustomer
+      ? t(`A few cents would stay owed: ${cdf(fcAll.toFixed(0))} settles it all, the francs over becoming credit.`, `Quelques centimes resteraient dus\u00a0: ${cdf(fcAll.toFixed(0))} soldent tout, les francs en trop allant à l'avoir.`)
+      : t(`A few cents would stay owed: ${cdf(fcAll.toFixed(0))} settles it all, the francs over becoming an advance.`, `Quelques centimes resteraient dus\u00a0: ${cdf(fcAll.toFixed(0))} soldent tout, les francs en trop devenant une avance.`)
+    : null;
   // An advance big enough to confirm is said once, in the warning below; the split then names only the debts.
   const splitAdvance = advance && !over;
   const splitText = cnyOwed && d(settleCny).gt(0) && split[0]?.kind === "cny"
@@ -514,7 +526,7 @@ function PaymentDialog({ party, balance, foreign: foreignNow, rows, onClose }: {
           >
             <div className="flex gap-2">
               {/* Inside a row with the "All" button, so the field's label is not tied to it: named here. */}
-              <Input inputMode="decimal" usd={!isCdf} thousands={isCdf} aria-label={t(`Amount (${curLabel(account?.currency ?? "USD")})`, `Montant (${curLabel(account?.currency ?? "USD")})`)} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
+              <Input inputMode="decimal" currency={account?.currency ?? "USD"} switchTo={isCdf ? t("a dollar account", "un compte en $") : t("a franc account", "un compte en FC")} aria-label={t(`Amount (${curLabel(account?.currency ?? "USD")})`, `Montant (${curLabel(account?.currency ?? "USD")})`)} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
               {outstanding && !isCdf && !cnyOwed && (
                 // Francs owed count at the day's rate, the figure that settles them all (as the voucher line's "Tout"),
                 // not as booked: 3 290,10 $ would leave 0,19 $ as an advance.
@@ -543,6 +555,7 @@ function PaymentDialog({ party, balance, foreign: foreignNow, rows, onClose }: {
             <div className="space-y-1 sm:col-span-2">
               {splitText && <p className="text-xs text-muted-foreground" data-testid="payment-split">{splitText}</p>}
               {overText && <p role="alert" className="text-xs font-medium text-amber-800 dark:text-amber-400">{overText}</p>}
+              {fcShort && <p className="text-xs font-medium text-amber-800 dark:text-amber-400" data-testid="fc-short">{fcShort}</p>}
             </div>
           ) : fcOwed && !(cnyOwed && d(settleCny).gt(0)) ? (
             <p className="text-xs text-muted-foreground sm:col-span-2">
