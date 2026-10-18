@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt, lte, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lt, lte, ne, sql } from "drizzle-orm";
 import { deMonth, frDate, frMoney, frNumber } from "@shared/french";
 import {
   accounts,
@@ -494,7 +494,19 @@ async function assertYuanInOrder(tx: Tx, values: { accountId: number; partyId: n
     .from(journalLines)
     .innerJoin(journals, eq(journals.id, journalLines.journalId))
     .innerJoin(parties, eq(parties.id, journalLines.partyId))
-    .where(and(eq(journalLines.accountId, payables), eq(journalLines.currency, "CNY"), inArray(journalLines.partyId, ids)))
+    .where(
+      and(
+        eq(journalLines.accountId, payables),
+        eq(journalLines.currency, "CNY"),
+        inArray(journalLines.partyId, ids),
+        // Only what moved yuan, as above: a month-end revaluation (and the reversal that undoes it when the
+        // month is reopened, and those settled since) moves dollars alone, so a reopened month still takes
+        // the yuan work dated before its end. Their dollars spread over the yuan held in the order posted
+        // (see yuanPool), and the month closed again revalues what is held by then, in both orders alike.
+        sql`coalesce(${journalLines.nativeAmount}, 0) <> 0`,
+        ne(journals.type, "revaluation"),
+      ),
+    )
     .groupBy(journalLines.partyId, parties.name)
     .having(sql`max(${journals.date}) > ${date}`)
     .limit(1);
@@ -688,11 +700,13 @@ const RESERVED_MEMOS = [COST_FX_MEMO, RESIDUE_MEMO, REVALUED_MEMO, SETTLED_FX_ME
 /**
  * Refuse a line memo typed as one of the books' own labels. Nothing goes by a memo any more (a line the
  * books write has its kind), but the daybook and the statements would show the typed line as theirs.
- * Whatever the case, accents or spacing.
+ * Whatever the case, accents, spacing or punctuation.
  */
 export function assertMemoNotReserved(memo: string | null | undefined, line: number): void {
   if (!memo) return;
-  const fold = (t: string) => t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/[\s\u00a0]+/g, " ").replace(/[’`]/g, "'").trim().toLowerCase();
+  // Letters and digits alone: accents (and compatibility forms, such as full-width letters), punctuation,
+  // symbols, spaces and invisible characters (a zero-width space, a soft hyphen) are dropped before comparing.
+  const fold = (t: string) => t.normalize("NFKD").replace(/[\p{M}\p{P}\p{S}\p{Z}\p{C}\s]/gu, "").toLowerCase();
   const typed = fold(memo);
   if (!RESERVED_MEMOS.some((m) => fold(m) === typed)) return;
   throw badRequest(

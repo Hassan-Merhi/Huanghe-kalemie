@@ -230,11 +230,18 @@ export function ambiguousImportMeasure(value: unknown): [string, string] | null 
  * 0,28 $, which divided back reads 0,1244 $. The roundest cost (to the cent, then 0,005, 0,001, 0,0005 and
  * 0,0001 $) that still gives that value to the cent is shown: 0,125 $. Read only: the value, the ledger and
  * every cost a sale takes stay value ÷ qty; when no rounder figure gives the value, value ÷ qty is shown.
+ * `kept` is the cost per unit the item's latest receipt was entered at, to its stored six decimals (see
+ * stock_movements.unit_cost): 1 L at 0,125 $ is kept as 0,13 $, which no rounder figure tells from 0,13 $
+ * a litre. It is shown first whenever it still gives the value to the cent.
  */
-export function shownUnitCost(value: DecimalInput, qty: DecimalInput): Decimal {
+export function shownUnitCost(value: DecimalInput, qty: DecimalInput, kept?: DecimalInput | null): Decimal {
   const q = dec(qty);
   const v = cents(value);
   if (!q.gt(0)) return dec(0);
+  if (kept != null && kept !== "") {
+    const k = dec(kept);
+    if (k.gt(0) && cents(k.times(q)).equals(v)) return k;
+  }
   const exact = v.dividedBy(q);
   for (const step of ["0.01", "0.005", "0.001", "0.0005", "0.0001"]) {
     const near = exact.dividedBy(step).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).times(step);

@@ -308,7 +308,7 @@ export function registerRoutes(app: Express) {
   app.get("/api/products/:id", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
     const product = await catalog.getProduct(db, paramId(req));
     if (req.user!.role === "cashier") {
-      res.json({ ...product, variants: product.variants.map(({ avgCost, stockValue, ...v }) => v) });
+      res.json({ ...product, variants: product.variants.map(({ avgCost, stockValue, keptUnitCost, ...v }) => v) });
       return;
     }
     res.json(product);
@@ -344,7 +344,7 @@ export function registerRoutes(app: Express) {
       .parse(req.query);
     const ids = q.ids ? q.ids.split(",").map((x) => id.parse(x)) : undefined;
     const rows = await catalog.searchVariants(db, { search: q.search, locationId: q.locationId ?? undefined, limit: q.limit, ids });
-    res.json(req.user!.role === "cashier" ? rows.map(({ avgCost, stockValue, ...r }) => r) : rows);
+    res.json(req.user!.role === "cashier" ? rows.map(({ avgCost, stockValue, keptUnitCost, ...r }) => r) : rows);
   }));
   app.get("/api/variants/:id/movements", requireRole(...READERS), asyncHandler(async (req, res) => {
     const rows = await db
