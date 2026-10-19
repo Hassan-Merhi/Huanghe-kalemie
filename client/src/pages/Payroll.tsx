@@ -22,7 +22,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
+import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, StatCard, SubmitButton, unclearAmount } from "@/components/common";
 import { AccountSelect, MoneyAccountSelect, MonthSelect, PartySelect, RateInput, useAccounts, useRateField, useRateTooFar } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
@@ -774,6 +774,25 @@ function PaySalariesDialog({ month, run, employees, saved, onClose }: { month: s
         )
       : t(`${e.name} gets ${fmtPay(x.paid)}; nothing is owed to them: all of it becomes an advance`, `${e.name} reçoit ${fmtPay(x.paid)}\u00a0; on ne lui doit rien\u00a0: tout devient une avance`);
   };
+  /**
+   * A franc amount not in 100 FC notes, said neutrally with what each nearest note amount does: the exact net is
+   * the right default, so nothing here nudges toward rounding up (which makes an advance).
+   */
+  const notesText = (e: Party) => {
+    const a = d(amountOf(e));
+    if (!isCdf || !typedNumberOk(amountOf(e)) || !a.gt(0) || !a.isInteger() || a.mod(100).isZero() || excessOf(e)) return null;
+    const owed = owedHere(e);
+    const effect = (x: Decimal) =>
+      x.gt(owed)
+        ? t(`makes an advance of ${fmtPay(x.minus(owed))}`, `crée une avance de ${fmtPay(x.minus(owed))}`)
+        : x.lt(owed)
+          ? t(`leaves ${fmtPay(owed.minus(x))} owed`, `laisse ${fmtPay(owed.minus(x))} dus`)
+          : t("pays what is owed", "solde ce qui est dû");
+    const up = a.dividedBy(100).ceil().times(100);
+    const down = a.dividedBy(100).floor().times(100);
+    const parts = [`${fmtPay(up)} ${effect(up)}`, ...(down.gt(0) ? [`${fmtPay(down)} ${effect(down)}`] : [])].join(", ");
+    return t(`Not payable exactly in notes: ${parts}.`, `Pas payable exactement en billets\u00a0: ${parts}.`);
+  };
   const [confirmOver, setConfirmOver] = useState(false);
 
   /** Amount in the paying account's currency, and its dollar value. */
@@ -887,8 +906,8 @@ function PaySalariesDialog({ month, run, employees, saved, onClose }: { month: s
                         )}
                         {isCdf && francDecimalsError(t, "CDF", amountOf(e)) ? (
                           <p className="mt-1 text-xs text-destructive">{t("No centimes in francs", "Pas de centimes en FC")}</p>
-                        ) : isCdf && d(amountOf(e)).gt(0) && !d(amountOf(e)).mod(100).isZero() && (
-                          <p className="mt-1 text-xs text-amber-800 dark:text-amber-400">{t("Not a multiple of 100 FC", "Pas un multiple de 100\u00a0FC")}</p>
+                        ) : notesText(e) && (
+                          <p className="ml-auto mt-1 max-w-[18rem] text-right text-xs text-muted-foreground" data-testid="pay-notes">{notesText(e)}</p>
                         )}
                       </div>
                     </div>
@@ -978,6 +997,40 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
   const outstandingTotal = outstanding.reduce((s, e) => s.plus(e.balance), d(0));
   const deducted = employees.filter((e) => e.advanceDeducted && d(e.advanceDeducted.usd).gt(0));
   const monthLabel = useMonthLabel();
+  // "Imprimer la pièce" is for the advance just given: any change to the form starts a new one and hides it.
+  const edit = <V,>(set: (v: V) => void) => (v: V) => {
+    setDoneId(null);
+    set(v);
+  };
+
+  // "50 000,5" FC is a slip the server refuses (said under the field), and "1.200" $ is not read as 1,20 $ (the
+  // field asks itself): either stops the button, and nothing is previewed.
+  const amountError = francDecimalsError(t, account?.currency, amount) ?? (typedNumberOk(amount) ? null : unclearAmount(t, amount, account?.currency ?? "USD") ?? t("Correct the amount", "Corrigez le montant"));
+  const typedOk = a.gt(0) && !amountError;
+  const amountUsd = typedOk ? (isCdf ? (r.gt(0) ? a.dividedBy(r) : null) : a) : null;
+  // The paying account's balance before and after, as on the voucher forms; an advance it cannot cover is stopped here.
+  const { can } = useAuth();
+  const balances = useAccounts("/api/accounts/balances", { enabled: can("manager", "partner") }).data;
+  const drawer = account ? balances?.find((x) => x.id === account.id) : undefined;
+  const drawerNow = drawer ? d(isCdf ? drawer.nativeBalance : drawer.balance) : null;
+  const drawerAfter = drawerNow && typedOk ? drawerNow.minus(a) : null;
+  const balanceText = (x: Decimal) => money(x.toFixed(isCdf ? 0 : 2), account!.currency);
+  const drawerShort = drawerNow && drawerAfter?.lt(0)
+    ? t(`Not enough money: balance ${balanceText(drawerNow)} → after ${balanceText(drawerAfter)}`, `Fonds insuffisants\u00a0: solde ${balanceText(drawerNow)} → après ${balanceText(drawerAfter)}`)
+    : null;
+  // More than a month's salary at the day's rate is asked about before paying, never refused: an advance that
+  // large can be meant, "5 000 000" typed for 500 000 FC rarely is.
+  const employee = employees.find((e) => e.id === partyId) ?? null;
+  const salary = employee?.monthlySalary && d(employee.monthlySalary).gt(0) ? d(employee.monthlySalary) : null;
+  const unusual = salary && amountUsd?.gt(salary) ? { ratio: amountUsd.dividedBy(salary) } : null;
+  const amountText = isCdf ? `${cdf(a.toFixed(0))} (≈ ${usd(amountUsd?.toFixed(2) ?? "0")})` : usd(a.toFixed(2));
+  const unusualText = unusual && employee
+    ? t(
+        `An advance of ${amountText} to ${employee.name}, whose salary is ${usd(salary!.toFixed(2))} a month.${unusual.ratio.gte(5) ? " An extra zero?" : ""}`,
+        `Une avance de ${amountText} à ${employee.name}, dont le salaire est de ${usd(salary!.toFixed(2))} par mois.${unusual.ratio.gte(5) ? " Un zéro de trop\u00a0?" : ""}`,
+      )
+    : null;
+  const [confirmUnusual, setConfirmUnusual] = useState(false);
 
   const give = useApiMutation<Record<string, unknown>, { id: number; total: string }>("POST", "/api/vouchers/payment", {
     success: t("Advance recorded", "Avance enregistrée"),
@@ -1013,30 +1066,37 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
           </CardHeader>
           <CardContent className="space-y-3">
             <Field label={t("Employee", "Employé")} required>
-              <PartySelect types={["employee"]} value={partyId} onChange={(id) => setPartyId(id)} allowCreate={false} />
+              <PartySelect types={["employee"]} value={partyId} onChange={edit((id: number | null) => setPartyId(id))} allowCreate={false} />
             </Field>
             <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-              <Field label={t("Paid from", "Payé depuis")} required>
-                <MoneyAccountSelect value={account?.id ?? null} onChange={(_, acc) => setAccount(acc)} />
+              <Field
+                label={t("Paid from", "Payé depuis")}
+                hint={drawerNow ? `${t("Balance", "Solde")} ${balanceText(drawerNow)}${drawerAfter ? ` → ${t("after", "après")} ${balanceText(drawerAfter)}` : ""}` : undefined}
+                error={drawerShort}
+                required
+              >
+                <MoneyAccountSelect value={account?.id ?? null} onChange={(_, acc) => { setDoneId(null); setAccount(acc); }} />
               </Field>
               <Field label={t("Date", "Date")}>
-                <Input type="date" aria-label={t("Payment date", "Date du paiement")} value={day} onChange={(e) => setDay(e.target.value)} />
+                <Input type="date" aria-label={t("Payment date", "Date du paiement")} value={day} onChange={(e) => edit(setDay)(e.target.value)} />
               </Field>
               <Field
                 label={`${t("Amount", "Montant")}${account ? ` (${curLabel(account.currency)})` : ""}`}
-                hint={isCdf && a.gt(0) && r.gt(0) ? `≈ ${usd(a.div(r).toFixed(2))}` : undefined}
+                hint={isCdf && amountUsd ? `≈ ${usd(amountUsd.toFixed(2))}` : undefined}
+                error={francDecimalsError(t, account?.currency, amount)}
                 required
               >
-                <Input inputMode="decimal" usd={!isCdf} thousands={isCdf} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
+                <Input inputMode="decimal" usd={!isCdf} thousands={isCdf} aria-invalid={!!amountError || undefined} value={amount} onChange={(e) => edit(setAmount)(e.target.value)} placeholder="0" />
               </Field>
               {isCdf && (
                 <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} required>
-                  <RateInput day={day} value={rate} onChange={setRate} />
+                  <RateInput day={day} value={rate} onChange={edit(setRate)} />
                 </Field>
               )}
             </div>
+            {unusualText && <p role="alert" className="text-sm font-medium text-amber-800 dark:text-amber-400">{unusualText}</p>}
             <Field label={t("Memo", "Libellé")}>
-              <Input value={memo} onChange={(e) => setMemo(e.target.value)} placeholder={t("Salary advance", "Avance sur salaire")} />
+              <Input value={memo} onChange={(e) => edit(setMemo)(e.target.value)} placeholder={t("Salary advance", "Avance sur salaire")} />
             </Field>
             <div className="flex flex-wrap items-center justify-end gap-2">
               {doneId && (
@@ -1045,17 +1105,19 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
                 </Button>
               )}
               <SubmitButton
-                onClick={submit}
+                onClick={() => (unusualText ? setConfirmUnusual(true) : submit())}
                 blocked={
                   !partyId
                     ? t("Choose an employee", "Choisissez un employé")
                     : !account
                       ? t("Choose the account to pay from", "Choisissez le compte de paiement")
-                      : !a.gt(0)
-                        ? t("Enter an amount above zero", "Saisissez un montant supérieur à zéro")
-                        : isCdf && !r.gt(0)
-                          ? t("Enter the exchange rate", "Saisissez le taux de change")
-                          : isCdf && rateFar
+                      : amountError
+                        ? amountError
+                        : !a.gt(0)
+                          ? t("Enter an amount above zero", "Saisissez un montant supérieur à zéro")
+                          : isCdf && !r.gt(0)
+                            ? t("Enter the exchange rate", "Saisissez le taux de change")
+                            : (isCdf && rateFar) || drawerShort
                 }
                 pending={give.isPending}
               >
@@ -1063,6 +1125,30 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
               </SubmitButton>
             </div>
           </CardContent>
+          <AlertDialog open={confirmUnusual} onOpenChange={setConfirmUnusual}>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>{t("An unusual amount?", "Un montant inhabituel\u00a0?")}</AlertDialogTitle>
+                <AlertDialogDescription asChild>
+                  <div className="space-y-2">
+                    <p>{unusualText}</p>
+                    <p>{t("The advance is deducted from their next salary. Check for an extra zero before paying.", "L'avance sera déduite de son prochain salaire. Vérifiez qu'il n'y a pas un zéro de trop avant de payer.")}</p>
+                  </div>
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+                <AlertDialogAction
+                  onClick={() => {
+                    setConfirmUnusual(false);
+                    submit();
+                  }}
+                >
+                  {t(`Give ${isCdf ? cdf(a.toFixed(0)) : usd(a.toFixed(2))}`, `Donner ${isCdf ? cdf(a.toFixed(0)) : usd(a.toFixed(2))}`)}
+                </AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </Card>
       )}
       <Card className={cn(!canEdit && "lg:col-span-2")}>

@@ -504,6 +504,15 @@ export function AdjustForm({
   const lost = lines.reduce((s, l) => (valueOf(l).lt(0) ? s.plus(valueOf(l).abs()) : s), d(0));
   const totalChange = found.minus(lost);
   const [confirming, setConfirming] = useState<Record<string, unknown> | null>(null);
+  /**
+   * What the confirmation lists, biggest value first: "Huile moteur 4T : 828 → 1 litre (−2 439,65 $)", so a
+   * slip on one line (1 typed for 1 000) is seen there, not only as a total.
+   */
+  const CONFIRM_LINES = 5;
+  const changed = lines
+    .filter((l) => !change(l).isZero())
+    .map((l) => ({ l, before: d(l.variant.locationQty), after: d(l.variant.locationQty).plus(change(l)), value: valueOf(l) }))
+    .sort((a, b) => b.value.abs().comparedTo(a.value.abs()));
 
   return (
     <div className="space-y-4">
@@ -689,6 +698,21 @@ export function AdjustForm({
                 {t("It changes the gross profit both partners share at month close. Check the quantities before saving.", "Cela modifie la marge brute partagée par les deux associés à la clôture du mois. Vérifiez les quantités avant d'enregistrer.")}
               </DialogDescription>
             </DialogHeader>
+            <ul className="space-y-1 text-sm" data-testid="adjust-confirm-lines">
+              {changed.slice(0, CONFIRM_LINES).map(({ l, before, after, value }) => (
+                <li key={l.key} className="flex justify-between gap-3">
+                  <span className="min-w-0">
+                    <span className="font-medium">{l.variant.productName}{l.variant.label !== "Standard" ? ` · ${l.variant.label}` : ""}</span>
+                    {t(": ", "\u00a0: ")}
+                    <span className="whitespace-nowrap">{qty(before.toString())} → {qtyWithUnit(t, after.toString(), l.variant.unit)}</span>
+                  </span>
+                  <Num className={cn("shrink-0", value.isNegative() ? "text-destructive" : "text-green-800 dark:text-green-400")}>{value.isNegative() ? "−" : "+"}{usd(value.abs().toFixed(2))}</Num>
+                </li>
+              ))}
+              {changed.length > CONFIRM_LINES && (
+                <li className="text-muted-foreground">{t(`+ ${changed.length - CONFIRM_LINES} more`, `+ ${changed.length - CONFIRM_LINES} ${changed.length - CONFIRM_LINES > 1 ? "autres" : "autre"}`)}</li>
+              )}
+            </ul>
             <div className="space-y-1 rounded-md border p-3 text-sm">
               {/* A side with nothing on it is left out: no "Stock perdu −0,00 $" on a count that only found stock. */}
               {d(found.toFixed(2)).gt(0) && <div className="flex justify-between"><span>{t("Stock found", "Stock retrouvé")}</span><Num className="text-green-800 dark:text-green-400">+{usd(found.toFixed(2))}</Num></div>}

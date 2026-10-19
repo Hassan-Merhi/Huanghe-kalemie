@@ -425,6 +425,9 @@ function PaymentDialog({ party, balance, foreign: foreignNow, rows, onClose }: {
   // (84 000 FC: 4 430,10 $ booked, 4 429,91 $ today): the figure says which, so the two do not read as one debt.
   const owedAtRate = !!outstanding && settled.some((p) => p.kind === "cdf" || p.kind === "cny") && !owedSettled.toDecimalPlaces(2).eq(outstanding.toDecimalPlaces(2));
   const owedText = `${usd(owedSettled.toFixed(2))}${owedAtRate ? t(" at today's rate", " au taux du jour") : ""}`;
+  // The header's figure is the books' (francs and yuan at the rate they were booked at): named so, beside the
+  // body's "au taux du jour", the two figures read as one debt valued two ways.
+  const bookLabel = foreign.some((f) => !d(f.native).isZero()) ? t(" (book value)", " (valeur comptable)") : "";
   const overText = !over
     ? null
     : isCustomer
@@ -491,11 +494,11 @@ function PaymentDialog({ party, balance, foreign: foreignNow, rows, onClose }: {
           <DialogDescription>
             {party.name}
             {outstanding && (
-              <> · {isCustomer ? t(`owes us ${usd(outstanding.toFixed(2))}`, `nous doit ${usd(outstanding.toFixed(2))}`) : t(`we owe ${usd(outstanding.toFixed(2))}`, `nous devons ${usd(outstanding.toFixed(2))}`)}</>
+              <> · {isCustomer ? t(`owes us ${usd(outstanding.toFixed(2))}`, `nous doit ${usd(outstanding.toFixed(2))}`) : t(`we owe ${usd(outstanding.toFixed(2))}`, `nous devons ${usd(outstanding.toFixed(2))}`)}{bookLabel}</>
             )}
             {/* The other side too, in the statement's words: a customer's avoir, a supplier holding our money. */}
             {!outstanding && !b.isZero() && (
-              <> · {isCustomer ? t(`credit ${usd(b.abs().toFixed(2))}`, `avoir ${usd(b.abs().toFixed(2))}`) : t(`owes us ${usd(b.toFixed(2))}`, `nous doit ${usd(b.toFixed(2))}`)}</>
+              <> · {isCustomer ? t(`credit ${usd(b.abs().toFixed(2))}`, `avoir ${usd(b.abs().toFixed(2))}`) : t(`owes us ${usd(b.toFixed(2))}`, `nous doit ${usd(b.toFixed(2))}`)}{bookLabel}</>
             )}
           </DialogDescription>
         </DialogHeader>
