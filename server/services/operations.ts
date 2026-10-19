@@ -34,11 +34,13 @@ import {
   resolveRate,
   rateTolerancePct,
   postJournal,
+  REVALUATION_SOURCES,
   reverseJournal,
   shopToday,
   SYSTEM_ACCOUNTS,
   systemAccountId,
   toUsd,
+  type ForeignCurrency,
   type PostLine,
   yuanTrueUpLines,
 } from "./ledger";
@@ -412,28 +414,52 @@ export async function applyAdvances(
  * balance), before any dollar advance does (see advanceToFrancLines). They were booked at what they cost
  * then, the bill at its own rate: on the first day they leave no francs owed or held, the dollars left
  * between the two go to exchange differences, as they would have had the bill been booked first (see
- * costForeignOutflows). Only what the rates of those francs explain: the bill's francs at the lowest
- * against the highest rate, plus a cent a line; more is for a person to correct (see selfCheck).
+ * costForeignOutflows). Francs worth under half a cent at that day's rate count as none, and go with the
+ * dollars when a line can carry them (francs owed with dollars owed), else stay at no dollars, as the
+ * residue a posting leaves does. Only what the rates of those francs explain: the bill's francs at the
+ * lowest against the highest rate, plus a cent a line, and what a month-end revaluation of them restated
+ * (a bill reversed since took its share of it, while francs paid dated before had left at a cost that
+ * held it); more is for a person to correct (see selfCheck). The balance is a contact's on `accountId`,
+ * or, with no contact, a balance sheet account's settled like one (withholdings to remit).
  * Undone with the bill's advances (see reverseAdvances).
  */
-async function francsMetLines(tx: Tx, payables: number, partyId: number, date: string, paidOn: string[], post: (on: string, lines: PostLine[]) => Promise<number | null>) {
+async function francsMetLines(tx: Tx, accountId: number, partyId: number | null, date: string, paidOn: string[], post: (on: string, lines: PostLine[]) => Promise<number | null>) {
+  const party = partyId ? eq(journalLines.partyId, partyId) : isNull(journalLines.partyId);
   for (const on of Array.from(new Set(paidOn)).sort()) {
-    const bal = await foreignBalance(tx, payables, partyId, "CDF", on);
-    if (!bal.native.isZero() || bal.usd.isZero()) continue;
+    const bal = await foreignBalance(tx, accountId, partyId, "CDF", on);
+    const rate = (await rateFor(tx, on)).rate;
+    if (!bal.native.abs().dividedBy(rate).lt("0.005") || bal.usd.isZero()) continue;
     const rows = await tx
       .select({ native: journalLines.nativeAmount, rate: journalLines.rate })
       .from(journalLines)
       .innerJoin(journals, eq(journals.id, journalLines.journalId))
-      .where(and(eq(journalLines.accountId, payables), eq(journalLines.partyId, partyId), eq(journalLines.currency, "CDF"), sql`${journals.date} >= ${date}`, lte(journals.date, on)));
+      .where(and(eq(journalLines.accountId, accountId), party, eq(journalLines.currency, "CDF"), sql`${journals.date} >= ${date}`, lte(journals.date, on)));
     const posts = rows.filter((r) => r.native && !dec(r.native).isZero() && r.rate && dec(r.rate).gt(0));
     if (!posts.length) return null;
     const rates = posts.map((r) => dec(r.rate!));
     const billed = sum(posts.filter((r) => dec(r.native!).isNegative()).map((r) => dec(r.native!).abs()));
-    const bound = billed.times(new Decimal(1).dividedBy(Decimal.min(...rates)).minus(new Decimal(1).dividedBy(Decimal.max(...rates)))).plus(new Decimal("0.01").times(posts.length));
+    // What the months' revaluations hold on the balance that day (see REVALUATION_SOURCES), and what a
+    // container's reversal took back from the exchange differences of its francs' payments, so the claim
+    // it leaves is worth what was paid (see yuanTrueUpLines): a bill dated before that day meets that
+    // claim, and the difference is the bill's exchange difference, as it would be had it been booked first.
+    const [reval] = await tx
+      .select({ usd: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)` })
+      .from(journalLines)
+      .innerJoin(journals, eq(journals.id, journalLines.journalId))
+      .where(and(eq(journalLines.accountId, accountId), party, eq(journalLines.currency, "CDF"), eq(journals.type, "revaluation"), inArray(journals.sourceType, REVALUATION_SOURCES), lte(journals.date, on)));
+    const [taken] = await tx
+      .select({ usd: sql<string>`coalesce(sum(abs(${journalLines.debit} - ${journalLines.credit})), 0)` })
+      .from(journalLines)
+      .innerJoin(journals, eq(journals.id, journalLines.journalId))
+      .where(and(eq(journalLines.accountId, accountId), party, eq(journalLines.currency, "CDF"), eq(journalLines.kind, "settled_fx"), sql`${journals.date} >= ${date}`, lte(journals.date, on)));
+    const revalued = dec(reval?.usd ?? 0).abs().plus(dec(taken?.usd ?? 0));
+    const bound = billed.times(new Decimal(1).dividedBy(Decimal.min(...rates)).minus(new Decimal(1).dividedBy(Decimal.max(...rates)))).plus(new Decimal("0.01").times(posts.length)).plus(revalued);
     if (bal.usd.abs().gt(bound)) return null;
+    // The francs go on the line only on the side that takes them off (a debit brings francs in).
+    const francs = bal.native.isNegative() === bal.usd.isNegative() ? bal.native.abs() : new Decimal(0);
     const fx = await systemAccountId(tx, SYSTEM_ACCOUNTS.fx);
     return post(on, [
-      { accountId: payables, partyId, currency: "CDF", nativeAmount: "0", rate: (await rateFor(tx, on)).rate.toFixed(4), debit: bal.usd.isNegative() ? bal.usd.abs() : 0, credit: bal.usd.isPositive() ? bal.usd : 0, memo: COST_FX_MEMO, kind: "cost_fx" },
+      { accountId, partyId, currency: "CDF", nativeAmount: francs.toFixed(2), rate: rate.toFixed(4), debit: bal.usd.isNegative() ? bal.usd.abs() : 0, credit: bal.usd.isPositive() ? bal.usd : 0, memo: COST_FX_MEMO, kind: "cost_fx" },
       { accountId: fx, debit: bal.usd.isPositive() ? bal.usd : 0, credit: bal.usd.isNegative() ? bal.usd.abs() : 0, memo: COST_FX_MEMO, kind: "cost_fx" },
     ]);
   }
@@ -441,29 +467,44 @@ async function francsMetLines(tx: Tx, payables: number, partyId: number, date: s
 }
 
 /**
- * Francs paid to (or received from) a supplier, agent or employee dated before a franc entry already on
- * them (a bill booked first, the payment typed afterwards for an earlier day) settle it as they come too:
- * the bill is not taken out again at what the francs cost, so the dollars left between the two on the
- * first day they leave no francs owed or held go to exchange differences, as francsMetLines does for a
- * bill dated before francs already paid. Undone with the journal (see reverseJournal).
+ * Francs paid to (or received from) a supplier, agent or employee, or paid on a balance sheet account
+ * settled like a contact (withholdings to remit), dated before a franc entry already on them (a bill
+ * booked first, the payment typed afterwards for an earlier day) settle it as they come too: the bill is
+ * not taken out again at what the francs cost, so the dollars left between the two on the first day they
+ * leave no francs owed or held go to exchange differences, as francsMetLines does for a bill dated before
+ * francs already paid. Undone with the journal (see reverseJournal).
  */
 export async function francsMetAfter(tx: Tx, journalId: number | null, date: string, userId: number): Promise<void> {
   if (!journalId) return;
   const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
   const own = await tx
-    .select({ partyId: journalLines.partyId })
+    .select({ accountId: journalLines.accountId, partyId: journalLines.partyId, type: accounts.type, isMoney: accounts.isMoney, systemKey: accounts.systemKey })
     .from(journalLines)
-    .where(and(eq(journalLines.journalId, journalId), eq(journalLines.accountId, payables), eq(journalLines.currency, "CDF")));
-  for (const partyId of Array.from(new Set(own.map((l) => l.partyId).filter((x): x is number => !!x)))) {
+    .innerJoin(accounts, eq(accounts.id, journalLines.accountId))
+    .where(and(eq(journalLines.journalId, journalId), eq(journalLines.currency, "CDF")));
+  const keys = new Map<string, { accountId: number; partyId: number | null }>();
+  for (const l of own) {
+    const settled = l.accountId === payables ? !!l.partyId : !l.partyId && !l.isMoney && (l.type === "asset" || l.type === "liability") && l.systemKey !== SYSTEM_ACCOUNTS.receivables;
+    if (settled) keys.set(`${l.accountId}|${l.partyId ?? ""}`, { accountId: l.accountId, partyId: l.partyId });
+  }
+  for (const key of keys.values()) {
     const later = await tx
       .selectDistinct({ date: journals.date })
       .from(journalLines)
       .innerJoin(journals, eq(journals.id, journalLines.journalId))
-      .where(and(eq(journalLines.accountId, payables), eq(journalLines.partyId, partyId), eq(journalLines.currency, "CDF"), gt(journals.date, date)))
+      .where(and(eq(journalLines.accountId, key.accountId), key.partyId ? eq(journalLines.partyId, key.partyId) : isNull(journalLines.partyId), eq(journalLines.currency, "CDF"), gt(journals.date, date)))
       .orderBy(journals.date);
     if (!later.length) continue;
-    await francsMetLines(tx, payables, partyId, date, later.map((d) => String(d.date)), (on, lines) =>
-      postJournal(tx, { date: on, type: "supplier_payment", memo: `Francs du ${frDate(date)} imputés sur la facture du ${frDate(on)}`, userId, lines, sourceType: FRANCS_MET_SOURCE, sourceId: journalId }),
+    await francsMetLines(tx, key.accountId, key.partyId, date, later.map((d) => String(d.date)), (on, lines) =>
+      postJournal(tx, {
+        date: on,
+        type: "supplier_payment",
+        memo: key.partyId ? `Francs du ${frDate(date)} imputés sur la facture du ${frDate(on)}` : `Francs du ${frDate(date)} imputés sur les francs dus au ${frDate(on)}`,
+        userId,
+        lines,
+        sourceType: FRANCS_MET_SOURCE,
+        sourceId: journalId,
+      }),
     );
   }
 }
@@ -680,14 +721,16 @@ export async function payablesReceiptLines(
  * undone, the yuan paid against its bill pay the next bill of the supplier still owed, and the rest come
  * back as yuan the supplier owes us, at what was paid for them: were they to come back at the invoice's
  * dollars, refunding exactly what was paid would leave yuan nobody could clear, and the discount would
- * stay as profit. The supplier's whole yuan history counts, in the order it was posted, whatever the
- * dates (see yuanTrueUpLines). The caller holds the supplier's lock.
+ * stay as profit. What a month-end revaluation left on the yuan still owed goes with the bill in the
+ * share of its yuan, so the yuan still owed keep theirs. A franc bill the same (`currency` "CDF"). The
+ * supplier's whole yuan history counts, in the order it was posted, whatever the dates (see
+ * yuanTrueUpLines). The caller holds the supplier's lock.
  */
 export async function settledFxTakebackLines(
   tx: Tx,
-  input: { payables: number; partyId: number; billJournalId: number; native: Decimal; usd: DecimalInput; rate: DecimalInput },
+  input: { payables: number; partyId: number; currency: ForeignCurrency; billJournalId: number; native: Decimal; usd: DecimalInput; rate: DecimalInput },
 ): Promise<PostLine[]> {
-  return yuanTrueUpLines(tx, { payables: input.payables, partyId: input.partyId, bill: input.billJournalId, native: input.native, usd: dec(input.usd), rate: input.rate });
+  return yuanTrueUpLines(tx, { payables: input.payables, partyId: input.partyId, currency: input.currency, bill: input.billJournalId, native: input.native, usd: dec(input.usd), rate: input.rate });
 }
 
 /** The date of a contact's first yuan owed to them dated after `date`, if any. Read only. */
