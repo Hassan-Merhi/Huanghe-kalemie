@@ -18,7 +18,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, SubmitButton, unclearAmount } from "@/components/common";
+import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, SubmitButton, unclearAmount, useCorrectFocus } from "@/components/common";
 import { CurrencySwitchNote, MoneyAccountSelect, PARTY_LABELS, RateInput, useAccounts, useCurrencySwitch, useRate, useRateField, useRateTooFar } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
@@ -522,6 +522,7 @@ function PaymentDialog({ party, balance, foreign: foreignNow, rows, onClose }: {
         )
     : null;
   const [confirmOver, setConfirmOver] = useState(false);
+  const correctOver = useCorrectFocus(() => "pay-amount");
   // Everything owed to this supplier in dollars: the dollars owed, the francs owed as booked and the yuan at the
   // rate shown, what the yuan check compares with and the "Tout" beside the amount fills in.
   const dollarsOwed = Decimal.max(dollarBalance.negated(), 0);
@@ -621,7 +622,7 @@ function PaymentDialog({ party, balance, foreign: foreignNow, rows, onClose }: {
           >
             <div className="flex gap-2">
               {/* Inside a row with the "All" button, so the field's label is not tied to it: named here. */}
-              <Input inputMode="decimal" currency={account?.currency ?? "USD"} switchTo={isCdf ? t("a dollar account", "un compte en $") : t("a franc account", "un compte en FC")} aria-label={t(`Amount (${curLabel(account?.currency ?? "USD")})`, `Montant (${curLabel(account?.currency ?? "USD")})`)} value={amount} onChange={(e) => { setAmount(e.target.value); currencySwitch.clear(); }} placeholder="0" />
+              <Input inputMode="decimal" currency={account?.currency ?? "USD"} data-correct="pay-amount" switchTo={isCdf ? t("a dollar account", "un compte en $") : t("a franc account", "un compte en FC")} aria-label={t(`Amount (${curLabel(account?.currency ?? "USD")})`, `Montant (${curLabel(account?.currency ?? "USD")})`)} value={amount} onChange={(e) => { setAmount(e.target.value); currencySwitch.clear(); }} placeholder="0" />
               {outstanding && !isCdf && !cnyOwed && (
                 // Francs owed count at the day's rate, the figure that settles them all (as the voucher line's "Tout"),
                 // not as booked: 3 290,10 $ would leave 0,19 $ as an advance.
@@ -709,7 +710,7 @@ function PaymentDialog({ party, balance, foreign: foreignNow, rows, onClose }: {
         </DialogFooter>
       </DialogContent>
       <AlertDialog open={confirmOver} onOpenChange={setConfirmOver}>
-        <AlertDialogContent>
+        <AlertDialogContent {...correctOver.content}>
           <AlertDialogHeader>
             <AlertDialogTitle>
               {isCustomer
@@ -736,7 +737,7 @@ function PaymentDialog({ party, balance, foreign: foreignNow, rows, onClose }: {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+            <AlertDialogCancel {...correctOver.cancel}>{t("Correct it", "Corriger")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
                 setConfirmOver(false);

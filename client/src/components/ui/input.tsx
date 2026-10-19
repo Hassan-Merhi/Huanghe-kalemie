@@ -1,8 +1,9 @@
 import * as React from "react";
+import Decimal from "decimal.js";
 import { CalendarDays } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { ambiguousDollars, ambiguousMeasure, type FieldUnit, formatLang, inputText, money, parseNumberInput, percentOf as percentAmount, qty, unitMismatch, unitMismatchText, unitRefusedText, unusableText } from "@/lib/format";
+import { ambiguousDollars, ambiguousMeasure, exactMoney, type FieldUnit, formatLang, inputText, parseNumberInput, percentOf as percentAmount, qty, unitMismatch, unitMismatchText, unitRefusedText, unusableText } from "@/lib/format";
 
 const BASE =
   "flex h-9 w-full rounded-md border border-input bg-background px-3 py-2 text-base ring-offset-background file:border-0 file:bg-transparent file:text-sm file:font-medium file:text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 aria-[invalid=true]:border-destructive aria-[invalid=true]:ring-destructive/20 disabled:cursor-not-allowed disabled:opacity-50 motion-reduce:transition-none md:text-sm";
@@ -157,11 +158,13 @@ const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className
   const thousands = thousandsProp || currency === "CDF";
   const usd = usdProp || (!!currency && currency !== "CDF");
   const cur = usdProp || !currency || currency === "CDF" ? "USD" : currency;
-  const fmtUsd = (v: unknown) => money(v, cur);
   const plain = value === undefined || value === null ? "" : String(value);
   // An ambiguous amount comes back as "1.200?" (see unusableText), a refused unit as "500FC!" (see
   // unitRefusedText): show it as typed, so the question is asked again.
-  const shown = (v: string) => inputText(/^[^?]*\d\?$/.test(v) || /\d.*!$/.test(v) ? v.slice(0, -1) : v);
+  // Whole quantities are asked about like dollars: "1.000" may be 1 000 pieces or 1.
+  const strict = usd || !!whole;
+  // A stored 4.125 is shown "4,1250" in a strict field, never as text the field itself would question.
+  const shown = (v: string) => inputText(/^[^?]*\d\?$/.test(v) || /\d.*!$/.test(v) ? v.slice(0, -1) : v, { strict });
   const [text, setText] = React.useState(() => shown(plain));
   // The value this field last sent up: when it comes back unchanged, keep what the person typed ("4," stays "4,").
   const sent = React.useRef<string | null>(null);
@@ -170,8 +173,6 @@ const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className
     sent.current = null;
   }, [plain]);
   const [focused, setFocused] = React.useState(false);
-  // Whole quantities are asked about like dollars: "1.000" may be 1 000 pieces or 1.
-  const strict = usd || !!whole;
   // Litres and the like: "1.000" only (see ambiguousMeasure).
   const measured = !strict && !!measuredProp;
   const unit = fieldUnit({ thousands, usd, currency, percent, rate });
@@ -182,7 +183,8 @@ const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className
   const asPercent = fromPercent(text);
   const read = wrongUnit ? null : asPercent ?? parseNumberInput(text, { thousands, usd: strict, measured });
   const ambiguous = wrongUnit || asPercent ? null : strict ? ambiguousDollars(text) : measured ? ambiguousMeasure(text) : null;
-  const fmtAmbiguous = (v: unknown) => (usd ? fmtUsd(v) : qty(v));
+  // Exact: "4,125" reads 4 125,00 ¥ or 4,125 ¥, never 4,13 ¥.
+  const fmtAmbiguous = (v: unknown) => (usd ? exactMoney(v, cur) : qty(v));
   const unreadable = text.trim() !== "" && read === null;
   const fr = formatLang() === "fr";
   // While a dollar amount is typed, say how it is read when that could be in doubt: "= 1 200,00 $", or what
@@ -242,8 +244,8 @@ const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className
             ? unitMismatchText(wrongUnit, unit, switchTo)
             : ambiguous
               ? fr
-                ? `${text.trim()}\u00a0: voulez-vous dire ${fmtAmbiguous(ambiguous)} ou ${fmtAmbiguous(Number(ambiguous) / 1000)}\u00a0?`
-                : `${text.trim()}: did you mean ${fmtAmbiguous(ambiguous)} or ${fmtAmbiguous(Number(ambiguous) / 1000)}?`
+                ? `${text.trim()}\u00a0: voulez-vous dire ${fmtAmbiguous(ambiguous)} ou ${fmtAmbiguous(new Decimal(ambiguous).dividedBy(1000).toString())}\u00a0?`
+                : `${text.trim()}: did you mean ${fmtAmbiguous(ambiguous)} or ${fmtAmbiguous(new Decimal(ambiguous).dividedBy(1000).toString())}?`
               : fr
                 ? "Nombre non reconnu"
                 : "Not a number"}
@@ -251,7 +253,7 @@ const DecimalInput = React.forwardRef<HTMLInputElement, InputProps>(({ className
       )}
       {showRead && (
         <span aria-hidden className="pointer-events-none absolute right-0 top-full z-20 mt-1 whitespace-nowrap rounded border bg-popover px-2 py-0.5 text-xs tabular-nums text-muted-foreground shadow-sm">
-          = {fmtUsd(read)}
+          = {exactMoney(read, cur)}
         </span>
       )}
     </span>

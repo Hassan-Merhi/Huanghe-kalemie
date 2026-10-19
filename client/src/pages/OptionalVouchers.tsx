@@ -357,7 +357,7 @@ function DraftSummary({ draft, check, onShort }: { draft: VoucherDraft; check: b
   const tooFar = useRateTooFar(draft.date, implied ? implied.toString() : voucherRate);
   const rateFar = tooFar && implied
     ? t(
-        `These amounts mean 1 $ = ${number(implied.toDecimalPlaces(2).toString())} FC, too far from the day's rate`,
+        `These amounts mean $1 = ${number(implied.toDecimalPlaces(2).toString())} FC, too far from the day's rate`,
         `Ces montants donnent 1\u00a0$ = ${number(implied.toDecimalPlaces(2).toString())}\u00a0FC, trop loin du taux du jour`,
       )
     : tooFar;

@@ -13,7 +13,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
+import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton, useCorrectFocus } from "@/components/common";
 import { MoneyAccountSelect, RateInput, useMoneyAccounts, useRate } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useToast } from "@/hooks/use-toast";
@@ -125,6 +125,11 @@ function ReturnDialog({ sale, owes, onClose, onDone }: { sale: SaleFull; owes: D
       : t(`The customer paid ${cdf(fcPaid.toString())}: hand back ${cdf(fcOver.toString())}?`, `Le client avait payé ${cdf(fcPaid.toString())}\u00a0: rendre ${cdf(fcOver.toString())}\u00a0?`)
     : null;
   const [confirmOver, setConfirmOver] = useState(false);
+  // "Corriger" goes back to the first quantity returned.
+  const correctOver = useCorrectFocus(() => {
+    const l = sale.lines.find((x) => d(qtys[x.id] || 0).gt(0));
+    return l ? `return-${l.id}` : null;
+  });
   // "1.000" pieces is asked about by its field (1 000 or 1?), never read as 1.
   const unclear = sale.lines.map((l) => unclearQty(t, qtys[l.id])).find(Boolean);
   const blocked = unclear
@@ -201,6 +206,7 @@ function ReturnDialog({ sale, owes, onClose, onDone }: { sale: SaleFull; owes: D
                           whole={wholeUnit(l.unit)} measured={!wholeUnit(l.unit)}
                           inlineAlert
                           disabled={max.lte(0)}
+                          data-correct={`return-${l.id}`}
                           aria-label={t(`Quantity of ${l.productName} to return`, `Quantité ${de(l.productName)} à retourner`)}
                           placeholder="0"
                           value={qtys[l.id] ?? ""}
@@ -311,13 +317,13 @@ function ReturnDialog({ sale, owes, onClose, onDone }: { sale: SaleFull; owes: D
         </DialogFooter>
       </DialogContent>
       <AlertDialog open={confirmOver} onOpenChange={setConfirmOver}>
-        <AlertDialogContent>
+        <AlertDialogContent {...correctOver.content}>
           <AlertDialogHeader>
             <AlertDialogTitle>{t("More francs than were paid?", "Plus de francs que payés\u00a0?")}</AlertDialogTitle>
             <AlertDialogDescription>{fcOverText}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+            <AlertDialogCancel {...correctOver.cancel}>{t("Correct it", "Corriger")}</AlertDialogCancel>
             <AlertDialogAction onClick={() => save(true)}>{fcOver ? t(`Hand back ${cdf(fcOver.toString())}`, `Rendre ${cdf(fcOver.toString())}`) : t("Save anyway", "Enregistrer quand même")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -379,9 +385,9 @@ function ReturnSlip({ sale, ret, accName }: { sale: SaleFull; ret: SaleFull["ret
       ) : (
         <p>{ret.refundAccountId ? `${t("Paid back from", "Rendu depuis")} ${accName(ret.refundAccountId)}` : t("Taken off the customer's balance", "Déduit du solde du client")}</p>
       )}
-      {ret.reason && <p>{t("Reason", "Motif")}{"\u00a0"}: {ret.reason}</p>}
+      {ret.reason && <p>{t("Reason:", "Motif\u00a0:")} {ret.reason}</p>}
       {dash}
-      <p className="mt-6">{t("Customer signature", "Signature du client")}{"\u00a0"}: ____________</p>
+      <p className="mt-6">{t("Customer signature:", "Signature du client\u00a0:")} ____________</p>
     </div>
   );
 }

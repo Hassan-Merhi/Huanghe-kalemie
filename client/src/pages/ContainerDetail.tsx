@@ -4,7 +4,7 @@ import { convertedUnitPrice } from "@shared/landedCost";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import { AlertTriangle, ArrowLeft, Bike, ChevronDown, Info, Lock, PackageCheck, Pencil, Plus, Save, Trash2, Undo2, X } from "lucide-react";
-import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, StatCard, SubmitButton, unclearAmount } from "@/components/common";
+import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, StatCard, SubmitButton, unclearAmount, useCorrectFocus } from "@/components/common";
 import { ContainerRateField, CurrencySwitchNote, MoneyAccountSelect, PartySelect, perUsdText, useAccounts, useContainerRateRefusal, useCurrencySwitch, useRate, VariantSearch } from "@/components/pickers";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -29,7 +29,7 @@ import { useApiMutation } from "@/hooks/useApiMutation";
 import { useToast } from "@/hooks/use-toast";
 import { api, invalidateAll } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { curLabel, d, date, money, number, pct, qty, todayLocal, typedNumberOk, unitCost, usd, variantText, unclearQty } from "@/lib/format";
+import { curLabel, d, date, dollarRate, money, number, pct, qty, todayLocal, typedNumberOk, unitCost, usd, variantText, unclearQty } from "@/lib/format";
 import { qtyWithUnit, unitKey, unitLabel, wholeUnit } from "@/lib/units";
 import { useT, count } from "@/lib/i18n";
 import type { Account, Party, VariantRow } from "@/lib/types";
@@ -306,7 +306,7 @@ function HeaderCard({ c, linesDirty }: { c: ContainerFull; linesDirty: boolean }
           <p className="text-xs text-muted-foreground">{t("Invoice currency", "Devise de la facture")}</p>
           <p className="mt-1 font-medium">
             {c.currency === "CDF" ? "FC" : c.currency}
-            {c.currency !== "USD" && <span className="ml-2 text-sm font-normal text-muted-foreground">1 $ = {qty(perUsdText(c.rateToUsd))} {c.currency === "CDF" ? "FC" : c.currency}</span>}
+            {c.currency !== "USD" && <span className="ml-2 text-sm font-normal text-muted-foreground">{dollarRate(perUsdText(c.rateToUsd), c.currency === "CDF" ? "FC" : c.currency)}</span>}
           </p>
         </div>
         <div>
@@ -366,7 +366,7 @@ function EditDetailsDialog({ c, linesDirty, onClose }: { c: ContainerFull; lines
     ? c.lines.reduce((s, l) => s.plus(lineValue(convertedUnitPrice(l.unitPrice, c.rateToUsd, cur, newRate), l)), d(0))
     : null;
   const rates = [c.currency, cur].filter((x, i, all) => x !== "USD" && all.indexOf(x) === i)
-    .map((x) => (x === c.currency || d(newRate).gt(0) ? `1\u00a0$ = ${qty(perUsdText(x === c.currency ? c.rateToUsd : newRate))}\u00a0${curLabel(x)}` : t(`the ${curLabel(x)} rate to enter`, `taux en ${curLabel(x)} à saisir`)))
+    .map((x) => (x === c.currency || d(newRate).gt(0) ? dollarRate(perUsdText(x === c.currency ? c.rateToUsd : newRate), curLabel(x)) : t(`the ${curLabel(x)} rate to enter`, `taux en ${curLabel(x)} à saisir`)))
     .join(t(" and ", " et "));
   function save() {
     const body: Record<string, unknown> = { shipDate: shipDate || null, arrivalDate: arrivalDate || null, notes: notes.trim() || null };
@@ -1046,6 +1046,7 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
           )
     : null;
   const [confirmBig, setConfirmBig] = useState(false);
+  const correctBig = useCorrectFocus(() => "cost-amount");
 
   function save() {
     create.mutate({
@@ -1131,7 +1132,7 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
             hint={bigText && <span role="alert" className="font-medium text-amber-800 dark:text-amber-400">{bigText}</span>}
             required
           >
-            <Input inputMode="decimal" usd={currency === "USD"} thousands={isCdf} value={amount} onChange={(e) => { setAmount(e.target.value); currencySwitch.clear(); }} placeholder="0" />
+            <Input inputMode="decimal" usd={currency === "USD"} thousands={isCdf} data-correct="cost-amount" value={amount} onChange={(e) => { setAmount(e.target.value); currencySwitch.clear(); }} placeholder="0" />
           </Field>
           {isCdf && (
             <Field
@@ -1188,7 +1189,7 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
         </DialogFooter>
       </DialogContent>
       <AlertDialog open={confirmBig} onOpenChange={setConfirmBig}>
-        <AlertDialogContent>
+        <AlertDialogContent {...correctBig.content}>
           <AlertDialogHeader>
             <AlertDialogTitle>{tooBig?.gt(100) ? t("A cost above the purchase value?", "Un frais supérieur à la valeur d'achat\u00a0?") : t("An unusual cost?", "Un frais inhabituel\u00a0?")}</AlertDialogTitle>
             <AlertDialogDescription asChild>
@@ -1199,7 +1200,7 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+            <AlertDialogCancel {...correctBig.cancel}>{t("Correct it", "Corriger")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
                 setConfirmBig(false);

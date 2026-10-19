@@ -187,13 +187,16 @@ export function num(value: unknown): number {
 /**
  * A plain number ("1234.5") as it reads inside a form field: "1 234,5" in French, "1234.5" in English.
  * Whole numbers lose their ",00". Anything that is not a plain number is shown as it is.
+ * With `strict` (dollar and yuan fields, whole quantities) a stored 4.125 is shown "4,1250", not "4,125",
+ * which the field would question as 4 125 or 4,125 (see ambiguousDollars).
  */
-export function inputText(value: string | null | undefined): string {
+export function inputText(value: string | null | undefined, opts: { strict?: boolean } = {}): string {
   const v = (value ?? "").trim();
   const m = /^(-?)(\d+)(?:\.(\d+))?$/.exec(v);
   if (!m) return value ?? "";
   const [, sign, int, frac] = m;
-  const fraction = frac && /[1-9]/.test(frac) ? frac : "";
+  const kept = frac && /[1-9]/.test(frac) ? frac : "";
+  const fraction = opts.strict && kept.length === 3 && /^[1-9]\d{0,2}$/.test(int) ? `${kept}0` : kept;
   if (lang === "en") return `${sign}${int}${fraction ? `.${fraction}` : ""}`;
   const grouped = int.length > 3 ? int.replace(/\B(?=(\d{3})+(?!\d))/g, "\u00a0") : int;
   return `${sign}${grouped}${fraction ? `,${fraction}` : ""}`;
@@ -256,6 +259,22 @@ export function money(value: unknown, currency: string = "USD"): string {
   if (currency === "CDF") return cdf(value);
   if (currency === "USD") return usd(value);
   return `${nf(2, 2).format(num(value))}${NB}${currency === "CNY" ? "¥" : currency}`;
+}
+
+/** A rate as people say it: "1 $ = 2 820 FC" in French, "$1 = 2,820 FC" in English (sign: FC, ¥, CNY). */
+export function dollarRate(value: unknown, sign = "FC"): string {
+  return lang === "fr" ? `1${NB}$ = ${qty(value)}${NB}${sign}` : `$1 = ${qty(value)} ${sign}`;
+}
+
+/**
+ * A dollar or yuan amount with every decimal it has, cents at least: 4,125 ¥ and 1,20 $, never 4,13 ¥.
+ * For the small reading of an ambiguous amount, so the question offers the value typed.
+ */
+export function exactMoney(value: unknown, currency: string = "USD"): string {
+  if (currency === "CDF") return cdf(value);
+  const n = num(value);
+  const body = nf(2, 4).format(Math.abs(n));
+  return currency === "USD" ? withDollar(n, body) : `${n < 0 ? MINUS : ""}${body}${NB}${currency === "CNY" ? "¥" : currency}`;
 }
 
 /** How a currency is written in the shop: FC and $, never CDF / USD. */
@@ -473,7 +492,7 @@ export function containerRateRefusal(
   const limit = Decimal.max(d(tolerancePct ?? 3), 5);
   if (!rate.minus(reference).abs().dividedBy(reference).times(100).gt(limit)) return null;
   return t(
-    `More than ${limit.toString()}% away from the rate on file (1 $ = ${qty(onFile)} ${sign}): check the invoice, or update the day's rate first`,
+    `More than ${limit.toString()}% away from the rate on file ($1 = ${qty(onFile)} ${sign}): check the invoice, or update the day's rate first`,
     `Plus de ${pct(limit.toString(), 2)} d'écart avec le taux enregistré (1\u00a0$ = ${qty(onFile)}\u00a0${sign})\u00a0: vérifiez la facture, ou mettez d'abord à jour le taux du jour`,
   );
 }
