@@ -20,6 +20,7 @@ import { draftEmpty, listDrafts, newSlot, removeDraft, resumedPrice, saveDraft, 
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
 import { cdf, curLabel, d, date as fmtDate, dateTime, dollarRate, fcRounding, frenchPunctuation, MINUS, money, pct as fmtPct, qty as fmtQty, refusedUnit, todayLocal, typedNumberOk, unclearQty, usd, variantText } from "@/lib/format";
+import { receiptFcRoundingUsd } from "@/lib/saleRows";
 import { cartCount, unitLabel, wholeUnit } from "@/lib/units";
 import type { Account, MotorcycleUnit, Party, Settings, VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -169,7 +170,7 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
   // cents (35,61 − 8,62 for 27,00 $): the receipt shows that rounding as its own line, the till's own (the
   // returns come later, on their slips), signed as the books and the Sales list keep it.
   const paymentsUsd = sale.payments.reduce((s, p) => s.plus(d(p.amountUsd)), d(0));
-  const keptUsd = sale.saleFcRoundingUsd !== undefined ? d(sale.saleFcRoundingUsd) : paymentsUsd.minus(sale.paidUsd);
+  const keptUsd = receiptFcRoundingUsd(sale) ?? paymentsUsd.minus(sale.paidUsd);
   const paidInFrancs = sale.payments.some((p) => p.currency === "CDF");
   // The same rounding in francs, as the till showed it: what was handed over less what was counted as paid,
   // each franc payment at its own rate (16 FC, where 0,01 $ alone would not say how many francs). Shown even
@@ -625,7 +626,8 @@ export default function POS() {
       const on = backDated ? t(` on ${fmtDate(saleDate)}`, ` le ${fmtDate(saleDate)}`) : "";
       problems.push(t(`${l.variant.productName}: ${inCart} in the cart, only ${here} in stock here${on}`, `${l.variant.productName}\u00a0: ${inCart} au panier, seulement ${here} en stock ici${on}`));
     }
-    if (costRefusal(l) === "list") problems.push(t(`${l.variant.productName}: price below cost, for the owner to raise`, `${l.variant.productName}\u00a0: prix sous le coût, à relever par le propriétaire`));
+    // A 0 $ price is already a problem above; the list price being under cost is no second one.
+    if (costRefusal(l) === "list" && typedNumberOk(l.unitPrice) && d(l.unitPrice).gt(0)) problems.push(t(`${l.variant.productName}: price below cost, for the owner to raise`, `${l.variant.productName}\u00a0: prix sous le coût, à relever par le propriétaire`));
     if (costRefusal(l) === "line") problems.push(t(`${l.variant.productName}: below cost; only the owner can sell below cost`, `${l.variant.productName}\u00a0: sous le coût\u00a0; seul le propriétaire peut vendre à perte`));
     if (l.variant.tracksSerials && !l.unitId) problems.push(t(`Choose the chassis number for ${l.variant.productName}`, `Choisissez le numéro de châssis pour ${l.variant.productName}`));
   }
@@ -1205,7 +1207,8 @@ export default function POS() {
                             {t(`${priceRise(l)} on the list price (${usd(d(l.variant.sellPrice).toFixed(2))}): check the zeros`, `${priceRise(l)} sur le prix de liste (${usd(d(l.variant.sellPrice).toFixed(2))}) — vérifiez les zéros`)}
                           </p>
                         )}
-                        {costRefusal(l) ? (
+                        {/* A 0 $ price is said once, above: "sous le coût" would only contradict "saisissez le prix". */}
+                        {typedNumberOk(l.unitPrice) && d(l.unitPrice).lte(0) ? null : costRefusal(l) ? (
                           <p className="flex items-center gap-1 text-xs font-medium text-destructive" data-testid="pos-below-cost">
                             <AlertTriangle className="h-3 w-3 shrink-0" />
                             {costRefusal(l) === "list"

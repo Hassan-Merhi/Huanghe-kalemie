@@ -29,7 +29,7 @@ import { useApiMutation } from "@/hooks/useApiMutation";
 import { useToast } from "@/hooks/use-toast";
 import { api, invalidateAll } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { curLabel, d, date, dollarRate, money, number, pct, qty, todayLocal, typedNumberOk, unitCost, usd, variantText, unclearQty } from "@/lib/format";
+import { curLabel, d, date, dollarRate, exactMoney, money, number, pct, qty, todayLocal, typedNumberOk, unitCost, usd, variantText, unclearQty } from "@/lib/format";
 import { qtyWithUnit, unitKey, unitLabel, wholeUnit } from "@/lib/units";
 import { useT, count } from "@/lib/i18n";
 import type { Account, Party, VariantRow } from "@/lib/types";
@@ -114,6 +114,14 @@ function fmtCur(value: unknown, currency: string) {
   // "8 401 FC l'unité" beside a 168 010 FC line.
   if (currency === "CDF" && value != null && /^-?\d+\.\d*[1-9]/.test(String(value))) return `${number(value, 6)} FC`;
   return money(value, currency);
+}
+
+/**
+ * A line's purchase price per unit, with every decimal it has: 4,125 ¥ as on the invoice, never "4,13 ¥
+ * l'unité" (the input field shows it the same way). Line totals (qty × unit) stay money to the cent.
+ */
+function fmtUnit(value: unknown, currency: string) {
+  return currency === "CDF" ? fmtCur(value, currency) : exactMoney(value, currency);
 }
 
 function itemLabel(l: { productName: string; attributes: Record<string, string> }) {
@@ -646,7 +654,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                   ) : (
                     <dl className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-sm">
                       <dt className="text-muted-foreground">{t("Quantity", "Quantité")}</dt><dd className="text-right"><Num>{qty(r.quantity)}</Num></dd>
-                      <dt className="text-muted-foreground">{t("Unit price", "Prix unitaire")}</dt><dd className="text-right"><Num>{fmtCur(r.unitPrice, c.currency)}</Num></dd>
+                      <dt className="text-muted-foreground">{t("Unit price", "Prix unitaire")}</dt><dd className="text-right"><Num>{fmtUnit(r.unitPrice, c.currency)}</Num></dd>
                       <dt className="text-muted-foreground">{t("Total weight (kg)", "Poids total (kg)")}</dt><dd className="text-right"><Num>{r.weightKg ? qty(r.weightKg) : "—"}</Num></dd>
                       <dt className="text-muted-foreground">{t("Total volume (m³)", "Volume total (m³)")}</dt><dd className="text-right"><Num>{r.volumeCbm ? qty(r.volumeCbm) : "—"}</Num></dd>
                     </dl>
@@ -710,7 +718,7 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                       ) : (
                         <>
                           <TableCell className="text-right"><Num>{qty(r.quantity)}</Num></TableCell>
-                          <TableCell className="text-right"><Num>{fmtCur(r.unitPrice, c.currency)}</Num></TableCell>
+                          <TableCell className="text-right"><Num>{fmtUnit(r.unitPrice, c.currency)}</Num></TableCell>
                           <TableCell className="text-right"><Num>{r.weightKg ? qty(r.weightKg) : "—"}</Num></TableCell>
                           <TableCell className="text-right"><Num>{r.volumeCbm ? qty(r.volumeCbm) : "—"}</Num></TableCell>
                         </>
@@ -1680,7 +1688,7 @@ function FinalCosts({ c, priceOf }: { c: ContainerFull; priceOf: Map<number, str
                       <TableCell className="text-right"><Num>{qty(l.quantity)}</Num></TableCell>
                       <TableCell className="text-right">
                         <Num>{usd(l.fobUsd)}</Num>
-                        <span className="block whitespace-nowrap text-xs text-muted-foreground">{fmtCur(l.unitPrice, c.currency)} {t("each", "l'unité")}</span>
+                        <span className="block whitespace-nowrap text-xs text-muted-foreground">{fmtUnit(l.unitPrice, c.currency)} {t("each", "l'unité")}</span>
                       </TableCell>
                       <TableCell className="text-right"><Num>{usd(l.allocatedUsd)}</Num></TableCell>
                       <TableCell className="text-right"><Num className="font-medium">{usd(l.landedTotalUsd)}</Num></TableCell>
