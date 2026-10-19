@@ -89,6 +89,8 @@ export interface SaleFull {
   creditUsd: string;
   cogs?: string;
   note: string | null;
+  /** The franc rate the sale was validated at; null on a sale made before it was kept. */
+  cdfRate?: string | null;
   voidedAt: string | null;
   voidReason: string | null;
   createdAt: string;
@@ -157,8 +159,10 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
     if (!a || a.systemKey === "cash_usd" || a.systemKey === "cash_cdf") return currency === "CDF" ? t("Cash FC", "Espèces FC") : t("Cash $", "Espèces $");
     return a.name;
   };
-  const saleRate = useRate(sale.date).data?.cdfPerUsd;
-  const cdfRate = sale.payments.find((p) => p.currency === "CDF")?.rate ?? saleRate ?? null;
+  // The rate the sale was validated at, so a reprint reads as the original did after the day's rate is
+  // corrected; a sale made before it was kept falls back to its francs' rate, else the day's.
+  const dayRate = useRate(sale.date).data?.cdfPerUsd;
+  const cdfRate = sale.cdfRate ?? sale.payments.find((p) => p.currency === "CDF")?.rate ?? dayRate ?? null;
   const gross = sale.lines.reduce((s, l) => s.plus(c2(d(l.qty).times(l.unitPrice))), d(0));
   const discount = gross.minus(sale.total);
   // Franc change goes in 100 FC steps, so the payment lines can miss what the sale counts as paid by a few
@@ -362,8 +366,11 @@ function ChassisPicker({ line, locationId, takenUnitIds, onChange }: { line: Car
 
 /** The server's limit on payment lines per sale (MAX_SALE_PAYMENTS). */
 const MAX_PAYMENTS = 10;
-/** Cash received above this many times the total is asked about before the sale is saved. */
-const UNUSUAL_RECEIVED = 10;
+/**
+ * Change above this many times the total (702 000 FC for a 70 200 FC sale: a zero too many) is asked about
+ * before the sale is saved, in dollars or francs alike.
+ */
+const UNUSUAL_CHANGE = 3;
 
 export default function POS() {
   const t = useT();
@@ -627,6 +634,8 @@ export default function POS() {
     // line over ("au plus 2,20 $" on a 22 $ tyre at 10 %), the lowest that keeps every line within the limit.
     let saleDiscountMax: Decimal | null = null;
     for (const l of lines) {
+      // A price, quantity or discount that cannot be read is said by its field alone ("Corrigez le prix").
+      if (!typedNumberOk(l.unitPrice) || !typedNumberOk(l.qty) || !typedNumberOk(l.lineDiscount)) continue;
       const list = c2(d(l.qty).times(d(l.variant.sellPrice)));
       if (list.lte(0)) continue;
       // The sale discount is shared over the lines by their amount, as the server does.
@@ -638,6 +647,18 @@ export default function POS() {
         if (own.lte(most) && saleDiscount.gt(0) && lineAmount(l).gt(0)) {
           const allowed = most.minus(own).times(subtotal).dividedBy(lineAmount(l)).toDecimalPlaces(2, Decimal.ROUND_DOWN);
           saleDiscountMax = saleDiscountMax ? Decimal.min(saleDiscountMax, allowed) : allowed;
+          continue;
+        }
+        // A price lowered below the list price with no discount typed is said as a price, not as a discount.
+        if (!d(l.lineDiscount || 0).gt(0) && d(l.unitPrice).lt(d(l.variant.sellPrice))) {
+          const price = usd(d(l.unitPrice).toFixed(2));
+          const listPrice = usd(d(l.variant.sellPrice).toFixed(2));
+          problems.push(
+            t(
+              `${l.variant.productName}: ${price} is more than ${maxDiscountPct}% below the selling price (${listPrice})`,
+              `${l.variant.productName}\u00a0: ${price} est plus de ${maxDiscountPct}\u00a0% sous le prix de vente (${listPrice})`,
+            ),
+          );
           continue;
         }
         problems.push(
@@ -698,9 +719,11 @@ export default function POS() {
    */
   const balancesQ = useAccounts("/api/accounts/balances", { enabled: can("manager") });
   const unusualCash: string[] = [];
-  if (!totalBad && total.gt(0) && received.gt(total.times(UNUSUAL_RECEIVED))) {
+  const unusualReceived = !totalBad && total.gt(0) && received.minus(total).gt(total.times(UNUSUAL_CHANGE));
+  if (unusualReceived) {
     const typed = Array.from(byAccount).map(([id, amount]) => money(amount.toFixed(2), accById(id)!.currency)).join(" + ");
-    const times = received.dividedBy(total).toDecimalPlaces(0, Decimal.ROUND_DOWN).toString();
+    // To the nearest: 702 000 FC on a 71 250 FC sale is 10 times the total, not 9.
+    const times = received.dividedBy(total).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).toString();
     unusualCash.push(t(
       `${typed} received for a ${usd(total.toFixed(2))} sale: ${fmtQty(times)} times the total. Check the zeros.`,
       `${typed} reçus pour une vente de ${usd(total.toFixed(2))}\u00a0: ${fmtQty(times)} fois le total. Vérifiez les zéros.`,
@@ -1563,7 +1586,7 @@ export default function POS() {
       <AlertDialog open={confirmCash} onOpenChange={setConfirmCash}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{t("An unusual amount?", "Un montant inhabituel\u00a0?")}</AlertDialogTitle>
+            <AlertDialogTitle>{unusualReceived ? t("An unusual amount received?", "Montant reçu inhabituel\u00a0?") : t("An unusual amount?", "Un montant inhabituel\u00a0?")}</AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2 text-left" data-testid="pos-cash-confirm">
                 {unusualCash.map((m) => <p key={m}>{m}</p>)}
