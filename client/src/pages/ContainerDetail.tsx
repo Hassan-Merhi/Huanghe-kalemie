@@ -25,6 +25,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { useApiMutation } from "@/hooks/useApiMutation";
+import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import { curLabel, d, date, money, pct, qty, todayLocal, typedNumberOk, unitCost, usd, variantText, unclearQty } from "@/lib/format";
 import { qtyWithUnit, unitKey, unitLabel, wholeUnit } from "@/lib/units";
@@ -264,7 +265,19 @@ function HeaderCard({ c }: { c: ContainerFull }) {
   const statusLabel = useStatusLabel();
   const [editing, setEditing] = useState(false);
   const finalized = c.status === "finalized";
-  const patch = useApiMutation<{ status: ContainerStatus }>("PATCH", `/api/containers/${c.id}`, { success: t("Status updated", "Statut mis à jour") });
+  const { toast } = useToast();
+  // "Arrivé" with no arrival date (or an expected one still to come) stamps today's, said in the toast and changed
+  // with the pencil, so the card never reads "Arrivé" beside "Arrivée : —".
+  const patch = useApiMutation<{ status: ContainerStatus; arrivalDate?: string }>("PATCH", `/api/containers/${c.id}`, {
+    onSuccess: (_, body) =>
+      toast({
+        title: t("Status updated", "Statut mis à jour"),
+        description: body.arrivalDate
+          ? t(`Arrival dated ${date(body.arrivalDate)}: change it with the pencil if it arrived another day.`, `Arrivée datée du ${date(body.arrivalDate)}\u00a0: modifiez-la avec le crayon s'il est arrivé un autre jour.`)
+          : undefined,
+      }),
+  });
+  const changeStatus = (status: ContainerStatus) => patch.mutate(status === "arrived" && (!c.arrivalDate || c.arrivalDate > todayLocal()) ? { status, arrivalDate: todayLocal() } : { status });
 
   return (
     <Card>
@@ -272,7 +285,7 @@ function HeaderCard({ c }: { c: ContainerFull }) {
         <div>
           <p className="text-xs text-muted-foreground">{t("Status", "Statut")}</p>
           {can("manager") && !finalized ? (
-            <Select value={c.status} onValueChange={(v) => patch.mutate({ status: v as ContainerStatus })}>
+            <Select value={c.status} onValueChange={(v) => changeStatus(v as ContainerStatus)}>
               <SelectTrigger className="mt-1 h-9 w-full sm:w-44" aria-label={t("Container status", "Statut du conteneur")}><SelectValue /></SelectTrigger>
               <SelectContent>
                 {(["draft", "in_transit", "arrived"] as const).map((s) => (

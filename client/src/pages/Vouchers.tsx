@@ -393,6 +393,8 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
   }
 
   function saveDraft(confirmed = false) {
+    // A rate the server would refuse is not parked either: the pending list would count it at that rate.
+    if (rateFar) return;
     if (unusual.length && !confirmed) return setConfirmUnusual("draft");
     onSaveDraft({ kind, date: day, memo: memo.trim() || null, payload: payload(false)! });
   }
@@ -536,7 +538,8 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
       )}
       {error && <ErrorText error={error} />}
       <ActionBar canSave={canSave}>
-        <Button variant="outline" disabled={savingDraft} onClick={() => saveDraft()}>
+        {/* Blocked for the same reason as "Enregistrer", said once beside it. */}
+        <Button variant="outline" disabled={savingDraft || !!rateFar} title={rateFar ?? undefined} onClick={() => saveDraft()}>
           {t("Save as pending", "Mettre en attente")}
         </Button>
         <SubmitButton onClick={() => save()} blocked={rateFar || short} pending={m.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
@@ -954,7 +957,8 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
         </CardContent>
       </Card>
       <ActionBar canSave={canSave}>
-        <Button variant="outline" disabled={savingDraft} onClick={() => onSaveDraft({ kind: "transfer", date: day, memo: memo.trim() || null, payload: payload() })}>
+        {/* Two amounts far from the day's rate are not parked either: the pending list would show them at that rate. */}
+        <Button variant="outline" disabled={savingDraft || rateFar} title={rateFar ? blocked ?? undefined : undefined} onClick={() => onSaveDraft({ kind: "transfer", date: day, memo: memo.trim() || null, payload: payload() })}>
           {t("Save as pending", "Mettre en attente")}
         </Button>
         <SubmitButton onClick={() => m.mutate({ date: day, ...payload() })} blocked={blocked} pending={m.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
