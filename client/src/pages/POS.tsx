@@ -1,5 +1,5 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { de } from "@shared/french";
+import { capitalize, de, deMonth, monthText } from "@shared/french";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import Decimal from "decimal.js";
@@ -104,6 +104,8 @@ export interface SaleFull {
   avoirUsedUsd?: string | null;
   avoirAtSaleUsd?: string | null;
   avoirLeftUsd?: string | null;
+  /** A cancelled sale: the part of its credit the customer's avoir had covered, given back to it. */
+  avoirGivenBackUsd?: string | null;
   /** Credit still on the sale after returns, however they were refunded. */
   creditLeftUsd?: string;
 }
@@ -368,6 +370,15 @@ export default function POS() {
   // Managers can enter a past sale (from the paper book after a power cut); cashiers sell today.
   const [saleDate, setSaleDate] = useState(today);
   const backDated = saleDate !== today;
+  // A date in a closed month (or before the last one closed) is refused by the server: said by the date field.
+  const periodsQ = useQuery<{ month: string; status: string }[]>({ queryKey: ["/api/periods"], enabled: can("manager") });
+  const lastClosed = (periodsQ.data ?? []).filter((p) => p.status === "closed").map((p) => p.month).sort().pop() ?? null;
+  const saleMonth = saleDate.slice(0, 7);
+  const dateClosed = backDated && lastClosed && saleMonth <= lastClosed
+    ? saleMonth === lastClosed
+      ? t(`${monthText(saleMonth, "en")} is closed`, `${capitalize(monthText(saleMonth, "fr"))} est clôturé`)
+      : t(`${monthText(lastClosed, "en")} is closed: nothing dated ${monthText(saleMonth, "en")} or earlier can change`, `Le mois ${deMonth(lastClosed)} est clôturé\u00a0: rien de daté ${deMonth(saleMonth)} ou avant ne peut changer`)
+    : null;
   const [locationId, setLocationId] = useState<number | null>(null);
   const [lines, setLines] = useState<CartLine[]>([]);
   const [discount, setDiscount] = useState("");
@@ -408,7 +419,8 @@ export default function POS() {
   // Live stock at the chosen location for every item in the cart.
   const variantIds = useMemo(() => Array.from(new Set(lines.map((l) => l.variant.id))).sort((a, b) => a - b), [lines]);
   const stockQ = useQuery<VariantRow[]>({
-    queryKey: ["/api/variants", { ids: variantIds.join(","), locationId: locationId ?? undefined, limit: 500 }],
+    // Back-dated, what could leave the location on that day, as the server checks the sale.
+    queryKey: ["/api/variants", { ids: variantIds.join(","), locationId: locationId ?? undefined, limit: 500, asOf: backDated ? saleDate : undefined }],
     enabled: variantIds.length > 0 && !!locationId,
   });
   const available = (variantId: number, fallback: string) => d(stockQ.data?.find((v) => v.id === variantId)?.locationQty ?? fallback);
@@ -564,6 +576,7 @@ export default function POS() {
   if (rateOff) {
     problems.push(t(`The rate is more than ${rateTolerance.toString()}% from the day's rate (${fmtQty(dayRate)}): correct it`, `Le taux s'écarte de plus de ${rateTolerance.toString()}\u00a0% du taux du jour (${fmtQty(dayRate)})\u00a0: corrigez-le`));
   }
+  if (dateClosed) problems.push(t(`${dateClosed}: choose another date`, `${dateClosed}\u00a0: choisissez une autre date`));
   if (!locationId) todo.push(t("Choose the location", "Choisissez le lieu"));
   if (lines.length === 0) todo.push(t("Add at least one item", "Ajoutez au moins un article"));
   for (const l of lines) {
@@ -582,7 +595,8 @@ export default function POS() {
     if (typedNumberOk(l.qty) && qtyInCart(l.variant.id).gt(available(l.variant.id, l.variant.locationQty))) {
       const inCart = fmtQty(qtyInCart(l.variant.id).toString());
       const here = fmtQty(available(l.variant.id, l.variant.locationQty).toString());
-      problems.push(t(`${l.variant.productName}: ${inCart} in the cart, only ${here} in stock here`, `${l.variant.productName}\u00a0: ${inCart} au panier, seulement ${here} en stock ici`));
+      const on = backDated ? t(` on ${fmtDate(saleDate)}`, ` le ${fmtDate(saleDate)}`) : "";
+      problems.push(t(`${l.variant.productName}: ${inCart} in the cart, only ${here} in stock here${on}`, `${l.variant.productName}\u00a0: ${inCart} au panier, seulement ${here} en stock ici${on}`));
     }
     if (costRefusal(l) === "list") problems.push(t(`${l.variant.productName}: price below cost, for the owner to raise`, `${l.variant.productName}\u00a0: prix sous le coût, à relever par le propriétaire`));
     if (costRefusal(l) === "line") problems.push(t(`${l.variant.productName}: below cost; only the owner can sell below cost`, `${l.variant.productName}\u00a0: sous le coût\u00a0; seul le propriétaire peut vendre à perte`));
@@ -701,14 +715,21 @@ export default function POS() {
     // Francs are asked in 100 FC notes (7 $ at 2 808: 19 700 FC, not 19 656 FC; 22 $: 61 800 FC, not 61 776 FC),
     // like the total, the change and "Reste à payer"; the few francs over or under are the sale's "Arrondi FC",
     // at most 50 FC, which the server takes as rounding (up to 100 FC).
-    const amount = currency === "CDF" ? francsFor(rest, true).toFixed(2) : rest.toFixed(2);
+    // What is left after another payment is asked up to the next 100 FC (16 $ at 2 808: 45 000 FC, not 44 900 FC),
+    // so the prefill settles the sale rather than leave the shop 28 FC short; the few francs over are rounding,
+    // or change under the usual rules.
+    const others = kept.some((p) => p !== same);
+    const amount = currency === "CDF" ? francsFor(rest, true, others).toFixed(2) : rest.toFixed(2);
     if (same) return setPays(kept.map((p) => (p === same ? { ...p, amount, rate: null } : p)));
     setPays([...kept, { key: keyRef.current++, accountId: acc.id, amount, rate: null }]);
   }
-  /** Dollars in francs at the day's rate; in 100 FC steps for what is asked or prefilled, exact for the secondary figure. */
-  function francsFor(value: Decimal, mixed: boolean) {
+  /**
+   * Dollars in francs at the day's rate; in 100 FC steps for what is asked or prefilled, exact for the secondary
+   * figure. `up`: the rest of a sale after another payment, rounded up so the francs prefilled cover it.
+   */
+  function francsFor(value: Decimal, mixed: boolean, up = false) {
     const exact = value.times(rateNum);
-    return mixed ? Decimal.max(exact.dividedBy(FRANC_ROUNDING).toDecimalPlaces(0, ROUND).times(FRANC_ROUNDING), FRANC_ROUNDING) : exact.toDecimalPlaces(0, ROUND);
+    return mixed ? Decimal.max(exact.dividedBy(FRANC_ROUNDING).toDecimalPlaces(0, up ? Decimal.ROUND_UP : ROUND).times(FRANC_ROUNDING), FRANC_ROUNDING) : exact.toDecimalPlaces(0, ROUND);
   }
   const updatePay = (key: number, patch: Partial<PayRow>) => setPays((ps) => ps.map((p) => (p.key === key ? { ...p, ...patch } : p)));
   /** Changing a line to an account in another currency converts what was typed at the day's rate. */
@@ -717,7 +738,9 @@ export default function POS() {
     let amount = p.amount;
     if (prev && prev.currency !== acc.currency && d(p.amount).gt(0)) {
       const value = payUsd(p);
-      if (acc.currency === "CDF") amount = rateNum.gt(0) ? francsFor(value, true).toFixed(0) : "";
+      // Beside another payment, it is the rest of the sale: up to the next 100 FC, as "Tout en FC" asks it.
+      const others = pays.some((q) => q.key !== p.key && q.accountId && d(q.amount).gt(0));
+      if (acc.currency === "CDF") amount = rateNum.gt(0) ? francsFor(value, true, others).toFixed(0) : "";
       else amount = value.gt(0) ? c2(value).toFixed(2) : "";
     }
     updatePay(p.key, { accountId: acc.id, amount, rate: null });
@@ -855,15 +878,19 @@ export default function POS() {
         actions={
           <div className="flex flex-wrap items-center gap-2">
             {can("manager") && (
-              <Input
-                type="date"
-                className={cn("w-40", backDated && "border-amber-500 text-amber-800 dark:text-amber-400")}
-                value={saleDate}
-                max={today}
-                onChange={(e) => setSaleDate(e.target.value || today)}
-                aria-label={t("Sale date", "Date de la vente")}
-                title={t("Sale date", "Date de la vente")}
-              />
+              <div className="w-40">
+                <Input
+                  type="date"
+                  className={cn("w-40", backDated && "border-amber-500 text-amber-800 dark:text-amber-400", dateClosed && "border-destructive text-destructive")}
+                  value={saleDate}
+                  max={today}
+                  onChange={(e) => setSaleDate(e.target.value || today)}
+                  aria-label={t("Sale date", "Date de la vente")}
+                  aria-invalid={!!dateClosed}
+                  title={t("Sale date", "Date de la vente")}
+                />
+                {dateClosed && <p className="mt-0.5 text-xs font-medium text-destructive" data-testid="sale-date-closed">{dateClosed}</p>}
+              </div>
             )}
             <div className="w-48">
               <LocationSelect value={locationId} onChange={setLocationId} aria-label={t("Location of the sale", "Lieu de la vente")} />
@@ -901,11 +928,11 @@ export default function POS() {
                           <div className="min-w-0">
                             <p className="break-words font-medium">{l.variant.productName}{l.variant.label !== "Standard" ? ` · ${l.variant.label}` : ""}</p>
                             <p className="text-xs text-muted-foreground">
-                              {l.variant.sku} · {t("in stock here", "en stock ici")}{t(":", "\u00a0:")} <span className={cn(short && "font-semibold text-destructive")}>{fmtQty(avail.toString())}</span>
+                              {l.variant.sku} · {backDated ? t(`in stock here on ${fmtDate(saleDate)}`, `en stock ici le ${fmtDate(saleDate)}`) : t("in stock here", "en stock ici")}{t(":", "\u00a0:")} <span className={cn(short && "font-semibold text-destructive")}>{fmtQty(avail.toString())}</span>
                             </p>
                             {short && (
                               <p className="mt-0.5 flex items-center gap-1 text-xs text-destructive">
-                                <AlertTriangle className="h-3 w-3" /> {t("More than the stock available at this location", "Plus que le stock disponible à ce lieu")}
+                                <AlertTriangle className="h-3 w-3" /> {backDated ? t("More than the stock available at this location on that day", "Plus que le stock disponible à ce lieu ce jour-là") : t("More than the stock available at this location", "Plus que le stock disponible à ce lieu")}
                               </p>
                             )}
                           </div>

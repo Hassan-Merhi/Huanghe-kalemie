@@ -340,7 +340,7 @@ export async function assertContainerRate(tx: Tx, currency: string, rateToUsd: s
     } else if (rate.lt(0.08) || rate.gt(0.25)) {
       throw badRequest(
         `${perUsd(rate).toString()} CNY for $1 looks wrong: one dollar buys about 7.1 CNY. Give how many yuan one dollar buys.`,
-        `${frNumber(perUsd(rate).toString())}\u00a0¥ pour 1\u00a0$ semble faux : un dollar vaut environ 7,1\u00a0¥. Indiquez combien de yuans vaut 1\u00a0$.`,
+        `${frNumber(perUsd(rate).toString())}\u00a0¥ pour 1\u00a0$ semble faux\u00a0: un dollar vaut environ 7,1\u00a0¥. Indiquez combien de yuans vaut 1\u00a0$.`,
       );
     }
   }
@@ -350,7 +350,7 @@ export async function assertContainerRate(tx: Tx, currency: string, rateToUsd: s
   if (rate.minus(reference).abs().dividedBy(reference).times(100).gt(limit)) {
     throw badRequest(
       `The container rate (${perUsd(rate).toString()} ${sign} for $1) is more than ${limit.toString()}% away from the rate on file (${onFile.toString()} ${sign} for $1). Check it, or update the day's rate first.`,
-      `Le taux du conteneur (${frNumber(perUsd(rate).toString())}\u00a0${sign} pour 1\u00a0$) s'écarte de plus de ${frNumber(limit.toString())} % du taux enregistré (${frNumber(onFile.toString())}\u00a0${sign} pour 1\u00a0$). Vérifiez-le, ou mettez d'abord à jour le taux du jour.`,
+      `Le taux du conteneur (${frNumber(perUsd(rate).toString())}\u00a0${sign} pour 1\u00a0$) s'écarte de plus de ${frNumber(limit.toString())}\u00a0% du taux enregistré (${frNumber(onFile.toString())}\u00a0${sign} pour 1\u00a0$). Vérifiez-le, ou mettez d'abord à jour le taux du jour.`,
     );
   }
 }

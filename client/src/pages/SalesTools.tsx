@@ -374,9 +374,18 @@ function BulkPriceDialog({ rows, onClose }: { rows: Row[]; onClose: () => void }
       })
       .filter((c) => !d(c.next).eq(d(c.r.sellPrice)));
   }, [rows, pct, valid, step]);
+  // "100" typed for "10" doubles every price at once: from +50 % or −30 %, the change is asked first, as a single price is.
+  const unusual = valid && (d(pct).gte(50) || d(pct).lte(-30));
+  const [confirming, setConfirming] = useState(false);
+  const sample = changes[0];
 
   // One request for the whole list: either every price changes or none does.
-  async function apply() {
+  async function apply(confirmed = false) {
+    if (!confirmed && unusual) {
+      setConfirming(true);
+      return;
+    }
+    setConfirming(false);
     setProgress({ done: 0, failed: 0 });
     try {
       const res = await api<{ updated: number }>("POST", "/api/import/prices", { rows: changes.map((c) => ({ sku: c.r.sku, sellPrice: c.next })) });
@@ -460,7 +469,7 @@ function BulkPriceDialog({ rows, onClose }: { rows: Row[]; onClose: () => void }
         <DialogFooter className="gap-2">
           <Button variant="outline" onClick={onClose} disabled={running}>{t("Cancel", "Annuler")}</Button>
           <SubmitButton
-            onClick={apply}
+            onClick={() => apply()}
             blocked={!pct.trim() ? t("Enter a percentage", "Saisissez un pourcentage") : !valid ? t("Fix the percentage", "Corrigez le pourcentage") : !changes.length && t("No price would change", "Aucun prix ne changerait")}
             pending={running}
           >
@@ -468,8 +477,44 @@ function BulkPriceDialog({ rows, onClose }: { rows: Row[]; onClose: () => void }
           </SubmitButton>
         </DialogFooter>
       </DialogContent>
+      <AlertDialog open={confirming} onOpenChange={setConfirming}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("An unusual change?", "Un changement inhabituel\u00a0?")}</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-left">
+                <p className="font-medium text-amber-800 dark:text-amber-400">{bulkChangeText(t, changes.length, d(pct))}</p>
+                {sample && (
+                  <p>
+                    {t(`For example, ${sample.r.productName}: ${usd(sample.r.sellPrice)} → ${usd(sample.next)}`, `Par exemple, ${sample.r.productName}\u00a0: ${usd(sample.r.sellPrice)} → ${usd(sample.next)}`)}
+                  </p>
+                )}
+                <p>{t("Check for a missing or extra zero before applying.", "Vérifiez qu'il ne manque pas un zéro, ou qu'il n'y en a pas un de trop.")}</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void apply(true)}>{t("Apply anyway", "Appliquer quand même")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
+}
+
+// "Les 15 prix vont doubler", "… baisser de 50 %": what the typed percentage does, in words.
+function bulkChangeText(t: ReturnType<typeof useT>, n: number, p: ReturnType<typeof d>) {
+  const all = n === 1 ? t("The price", "Le prix") : t(`The ${n} prices`, `Les ${n} prix`);
+  const will = n === 1 ? t("will", "va") : t("will", "vont");
+  const by = fmtPct(p.abs().toDecimalPlaces(0).toString(), 0);
+  if (p.eq(100)) return t(`${all} ${will} double.`, `${all} ${will} doubler.`);
+  if (p.eq(-50)) return t(`${all} ${will} be halved.`, `${all} ${will} être divisé${n === 1 ? "" : "s"} par deux.`);
+  if (p.gt(0) && p.mod(100).isZero()) {
+    const x = p.div(100).plus(1).toString();
+    return t(`${all} ${will} be multiplied by ${x}.`, `${all} ${will} être multiplié${n === 1 ? "" : "s"} par ${x}.`);
+  }
+  return p.gt(0) ? t(`${all} ${will} rise by ${by}.`, `${all} ${will} augmenter de ${by}.`) : t(`${all} ${will} drop by ${by}.`, `${all} ${will} baisser de ${by}.`);
 }
 
 // ---------------------------------------------------------------- Today's sales

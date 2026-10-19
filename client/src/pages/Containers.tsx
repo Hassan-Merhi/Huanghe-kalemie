@@ -4,7 +4,7 @@ import { containerNumberKey } from "@shared/containerNumber";
 import { Link, useLocation } from "wouter";
 import { Plus } from "lucide-react";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
-import { ContainerRateField, LocationSelect, PartySelect } from "@/components/pickers";
+import { ContainerRateField, LocationSelect, PartySelect, useContainerRateRefusal } from "@/components/pickers";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -187,6 +187,7 @@ function NewContainerDialog({ onClose, onCreated }: { onClose: () => void; onCre
   });
   const foreign = currency !== "USD";
   const rateOk = !foreign || d(rateToUsd).gt(0);
+  const rateRefused = useContainerRateRefusal(currency, rateToUsd);
   const blocked = !number.trim()
     ? t("Enter the container number", "Saisissez le numéro du conteneur")
     : numberError
@@ -196,8 +197,8 @@ function NewContainerDialog({ onClose, onCreated }: { onClose: () => void; onCre
       : !locationId
         ? t("Choose where to unload", "Choisissez le lieu de déchargement")
         : !rateOk
-          ? t(`Enter how many ${currency === "CDF" ? "FC" : currency} one dollar buys`, `Saisissez le taux (${currency === "CDF" ? "FC" : currency} pour 1 $)`)
-          : null;
+          ? t(`Enter how many ${currency === "CDF" ? "FC" : currency} one dollar buys`, `Saisissez le taux (${currency === "CDF" ? "FC" : currency} pour 1\u00a0$)`)
+          : rateRefused;
 
   function save() {
     create.mutate({

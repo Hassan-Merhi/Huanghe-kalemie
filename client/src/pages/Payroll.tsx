@@ -959,6 +959,8 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
   const a = d(amount);
   const outstanding = employees.filter((e) => d(e.balance).gt(0));
   const outstandingTotal = outstanding.reduce((s, e) => s.plus(e.balance), d(0));
+  const deducted = employees.filter((e) => e.advanceDeducted && d(e.advanceDeducted.usd).gt(0));
+  const monthLabel = useMonthLabel();
 
   const give = useApiMutation<Record<string, unknown>, { id: number; total: string }>("POST", "/api/vouchers/payment", {
     success: t("Advance recorded", "Avance enregistrée"),
@@ -1057,7 +1059,11 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
         </CardHeader>
         <CardContent className="p-0">
           {outstanding.length === 0 ? (
-            <div className="p-4"><EmptyState title={t("No advance outstanding", "Aucune avance en cours")} /></div>
+            <div className="p-4">
+              <EmptyState title={t("No advance outstanding", "Aucune avance en cours")}>
+                {deducted.length > 0 && t("Advances given since the payroll was saved are already deducted (below).", "Les avances données depuis la paie enregistrée sont déjà déduites (ci-dessous).")}
+              </EmptyState>
+            </div>
           ) : (
             <Table>
               <TableHeader>
@@ -1084,6 +1090,20 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
                 </TableRow>
               </TableFooter>
             </Table>
+          )}
+          {/* Given after the month's payroll was saved: netted against the salary owed, not lost. */}
+          {deducted.length > 0 && (
+            <ul className="space-y-1 border-t p-4 text-sm text-muted-foreground" data-testid="advance-deducted">
+              {deducted.map((e) => (
+                <li key={e.id}>
+                  <Link href={`/contacts/${e.id}`} className="font-medium text-foreground hover:underline">{e.name}</Link>
+                  {t(
+                    `: ${usd(e.advanceDeducted!.usd)} of advance already deducted from the ${monthLabel(e.advanceDeducted!.month)} salary`,
+                    `\u00a0: ${usd(e.advanceDeducted!.usd)} d'avance déjà déduits du salaire ${deMonth(e.advanceDeducted!.month)}`,
+                  )}
+                </li>
+              ))}
+            </ul>
           )}
         </CardContent>
       </Card>
