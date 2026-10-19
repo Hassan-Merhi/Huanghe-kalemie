@@ -10,7 +10,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
+import { EmptyState, ErrorText, Field, KeepNumbers, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
@@ -490,17 +490,21 @@ export default function Daybook() {
                     <button type="button" className="w-full text-left" onClick={() => toggle(r.id)}>
                       <div className="flex items-start justify-between gap-2">
                         <div className="min-w-0">
-                          <p className={cn("break-words font-medium", r.reversedByJournalId && "line-through text-muted-foreground")}>{(r.memo && frenchPunctuation(sys.memo(r.memo))) || contacts || journalTypeLabel(r.type, t)}</p>
+                          <p className={cn("break-words font-medium", r.reversedByJournalId && "line-through text-muted-foreground")}>
+                            <KeepNumbers text={(r.memo && frenchPunctuation(sys.memo(r.memo))) || contacts || journalTypeLabel(r.type, t)} />
+                          </p>
                           <p className="break-words text-xs text-muted-foreground">
-                            {fmtDate(r.date)} · <span className="font-mono">{r.number}</span>{contacts && r.memo ? ` · ${contacts}` : ""}
+                            {fmtDate(r.date)} · <span className="whitespace-nowrap font-mono">{r.number}</span>{contacts && r.memo ? ` · ${contacts}` : ""}
                           </p>
                         </div>
                         <div className="shrink-0 text-right">
                           <Num className="font-medium">{usd(r.amount)}</Num>
                           {cashDetail(r, t) && <span className="block max-w-[10rem] text-[11px] text-muted-foreground">{cashDetail(r, t)}</span>}
-                          <div className="mt-1 flex flex-wrap justify-end gap-1"><TypeBadge type={r.type} t={t} /><StatusBadges r={r} t={t} /></div>
                         </div>
                       </div>
+                      {/* The badges on a line of their own: beside the amount, two of them ("Vente annulée",
+                          "Contre-passation") left the libellé a word per line. */}
+                      <div className="mt-1 flex flex-wrap justify-end gap-1"><TypeBadge type={r.type} t={t} /><StatusBadges r={r} t={t} /></div>
                     </button>
                     {expanded && (
                       <div className="mt-2 space-y-2">
