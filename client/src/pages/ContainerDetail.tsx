@@ -166,6 +166,19 @@ function MarginCell({ sell, cost }: { sell: string | undefined; cost: string | n
   return <Num className={cls}>{pct(m.toNumber(), 1, 1)}</Num>;
 }
 
+/** The item's selling price; none yet (0 $, as a packing list creates it) is flagged, since the till refuses it. */
+function SellCell({ sell }: { sell: string | undefined }) {
+  const t = useT();
+  if (sell === undefined) return <Num>—</Num>;
+  if (!d(sell).isZero()) return <Num>{usd(sell)}</Num>;
+  return (
+    <span className="whitespace-nowrap font-medium text-amber-800 dark:text-amber-400">
+      <Num>{usd(sell)}</Num>
+      <span className="block text-xs">{t("No price yet", "Sans prix")}</span>
+    </span>
+  );
+}
+
 // ---------------------------------------------------------------- Page
 
 export default function ContainerDetail() {
@@ -186,6 +199,8 @@ export default function ContainerDetail() {
     for (const v of pricesQ.data ?? []) m.set(v.id, v.sellPrice);
     return m;
   }, [pricesQ.data]);
+  // Where each item's selling price is set, for a line that has none yet.
+  const productOf = useMemo(() => new Map((pricesQ.data ?? []).map((v) => [v.id, v.productId])), [pricesQ.data]);
 
   const [linesDirty, setLinesDirty] = useState(false);
   const [linesKey, setLinesKey] = useState(0);
@@ -208,7 +223,7 @@ export default function ContainerDetail() {
         description={c.supplierName ? t(`Supplier: ${c.supplierName}`, `Fournisseur\u00a0: ${c.supplierName}`) : undefined}
         actions={
           <>
-            {editable && <OffloadButton c={c} priceOf={priceOf} disabledReason={linesDirty ? t("Save the lines first", "Enregistrez d'abord les lignes") : null} />}
+            {editable && <OffloadButton c={c} priceOf={priceOf} productOf={productOf} disabledReason={linesDirty ? t("Save the lines first", "Enregistrez d'abord les lignes") : null} />}
             {finalized && can() && <ReverseButton c={c} />}
           </>
         }
@@ -1211,7 +1226,7 @@ function PreviewSection({ c, priceOf }: { c: ContainerFull; priceOf: Map<number,
                         <TableCell className="text-right"><Num>{usd(r.allocatedUsd)}</Num></TableCell>
                         <TableCell className="text-right"><Num className="font-medium">{usd(r.landedTotalUsd)}</Num></TableCell>
                         <TableCell className="text-right"><Num className="font-semibold">{unitCost(r.landedUnitCost)}</Num></TableCell>
-                        <TableCell className="text-right"><Num>{sell !== undefined ? usd(sell) : "—"}</Num></TableCell>
+                        <TableCell className="text-right"><SellCell sell={sell} /></TableCell>
                         <TableCell className="text-right"><MarginCell sell={sell} cost={r.landedUnitCost} /></TableCell>
                       </TableRow>
                     );
@@ -1280,7 +1295,7 @@ function CheapAlert({ cheap, currency, children }: { cheap: ReturnType<typeof ch
 
 // ---------------------------------------------------------------- Offload
 
-function OffloadButton({ c, disabledReason, priceOf }: { c: ContainerFull; disabledReason: string | null; priceOf: Map<number, string> }) {
+function OffloadButton({ c, disabledReason, priceOf, productOf }: { c: ContainerFull; disabledReason: string | null; priceOf: Map<number, string>; productOf: Map<number, number> }) {
   const t = useT();
   const [open, setOpen] = useState(false);
   const [offloadDate, setOffloadDate] = useState(todayLocal());
@@ -1310,6 +1325,14 @@ function OffloadButton({ c, disabledReason, priceOf }: { c: ContainerFull; disab
         const pl = p.lines.find((x) => x.key === l.id);
         const price = priceOf.get(l.variantId);
         return pl && price && d(price).gt(0) && d(pl.landedUnitCost).gt(d(price)) ? [{ l, cost: pl.landedUnitCost, price }] : [];
+      })
+    : [];
+  /** Items with no selling price yet (one a packing list created): the till refuses them at 0 $. */
+  const unpriced = p
+    ? c.lines.flatMap((l) => {
+        const pl = p.lines.find((x) => x.key === l.id);
+        const price = priceOf.get(l.variantId);
+        return pl && price !== undefined && d(price).isZero() ? [{ l, cost: pl.landedUnitCost }] : [];
       })
     : [];
   const noCosts = !!p && d(p.expensesTotalUsd).isZero();
@@ -1360,6 +1383,27 @@ function OffloadButton({ c, disabledReason, priceOf }: { c: ContainerFull; disab
                   <Checkbox checked={losingOk} onCheckedChange={(v) => setLosingOk(v === true)} className="mt-0.5" />
                   <span>{t("I checked: offload at these costs", "J'ai vérifié\u00a0: décharger à ces coûts")}</span>
                 </label>
+              </AlertDescription>
+            </Alert>
+          )}
+          {unpriced.length > 0 && (
+            <Alert className="border-amber-400 bg-amber-50 text-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>{t("No selling price", "Sans prix de vente")}</AlertTitle>
+              <AlertDescription>
+                <ul className="space-y-0.5">
+                  {unpriced.map(({ l, cost }) => (
+                    <li key={l.id}>
+                      {itemLabel(l)} ({t("cost", "coût")} {unitCost(cost)}){" "}
+                      {productOf.has(l.variantId) && (
+                        <Link href={`/products/${productOf.get(l.variantId)}`} className="whitespace-nowrap font-medium underline">
+                          {t("Set the price →", "Fixer le prix →")}
+                        </Link>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+                <p className="mt-1">{t("The till refuses an item at 0 $: set its selling price on the item page, before or after the offload.", "La caisse refuse un article à 0\u00a0$\u00a0: fixez son prix de vente dans la fiche article, avant ou après le déchargement.")}</p>
               </AlertDescription>
             </Alert>
           )}
@@ -1519,7 +1563,7 @@ function FinalCosts({ c, priceOf }: { c: ContainerFull; priceOf: Map<number, str
                       <TableCell className="text-right"><Num>{usd(l.allocatedUsd)}</Num></TableCell>
                       <TableCell className="text-right"><Num className="font-medium">{usd(l.landedTotalUsd)}</Num></TableCell>
                       <TableCell className="text-right"><Num className="font-semibold">{unitCost(l.landedUnitCost)}</Num></TableCell>
-                      <TableCell className="text-right"><Num>{sell !== undefined ? usd(sell) : "—"}</Num></TableCell>
+                      <TableCell className="text-right"><SellCell sell={sell} /></TableCell>
                       <TableCell className="text-right"><MarginCell sell={sell} cost={l.landedUnitCost} /></TableCell>
                     </TableRow>
                   );

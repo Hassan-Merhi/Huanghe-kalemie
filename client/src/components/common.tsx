@@ -1,4 +1,4 @@
-import { cloneElement, isValidElement, useEffect, useId, type ComponentProps, type ReactElement, type ReactNode } from "react";
+import { Fragment, cloneElement, isValidElement, useEffect, useId, type ComponentProps, type ReactElement, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/lib/i18n";
@@ -158,4 +158,14 @@ export function unclearAmount(t: (en: string, fr: string) => string, value: stri
   if (!r) return null;
   const [big, small] = r.map((x) => money(x, currency));
   return t(`Say which amount: ${big} or ${small}`, `Précisez le montant : ${big} ou ${small}`);
+}
+
+/** Document numbers in a text ("Vente S-000027 annulée") kept whole: a narrow card never breaks "J-/000044" at its hyphen. */
+export function KeepNumbers({ text }: { text: string }) {
+  const parts = text.split(/\b([A-Z]{1,4}-\d+)\b/);
+  return (
+    <>
+      {parts.map((part, i) => (i % 2 ? <span key={i} className="whitespace-nowrap">{part}</span> : <Fragment key={i}>{part}</Fragment>))}
+    </>
+  );
 }

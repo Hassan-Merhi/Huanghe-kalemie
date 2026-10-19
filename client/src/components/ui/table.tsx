@@ -22,6 +22,26 @@ function labelCells(table: HTMLTableElement) {
   });
 }
 
+/**
+ * Whether the last column holds only the row's actions (buttons, a menu): it then stays in view at the
+ * right edge while a table too wide for its box scrolls ("Valider", "Supprimer" at 1024 px).
+ */
+function actionsColumn(table: HTMLTableElement) {
+  const head = table.querySelector(":scope > thead > tr:last-child > th:last-child") as HTMLElement | null
+  const cells = Array.from(table.querySelectorAll(":scope > tbody > tr > td:last-child")) as HTMLTableCellElement[]
+  if (!head || !cells.length) return false
+  const title = (head.innerText ?? head.textContent ?? "").trim()
+  if (title && !/^actions?$/i.test(title)) return false
+  return cells.every((cell) => {
+    if ((cell.colSpan || 1) > 1) return true
+    if (!cell.querySelector("button, a")) return !(cell.innerText ?? "").trim()
+    // Nothing but the controls: their own text aside, the cell says nothing.
+    const clone = cell.cloneNode(true) as HTMLElement
+    clone.querySelectorAll("button, a").forEach((el) => el.remove())
+    return !(clone.textContent ?? "").trim()
+  })
+}
+
 const Table = React.forwardRef<
   HTMLTableElement,
   React.HTMLAttributes<HTMLTableElement> & {
@@ -30,6 +50,11 @@ const Table = React.forwardRef<
   }
 >(({ className, cards = true, ...props }, ref) => {
   const inner = React.useRef<HTMLTableElement | null>(null)
+  const box = React.useRef<HTMLDivElement | null>(null)
+  // Columns hidden past the right edge: a fade there says the table scrolls.
+  const [more, setMore] = React.useState(false)
+  // Left of the actions column when it stays in view, so the fade never covers its buttons.
+  const [fadeAt, setFadeAt] = React.useState(0)
   React.useLayoutEffect(() => {
     const table = inner.current
     if (!table || !cards) return
@@ -38,16 +63,54 @@ const Table = React.forwardRef<
     observer.observe(table, { childList: true, subtree: true, characterData: true })
     return () => observer.disconnect()
   }, [cards])
+  React.useLayoutEffect(() => {
+    const table = inner.current
+    const scroller = box.current
+    if (!table || !scroller) return
+    const check = () => {
+      const overflow = scroller.scrollWidth > scroller.clientWidth + 1
+      if (overflow !== scroller.hasAttribute("data-overflow")) scroller.toggleAttribute("data-overflow", overflow)
+      const sticky = overflow && actionsColumn(table)
+      if (sticky !== table.hasAttribute("data-sticky-end")) table.toggleAttribute("data-sticky-end", sticky)
+      const end = sticky ? (table.querySelector(":scope > thead > tr:last-child > th:last-child") as HTMLElement | null)?.offsetWidth ?? 0 : 0
+      setFadeAt(end)
+      // With the actions column held, what is hidden is the columns under it, until the end is reached.
+      setMore(overflow && scroller.scrollWidth - scroller.scrollLeft - scroller.clientWidth > 2)
+    }
+    check()
+    scroller.addEventListener("scroll", check, { passive: true })
+    const resize = typeof ResizeObserver !== "undefined" ? new ResizeObserver(check) : null
+    resize?.observe(scroller)
+    resize?.observe(table)
+    const mutation = new MutationObserver(check)
+    mutation.observe(table, { childList: true, subtree: true })
+    return () => {
+      scroller.removeEventListener("scroll", check)
+      resize?.disconnect()
+      mutation.disconnect()
+    }
+  }, [])
   return (
-    <div className="relative w-full overflow-auto">
-      <table
-        ref={(node) => {
-          inner.current = node
-          if (typeof ref === "function") ref(node)
-          else if (ref) ref.current = node
-        }}
-        className={cn("w-full caption-bottom text-sm", cards && "table-cards", className)}
-        {...props}
+    <div className="relative w-full">
+      <div ref={box} className="table-scroll w-full overflow-auto">
+        <table
+          ref={(node) => {
+            inner.current = node
+            if (typeof ref === "function") ref(node)
+            else if (ref) ref.current = node
+          }}
+          className={cn("w-full caption-bottom text-sm", cards && "table-cards", className)}
+          {...props}
+        />
+      </div>
+      <div
+        aria-hidden
+        data-testid="table-more-right"
+        className={cn(
+          "pointer-events-none absolute inset-y-0 w-8 bg-gradient-to-l from-black/10 to-transparent transition-opacity dark:from-black/50",
+          more ? "opacity-100" : "opacity-0",
+        )}
+        style={{ right: fadeAt }}
       />
     </div>
   )

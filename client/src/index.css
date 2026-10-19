@@ -468,3 +468,14 @@
   table.table-cards td[colspan]:not([colspan="1"]) { grid-column: 1 / -1; }
   table.table-cards td[colspan]:not([colspan="1"])::before { content: none; }
 }
+
+/* A table wider than its box keeps its actions column in view at the right edge while it scrolls. */
+@media screen and (min-width: 640px) {
+  .table-scroll[data-overflow] > table[data-sticky-end] > * > tr > :last-child {
+    position: sticky;
+    right: 0;
+    z-index: 1;
+    background-color: hsl(var(--card));
+    box-shadow: inset 1px 0 0 hsl(var(--border));
+  }
+}

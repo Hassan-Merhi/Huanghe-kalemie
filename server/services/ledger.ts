@@ -1368,7 +1368,18 @@ export async function setExchangeRate(
         403,
         `${next.toString()} is more than ${limit.toString()}% away from the last rate (${prev.toString()}). Only the owner can make that change.`,
         "FORBIDDEN",
-        `${frNumber(next.toString())}\u00a0FC pour 1\u00a0$ s'écarte de plus de ${frNumber(limit.toString())} % du dernier taux (${frNumber(prev.toString())}\u00a0FC). Seul le propriétaire peut faire ce changement.`,
+        `${frNumber(next.toString())}\u00a0FC pour 1\u00a0$ s'écarte de plus de ${frNumber(limit.toString())}\u00a0% du dernier taux (${frNumber(prev.toString())}\u00a0FC). Seul le propriétaire peut faire ce changement.`,
+      );
+    }
+    // A day that has its rate already is also held to it: 2 950 is 4,9 % from yesterday's 2 812 but
+    // 5,06 % from today's 2 808, and a day's rate moves only that far in one step.
+    if (existing && !unchanged(existing.cdfPerUsd, input.cdfPerUsd) && !near(dec(existing.cdfPerUsd), next)) {
+      const own = dec(existing.cdfPerUsd);
+      throw new AppError(
+        403,
+        `${next.toString()} is more than ${limit.toString()}% away from the rate already set for ${input.date} (${own.toString()}). Only the owner can make that change.`,
+        "FORBIDDEN",
+        `${frNumber(next.toString())}\u00a0FC pour 1\u00a0$ s'écarte de plus de ${frNumber(limit.toString())}\u00a0% du taux déjà saisi pour ce jour (${frNumber(own.toString())}\u00a0FC). Seul le propriétaire peut faire ce changement.`,
       );
     }
     if (input.cnyPerUsd && !unchanged(existing?.cnyPerUsd, input.cnyPerUsd)) {
@@ -1389,7 +1400,7 @@ export async function setExchangeRate(
           403,
           `${nextCny.toString()} CNY is more than ${limit.toString()}% away from the last yuan rate (${ref.toString()}). Only the owner can make that change.`,
           "FORBIDDEN",
-          `${frNumber(nextCny.toString())}\u00a0¥ pour 1\u00a0$ s'écarte de plus de ${frNumber(limit.toString())} % du dernier taux du yuan (${frNumber(ref.toString())}\u00a0¥). Seul le propriétaire peut faire ce changement.`,
+          `${frNumber(nextCny.toString())}\u00a0¥ pour 1\u00a0$ s'écarte de plus de ${frNumber(limit.toString())}\u00a0% du dernier taux du yuan (${frNumber(ref.toString())}\u00a0¥). Seul le propriétaire peut faire ce changement.`,
         );
       }
     }
