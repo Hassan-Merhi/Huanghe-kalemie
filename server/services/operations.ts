@@ -356,15 +356,19 @@ export async function applyAdvances(
   const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
   // Only the bill's own currency, so undoing the bill gives back exactly what it took.
   const linesOn = (on: string) => (currency === "CNY" ? advanceToYuanLines(tx, payables, partyId, on) : advanceToFrancLines(tx, payables, partyId, on));
-  let on = date;
-  let lines = await linesOn(on);
-  // A bill dated before a deposit paid since: the deposit settles it from the day it was paid (the first
-  // day after the bill on which dollars or francs were paid to the contact and the advance covers it), not
+  const post = async (on: string, lines: PostLine[]) =>
+    postJournal(tx, { date: on, type: "supplier_payment", memo, userId, lines, sourceType: `advance_${source.type}`, sourceId: source.id });
+  let first: number | null = null;
+  const lines = await linesOn(date);
+  if (lines.length) first = await post(date, lines);
+  // Deposits paid since a bill dated before them: each settles it from the day it was paid (each day after
+  // the bill on which dollars or francs were paid to the contact, its own part in a journal of its own), not
   // from today, so yuan work dated in between is not refused for a date the books chose (see
-  // assertYuanInOrder). Only a day after which nothing has taken from that advance yet, so what it holds
-  // then is still there; else today, as before. Those days are in open months: the bill's month is open,
-  // and so is every later one.
-  if (!lines.length && date < shopToday()) {
+  // assertYuanInOrder). Only days after which nothing has taken from that advance yet, so what it holds
+  // then is still there (and what one day applies leaves the next day's deposit whole); what is left is
+  // applied today, as before. Those days are in open months: the bill's month is open, and so is every later
+  // one. Undone (see reverseAdvances), every part goes back.
+  if (date < shopToday()) {
     const days = await tx
       .select({ date: journals.date, paid: sql<boolean>`bool_or(${journalLines.debit} > 0)`, taken: sql<boolean>`bool_or(${journalLines.credit} > 0)` })
       .from(journalLines)
@@ -381,14 +385,14 @@ export async function applyAdvances(
       .groupBy(journals.date)
       .orderBy(journals.date);
     const paidOn = days.filter((d, i) => d.paid && !days.slice(i + 1).some((later) => later.taken)).map((d) => String(d.date));
-    for (const d of [...paidOn, shopToday()]) {
-      on = d;
-      lines = await linesOn(on);
-      if (lines.length) break;
+    for (const on of Array.from(new Set([...paidOn, shopToday()]))) {
+      const more = await linesOn(on);
+      if (!more.length) continue;
+      const id = await post(on, more);
+      first ??= id;
     }
   }
-  if (!lines.length) return null;
-  return postJournal(tx, { date: on, type: "supplier_payment", memo, userId, lines, sourceType: `advance_${source.type}`, sourceId: source.id });
+  return first;
 }
 
 export type AdvanceSource = "expense" | "container_expense" | "container" | "payroll";
@@ -398,7 +402,9 @@ export async function reverseAdvances(tx: Tx, source: { type: AdvanceSource; id:
   const rows = await tx
     .select({ id: journals.id, date: journals.date })
     .from(journals)
-    .where(and(eq(journals.sourceType, `advance_${source.type}`), eq(journals.sourceId, source.id), isNull(journals.reversedByJournalId), isNull(journals.reversesJournalId)));
+    .where(and(eq(journals.sourceType, `advance_${source.type}`), eq(journals.sourceId, source.id), isNull(journals.reversedByJournalId), isNull(journals.reversesJournalId)))
+    // The latest part first: each undone gives back the advance the one before it left.
+    .orderBy(desc(journals.id));
   for (const r of rows) await reverseJournal(tx, r.id, { date: date < r.date ? r.date : date, userId, memo: "Avance rendue : la facture est annulée" });
 }
 
@@ -876,6 +882,8 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
           `${v.name} (${v.variant.sku}) : ${frNumber(change.toFixed())} à ${frNumber(unit.toFixed())} $ vaut moins d'un centime. Saisissez le coût d'une plus grande quantité, ou 0.`,
         );
       }
+      // The cost typed, kept on the movement for the cost shown (see receiveStock); never one the books chose.
+      const typed = unit;
       if (!opts.owner && input.kind !== "opening") unit = await staffGainCost(tx, v.variant, v.name, unit);
       if (!unit) {
         const q = dec(v.variant.stockQty);
@@ -891,7 +899,9 @@ export async function adjustStock(tx: Tx, input: AdjustmentInput, userId: number
         locationId: input.locationId,
         qty: change,
         value,
-        unitCost: unit,
+        // Only the cost typed: the running average (or the cost a manager's line was held to) is value ÷ qty to
+        // six decimals, which would show 0,124444 $ where the cost typed before still gives the value.
+        unitCost: typed && unit.equals(typed) ? unit : null,
         sourceType: "adjustment",
         sourceId: adj.id,
         note: input.reason,

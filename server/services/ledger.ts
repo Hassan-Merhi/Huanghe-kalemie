@@ -694,21 +694,33 @@ export async function markSystemLines(tx: Tx): Promise<void> {
       )`);
 }
 
+/** Memo of the lines that take a revaluation off a balance settled after the month's end (see settledRevaluations). */
+export const REVALUATION_SETTLED_MEMO = "Réévaluation soldée\u00a0: devises réglées après la fin du mois";
+
 /** The labels of the lines the books write themselves (see LineKind). */
-const RESERVED_MEMOS = [COST_FX_MEMO, RESIDUE_MEMO, REVALUED_MEMO, SETTLED_FX_MEMO];
+const RESERVED_MEMOS = [COST_FX_MEMO, RESIDUE_MEMO, REVALUED_MEMO, SETTLED_FX_MEMO, REVALUATION_SETTLED_MEMO];
 
 /**
  * Refuse a line memo typed as one of the books' own labels. Nothing goes by a memo any more (a line the
  * books write has its kind), but the daybook and the statements would show the typed line as theirs.
- * Whatever the case, accents, spacing or punctuation.
+ * Whatever the case, accents, spacing or punctuation, or a letter of another alphabet that looks like one.
  */
 export function assertMemoNotReserved(memo: string | null | undefined, line: number): void {
   if (!memo) return;
   // Letters and digits alone: accents (and compatibility forms, such as full-width letters), punctuation,
   // symbols, spaces and invisible characters (a zero-width space, a soft hyphen) are dropped before comparing.
   const fold = (t: string) => t.normalize("NFKD").replace(/[\p{M}\p{P}\p{S}\p{Z}\p{C}\s]/gu, "").toLowerCase();
-  const typed = fold(memo);
-  if (!RESERVED_MEMOS.some((m) => fold(m) === typed)) return;
+  const typed = Array.from(fold(memo));
+  // The labels fold to Latin letters and digits alone: a Cyrillic or Greek letter (a Cyrillic "е", a Greek
+  // "ο"), or a Latin one no accent folds ("ø"), stands for whichever letter it sits in place of, while most
+  // of the label is there as typed. A note written in another alphabet (Chinese, Russian) is never one.
+  const lookalike = (c: string) => /[\p{Script=Cyrillic}\p{Script=Greek}\p{Script=Latin}]/u.test(c) && !/[a-z]/.test(c);
+  const same = (label: string) => {
+    const want = Array.from(fold(label));
+    if (want.length !== typed.length || !want.every((c, i) => typed[i] === c || lookalike(typed[i]))) return false;
+    return want.filter((c, i) => typed[i] === c).length * 2 > want.length;
+  };
+  if (!RESERVED_MEMOS.some(same)) return;
   throw badRequest(
     `Line ${line}: "${memo.trim()}" is the label of an entry the books make themselves. Write another note.`,
     `Ligne ${line} : « ${memo.trim()} » est le libellé d'une écriture que la comptabilité passe elle-même. Écrivez une autre note.`,
