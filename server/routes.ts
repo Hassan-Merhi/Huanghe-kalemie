@@ -1012,6 +1012,13 @@ export function registerRoutes(app: Express) {
     const sale = await db.transaction((tx) => salesSvc.createSale(tx, { ...body, date }, uid(req), { role: req.user!.role }));
     res.status(201).json(req.user!.role === "cashier" ? withoutCost(sale) : sale);
   }));
+  // The till asks before "Valider" which lines the sale would refuse as below cost (see linesBelowCost): a
+  // yes or no per item, never the cost. Read only, so nothing is posted.
+  app.post("/api/sales/price-check", requireRole(...SELLERS), asyncHandler(async (req, res) => {
+    const body = z.object({ lines: z.array(z.object({ variantId: id, qty: positiveDecimal, amount: decimalString })).max(200) }).parse(req.body);
+    const refused = await salesSvc.linesBelowCost(db, req.user!.role, body.lines);
+    res.json({ refused });
+  }));
   app.post("/api/sales/:id/void", requireRole(...STAFF), asyncHandler(async (req, res) => {
     const body = z.object({ reason: z.string().min(1).max(300), date: isoDate.optional() }).parse(req.body);
     const sale = await db.transaction((tx) => salesSvc.voidSale(tx, paramId(req), body.date ?? todayIso(), body.reason, uid(req)));

@@ -85,6 +85,31 @@ export async function priceLimits(tx: Tx, role: Role): Promise<{ maxDiscountPct:
   return { maxDiscountPct: dec(String(pct)), belowCost: role === "manager" && get("managerBelowCost") === true };
 }
 
+/**
+ * The lines of a sale that role would be refused for as sold below cost, judged as createSale judges them:
+ * each line's amount (after its discount and its share of the sale discount) against the value issueStock
+ * would book for its quantity, the whole stock's value when it is all of it, else the average to the cent.
+ * Read only: the till says it under the price before "Valider" to a cashier, who is not shown the cost, as
+ * it does from the cost itself to a manager. A line of nothing, or of an unknown item, is left to the sale.
+ */
+export async function linesBelowCost(tx: Tx, role: Role, lines: { variantId: number; qty: DecimalInput; amount: DecimalInput }[]): Promise<number[]> {
+  const limits = await priceLimits(tx, role);
+  if (limits.belowCost || !lines.length) return [];
+  const rows = await tx
+    .select({ id: variants.id, stockQty: variants.stockQty, stockValue: variants.stockValue })
+    .from(variants)
+    .where(inArray(variants.id, Array.from(new Set(lines.map((l) => l.variantId)))));
+  const refused = new Set<number>();
+  for (const l of lines) {
+    const v = rows.find((r) => r.id === l.variantId);
+    const q = dec(l.qty);
+    if (!v || !q.gt(0) || !dec(v.stockQty).gt(0)) continue;
+    const cogs = q.gte(v.stockQty) ? dec(v.stockValue) : cents(dec(v.stockValue).times(q).dividedBy(v.stockQty));
+    if (cents(l.amount).lt(cogs)) refused.add(l.variantId);
+  }
+  return Array.from(refused);
+}
+
 export async function createSale(tx: Tx, input: CreateSaleInput, userId: number, rules?: PriceRules) {
   if (input.lines.length === 0) throw badRequest("Add at least one item", "Ajoutez au moins un article");
   if (input.lines.length > MAX_SALE_LINES) throw badRequest(`A sale can have at most ${MAX_SALE_LINES} lines`, `Une vente peut avoir au plus ${MAX_SALE_LINES} lignes`);
