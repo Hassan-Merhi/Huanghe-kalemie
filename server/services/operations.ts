@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, isNull, lte, sql } from "drizzle-orm";
+import { and, desc, eq, gt, inArray, isNull, lte, sql } from "drizzle-orm";
 import {
   accounts,
   exchangeRates,
@@ -24,6 +24,7 @@ import {
   COST_FX_MEMO,
   contactLines,
   foreignBalance,
+  FRANCS_MET_SOURCE,
   bookValue,
   lockBalances,
   lockForeignBalances,
@@ -439,6 +440,34 @@ async function francsMetLines(tx: Tx, payables: number, partyId: number, date: s
   return null;
 }
 
+/**
+ * Francs paid to (or received from) a supplier, agent or employee dated before a franc entry already on
+ * them (a bill booked first, the payment typed afterwards for an earlier day) settle it as they come too:
+ * the bill is not taken out again at what the francs cost, so the dollars left between the two on the
+ * first day they leave no francs owed or held go to exchange differences, as francsMetLines does for a
+ * bill dated before francs already paid. Undone with the journal (see reverseJournal).
+ */
+export async function francsMetAfter(tx: Tx, journalId: number | null, date: string, userId: number): Promise<void> {
+  if (!journalId) return;
+  const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
+  const own = await tx
+    .select({ partyId: journalLines.partyId })
+    .from(journalLines)
+    .where(and(eq(journalLines.journalId, journalId), eq(journalLines.accountId, payables), eq(journalLines.currency, "CDF")));
+  for (const partyId of Array.from(new Set(own.map((l) => l.partyId).filter((x): x is number => !!x)))) {
+    const later = await tx
+      .selectDistinct({ date: journals.date })
+      .from(journalLines)
+      .innerJoin(journals, eq(journals.id, journalLines.journalId))
+      .where(and(eq(journalLines.accountId, payables), eq(journalLines.partyId, partyId), eq(journalLines.currency, "CDF"), gt(journals.date, date)))
+      .orderBy(journals.date);
+    if (!later.length) continue;
+    await francsMetLines(tx, payables, partyId, date, later.map((d) => String(d.date)), (on, lines) =>
+      postJournal(tx, { date: on, type: "supplier_payment", memo: `Francs du ${frDate(date)} imputés sur la facture du ${frDate(on)}`, userId, lines, sourceType: FRANCS_MET_SOURCE, sourceId: journalId }),
+    );
+  }
+}
+
 export type AdvanceSource = "expense" | "container_expense" | "container" | "payroll";
 
 /**
@@ -718,13 +747,16 @@ export async function payParty(tx: Tx, input: PartyPaymentInput, userId: number)
   } else {
     partyLines = await payablesLines(tx, { payables, partyId: party.id, usd: leg.usd, money: leg, date: input.date });
   }
-  return postJournal(tx, {
+  const journalId = await postJournal(tx, {
     date: input.date,
     type: "supplier_payment",
     memo: input.memo ?? `Paiement à ${party.name}`,
     userId,
     lines: [...partyLines, { accountId: leg.accountId, credit: leg.usd, nativeAmount: leg.nativeAmount, rate: leg.rate }],
   });
+  // Francs paid dated before a franc bill already booked (see francsMetAfter).
+  await francsMetAfter(tx, journalId, input.date, userId);
+  return journalId;
 }
 
 export interface PartnerMoneyInput {

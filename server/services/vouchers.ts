@@ -279,6 +279,8 @@ export async function postVoucher(tx: Tx, kind: "payment" | "receipt", input: Vo
     userId,
     lines: [...lines.map(({ usd: _u, expense: _e, ...l }) => l), moneyLine],
   });
+  // Francs paid or received dated before a franc bill already booked on a supplier (see francsMetAfter).
+  await ops.francsMetAfter(tx, journalId, input.date, userId);
   const expenseLines = lines.filter((l) => l.expense);
   if (expenseLines.length) {
     await tx.insert(expenses).values(
