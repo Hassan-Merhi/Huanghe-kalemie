@@ -566,10 +566,11 @@ export async function reverseContainer(tx: Tx, containerId: number, date: string
   await reverseAdvances(tx, { type: "container", id: containerId }, date, userId);
   const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
   const invoice = supplierInvoiceNative(container.currency, full.lines, container.fobTotalUsd!);
-  // Yuan paid for at a discount (or at another rate) come back owed at what was paid for them.
+  // Yuan (or francs) paid for at a discount (or at another rate) come back owed at what was paid for them,
+  // and the bill takes its share of a month-end revaluation with it.
   const takeback =
-    invoice.currency === "CNY" && container.finalizeJournalId
-      ? await settledFxTakebackLines(tx, { payables, partyId: container.supplierId, billJournalId: container.finalizeJournalId, native: invoice.nativeAmount, usd: container.fobTotalUsd!, rate: invoice.rate })
+    invoice.currency && container.finalizeJournalId
+      ? await settledFxTakebackLines(tx, { payables, partyId: container.supplierId, currency: invoice.currency, billJournalId: container.finalizeJournalId, native: invoice.nativeAmount, usd: container.fobTotalUsd!, rate: invoice.rate })
       : [];
   let removed = dec(0);
   for (const line of full.lines) {

@@ -6,7 +6,7 @@ import type { Tx } from "../db";
 import { badRequest, conflict } from "../errors";
 import { deMonth, frDate, frNumber, monthText } from "@shared/french";
 import { cents } from "@shared/money";
-import { cnyRateFor, lockPeriodsExclusive, postJournal, rateFor, REVALUATION_SETTLED_MEMO, REVALUATION_SOURCES, REVALUED_MEMO, reverseJournal, setRestater, SYSTEM_ACCOUNTS, systemAccountId, yuanMarkedOwed, type PostLine } from "./ledger";
+import { cnyRateFor, lockBalances, lockPeriodsExclusive, postJournal, rateFor, REVALUATION_SETTLED_MEMO, REVALUATION_SOURCES, REVALUED_MEMO, reverseJournal, setRestater, SYSTEM_ACCOUNTS, systemAccountId, foreignMarkedOwed, type PostLine } from "./ledger";
 import { todayIso } from "../http";
 
 export function monthRange(month: string): { from: string; to: string } {
@@ -158,6 +158,10 @@ async function postAgainstFx(
 ) {
   const label = journal.settled ? { memo: REVALUATION_SETTLED_MEMO, kind: null } : { memo: REVALUED_MEMO, kind: "revalued" as const };
   const fx = await systemAccountId(tx, SYSTEM_ACCOUNTS.fx);
+  // Every contact restated, all at once and in id order, before the day's journals take theirs (see
+  // lockBalances): a day's contacts after the day before's would be out of order. After a posting (see
+  // restateAfter) they are the posting's own, held already.
+  await lockBalances(tx, { parties: posts.map((p) => p.key.partyId) });
   for (const date of Array.from(new Set(posts.map((p) => p.date))).sort()) {
     const day = posts.filter((p) => p.date === date);
     const cdf = (await rateFor(tx, date)).rate;
@@ -205,11 +209,12 @@ async function postAgainstFx(
  *   needed for that, never beyond what it restated nor the other way (more is for a person to correct, see
  *   selfCheck). As settled once the month is closed: a balance settled before the close has the
  *   revaluation taken off on that day, one settled at the revalued cost keeps it there;
- * - a container's reversal that takes a supplier's yuan bill away: of the revaluation still on their yuan
- *   owed (or paid since it was posted), the share of those it leaves stays (see yuanMarkedOwed), the rest
- *   left with the bill. Otherwise, a posting that turns what is owed into a claim (or a claim into yuan or
- *   francs owed) leaves none of it. Posted with the month closed, the posting moved it to exchange differences, so reopened it is taken
- *   back there; posted with it reopened, closing it again moves it there.
+ * - a container's reversal that takes a supplier's yuan or franc bill away: of the revaluation still on
+ *   their yuan or francs owed (or paid since it was posted), the share of those it leaves stays (see
+ *   foreignMarkedOwed), the rest left with the bill. Otherwise, a posting that turns what is owed into a
+ *   claim (or a claim into yuan or francs owed) leaves none of it. Posted with the month closed, the
+ *   posting moved it to exchange differences (see yuanTrueUpLines), so reopened it is taken back there;
+ *   posted with it reopened, closing it again moves it there.
  * Drawers keep their revaluation (see selfCheck): only the revaluation and its undoing are on them.
  */
 async function restateSettled(tx: Tx, month: string, periodId: number, revaluationJournalId: number | null, state: "closed" | "open", userId: number | null, only?: { keys: Set<string>; from: string }) {
@@ -257,7 +262,7 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
       .innerJoin(journals, eq(journals.id, journalLines.journalId))
       .where(and(eq(journalLines.accountId, key.accountId), key.partyId ? eq(journalLines.partyId, key.partyId) : isNull(journalLines.partyId), eq(journalLines.currency, key.currency)))
       .orderBy(journals.date, journals.id, journalLines.id);
-    const marks = key.currency === "CNY" && key.accountId === payables && key.partyId ? await yuanMarkedOwed(tx, payables, key.partyId, to) : null;
+    const marks = key.accountId === payables && key.partyId ? await foreignMarkedOwed(tx, payables, key.partyId, key.currency, to) : null;
     let native = new Decimal(0);
     let others = new Decimal(0); // the dollars everything but the month's own journals put on it
     let current = new Decimal(0); // what the month's own journals put on it since its end
