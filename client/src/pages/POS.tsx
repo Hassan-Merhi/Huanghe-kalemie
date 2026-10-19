@@ -16,7 +16,7 @@ import { EmptyState, Field, Num, PageHeader, SubmitButton, unclearAmount } from 
 import { LocationSelect, MoneyAccountSelect, PartySelect, RateInput, VariantSearch, useAccounts, useLocations, useMoneyAccounts, useRate } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api, withQuery } from "@/lib/api";
-import { findDraft, removeDraft, resumedPrice, saveDraft, DRAFT_VERSION, type PosDraft } from "@/lib/posDraft";
+import { draftEmpty, listDrafts, newSlot, removeDraft, resumedPrice, saveDraft, DRAFT_VERSION, type PosDraft } from "@/lib/posDraft";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
 import { cdf, curLabel, d, date as fmtDate, dateTime, fcRounding, frenchPunctuation, MINUS, money, pct as fmtPct, qty as fmtQty, refusedUnit, todayLocal, typedNumberOk, unclearQty, usd, variantText } from "@/lib/format";
@@ -809,8 +809,10 @@ export default function POS() {
     onSuccess: (sale) => {
       setReceipt(sale);
       reset();
-      // The sale is recorded: its draft goes at once, not only once the empty cart is saved over it.
-      if (user) removeDraft(user.id, sale.locationId);
+      // The sale is recorded: its own draft goes at once, not only once the empty cart is saved over it. Only
+      // this cart's: a sale left unfinished and still offered stays offered.
+      if (user) removeDraft(user.id, sale.locationId, liveSlot.current);
+      setDraftsSeen((n) => n + 1);
     },
     // A refused sale may be one the day's rate moved under: the till shows the new rate at once.
     onError: () => {
@@ -878,37 +880,43 @@ export default function POS() {
 
   // ---- sale in progress (kept across navigation and reloads, see posDraft)
   const { data: locations = [] } = useLocations();
-  /** A draft found on opening the till, offered until resumed or discarded; nothing is saved over it meanwhile. */
-  const [offered, setOffered] = useState<PosDraft | null>(null);
+  /**
+   * The sales left unfinished, offered until resumed or discarded, read from storage (so the banner follows what
+   * is kept). The cart being rung is kept beside them under its own slot, never over one of them.
+   */
+  const liveSlot = useRef(newSlot());
+  const [draftsSeen, setDraftsSeen] = useState(0);
+  const parked = useMemo(
+    () => (user && locationId ? listDrafts(user.id, locationId, { userId: user.id, locationId, slot: liveSlot.current }) : []),
+    // draftsSeen: read again after a draft is resumed, discarded or completed.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [user, locationId, draftsSeen],
+  );
+  const offered: PosDraft | null = parked[0] ?? null;
   const [resumeNotes, setResumeNotes] = useState<string[]>([]);
   const [resuming, setResuming] = useState(false);
-  // State, not a ref: the save below must first run with the draft found already offered, or it would save the
-  // empty cart over it.
-  const [looked, setLooked] = useState(false);
-  useEffect(() => {
-    if (looked || !user || !locationId) return;
-    setOffered(findDraft(user.id, locationId));
-    setLooked(true);
-  }, [looked, user, locationId]);
-  // Saved on every change, under this user and location; an empty cart removes it. Moving the cart to another
-  // location moves its draft too.
+  const [confirmResume, setConfirmResume] = useState(false);
+  // Saved on every change, under this user, location and slot; an empty cart removes it. Moving the cart to
+  // another location moves its draft too.
   const draftLocation = useRef<number | null>(null);
   useEffect(() => {
-    if (!user || !locationId || !looked || offered || resuming) return;
-    if (draftLocation.current && draftLocation.current !== locationId) removeDraft(user.id, draftLocation.current);
+    if (!user || !locationId || resuming) return;
+    if (draftLocation.current && draftLocation.current !== locationId) removeDraft(user.id, draftLocation.current, liveSlot.current);
     draftLocation.current = locationId;
     saveDraft({
-      v: DRAFT_VERSION, userId: user.id, locationId, savedAt: Date.now(), day: today, cdfRate: dayRate,
+      v: DRAFT_VERSION, userId: user.id, locationId, slot: liveSlot.current || undefined, savedAt: Date.now(), day: today, cdfRate: dayRate,
       lines: lines.map(({ variant, unitId, qty, unitPrice, lineDiscount }) => ({ variant, unitId, qty, unitPrice, lineDiscount })),
       discount, customerId, customer, note,
       pays: pays.map(({ accountId, amount, rate }) => ({ accountId, amount, rate })),
       changeAccId, changeAmt, francsChosen,
     });
-  }, [user, locationId, looked, offered, resuming, today, dayRate, lines, discount, customerId, customer, note, pays, changeAccId, changeAmt, francsChosen]);
+  }, [user, locationId, resuming, today, dayRate, lines, discount, customerId, customer, note, pays, changeAccId, changeAmt, francsChosen]);
+  /** The cart being rung holds something worth keeping: "Reprendre" asks before putting another in its place. */
+  const cartInUse = !draftEmpty({ lines, pays });
 
   function discardDraft() {
-    if (user && offered) removeDraft(user.id, offered.locationId);
-    setOffered(null);
+    if (user && offered) removeDraft(user.id, offered.locationId, offered.slot);
+    setDraftsSeen((n) => n + 1);
   }
   /**
    * Puts the draft back in the till, reading again what may have moved since: the items (gone, or a new list
@@ -916,9 +924,12 @@ export default function POS() {
    * balance and the day's rate. The stock at the location is the till's live figure, as for any cart, and the
    * server checks the sale as always (a franc rate that moved again before "Valider" is still refused).
    */
-  async function resumeDraft() {
+  async function resumeDraft(confirmed = false) {
     const draft = offered;
     if (!draft || resuming) return;
+    // The cart in the till is not thrown away: it stays kept under its own slot, offered in the banner in turn.
+    if (cartInUse && !confirmed) return setConfirmResume(true);
+    setConfirmResume(false);
     setResuming(true);
     const notes: string[] = [];
     try {
@@ -965,6 +976,8 @@ export default function POS() {
       // Set before the location: the change of location must not clear the motorcycles just put back.
       prevLocation.current = draft.locationId;
       draftLocation.current = draft.locationId;
+      // The till now rings that draft, under its own key: saving goes over it, not over the cart just set aside.
+      liveSlot.current = draft.slot ?? "";
       setLocationId(draft.locationId);
       setSaleDate(today);
       setLines(restored);
@@ -978,7 +991,7 @@ export default function POS() {
       setFrancsChosen(draft.francsChosen);
       setHanded("");
       setResumeNotes(notes);
-      setOffered(null);
+      setDraftsSeen((n) => n + 1);
     } catch (e) {
       setResumeNotes([e instanceof Error ? e.message : String(e)]);
     } finally {
@@ -1042,6 +1055,7 @@ export default function POS() {
             {offeredTotal && offeredTotal.gt(0) ? ` · ${usd(offeredTotal.toFixed(2))}` : ""}
             {offered.locationId !== locationId && locations.find((l) => l.id === offered.locationId) ? ` · ${locations.find((l) => l.id === offered.locationId)!.name}` : ""}
             {" · "}{dateTime(new Date(offered.savedAt))}
+            {parked.length > 1 ? ` · ${t(`${parked.length - 1} more after it`, `${parked.length - 1} autre${parked.length > 2 ? "s" : ""} ensuite`)}` : ""}
             </span>
           </p>
           <div className="flex flex-wrap gap-2">
@@ -1465,6 +1479,24 @@ export default function POS() {
           </SubmitButton>
         </div>
       )}
+
+      <AlertDialog open={confirmResume} onOpenChange={setConfirmResume}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>{t("Replace the cart in the till?", "Remplacer le panier en cours\u00a0?")}</AlertDialogTitle>
+            <AlertDialogDescription>
+              {t(
+                `The cart in the till (${cartCount(t, lines.map((l) => ({ qty: l.qty, unit: String(l.variant.unit ?? "pcs") })))}) is set aside, not lost: it is offered here in turn, to resume or discard.`,
+                `Le panier en cours (${cartCount(t, lines.map((l) => ({ qty: l.qty, unit: String(l.variant.unit ?? "pcs") })))}) est mis de côté, pas perdu\u00a0: il sera proposé ici à son tour, à reprendre ou abandonner.`,
+              )}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>{t("Keep this cart", "Garder ce panier")}</AlertDialogCancel>
+            <AlertDialogAction onClick={() => void resumeDraft(true)}>{t("Resume the other sale", "Reprendre l'autre vente")}</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
 
       <AlertDialog open={confirmCross} onOpenChange={setConfirmCross}>
         <AlertDialogContent>

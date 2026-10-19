@@ -7,7 +7,7 @@ import { Table } from "@/components/ui/table";
 import { Card, CardContent } from "@/components/ui/card";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { ErrorText, Loading, Num } from "@/components/common";
-import { cdf, d, date, money, qty, usd } from "@/lib/format";
+import { advanceText, cdf, d, date, money, qty, usd } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import type { Settings } from "@/lib/types";
 import { journalTypeLabel } from "@/pages/ContactDetail";
@@ -48,6 +48,8 @@ interface Voucher {
   /** The daybook's amount: francs at the voucher's rate, without the exchange difference. */
   amount?: string;
   fxDiff?: string | null;
+  /** A payment that also applied an advance the contact held: what it settled, beside the money paid (the amount). */
+  advance?: { usd: string; cny?: string; cdf?: string } | null;
   reversedByJournalId: number | null;
   reversesJournalId: number | null;
   lines: VoucherLine[];
@@ -250,6 +252,13 @@ export default function VoucherPrint() {
                 <span className="text-base font-semibold">{usd(amountUsd)}</span>
               )}
             </p>
+            {v.advance && (
+              // The advance moved no money: said beside the amount, so the signature box reads what left the box.
+              <p data-testid="voucher-advance">
+                <span className="text-muted-foreground">{t("Advance applied: ", "Avance imputée\u00a0: ")}</span>
+                <span>{advanceText(v.advance)}</span>
+              </p>
+            )}
             <p>
               <span className="text-muted-foreground">{t("Created by: ", "Saisi par\u00a0: ")}</span>
               <span>{v.createdByName ?? "—"}</span>

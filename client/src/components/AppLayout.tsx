@@ -179,7 +179,7 @@ function NavLinks() {
   const { lang } = useI18n();
   const label = (item: NavItem) => (user?.role === "cashier" && item.cashier ? item.cashier : item);
   const [location] = useLocation();
-  const { setOpenMobile } = useSidebar();
+  const close = useCloseMenu();
   // Keep the current page's entry in view when the menu is taller than the screen.
   useEffect(() => {
     document.querySelector<HTMLElement>('[data-sidebar="content"] [data-active="true"]')?.scrollIntoView({ block: "nearest" });
@@ -201,7 +201,7 @@ function NavLinks() {
                   return (
                     <SidebarMenuItem key={item.href}>
                       <SidebarMenuButton asChild isActive={active}>
-                        <Link href={item.href} onClick={() => setOpenMobile(false)}>
+                        <Link href={item.href} onClick={close}>
                           <item.icon className="h-4 w-4" />
                           <span>{lang === "fr" ? label(item).fr : label(item).en}</span>
                         </Link>
@@ -222,12 +222,12 @@ function NavLinks() {
 function SettingsLink() {
   const { lang } = useI18n();
   const [location] = useLocation();
-  const { setOpenMobile } = useSidebar();
+  const close = useCloseMenu();
   const active = under(location, "/settings");
   return (
     <Link
       href="/settings"
-      onClick={() => setOpenMobile(false)}
+      onClick={close}
       aria-current={active ? "page" : undefined}
       data-active={active || undefined}
       className={cn(
@@ -277,6 +277,18 @@ function MoreBelow() {
  */
 const WIDE_MENU = "(min-width: 1280px)";
 const wideScreen = () => typeof window === "undefined" || !window.matchMedia || window.matchMedia(WIDE_MENU).matches;
+
+/**
+ * Picking a page closes the menu on a phone, and below 1280 px on a desktop too: opened there by hand, it would
+ * stay beside the next page and push its tables' last columns off screen (as it starts closed there).
+ */
+function useCloseMenu() {
+  const { setOpenMobile, setOpen } = useSidebar();
+  return () => {
+    setOpenMobile(false);
+    if (!wideScreen()) setOpen(false);
+  };
+}
 
 function MenuFollowsWidth() {
   const { setOpen } = useSidebar();

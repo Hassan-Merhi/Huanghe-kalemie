@@ -657,10 +657,10 @@ function LinesEditor({ c, editable, onDirtyChange }: { c: ContainerFull; editabl
                             <Input className="ml-auto w-28 text-right" inputMode="decimal" currency={c.currency} inlineAlert aria-label={t(`Unit price of ${itemLabel(r)}`, `Prix unitaire ${de(itemLabel(r))}`)} value={r.unitPrice} placeholder="0" onBlur={() => touch(r.key)} onChange={(e) => update(r.key, { unitPrice: e.target.value })} />
                           </TableCell>
                           <TableCell className="text-right">
-                            <Input className="ml-auto w-24 text-right" inputMode="decimal" aria-label={t("Total weight for the line (kg)", "Poids total de la ligne (kg)")} placeholder={t("total kg", "kg total")} value={r.weightKg} onChange={(e) => update(r.key, { weightKg: e.target.value })} />
+                            <Input className="ml-auto w-24 text-right" inputMode="decimal" aria-label={t(`Total weight of ${itemLabel(r)} (kg)`, `Poids total ${de(itemLabel(r))} (kg)`)} placeholder={t("total kg", "kg total")} value={r.weightKg} onChange={(e) => update(r.key, { weightKg: e.target.value })} />
                           </TableCell>
                           <TableCell className="text-right">
-                            <Input className="ml-auto w-24 text-right" inputMode="decimal" aria-label={t("Total volume for the line (m³)", "Volume total de la ligne (m³)")} placeholder={t("total m³", "m³ total")} value={r.volumeCbm} onChange={(e) => update(r.key, { volumeCbm: e.target.value })} />
+                            <Input className="ml-auto w-24 text-right" inputMode="decimal" aria-label={t(`Total volume of ${itemLabel(r)} (m³)`, `Volume total ${de(itemLabel(r))} (m³)`)} placeholder={t("total m³", "m³ total")} value={r.volumeCbm} onChange={(e) => update(r.key, { volumeCbm: e.target.value })} />
                           </TableCell>
                         </>
                       ) : (

@@ -19,7 +19,7 @@ import { dec, shownUnitCost, sum } from "@shared/money";
 import type { Tx } from "../db";
 import { notFound } from "../errors";
 import { monthRange, pnlByAccount, summarizePnl } from "./periods";
-import { accountBalances, netPosition, salesByProduct } from "./reports";
+import { accountBalances, contactSides, netPosition, salesByProduct } from "./reports";
 import { avoirUsedSql, creditLeftSql } from "./sales";
 import { keptUnitCosts } from "./stock";
 
@@ -340,5 +340,7 @@ export async function analytics(tx: Tx, from: string, to: string) {
     expenses: pnl.filter((r) => r.type === "expense").sort((a, b) => dec(b.amount).comparedTo(a.amount)),
     stockByCategory: stockByCategory.map((s) => ({ name: s.name ?? "—", value: dec(s.value).toFixed(2) })).filter((s) => !dec(s.value).isZero()),
     position: netPosition(balances),
+    // The contacts' side of it, each said apart as on the dashboard (supplier advances, salary advances…).
+    contactBalances: await contactSides(tx),
   };
 }

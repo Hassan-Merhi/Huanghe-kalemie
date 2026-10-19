@@ -259,7 +259,7 @@ export async function cancelRun(tx: Tx, month: string, date: string | null | und
   const cancelJournalId = run.journalId
     ? await reverseJournal(tx, run.journalId, { date: date || run.date, userId, memo: `Annulation des salaires ${monthText(month)}` })
     : null;
-  await reverseAdvances(tx, { type: "payroll", id: run.id }, date || run.date, userId);
+  await reverseAdvances(tx, { type: "payroll", id: run.id }, date || run.date, userId, `Avance rendue\u00a0: la paie ${deMonth(month)} est annulée`);
   if (run.journalId) await clearFrancResidue(tx, run.journalId, date || run.date, userId);
   await tx.update(payrollRuns).set({ status: "cancelled", cancelledAt: new Date(), cancelledBy: userId, cancelJournalId }).where(eq(payrollRuns.id, run.id));
 }

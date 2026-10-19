@@ -403,6 +403,12 @@ export function perUsdText(rateToUsd: string | null | undefined): string {
 }
 
 /** USD per 1 unit for "how many one dollar buys", kept to the twelve decimals the server stores: 2 808 FC stays 2 808 FC. */
+/** "4 134,83 $ (29 440,00 ¥)": the dollars of an advance applied, with the yuan or francs it settled. */
+export function advanceText(a: { usd: string; cny?: string; cdf?: string }) {
+  const native = [a.cny ? money(a.cny, "CNY") : null, a.cdf ? cdf(a.cdf) : null].filter(Boolean).join(", ");
+  return `${usd(a.usd)}${native ? ` (${native})` : ""}`;
+}
+
 export function usdPerUnit(perUsd: string | null | undefined): string {
   const x = d(perUsd);
   return x.gt(0) ? d(1).dividedBy(x).toDecimalPlaces(12).toString() : "";

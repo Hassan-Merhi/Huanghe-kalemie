@@ -26,7 +26,7 @@ import { useT } from "@/lib/i18n";
 import { cdf, curLabel, d, date as fmtDate, money, number as fmtNumber, qty as fmtQty, todayLocal, typedNumberOk, usd } from "@/lib/format";
 import type { Account, Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { paymentSplit, yuanOnDate, type PaymentPart } from "@/lib/allocation";
+import { advanceToYuan, paymentSplit, yuanOnDate, type PaymentPart } from "@/lib/allocation";
 import Decimal from "decimal.js";
 import { BalanceWords, foreignText, PartyDialog, type ForeignBalance } from "@/pages/Contacts";
 import { useSystemText } from "@/lib/systemText";
@@ -443,6 +443,51 @@ function PaymentDialog({ party, balance, foreign: foreignNow, rows, onClose }: {
             `Nous payons ${paidText}\u00a0; nous devons ${owedText}\u00a0: ${usd(over.usd)} deviendront une avance`,
           )
         : t(`We pay ${paidText}; we owe nothing: all of it will become an advance`, `Nous payons ${paidText}\u00a0; nous ne devons rien\u00a0: tout deviendra une avance`);
+  // An advance they already hold (dollars, or francs) goes to the yuan still owed when a payment to them is saved,
+  // with no francs owed (payablesLines, payParty): before yuan typed in "Yuans réglés", after the yuan the
+  // payment itself settles otherwise. It moves no money, so it is said here and asked about before saving.
+  const cnyOwedAny = !isCustomer ? owedIn("CNY") : null;
+  const heldUsd = Decimal.max(dollarBalance, 0);
+  const heldFc = Decimal.max(d(foreign.find((x) => x.currency === "CDF")?.native ?? 0), 0);
+  const holdsAdvance = !isCustomer && (heldUsd.gt(0) || heldFc.gt(0));
+  const heldText = `${usd(heldUsd.toFixed(2))}${heldFc.gt(0) ? ` ${t("and", "et")} ${cdf(heldFc.toFixed(0))}` : ""}`;
+  const typedYuan = !!cnyOwed && d(settleCny).gt(0);
+  const fromAdvance = cnyOwedAny && holdsAdvance && !fcOwed && (typedYuan || split.length > 0)
+    ? advanceToYuan({
+        owedCny: cnyOwedAny,
+        owedUsd: d(cnyForeign?.usd ?? 0).abs(),
+        settledNative: typedYuan ? d(0) : d(split.find((x) => x.kind === "cny")?.native ?? 0),
+        advanceUsd: heldUsd,
+        advanceFc: heldFc,
+        fcRate: d(rate).gt(0) ? d(rate) : null,
+        cnyRate: cnyOnFile ? d(cnyRate!) : null,
+      })
+    : null;
+  // With yuan typed, the advance takes its yuan first: only what is left can be typed.
+  const yuanAfterAdvance = fromAdvance && typedYuan ? cnyOwed!.minus(d(fromAdvance.native)) : null;
+  const advanceUseText = fromAdvance
+    ? typedYuan
+      ? t(
+          `${party.name} already holds an advance of ${heldText}: saving first applies ${usd(fromAdvance.usd)} of it to ${money(fromAdvance.native, "CNY")} owed, then this payment settles the yuan typed`,
+          `${party.name} détient déjà une avance de ${heldText}\u00a0: l'enregistrement en impute d'abord ${usd(fromAdvance.usd)} sur ${money(fromAdvance.native, "CNY")} dus, puis ce paiement règle les yuans saisis`,
+        )
+      : t(
+          `${party.name} already holds an advance of ${heldText}: saving also applies ${usd(fromAdvance.usd)} of it to ${money(fromAdvance.native, "CNY")} owed`,
+          `${party.name} détient déjà une avance de ${heldText}\u00a0: l'enregistrement en impute aussi ${usd(fromAdvance.usd)} sur ${money(fromAdvance.native, "CNY")} dus`,
+        )
+    : null;
+  // No route applies an advance with no money: said in place of "Saisissez un montant supérieur à zéro".
+  const advanceAlone = cnyOwedAny && holdsAdvance && !d(amount).gt(0)
+    ? fcOwed
+      ? t(
+          `Enter an amount above zero. The advance of ${heldText} goes to the yuan owed once the francs owed are paid: a payment after that applies it, as does their next yuan invoice.`,
+          `Saisissez un montant supérieur à zéro. L'avance de ${heldText} va aux yuans dus une fois les francs dus payés\u00a0: un paiement ensuite l'impute, tout comme sa prochaine facture en yuans.`,
+        )
+      : t(
+          `Enter an amount above zero. The advance of ${heldText} is not applied on its own: any payment to them applies it to the yuan owed (0.01 $ is enough), as does their next yuan invoice.`,
+          `Saisissez un montant supérieur à zéro. L'avance de ${heldText} ne s'impute pas seule\u00a0: tout paiement à ce fournisseur l'impute sur les yuans dus (0,01\u00a0$ suffit), tout comme sa prochaine facture en yuans.`,
+        )
+    : null;
   const [confirmOver, setConfirmOver] = useState(false);
   // Everything owed to this supplier in dollars: the dollars owed, the francs owed as booked and the yuan at the
   // rate shown, what the yuan check compares with and the "Tout" beside the amount fills in.
@@ -460,13 +505,23 @@ function PaymentDialog({ party, balance, foreign: foreignNow, rows, onClose }: {
   const blocked = !account
     ? t("Choose an account", "Choisissez un compte")
     : unclearAmount(t, amount, account.currency) ?? francSlip ?? (cnyOwed ? unclearAmount(t, settleCny, "CNY") : null) ?? (!d(amount).gt(0)
-      ? t("Enter an amount above zero", "Saisissez un montant supérieur à zéro")
+      ? advanceAlone ?? t("Enter an amount above zero", "Saisissez un montant supérieur à zéro")
       : isCdf && !d(rate).gt(0)
         ? t("Enter the exchange rate", "Saisissez le taux de change")
         : isCdf && rateFar
           ? rateFar
         : cnyOwed && settleCny && !d(settleCny).lte(cnyOwed)
           ? t("The yuan settled are more than what is owed", "Les yuans réglés dépassent ce qui est dû")
+        : yuanAfterAdvance && d(settleCny).gt(yuanAfterAdvance)
+          ? yuanAfterAdvance.gt(0)
+            ? t(
+                `Their advance settles ${money(fromAdvance!.native, "CNY")} first: only ${money(yuanAfterAdvance.toFixed(2), "CNY")} are left to settle`,
+                `Son avance règle d'abord ${money(fromAdvance!.native, "CNY")}\u00a0: il ne reste que ${money(yuanAfterAdvance.toFixed(2), "CNY")} à régler`,
+              )
+            : t(
+                `Their advance already settles all ${money(fromAdvance!.native, "CNY")}: leave the yuan settled empty`,
+                `Son avance règle déjà les ${money(fromAdvance!.native, "CNY")}\u00a0: laissez les yuans réglés vides`,
+              )
           : yuanMismatch
             ? t("The dollars do not match the yuan settled", "Les dollars ne correspondent pas aux yuans réglés")
             : yuanTooEarly && (d(settleCny).gt(0) || split.some((p) => p.kind === "cny"))
@@ -561,6 +616,7 @@ function PaymentDialog({ party, balance, foreign: foreignNow, rows, onClose }: {
             <div className="space-y-1 sm:col-span-2">
               {splitText && <p className="text-xs text-muted-foreground" data-testid="payment-split">{splitText}</p>}
               {overText && <p role="alert" className="text-xs font-medium text-amber-800 dark:text-amber-400">{overText}</p>}
+              {advanceUseText && <p role="alert" className="text-xs font-medium text-amber-800 dark:text-amber-400" data-testid="advance-use">{advanceUseText}.</p>}
               {fcShort && <p className="text-xs font-medium text-amber-800 dark:text-amber-400" data-testid="fc-short">{fcShort}</p>}
             </div>
           ) : fcOwed && !(cnyOwed && d(settleCny).gt(0)) ? (
@@ -615,23 +671,33 @@ function PaymentDialog({ party, balance, foreign: foreignNow, rows, onClose }: {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <SubmitButton onClick={() => (overText ? setConfirmOver(true) : save())} blocked={blocked} pending={mutation.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
+          <SubmitButton onClick={() => (overText || advanceUseText ? setConfirmOver(true) : save())} blocked={blocked} pending={mutation.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
         </DialogFooter>
       </DialogContent>
       <AlertDialog open={confirmOver} onOpenChange={setConfirmOver}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>{isCustomer ? t("Receive more than is owed?", "Recevoir plus que ce qui est dû\u00a0?") : t("Pay more than is owed?", "Payer plus que ce qui est dû\u00a0?")}</AlertDialogTitle>
+            <AlertDialogTitle>
+              {isCustomer
+                ? t("Receive more than is owed?", "Recevoir plus que ce qui est dû\u00a0?")
+                : overText
+                  ? t("Pay more than is owed?", "Payer plus que ce qui est dû\u00a0?")
+                  : t("Apply the advance the supplier holds?", "Imputer l'avance que détient le fournisseur\u00a0?")}
+            </AlertDialogTitle>
             <AlertDialogDescription asChild>
               <div className="space-y-2">
-                <p>{overText}.</p>
-                <p>
+                {overText && <p>{overText}.</p>}
+                {advanceUseText && <p>{advanceUseText}.</p>}
+                {advanceUseText && (
+                  <p>{t("The advance moves no money: the voucher shows only the money paid, the advance applied beside it.", "L'avance ne fait sortir aucun argent\u00a0: la pièce montre l'argent payé, l'avance imputée à côté.")}</p>
+                )}
+                {overText && <p>
                   {isCustomer
                     ? t("The credit is deducted from their next purchases. Check for an extra zero before saving.", "L'avoir sera déduit de ses prochains achats. Vérifiez qu'il n'y a pas un zéro de trop avant d'enregistrer.")
                     : party.type === "employee"
                       ? t("The advance is deducted from the next salary. Check for an extra zero before saving.", "L'avance sera déduite du prochain salaire. Vérifiez qu'il n'y a pas un zéro de trop avant d'enregistrer.")
                       : t("The advance is deducted from the next invoices. Check for an extra zero before saving.", "L'avance sera déduite des prochaines factures. Vérifiez qu'il n'y a pas un zéro de trop avant d'enregistrer.")}
-                </p>
+                </p>}
               </div>
             </AlertDialogDescription>
           </AlertDialogHeader>

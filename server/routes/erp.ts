@@ -103,6 +103,7 @@ export function registerErpRoutes(
       total: m.lines.reduce((s, l) => s.plus(l.debit), dec(0)).toFixed(2),
       amount: doc.amount,
       fxDiff: "fxDiff" in doc ? doc.fxDiff ?? null : null,
+      advance: "advance" in doc ? doc.advance ?? null : null,
       lines: withFrancs.map((l) => (l.accountId === -1 ? { ...l, systemKey: null } : l)),
     });
   }));
@@ -122,6 +123,8 @@ export function registerErpRoutes(
    * rather than at the document's rate: shown on its own line, never inside the document's amount.
    */
   const isCostFx = (l: DayLine) => l.systemKey === "fx" && l.line.memo === COST_FX_MEMO;
+  /** Memo of the lines that apply an advance a contact held to what they are owed (see advanceToYuanLines). */
+  const ADVANCE_MEMO = "Avance imputée";
   /**
    * A line at the document's own value: francs at the rate typed on the document, not at the box's
    * average cost (so 2 500 000 FC at 2 808 reads 890,31 $, as on the container).
@@ -183,11 +186,32 @@ export function registerErpRoutes(
     }
     // Otherwise every debit, without the cost-of-goods pair of a sale or an exchange difference beside the document.
     const kept = ls.filter((l) => !(SALE_JOURNALS.has(type) && (l.systemKey === "cogs" || l.systemKey === "inventory")) && !(FX_SIDE.has(type) && l.systemKey === "fx") && !isCostFx(l));
+    // A payment that also applied an advance the contact held to what they are owed (advanceToYuanLines): the
+    // advance's pair of lines moves no money, so the document is the money paid (500 $), the advance apart
+    // ("avance imputée 4 134,83 $ (29 440 ¥)"). A journal of nothing but an advance applied to a bill keeps its amount.
+    const applied = ls.filter((l) => !l.isMoney && l.line.memo === ADVANCE_MEMO);
+    const advance = applied.length && applied.length < kept.length && money.length ? advanceOf(applied) : null;
+    const counted = advance ? kept.filter((l) => !applied.includes(l)) : kept;
     // Money paid out at the document's rate: when it differs from the other side at book cost, the money is the document.
     const paidOut = total(money, "credit");
     const paidIn = total(money, "debit");
-    const amount = !costFx.isZero() && (paidOut.gt(0) !== paidIn.gt(0)) ? Decimal.max(paidOut, paidIn) : total(kept, "debit");
-    return { amount: amount.toFixed(2), ...fxDiff };
+    const amount = !costFx.isZero() && (paidOut.gt(0) !== paidIn.gt(0)) ? Decimal.max(paidOut, paidIn) : total(counted, "debit");
+    return { amount: amount.toFixed(2), ...fxDiff, ...(advance ? { advance } : {}) };
+  };
+  /**
+   * What an advance applied inside a payment settled: the dollars of the advance used (its credit side: the yuan
+   * settled leave at their book cost, the gap is the exchange difference), and the yuan or francs it took off the debt.
+   */
+  const advanceOf = (applied: DayLine[]) => {
+    const debits = applied.filter((l) => dec(l.line.debit).gt(0));
+    const native = (cur: string) => sum(debits.filter((l) => l.line.currency === cur && l.line.nativeAmount).map((l) => dec(l.line.nativeAmount!).abs()));
+    const cny = native("CNY");
+    const cdf = native("CDF");
+    return {
+      usd: sum(applied.map((l) => dec(l.line.credit))).toFixed(2),
+      ...(cny.gt(0) ? { cny: cny.toFixed(2) } : {}),
+      ...(cdf.gt(0) ? { cdf: cdf.toFixed(2) } : {}),
+    };
   };
   /** The nearest day before (or after) the given one that has postings, for the daybook's jump buttons. */
   app.get("/api/daybook/active-day", requireRole(...READERS), asyncHandler(async (req, res) => {

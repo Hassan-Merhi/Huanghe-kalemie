@@ -130,3 +130,45 @@ export function yuanOnDate(
   }
   return { native: native.toFixed(2), usd: usd.toFixed(2), latest, startsAfter };
 }
+
+/**
+ * The yuan an advance the supplier already holds will settle when a payment to them is saved, mirroring the
+ * server's advanceToYuanLines: once the payment's own yuan are settled (`settledNative`), dollars paid ahead
+ * go to the yuan still owed, then francs paid ahead (at the day's franc rate). The yuan are valued at the yuan
+ * rate of the day, else at what they cost (`owedUsd`, their book value). Nothing when no yuan are left or no
+ * advance is held. All amounts are positive.
+ */
+export function advanceToYuan(input: {
+  owedCny: Decimal;
+  /** The yuan owed's book value in dollars. */
+  owedUsd: Decimal;
+  settledNative: Decimal;
+  /** Dollars paid ahead to them. */
+  advanceUsd: Decimal;
+  /** Francs paid ahead to them, and the day's franc rate. */
+  advanceFc?: Decimal;
+  fcRate?: Decimal | null;
+  cnyRate?: Decimal | null;
+}): { native: string; usd: string } | null {
+  const owed = input.owedCny;
+  let left = owed.minus(input.settledNative);
+  if (!owed.gt(0) || !left.gt(0)) return null;
+  const day = input.cnyRate && input.cnyRate.gt(0) ? input.cnyRate : null;
+  if (!day && !input.owedUsd.gt(0)) return null;
+  const usdOf = (n: Decimal) => cents(day ? n.dividedBy(day) : input.owedUsd.times(n).dividedBy(owed));
+  const nativeOf = (u: Decimal) => cents(day ? u.times(day) : owed.times(u).dividedBy(input.owedUsd));
+  let native = new Decimal(0);
+  let usd = new Decimal(0);
+  const take = (held: Decimal) => {
+    const leftUsd = usdOf(left);
+    const applyUsd = Decimal.min(held, leftUsd);
+    const applyNative = applyUsd.equals(leftUsd) ? left : nativeOf(applyUsd);
+    if (!applyUsd.gt(0) || !applyNative.gt(0)) return;
+    native = native.plus(applyNative);
+    usd = usd.plus(applyUsd);
+    left = left.minus(applyNative);
+  };
+  if (input.advanceUsd.gt(0)) take(input.advanceUsd);
+  if (left.gt(0) && input.advanceFc && input.advanceFc.gt(0) && input.fcRate && input.fcRate.gt(0)) take(cents(input.advanceFc.dividedBy(input.fcRate)));
+  return native.gt(0) ? { native: native.toFixed(2), usd: usd.toFixed(2) } : null;
+}
