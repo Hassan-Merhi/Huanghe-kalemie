@@ -323,7 +323,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
   // What cancelling changes for the part of each net pay no longer owed. Paid out in cash, reversing the salary
   // leaves that money as an advance to repay; deducted from an advance the employee already had (or one given
   // after the run, which came off it), it simply goes back onto that advance: said apart, by what happened.
-  const zero = { usd: d(0), native: d(0), people: 0 };
+  const zero = { usd: d(0), native: d(0), people: 0, each: [] as { name: string; usd: Decimal; native: Decimal }[] };
   const { paidAsAdvance, backOnAdvance } = (run?.lines ?? []).reduce(
     (s, l) => {
       const e = data.employees.find((x) => x.id === l.partyId);
@@ -336,7 +336,8 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
       const cash = usdPart.minus(fromAdvance);
       // In the run's currency, at the run's own rate (the whole net when all of it was settled).
       const native = (x: Decimal) => (netUsd.gt(0) ? x.dividedBy(netUsd).times(d(l.net)) : x);
-      const add = (acc: typeof zero, x: Decimal) => (x.gt(0) ? { usd: acc.usd.plus(x), native: acc.native.plus(native(x)), people: acc.people + 1 } : acc);
+      const add = (acc: typeof zero, x: Decimal) =>
+        x.gt(0) ? { usd: acc.usd.plus(x), native: acc.native.plus(native(x)), people: acc.people + 1, each: [...acc.each, { name: e?.name ?? "", usd: x, native: native(x) }] } : acc;
       return { paidAsAdvance: add(s.paidAsAdvance, cash), backOnAdvance: add(s.backOnAdvance, fromAdvance) };
     },
     { paidAsAdvance: zero, backOnAdvance: zero },
@@ -628,13 +629,14 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                       `${usd(paidAsAdvance.usd.toFixed(2))} déjà payés deviendront des avances à rembourser ou à déduire des prochains salaires.`,
                     ))}{" "}
               {/* No cash paid: the salary only came off an advance, which gets that money back. */}
+              {/* Each employee by name: in a run of several, "son avance" alone would name nobody. */}
               {backOnAdvance.usd.gt(0) &&
-                (() => {
-                  const amount = run?.currency === "CDF" ? `${cdf(backOnAdvance.native.toFixed(0))} (${usd(backOnAdvance.usd.toFixed(2))})` : usd(backOnAdvance.usd.toFixed(2));
-                  return backOnAdvance.people === 1
-                    ? t(`${amount} already deducted from the advance go back onto it.`, `${amount} déjà déduits de son avance y sont remis.`)
-                    : t(`${amount} already deducted from their advances go back onto them.`, `${amount} déjà déduits de leurs avances y sont remis.`);
-                })()}
+                backOnAdvance.each
+                  .map((x) => {
+                    const amount = run?.currency === "CDF" ? `${cdf(x.native.toFixed(0))} (${usd(x.usd.toFixed(2))})` : usd(x.usd.toFixed(2));
+                    return t(`${x.name}: ${amount} already deducted from their advance go back onto it.`, `${x.name}\u00a0: ${amount} déjà déduits de son avance y sont remis.`);
+                  })
+                  .join(" ")}
               {!paidAsAdvance.usd.gt(0) && !backOnAdvance.usd.gt(0) && t("Nothing has been paid on it yet.", "Rien n'a encore été payé dessus.")}
             </AlertDialogDescription>
           </AlertDialogHeader>

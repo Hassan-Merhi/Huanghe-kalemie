@@ -80,6 +80,7 @@ const PATTERNS: [RegExp, (...m: string[]) => string][] = [
   [/^Apport en capital ((?:de |d'|d’|du |des ).+)$/s, (p) => `Capital put in by ${of(p)}`],
   [/^Retrait ((?:de |d'|d’|du |des ).+)$/s, (p) => `Withdrawal by ${of(p)}`],
   [/^Annulation des salaires (.+)$/, (m) => `Salaries of ${month(m)} cancelled`],
+  [new RegExp(`^Avance rendue${C}la paie (.+?) est annulée$`), (m) => `Advance returned: the ${month(of(m))} payroll is cancelled`],
   [/^Avance déduite du salaire (\S+ \d{4}|\d{4}-\d{2})$/, (m) => `Advance deducted from the ${month(m)} salary`],
   [/^Retenues sur salaires (\S+ \d{4}|\d{4}-\d{2})$/, (m) => `Salary withholdings ${month(m)}`],
   [/^Salaires? (\S+ \d{4}|\d{4}-\d{2})$/, (m) => `Salaries ${month(m)}`],
@@ -97,6 +98,12 @@ export function memoText(text: string | null | undefined, lang: string): string 
     const m = re.exec(text);
     if (m) return fn(...m.slice(1));
   }
+  // An expense's memo, "Transport local : Transport des pièces au dépôt": a default account's name before the
+  // description typed, which stays as typed. An account renamed by hand is not known here and stays too.
+  const named = new RegExp(`^(.+?)${C}(.*)$`, "s").exec(text);
+  if (named && ACCOUNTS[named[1]]) return `${ACCOUNTS[named[1]]}: ${named[2]}`;
+  // An expense described by its account's name alone.
+  if (ACCOUNTS[text]) return ACCOUNTS[text];
   // "ADJ-000001 : Inventaire", "CDF-A6 : Fret": a generated number before the no-break colon.
   const numbered = /^(\S+)\u00a0: (.*)$/s.exec(text);
   if (numbered) return `${numbered[1]}: ${MEMOS[numbered[2]] ?? numbered[2]}`;

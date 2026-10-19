@@ -25,9 +25,12 @@ interface Analytics {
   expenses: { accountId: number; code: string; name: string; amount: string }[];
   stockByCategory: { name: string; value: string }[];
   position: Position;
+  contactBalances?: ContactSides;
 }
 
 export interface Position { money: string; stock: string; transit: string; receivables: string; payables: string; otherAssets?: string; otherLiabilities?: string; net: string }
+/** Each contact's side of receivables and payables, as the dashboard says them. */
+export interface ContactSides { customersOwe: string; customerAvoirs: string; weOweSuppliers: string; supplierAdvances: string; salariesOwed?: string; salaryAdvances?: string }
 
 // Palette: primary for the main series, a muted second colour, emerald for profit.
 const C_MAIN = "hsl(var(--primary))";
@@ -280,24 +283,39 @@ function Body({ a, from, to }: { a: Analytics; from: string; to: string }) {
             )}
           </CardContent>
         </Card>
-        <PositionCard position={a.position} />
+        <PositionCard position={a.position} sides={a.contactBalances} />
       </div>
     </div>
   );
 }
 
 /** What the shop owns minus what it owes, today. */
-export function PositionCard({ position: p }: { position: Position }) {
+export function PositionCard({ position: p, sides }: { position: Position; sides?: ContactSides }) {
   const t = useT();
+  // Credit customers hold is owed by us, and an advance to suppliers is owed to us: each said as what it is,
+  // contact by contact when known, salary advances apart from the suppliers' (as on the dashboard; the net is the same).
+  const contactRows: [string, string, boolean?][] = sides
+    ? [
+        [t("Customers owe us", "Clients nous doivent"), sides.customersOwe],
+        ...(d(sides.customerAvoirs).gt(0) ? [[t("Customer credit (we owe)", "Avoirs clients (dus)"), sides.customerAvoirs, true] as [string, string, boolean]] : []),
+        ...(d(sides.supplierAdvances).gt(0) ? [[t("Advances to suppliers", "Avances aux fournisseurs"), sides.supplierAdvances] as [string, string]] : []),
+        ...(d(sides.salaryAdvances ?? 0).gt(0) ? [[t("Salary advances", "Avances sur salaire"), sides.salaryAdvances!] as [string, string]] : []),
+        [t("We owe", "Nous devons"), sides.weOweSuppliers, true],
+        ...(d(sides.salariesOwed ?? 0).gt(0) ? [[t("Salaries owed", "Salaires dus"), sides.salariesOwed!, true] as [string, string, boolean]] : []),
+      ]
+    : [
+        d(p.receivables).lt(0) ? [t("Customer credit (we owe)", "Avoirs clients (dus)"), d(p.receivables).negated().toFixed(2), true] : [t("Customers owe us", "Clients nous doivent"), p.receivables],
+        d(p.payables).lt(0) ? [t("Advances to suppliers", "Avances aux fournisseurs"), d(p.payables).negated().toFixed(2)] : [t("We owe", "Nous devons"), p.payables, true],
+      ];
   const rows: [string, string, boolean?][] = [
     [t("Money (cash, bank, mobile)", "Trésorerie (caisse, banque, mobile)"), p.money],
     [t("Stock (at cost)", "Stock (au coût)"), p.stock],
     [t("Goods on the way", "Marchandises en route"), p.transit],
-    // Credit customers hold is owed by us, and an advance to suppliers is owed to us: each said as what it is.
-    d(p.receivables).lt(0) ? [t("Customer credit (we owe)", "Avoirs clients (dus)"), d(p.receivables).negated().toFixed(2), true] : [t("Customers owe us", "Clients nous doivent"), p.receivables],
-    d(p.payables).lt(0) ? [t("Advances to suppliers", "Avances aux fournisseurs"), d(p.payables).negated().toFixed(2)] : [t("We owe", "Nous devons"), p.payables, true],
+    ...contactRows,
   ];
-  if (p.otherAssets && !d(p.otherAssets).isZero()) rows.splice(4, 0, [t("Advances and deposits", "Avances et dépôts"), p.otherAssets]);
+  // Other advances and deposits go with the assets, before what is owed.
+  const firstOwed = rows.findIndex(([, , owed]) => owed);
+  if (p.otherAssets && !d(p.otherAssets).isZero()) rows.splice(firstOwed < 0 ? rows.length : firstOwed, 0, [t("Advances and deposits", "Avances et dépôts"), p.otherAssets]);
   if (p.otherLiabilities && !d(p.otherLiabilities).isZero()) rows.push([t("Other debts (withholdings…)", "Autres dettes (retenues…)"), p.otherLiabilities, true]);
   return (
     <Card>

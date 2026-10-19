@@ -248,10 +248,10 @@ export default function OptionalVouchers() {
                     <TableRow key={r.id}>
                       <TableCell className="whitespace-nowrap">{date(r.date)}</TableCell>
                       <TableCell>{kindBadge(r.kind)}</TableCell>
-                      {/* The description takes the row's spare width, so the actions stay on one line in view: cut to one
-                          line under 1280 px, on two lines from 1280 px (cut only beyond that). */}
-                      <TableCell className="w-full min-w-[8rem] max-w-0 truncate xl:min-w-[10rem] xl:whitespace-normal" title={r.memo || undefined}>
-                        <span className="xl:line-clamp-2">{r.memo || <span className="text-muted-foreground">—</span>}</span>
+                      {/* The description takes the row's spare width, so the actions stay on one line in view: on up to
+                          three lines at 768–1279 px, where the column is narrow, on two from 1280 px (cut only beyond that). */}
+                      <TableCell className="w-full min-w-[8rem] max-w-0 truncate md:whitespace-normal xl:min-w-[10rem]" title={r.memo || undefined}>
+                        <span className="md:line-clamp-3 xl:line-clamp-2">{r.memo || <span className="text-muted-foreground">—</span>}</span>
                       </TableCell>
                       <TableCell className="text-right"><DraftAmount r={r} francs={francsOf(r)} /></TableCell>
                       <TableCell className="whitespace-nowrap text-muted-foreground">{r.createdByName ?? "—"}</TableCell>
@@ -340,7 +340,7 @@ function DraftSummary({ draft, check, onShort }: { draft: VoucherDraft; check: b
     lines: lines.map((l) => ({ partyId: Number(l.partyId) || null, accountId: Number(l.accountId) || null, amount: l.amount == null ? "" : String(l.amount) })),
     enabled: check,
   });
-  const warnings = check ? [...checks.unusual, ...checks.overDebt] : [];
+  const warnings = check ? [...checks.unusual, ...checks.overDebt, ...checks.advanceUse] : [];
   // A rate the server would refuse stops Valider with its reason, as on the voucher form: the owner's rate is
   // kept on a franc voucher (staff's is replaced by the day's), and a transfer's two amounts make one.
   const isOwner = useAuth().user?.role === "owner";
@@ -390,7 +390,7 @@ function DraftSummary({ draft, check, onShort }: { draft: VoucherDraft; check: b
       {warnings.length > 0 && (
         <div role="alert" className="space-y-1 font-medium text-amber-800 dark:text-amber-400" data-testid="draft-warnings">
           {warnings.map((w) => <p key={w}>{w}.</p>)}
-          <p className="font-normal text-muted-foreground">{t("Check for an extra zero before validating.", "Vérifiez qu'il n'y a pas un zéro de trop avant de valider.")}</p>
+          {warnings.length > checks.advanceUse.length && <p className="font-normal text-muted-foreground">{t("Check for an extra zero before validating.", "Vérifiez qu'il n'y a pas un zéro de trop avant de valider.")}</p>}
         </div>
       )}
     </div>

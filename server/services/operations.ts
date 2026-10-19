@@ -441,15 +441,18 @@ async function francsMetLines(tx: Tx, payables: number, partyId: number, date: s
 
 export type AdvanceSource = "expense" | "container_expense" | "container" | "payroll";
 
-/** Undo the advances a bill took when the bill itself is undone, so the advance is a dollar advance again. */
-export async function reverseAdvances(tx: Tx, source: { type: AdvanceSource; id: number }, date: string, userId: number) {
+/**
+ * Undo the advances a bill took when the bill itself is undone, so the advance is a dollar advance again.
+ * `memo` names what was undone when it is not an invoice (a payroll run); the reversal is the same.
+ */
+export async function reverseAdvances(tx: Tx, source: { type: AdvanceSource; id: number }, date: string, userId: number, memo = "Avance rendue\u00a0: la facture est annulée") {
   const rows = await tx
     .select({ id: journals.id, date: journals.date })
     .from(journals)
     .where(and(eq(journals.sourceType, `advance_${source.type}`), eq(journals.sourceId, source.id), isNull(journals.reversedByJournalId), isNull(journals.reversesJournalId)))
     // The latest part first: each undone gives back the advance the one before it left.
     .orderBy(desc(journals.id));
-  for (const r of rows) await reverseJournal(tx, r.id, { date: date < r.date ? r.date : date, userId, memo: "Avance rendue : la facture est annulée" });
+  for (const r of rows) await reverseJournal(tx, r.id, { date: date < r.date ? r.date : date, userId, memo });
 }
 
 /**

@@ -348,7 +348,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
     lines: lines.map((l) => (l.mode === "party" ? { partyId: l.partyId, accountId: null, amount: l.amount } : { partyId: null, accountId: l.accountId, amount: l.amount })),
     enabled: canSave,
   });
-  const unusual = [...checks.unusual, ...checks.overDebt];
+  const unusual = [...checks.unusual, ...checks.overDebt, ...checks.advanceUse];
   // The same question before "Mettre en attente": the owner validating it later should not be the first to see it.
   const [confirmUnusual, setConfirmUnusual] = useState<null | "save" | "draft">(null);
 
@@ -494,11 +494,24 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
                             // never says they are only settled from the contact page.
                             const settles = kind === "payment" && pty.type !== "customer" && !(fcBooked && !d(fcBooked.native).isZero());
                             const yuan = settles ? checks.yuanSettled.get(pty.id) : undefined;
+                            // An advance they hold settles the yuan this payment leaves: the line says both parts.
+                            const adv = settles ? checks.yuanAdvance.get(pty.id) : undefined;
+                            const total = adv ? d(adv.native).plus(d(yuan?.native ?? 0)).toFixed(2) : null;
                             const at = checks.yuanAtBook ? t("at book value", "à la valeur comptable") : t("at today's rate", "au taux du jour");
                             const link = <Link href={`/contacts/${pty.id}`} className="underline underline-offset-2">{t("“Pay” on the contact page", "la fiche du contact")}</Link>;
                             return (
                               <span className="w-full text-muted-foreground" data-testid="line-owed-cny">
-                                {yuan
+                                {adv && total
+                                  ? yuan
+                                    ? t(
+                                        `This payment will settle ${money(total, "CNY")}: ${money(yuan.native, "CNY")} by this payment, ${money(adv.native, "CNY")} (${usd(adv.usd)}) by the advance of ${adv.held} they hold, ${at}; to choose the yuan settled, use `,
+                                        `Ce paiement règlera ${money(total, "CNY")}\u00a0: ${money(yuan.native, "CNY")} par ce paiement, ${money(adv.native, "CNY")} (${usd(adv.usd)}) par l'avance de ${adv.held} qu'il détient, ${at}\u00a0; pour choisir les yuans réglés, utilisez «\u00a0Payer\u00a0» sur `,
+                                      )
+                                    : t(
+                                        `This payment will settle ${money(total, "CNY")} by the advance of ${adv.held} they hold (${usd(adv.usd)}), ${at}; to choose the yuan settled, use `,
+                                        `Ce paiement règlera ${money(total, "CNY")} par l'avance de ${adv.held} qu'il détient (${usd(adv.usd)}), ${at}\u00a0; pour choisir les yuans réglés, utilisez «\u00a0Payer\u00a0» sur `,
+                                      )
+                                  : yuan
                                   ? t(`This payment will also settle ${money(yuan.native, "CNY")} (${usd(yuan.usd)}) ${at}; to choose the yuan settled, use `, `Ce paiement règlera aussi ${money(yuan.native, "CNY")} (${usd(yuan.usd)}) ${at}\u00a0; pour choisir les yuans réglés, utilisez «\u00a0Payer\u00a0» sur `)
                                   : settles
                                     ? t(`Paid beyond the dollars owed, the yuan are settled ${at}; to choose the yuan settled, use `, `Au-delà des dollars dus, un paiement règle les yuans ${at}\u00a0; pour choisir les yuans réglés, utilisez «\u00a0Payer\u00a0» sur `)
@@ -561,7 +574,9 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              {checks.unusual.length || !checks.overDebt.length
+              {!checks.unusual.length && !checks.overDebt.length && checks.advanceUse.length
+                ? t("Apply the advance the supplier holds?", "Imputer l'avance que détient le fournisseur\u00a0?")
+                : checks.unusual.length || !checks.overDebt.length
                 ? t("An unusual amount?", "Un montant inhabituel\u00a0?")
                 : checks.overGrows === checks.overDebt.length
                   // Nothing is over what is owed: the money goes the way that makes the contact's debt (or ours) grow.
@@ -587,7 +602,10 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
                       : t("This increases what we owe them.", "Cela augmente ce que nous lui devons.")}
                   </p>
                 )}
-                <p>{t("Check for an extra zero before saving.", "Vérifiez qu'il n'y a pas un zéro de trop avant d'enregistrer.")}</p>
+                {checks.advanceUse.length > 0 && (
+                  <p>{t("The advance moves no money: the voucher shows only the money paid, the advance applied beside it.", "L'avance ne fait sortir aucun argent\u00a0: la pièce montre l'argent payé, l'avance imputée à côté.")}</p>
+                )}
+                {unusual.length > checks.advanceUse.length && <p>{t("Check for an extra zero before saving.", "Vérifiez qu'il n'y a pas un zéro de trop avant d'enregistrer.")}</p>}
                 {confirmUnusual === "draft" && (
                   <p>{t("Nothing is posted yet: the same question comes back when it is validated.", "Rien n'est encore passé : la même question reviendra à la validation.")}</p>
                 )}

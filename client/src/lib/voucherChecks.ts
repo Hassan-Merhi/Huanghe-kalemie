@@ -1,7 +1,7 @@
 import { useQueries, useQuery } from "@tanstack/react-query";
 import Decimal from "decimal.js";
 import { useAccounts, useMoneyAccounts, useRate } from "@/components/pickers";
-import { owedOn, paymentSplit } from "@/lib/allocation";
+import { advanceToYuan, owedOn, paymentSplit } from "@/lib/allocation";
 import { de } from "@shared/french";
 import { cdf, d, money, pct, usd } from "@/lib/format";
 import { useT } from "@/lib/i18n";
@@ -27,6 +27,7 @@ export const FIRST_PAYMENT_ASK = 1000;
  * - `overDebt`: a contact line for more than is owed, which becomes an advance or credit (the contact page's
  *   "Payer plus que ce qui est dû ?"), or paid to a contact who already owes the other way, whose debt it adds to
  *   (`overGrows` counts those lines);
+ * - `advanceUse`: a payment to a supplier who already holds an advance that saving applies to the yuan owed;
  * - `short`: a payment the drawer cannot cover (the server refuses it).
  * They are questions, not refusals: a deliberate advance is still saved once confirmed.
  */
@@ -126,6 +127,9 @@ export function useVoucherChecks(input: { kind: string; day: string; accountId: 
    */
   const yuanAtBook = !cnyRate;
   const yuanSettled = new Map<number, { native: string; usd: string }>();
+  /** The yuan an advance the contact holds settles on saving, with the advance held and all the yuan owed. */
+  const yuanAdvance = new Map<number, { native: string; usd: string; held: string; all: string }>();
+  const advanceUse: string[] = [];
   if (kind && enabled && account && (!isCdf || rate.gt(0))) {
     for (const [id, amount] of Array.from(byParty)) {
       const p = partyOf(id);
@@ -145,6 +149,37 @@ export function useVoucherChecks(input: { kind: string; day: string; accountId: 
       });
       const yuan = split.find((x) => x.kind === "cny");
       if (yuan?.native) yuanSettled.set(id, { native: yuan.native, usd: yuan.usd });
+      // An advance they already hold goes to the yuan still owed too when saved (advanceToYuanLines, only with no
+      // francs owed): said on the line and asked about, since it moves no money and the voucher reads only 500 $.
+      if (kind === "payment" && !customer && owed.cny.gt(0) && !owed.fc.gt(0)) {
+        const dollars = d(p.balance).minus((p.foreign ?? []).reduce((s, f) => s.plus(f.usd), d(0)));
+        const heldUsd = Decimal.max(dollars, 0);
+        const heldFc = Decimal.max(d(p.foreign?.find((f) => f.currency === "CDF")?.native ?? 0), 0);
+        const used = advanceToYuan({
+          owedCny: owed.cny,
+          owedUsd: d(cny?.usd ?? 0).abs(),
+          settledNative: d(yuan?.native ?? 0),
+          advanceUsd: heldUsd,
+          advanceFc: heldFc,
+          fcRate: dayRate?.cdfPerUsd ? d(dayRate.cdfPerUsd) : null,
+          cnyRate,
+        });
+        if (used) {
+          const held = `${usd(heldUsd.toFixed(2))}${heldFc.gt(0) ? ` ${t("and", "et")} ${cdf(heldFc.toFixed(0))}` : ""}`;
+          yuanAdvance.set(id, { ...used, held, all: owed.cny.toFixed(2) });
+          advanceUse.push(
+            yuan?.native
+              ? t(
+                  `${p.name} already holds an advance of ${held}: saving applies ${usd(used.usd)} of it to ${money(used.native, "CNY")} owed, besides the ${money(yuan.native, "CNY")} this payment settles`,
+                  `${p.name} détient déjà une avance de ${held}\u00a0: l'enregistrement en impute ${usd(used.usd)} sur ${money(used.native, "CNY")} dus, en plus des ${money(yuan.native, "CNY")} que règle ce paiement`,
+                )
+              : t(
+                  `${p.name} already holds an advance of ${held}: saving applies ${usd(used.usd)} of it to ${money(used.native, "CNY")} owed`,
+                  `${p.name} détient déjà une avance de ${held}\u00a0: l'enregistrement en impute ${usd(used.usd)} sur ${money(used.native, "CNY")} dus`,
+                ),
+          );
+        }
+      }
       const advance = split.find((x) => x.kind === "advance");
       // Under 100 FC left over is the notes' rounding.
       if (!advance || !(isCdf ? d(advance.usd).times(rate).gte(100) : d(advance.usd).gt(0))) continue;
@@ -200,5 +235,5 @@ export function useVoucherChecks(input: { kind: string; day: string; accountId: 
   const others = input.lines.filter((l) => l.partyId || l.accountId).length - 1;
   const fallbackMemo = firstName ? `${firstName}${others > 0 ? ` + ${others} ${t(others > 1 ? "others" : "other", others > 1 ? "autres" : "autre")}` : ""}` : null;
 
-  return { yuanSettled, yuanAtBook, unusual, overDebt, overGrows, overGrowsCustomers: overGrows > 0 && growsOnlyCustomers, short, partyOf, settleAll, total, currency, account, fallbackMemo };
+  return { yuanSettled, yuanAdvance, advanceUse, yuanAtBook, unusual, overDebt, overGrows, overGrowsCustomers: overGrows > 0 && growsOnlyCustomers, short, partyOf, settleAll, total, currency, account, fallbackMemo };
 }

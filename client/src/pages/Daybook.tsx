@@ -15,7 +15,7 @@ import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
 import { downloadCsv } from "@/lib/sheets";
-import { cdf, curLabel, d, date as fmtDate, frenchPunctuation, money, qty, todayLocal, usd } from "@/lib/format";
+import { advanceText, cdf, curLabel, d, date as fmtDate, frenchPunctuation, money, qty, todayLocal, usd } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { RangePicker, useRange } from "@/pages/Reports";
 import { journalTypeLabel } from "@/pages/ContactDetail";
@@ -67,6 +67,8 @@ interface DaybookRow {
   /** Stock counts: value of the stock found and of the stock lost (the amount is the net). */
   stockAdded?: string;
   stockRemoved?: string;
+  /** A payment that also applied an advance the contact held (not in the amount: no money moved for it). */
+  advance?: { usd: string; cny?: string; cdf?: string };
   lines: DaybookLine[];
 }
 
@@ -146,6 +148,7 @@ function cashDetail(r: DaybookRow, t: T): string | null {
   if (r.stockAdded && r.stockRemoved && d(r.stockAdded).gt(0) && d(r.stockRemoved).gt(0)) {
     parts.push(`${t("found", "trouvé")} ${usd(r.stockAdded)} · ${t("lost", "perdu")} ${usd(r.stockRemoved)}`);
   }
+  if (r.advance) parts.push(`${t("advance applied", "avance imputée")} ${advanceText(r.advance)}`);
   if (r.fxDiff && !d(r.fxDiff).isZero()) {
     const fx = d(r.fxDiff);
     parts.push(`${t("exchange", "écart de change")} ${usd(fx.abs().toFixed(2))} (${fx.gt(0) ? t("loss", "perte") : t("gain", "gain")})`);
