@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { de } from "@shared/french";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
-import { AlertTriangle, ArrowLeft, Bike, Info, Lock, PackageCheck, Pencil, Plus, Save, Trash2, Undo2, X } from "lucide-react";
+import { AlertTriangle, ArrowLeft, Bike, ChevronDown, Info, Lock, PackageCheck, Pencil, Plus, Save, Trash2, Undo2, X } from "lucide-react";
 import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, StatCard, SubmitButton, unclearAmount } from "@/components/common";
 import { ContainerRateField, MoneyAccountSelect, PartySelect, perUsdText, useAccounts, useContainerRateRefusal, useRate, VariantSearch } from "@/components/pickers";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -273,7 +273,7 @@ function HeaderCard({ c }: { c: ContainerFull }) {
           <p className="text-xs text-muted-foreground">{t("Status", "Statut")}</p>
           {can("manager") && !finalized ? (
             <Select value={c.status} onValueChange={(v) => patch.mutate({ status: v as ContainerStatus })}>
-              <SelectTrigger className="mt-1 h-9 w-full sm:w-44"><SelectValue /></SelectTrigger>
+              <SelectTrigger className="mt-1 h-9 w-full sm:w-44" aria-label={t("Container status", "Statut du conteneur")}><SelectValue /></SelectTrigger>
               <SelectContent>
                 {(["draft", "in_transit", "arrived"] as const).map((s) => (
                   <SelectItem key={s} value={s}>{statusLabel(s)}</SelectItem>
@@ -821,6 +821,7 @@ function SplitEditor({ c, e }: { c: ContainerFull; e: ContainerExpense }) {
   const t = useT();
   const L = useLabels();
   const [pendingLine, setPendingLine] = useState(false);
+  const feeName = useFeeName(c);
   const patch = useApiMutation<{ method: Method; targetLineId: number | null }>("PATCH", `/api/containers/${c.id}/expenses/${e.id}`, {
     success: t("Split updated", "Répartition mise à jour"),
     onSuccess: () => setPendingLine(false),
@@ -841,7 +842,7 @@ function SplitEditor({ c, e }: { c: ContainerFull; e: ContainerExpense }) {
           }
         }}
       >
-        <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+        <SelectTrigger className="h-8 text-xs" aria-label={t(`Split of the ${feeName(e)} cost`, `Répartition du frais ${feeName(e)}`)}><SelectValue /></SelectTrigger>
         <SelectContent>
           {METHODS.map((m) => (
             <SelectItem key={m} value={m} disabled={m === "line" && c.lines.length === 0}>{L.method(m)}</SelectItem>
@@ -850,7 +851,7 @@ function SplitEditor({ c, e }: { c: ContainerFull; e: ContainerExpense }) {
       </Select>
       {showLine && (
         <Select value={e.method === "line" && e.targetLineId ? String(e.targetLineId) : ""} onValueChange={(v) => patch.mutate({ method: "line", targetLineId: Number(v) })}>
-          <SelectTrigger className={missingLine || pendingLine ? "h-8 border-destructive text-xs" : "h-8 text-xs"}>
+          <SelectTrigger className={missingLine || pendingLine ? "h-8 border-destructive text-xs" : "h-8 text-xs"} aria-label={t(`Line that bears the ${feeName(e)} cost`, `Ligne qui porte le frais ${feeName(e)}`)}>
             <SelectValue placeholder={t("Pick the line", "Choisir la ligne")} />
           </SelectTrigger>
           <SelectContent>
@@ -1146,10 +1147,54 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
 
 // ---------------------------------------------------------------- Landed cost preview
 
+/**
+ * A fee told apart from the others of its type: "Fret · Transit Lubumbashi", by its description, else its
+ * creditor or the account that paid it. Two fees both read "Fret · Par valeur d'achat" otherwise.
+ */
+function useFeeName(c: ContainerFull) {
+  const L = useLabels();
+  const accountsQ = useAccounts();
+  const partiesQ = useQuery<Party[]>({ queryKey: ["/api/parties"] });
+  return (e: ContainerExpense) => {
+    const same = c.expenses.filter((x) => x.type === e.type).length > 1;
+    const who = e.description?.trim()
+      || (e.payablePartyId ? partiesQ.data?.find((x) => x.id === e.payablePartyId)?.name : accountsQ.data?.find((a) => a.id === e.paidFromAccountId)?.name)
+      || (same ? `#${c.expenses.filter((x) => x.type === e.type).indexOf(e) + 1}` : "");
+    return who ? `${L.type(e.type)} · ${who}` : L.type(e.type);
+  };
+}
+
+/** The fees added to a line, their detail a click (or a hover) away. */
+function FeesCell({ c, byExpense, total, feeName, item }: { c: ContainerFull; byExpense: Record<string, string>; total: string; feeName: (e: ContainerExpense) => string; item: string }) {
+  const t = useT();
+  const L = useLabels();
+  const parts = c.expenses.map((e) => ({ e, usd: byExpense[String(e.id)] ?? "0" }));
+  if (parts.length < 2) return <Num>{usd(total)}</Num>;
+  const title = parts.map(({ e, usd: x }) => `${feeName(e)} (${L.method(e.method)})${t(": ", "\u00a0: ")}${usd(x)}`).join("\n");
+  return (
+    // The detail wraps in the column's own width: opened, it must not push Sell price and Margin out again.
+    <details className="group block text-right">
+      <summary className="inline-flex cursor-pointer list-none items-center gap-1 rounded hover:text-primary [&::-webkit-details-marker]:hidden" title={title} aria-label={t(`Costs added to ${item}: ${usd(total)}, show the detail by fee`, `Frais ajoutés à ${item}\u00a0: ${usd(total)}, voir le détail par frais`)}>
+        <ChevronDown className="h-3 w-3 shrink-0 text-muted-foreground transition-transform group-open:rotate-180" />
+        <Num>{usd(total)}</Num>
+      </summary>
+      <ul className="mt-1 w-0 min-w-full space-y-1 text-xs text-muted-foreground">
+        {parts.map(({ e, usd: x }) => (
+          <li key={e.id}>
+            {feeName(e)}{t(": ", "\u00a0: ")}<Num className="whitespace-nowrap">{usd(x)}</Num>
+            <span className="block text-[10px]">{L.method(e.method)}</span>
+          </li>
+        ))}
+      </ul>
+    </details>
+  );
+}
+
 function PreviewSection({ c, priceOf }: { c: ContainerFull; priceOf: Map<number, string> }) {
   const t = useT();
   const L = useLabels();
   const p = c.preview;
+  const feeName = useFeeName(c);
   if (c.lines.length === 0) return null;
   const cheap = p ? cheapLines(c, priceOf, p.lines) : [];
   return (
@@ -1186,21 +1231,21 @@ function PreviewSection({ c, priceOf }: { c: ContainerFull; priceOf: Map<number,
             {cheap.length > 0 && <CheapAlert cheap={cheap} currency={c.currency} />}
             <p className="text-xs text-muted-foreground hidden sm:block md:hidden">{t("Swipe the table sideways to see every column →", "Faites glisser le tableau sur le côté pour voir toutes les colonnes →")}</p>
             <div className="max-w-full overflow-x-auto rounded-md border">
-              <Table>
+              <Table className="[&_td]:px-2 [&_th]:px-2">
                 <TableHeader>
                   <TableRow>
                     <TableHead>{t("Item", "Article")}</TableHead>
                     <TableHead className="text-right">{t("Qty", "Qté")}</TableHead>
                     <TableHead className="text-right">{t("Purchase ($)", "Achat ($)")}</TableHead>
-                    {c.expenses.map((e) => (
-                      <TableHead key={e.id} className="hidden text-right md:table-cell" data-card-label={`${L.type(e.type)} · ${L.method(e.method)}`}>
-                        <span className="block whitespace-nowrap">{L.type(e.type)}</span>
-                        <span className="block text-[10px] font-normal">{L.method(e.method)}</span>
-                      </TableHead>
-                    ))}
+                    {/* One column for every fee, its detail opened on the line: a column per fee pushed Sell price
+                        and Margin out of view at 1280 px with the menu open, where a moto selling at a loss shows. */}
                     <TableHead className="text-right">{t("Costs added", "Frais ajoutés")}</TableHead>
-                    <TableHead className="text-right">{t("Landed total", "Total de revient")}</TableHead>
-                    <TableHead className="text-right">{t("Cost per unit", "Coût unitaire")}</TableHead>
+                    {/* The line's landed total sits under its unit cost (and the padding is tighter), so Sell price and
+                        Margin fit in 668 px, at 1024 px with the menu open. */}
+                    <TableHead className="text-right" data-card-label={t("Cost per unit (line total)", "Coût unitaire (total de la ligne)")}>
+                      <span className="block">{t("Cost per unit", "Coût unitaire")}</span>
+                      <span className="block text-[10px] font-normal">{t("line total", "total de la ligne")}</span>
+                    </TableHead>
                     <TableHead className="text-right">{t("Sell price", "Prix de vente")}</TableHead>
                     <TableHead className="text-right">{t("Margin", "Marge")}</TableHead>
                   </TableRow>
@@ -1212,20 +1257,17 @@ function PreviewSection({ c, priceOf }: { c: ContainerFull; priceOf: Map<number,
                     const sell = priceOf.get(l.variantId);
                     return (
                       <TableRow key={l.id}>
-                        <TableCell className="min-w-[160px]">
+                        <TableCell className="min-w-[8.5rem]">
                           <div className="font-medium">{itemLabel(l)}</div>
                           <div className="text-xs text-muted-foreground">{l.sku}</div>
                         </TableCell>
                         <TableCell className="text-right"><Num>{qty(l.quantity)}</Num></TableCell>
                         <TableCell className="text-right"><Num>{usd(r.fobUsd)}</Num></TableCell>
-                        {c.expenses.map((e) => (
-                          <TableCell key={e.id} className="hidden text-right md:table-cell">
-                            <Num className="text-muted-foreground">{usd(r.byExpense[String(e.id)] ?? 0)}</Num>
-                          </TableCell>
-                        ))}
-                        <TableCell className="text-right"><Num>{usd(r.allocatedUsd)}</Num></TableCell>
-                        <TableCell className="text-right"><Num className="font-medium">{usd(r.landedTotalUsd)}</Num></TableCell>
-                        <TableCell className="text-right"><Num className="font-semibold">{unitCost(r.landedUnitCost)}</Num></TableCell>
+                        <TableCell className="text-right"><FeesCell c={c} byExpense={r.byExpense} total={r.allocatedUsd} feeName={feeName} item={itemLabel(l)} /></TableCell>
+                        <TableCell className="text-right">
+                          <Num className="font-semibold">{unitCost(r.landedUnitCost)}</Num>
+                          <span className="block text-xs text-muted-foreground tabular">{usd(r.landedTotalUsd)}</span>
+                        </TableCell>
                         <TableCell className="text-right"><SellCell sell={sell} /></TableCell>
                         <TableCell className="text-right"><MarginCell sell={sell} cost={r.landedUnitCost} /></TableCell>
                       </TableRow>
@@ -1236,12 +1278,9 @@ function PreviewSection({ c, priceOf }: { c: ContainerFull; priceOf: Map<number,
                   <TableRow>
                     <TableCell colSpan={2} className="font-medium">{t("Total", "Total")}</TableCell>
                     <TableCell className="text-right"><Num>{usd(p.fobTotalUsd)}</Num></TableCell>
-                    {c.expenses.map((e) => (
-                      <TableCell key={e.id} className="hidden text-right md:table-cell"><Num>{usd(e.amountUsd)}</Num></TableCell>
-                    ))}
                     <TableCell className="text-right"><Num>{usd(p.expensesTotalUsd)}</Num></TableCell>
                     <TableCell className="text-right"><Num className="font-semibold">{usd(p.landedTotalUsd)}</Num></TableCell>
-                    <TableCell colSpan={3} />
+                    <TableCell colSpan={2} />
                   </TableRow>
                 </TableFooter>
               </Table>
