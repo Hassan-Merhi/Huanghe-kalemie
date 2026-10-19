@@ -29,7 +29,7 @@ export function useApiMutation<TBody = unknown, TResult = unknown>(
     success?: string;
     onSuccess?: (result: TResult, body: TBody) => void;
     /** A page that shows an error itself (on the field it is about) returns true, and no toast covers the form. */
-    onError?: (error: Error) => boolean | void;
+    onError?: (error: Error, body: TBody) => boolean | void;
   } = {},
 ) {
   const { toast } = useToast();
@@ -49,9 +49,9 @@ export function useApiMutation<TBody = unknown, TResult = unknown>(
       opts.onSuccess?.(result, body);
     },
     // A second tap while the first is saving: the first one's result will show.
-    onError: (e) => {
+    onError: (e, body) => {
       if (e instanceof ApiError && e.code === "IN_PROGRESS") return;
-      if (opts.onError?.(e)) return;
+      if (opts.onError?.(e, body)) return;
       toast({ title: e.message, variant: "destructive" });
     },
   });
