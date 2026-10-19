@@ -92,6 +92,7 @@ function usePriceRows(search: string) {
 
 export default function SalesTools() {
   const t = useT();
+  const { can } = useAuth();
   const [tab, setTab] = useState("prices");
   return (
     <div>
@@ -99,7 +100,8 @@ export default function SalesTools() {
       <PageHeader
         title={t("Sales tools", "Outils de vente")}
         description={t("Price list and today's sales.", "Liste de prix et ventes du jour.")}
-        actions={<Button asChild><Link href="/pos"><ShoppingCart className="mr-1 h-4 w-4" /> {t("Point of sale", "Caisse")}</Link></Button>}
+        // The partner reads the price list and the day's sales but does not sell: no link to a till they cannot open.
+        actions={can("manager", "cashier") ? <Button asChild><Link href="/pos"><ShoppingCart className="mr-1 h-4 w-4" /> {t("Point of sale", "Caisse")}</Link></Button> : undefined}
       />
       <Tabs value={tab} onValueChange={setTab}>
         <div className="overflow-x-auto pb-1">
@@ -523,6 +525,7 @@ function bulkChangeText(t: ReturnType<typeof useT>, n: number, p: ReturnType<typ
 
 function TodaySales() {
   const t = useT();
+  const { can } = useAuth();
   const today = todayLocal();
   const q = useQuery<SaleListRow[]>({ queryKey: ["/api/sales", { from: today, to: today }] });
   // The figures are the "Aujourd'hui" card's (Sales, dashboard, Caisse du jour): net of returns and refunds, and
@@ -559,7 +562,7 @@ function TodaySales() {
         <Loading />
       ) : sales.length === 0 ? (
         <EmptyState title={t("No sales yet today", "Pas encore de ventes aujourd'hui")}>
-          <Button asChild className="mt-2"><Link href="/pos"><ShoppingCart className="mr-1 h-4 w-4" /> {t("Open the point of sale", "Ouvrir la caisse")}</Link></Button>
+          {can("manager", "cashier") && <Button asChild className="mt-2"><Link href="/pos"><ShoppingCart className="mr-1 h-4 w-4" /> {t("Open the point of sale", "Ouvrir la caisse")}</Link></Button>}
         </EmptyState>
       ) : (
         <Card>

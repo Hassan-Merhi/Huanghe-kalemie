@@ -22,7 +22,7 @@ import { allocateCents, cents, dec, sum, Decimal, type DecimalInput } from "@sha
 import type { Tx } from "../db";
 import { badRequest, conflict, forbidden, notFound, wholeUnitError } from "../errors";
 import { wholeUnit } from "@shared/units";
-import { lockBalances, moneyLeg, nextNumber, postJournal, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
+import { lockBalances, moneyLeg, nextNumber, postJournal, rateFor, resolveRate, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
 import { issueStock, linkMovementsToJournal, lockVariants, receiveStock, stockQty } from "./stock";
 
 /**
@@ -284,6 +284,8 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
       creditUsd: credit.toFixed(2),
       cogs: "0",
       note: input.note ?? null,
+      // What the receipt prints as "Taux" and the francs the total is worth, even after the day's rate is corrected.
+      cdfRate: francRate ? francRate.toFixed(4) : (await rateFor(tx, input.date)).rate.toFixed(4),
       createdBy: userId,
     })
     .returning();

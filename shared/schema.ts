@@ -574,6 +574,8 @@ export const sales = pgTable(
     creditUsd: money("credit_usd").notNull().default("0"),
     cogs: money("cogs").notNull(),
     note: text("note"),
+    /** CDF per 1 USD the sale was validated at (its francs' rate, else the day's), for its receipt. Null before U48. */
+    cdfRate: numeric("cdf_rate", { precision: 14, scale: 4 }),
     journalId: integer("journal_id"),
     voidJournalId: integer("void_journal_id"),
     voidedAt: timestamp("voided_at"),

@@ -120,6 +120,13 @@
       "when": 1792130000000,
       "tag": "0016_a37_movement_unit_cost",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1792140000000,
+      "tag": "0017_u48_sale_rate",
+      "breakpoints": true
     }
   ]
 }

@@ -30,7 +30,7 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { curLabel, d, MINUS, money, number, pct as fmtPct, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import { useI18n, useT, count } from "@/lib/i18n";
-import { amountCellUnsure, downloadXlsx, readNumberCell, readSheet, toWire } from "@/lib/sheets";
+import { amountCellUnsure, csvAmountText, downloadXlsx, readNumberCell, readSheet, toWire } from "@/lib/sheets";
 import { knownUnit, qtyWithUnit, unitLabel, wholeUnit } from "@/lib/units";
 import type { Product } from "@/lib/types";
 import { type Decimal, typedCurrencyMark } from "@shared/money";
@@ -219,7 +219,7 @@ const amountIn = (t: T, value: string, currency?: string) => {
   return !currency || currency === "USD" ? t(`$${n}`, `${n}\u00a0$`) : `${n}\u00a0${curLabel(currency)}`;
 };
 
-function amountQuestion(t: T, cells: Cells | undefined, fields: { key: string; en: string; fr: string; currency?: string }[]): string | null {
+function amountQuestion(t: T, cells: Cells | undefined, fields: { key: string; en: string; fr: string; currency?: string }[], csv = false): string | null {
   for (const f of fields) {
     const raw = cells?.[f.key];
     // "28 000 FC" in a dollar column: the server refuses it, so the row says so first.
@@ -236,6 +236,13 @@ function amountQuestion(t: T, cells: Cells | undefined, fields: { key: string; e
     if (!u) continue;
     const text = String(raw).trim();
     const [many, few] = [amountIn(t, u[0], f.currency), amountIn(t, u[1], f.currency)];
+    // A CSV has no number cells: the decimals are written so they cannot read as thousands ("14", "4,1250").
+    if (csv) {
+      return t(
+        `${f.en} "${text}": ${many} or ${few}? For ${many}, write ${u[0]} without the separator; for ${few}, write ${csvAmountText(u[1], false)}`,
+        `${f.fr} «\u00a0${text}\u00a0»\u00a0: ${many} ou ${few}\u00a0? Pour ${many}, écrivez ${u[0]} sans séparateur\u00a0; pour ${few}, écrivez ${csvAmountText(u[1], true)}`,
+      );
+    }
     return t(
       // Both readings get their own way out: "4,125" or "1,000" typed as text stays in doubt (a French sheet means
       // decimals, an English one thousands), so the decimals go in as a number cell.
@@ -304,6 +311,7 @@ function ItemsImport() {
   const { user } = useAuth();
   const [fileRows, setRows] = useState<StockRow[]>([]);
   const [cells, setCells] = useState<Cells[]>([]);
+  const [csv, setCsv] = useState(false);
   const [preview, setPreview] = useState<PreviewRow[]>([]);
   const [fileError, setFileError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -331,7 +339,7 @@ function ItemsImport() {
     setPreview([]);
     setAddExisting(false);
     try {
-      const { rows: raw, found, cells: rawCells } = await readSheet(file, STOCK_FIELDS);
+      const { rows: raw, found, cells: rawCells, csv: isCsv } = await readSheet(file, STOCK_FIELDS);
       if (!found.includes("name")) {
         setFileError(t("No item name column found. Name a column \"Article\" (or \"Item\", \"Désignation\").", "Aucune colonne de nom d'article trouvée. Nommez une colonne «\u00a0Article\u00a0» (ou «\u00a0Item\u00a0», «\u00a0Désignation\u00a0»)."));
         return;
@@ -343,6 +351,7 @@ function ItemsImport() {
       const clean = raw.map((r) => ({ ...r, sellPrice: numCell(r.sellPrice), reorderLevel: numCell(r.reorderLevel), qty: numCell(r.qty), unitCost: numCell(r.unitCost) }));
       setRows(clean);
       setCells(rawCells);
+      setCsv(isCsv);
       setBusy(true);
       const p = await api<PreviewRow[]>("POST", "/api/import/items/preview", { rows: clean.map(({ qty: _q, unitCost: _c, ...r }) => toWire(r)) });
       setPreview(p);
@@ -366,7 +375,7 @@ function ItemsImport() {
   const { rows, unsure, units } = useMemo(() => remeasure(t, fileRows, cells, preview, "qty", []), [t, fileRows, cells, preview]);
   const merged = rows.map((r, i) => {
     const p = preview[i];
-    const err = rowError(p?.status === "error" ? p : undefined, lang) ?? unsure[i] ?? amountQuestion(t, cells[i], [SELL_PRICE, { key: "unitCost", en: "Unit cost", fr: "Coût unitaire", currency: "USD" }]) ?? localError(r, units[i]);
+    const err = rowError(p?.status === "error" ? p : undefined, lang) ?? unsure[i] ?? amountQuestion(t, cells[i], [SELL_PRICE, { key: "unitCost", en: "Unit cost", fr: "Coût unitaire", currency: "USD" }], csv) ?? localError(r, units[i]);
     // A unit the shop does not know is kept as typed, and its quantity may have decimals: said, not refused.
     const note = !err && !knownUnit(units[i])
       ? t(`Unknown unit "${units[i].trim()}": kept as typed, decimals allowed`, `Unité «\u00a0${units[i].trim()}\u00a0» inconnue\u00a0: gardée telle quelle, décimales permises`)
@@ -551,6 +560,7 @@ function PricesImport() {
   const t = useT();
   const [rows, setRows] = useState<PriceRow[]>([]);
   const [cells, setCells] = useState<Cells[]>([]);
+  const [csv, setCsv] = useState(false);
   const [fileError, setFileError] = useState<string | null>(null);
   const [updated, setUpdated] = useState<number | null>(null);
   const [confirming, setConfirming] = useState(false);
@@ -579,13 +589,14 @@ function PricesImport() {
     setUpdated(null);
     setRows([]);
     try {
-      const { rows: raw, found, cells: rawCells } = await readSheet(file, PRICE_FIELDS);
+      const { rows: raw, found, cells: rawCells, csv: isCsv } = await readSheet(file, PRICE_FIELDS);
       if (!found.includes("sellPrice") || (!found.includes("sku") && !found.includes("barcode"))) {
         setFileError(t("The file needs a SKU or barcode column and a price column.", "Le fichier doit avoir une colonne Code (SKU) ou code-barres et une colonne de prix."));
         return;
       }
       setRows(raw.map((r) => ({ ...r, sellPrice: numCell(r.sellPrice) })));
       setCells(rawCells);
+      setCsv(isCsv);
     } catch (e) {
       setFileError(e instanceof Error ? e.message : String(e));
     }
@@ -593,7 +604,7 @@ function PricesImport() {
 
   const problem = (r: PriceRow, i: number) => {
     if (!r.sku && !r.barcode) return t("SKU or barcode missing", "Code ou code-barres manquant");
-    const unsure = amountQuestion(t, cells[i], [SELL_PRICE]);
+    const unsure = amountQuestion(t, cells[i], [SELL_PRICE], csv);
     if (unsure) return unsure;
     if (!r.sellPrice || !/^\d+(\.\d+)?$/.test(r.sellPrice)) return t("Price is not a valid number", "Le prix n'est pas un nombre valide");
     return null;
@@ -853,6 +864,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onContainer,
   const { lang } = useI18n();
   const [fileRows, setRows] = useState<ContainerRowIn[]>([]);
   const [cells, setCells] = useState<Cells[]>([]);
+  const [csv, setCsv] = useState(false);
   const [preview, setPreview] = useState<PreviewRow[]>([]);
   const [fileError, setFileError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -877,7 +889,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onContainer,
     setRows([]);
     setPreview([]);
     try {
-      const { rows: raw, found, cells: rawCells } = await readSheet(file, CONTAINER_FIELDS);
+      const { rows: raw, found, cells: rawCells, csv: isCsv } = await readSheet(file, CONTAINER_FIELDS);
       if (!found.includes("name")) {
         setFileError(t("No item name column found. Name a column \"Article\" (or \"Item\").", "Aucune colonne de nom d'article trouvée. Nommez une colonne «\u00a0Article\u00a0» (ou «\u00a0Item\u00a0»)."));
         return;
@@ -889,6 +901,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onContainer,
       const clean = raw.map((r) => ({ ...r, quantity: numCell(r.quantity), unitPrice: numCell(r.unitPrice), weightKg: numCell(r.weightKg), volumeCbm: numCell(r.volumeCbm), sellPrice: numCell(r.sellPrice) }));
       setRows(clean);
       setCells(rawCells);
+      setCsv(isCsv);
       setBusy(true);
       setPreview(await api<PreviewRow[]>("POST", "/api/import/items/preview", { rows: clean.map(({ quantity: _q, unitPrice: _p, weightKg: _w, volumeCbm: _v, ...r }) => toWire(r)) }));
     } catch (e) {
@@ -915,7 +928,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onContainer,
   );
   const merged = rows.map((r, i) => {
     const p = preview[i];
-    const err = rowError(p?.status === "error" ? p : undefined, lang) ?? unsure[i] ?? amountQuestion(t, cells[i], [{ key: "unitPrice", en: "Unit price", fr: "Prix unitaire", currency: currency.toUpperCase() }, SELL_PRICE]) ?? localError(r);
+    const err = rowError(p?.status === "error" ? p : undefined, lang) ?? unsure[i] ?? amountQuestion(t, cells[i], [{ key: "unitPrice", en: "Unit price", fr: "Prix unitaire", currency: currency.toUpperCase() }, SELL_PRICE], csv) ?? localError(r);
     return { r, p, err, unsure: unsure[i], status: (err ? "error" : p?.status ?? "existing") as PreviewRow["status"] };
   });
   const errors = merged.filter((m) => m.err).length;

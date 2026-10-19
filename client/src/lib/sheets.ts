@@ -67,9 +67,12 @@ const NUMBER_FIELDS = new Set(["sellPrice", "reorderLevel", "qty", "unitCost", "
 /** Prices and costs, where text such as "4,125" or "1.350" is asked about, as the server refuses it (see ambiguousTypedAmount). */
 const AMOUNT_FIELDS = new Set(["sellPrice", "unitCost", "unitPrice"]);
 
+/** A CSV (or text) file: its cells are all text, never Excel numbers. */
+const isCsv = (file: File) => /\.(csv|txt)$/i.test(file.name) || file.type === "text/csv";
+
 async function readWorkbook(file: File) {
   const buf = await file.arrayBuffer();
-  if (/\.(csv|txt)$/i.test(file.name) || file.type === "text/csv") {
+  if (isCsv(file)) {
     const text = decodeCsv(buf);
     // Cells stay text (raw), so "12,50" is not read as 1250; the server reads French and English numbers.
     return XLSX.read(text, { type: "string", raw: true, FS: csvSeparator(text), cellDates: false });
@@ -80,13 +83,15 @@ async function readWorkbook(file: File) {
 /**
  * Read the first sheet of a file into objects keyed by our field names.
  * `fields` maps a field to the header names it accepts (any case, accents and spaces ignored).
- * Returns the rows, the fields whose column was found, and each row's number cells as they were in the
- * file (a page that knows the unit reads "2,250" litres again as 2,25: see parseTypedNumber).
+ * Returns the rows, the fields whose column was found, each row's number cells as they were in the
+ * file (a page that knows the unit reads "2,250" litres again as 2,25: see parseTypedNumber), and whether
+ * it is a CSV, whose cells cannot be Excel numbers.
  */
 export async function readSheet<F extends string>(file: File, fields: Record<F, string[]>) {
   const wb = await readWorkbook(file);
   const ws = wb.Sheets[wb.SheetNames[0]];
-  if (!ws) return { rows: [] as Record<F, string | null>[], found: [] as F[], cells: [] as Partial<Record<F, string | number>>[] };
+  const csv = isCsv(file);
+  if (!ws) return { rows: [] as Record<F, string | null>[], found: [] as F[], cells: [] as Partial<Record<F, string | number>>[], csv };
   const grid = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true, defval: null, blankrows: false });
   const header = (grid[0] ?? []).map((h) => strip(String(h ?? "")));
   const colOf = {} as Record<F, number>;
@@ -112,7 +117,7 @@ export async function readSheet<F extends string>(file: File, fields: Record<F, 
       cells.push(raw);
       return o;
     });
-  return { rows, found, cells };
+  return { rows, found, cells, csv };
 }
 
 /**
@@ -139,6 +144,16 @@ export function readNumberCell(
  */
 export function amountCellUnsure(raw: string | number | null | undefined): [string, string] | null {
   return ambiguousTypedAmount(raw);
+}
+
+/**
+ * The decimal reading of a price in doubt as a CSV can hold it, where no cell is an Excel number: "14" for 14,
+ * "1,35" for 1,35, and "4,1250" for 4,125 (a fourth decimal, so it cannot read as thousands). `fr`: a comma.
+ */
+export function csvAmountText(value: string, fr: boolean): string {
+  const [whole, fraction = ""] = value.split(".");
+  if (!fraction) return whole;
+  return `${whole}${fr ? "," : "."}${fraction.length === 3 ? `${fraction}0` : fraction}`;
 }
 
 /**
