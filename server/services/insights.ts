@@ -19,7 +19,7 @@ import { dec, shownUnitCost, sum } from "@shared/money";
 import type { Tx } from "../db";
 import { notFound } from "../errors";
 import { monthRange, pnlByAccount, summarizePnl } from "./periods";
-import { accountBalances, contactSides, netPosition, salesByProduct } from "./reports";
+import { accountBalances, contactSides, containersOnTheWay, netPosition, salesByProduct } from "./reports";
 import { avoirUsedSql, creditLeftSql } from "./sales";
 import { keptUnitCosts } from "./stock";
 
@@ -342,5 +342,7 @@ export async function analytics(tx: Tx, from: string, to: string) {
     position: netPosition(balances),
     // The contacts' side of it, each said apart as on the dashboard (supplier advances, salary advances…).
     contactBalances: await contactSides(tx),
+    // Goods bought in containers not offloaded yet, not in the position until then (as the dashboard says).
+    goodsOnTheWayUsd: sum((await containersOnTheWay(tx)).map((c) => c.purchaseUsd)).toFixed(2),
   };
 }

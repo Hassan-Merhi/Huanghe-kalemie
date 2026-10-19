@@ -323,7 +323,7 @@ export default function Daybook() {
             <Field label={t("Search", "Recherche")} className="w-full sm:w-72">
               <div className="relative">
                 <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input className="pl-8" value={qInput} onChange={(e) => setQInput(e.target.value)} placeholder={t("Number, memo, contact…", "Numéro, libellé, tiers…")} />
+                <Input className="pl-8" value={qInput} onChange={(e) => setQInput(e.target.value)} placeholder={t("Number, memo, contact…", "Numéro, libellé, tiers…")} aria-label={t("Number, memo, contact…", "Numéro, libellé, tiers…")} />
               </div>
             </Field>
             <div className="ml-auto flex rounded-md border p-0.5">
@@ -451,7 +451,8 @@ export default function Daybook() {
                             </TableCell>
                             <TableCell className="min-w-[200px]">
                               <span className={cn(r.reversedByJournalId && "line-through")}>{r.memo ? frenchPunctuation(sys.memo(r.memo)) : "—"}</span>
-                              {contacts && <span className="block text-xs text-muted-foreground">{contacts}</span>}
+                              {/* A voucher with no libellé is named after its contact: said once, not twice. */}
+                              {contacts && contacts !== r.memo && <span className="block text-xs text-muted-foreground">{contacts}</span>}
                             </TableCell>
                             <TableCell className="text-right font-medium">
                               <Num>{usd(r.amount)}</Num>
@@ -497,7 +498,7 @@ export default function Daybook() {
                             <KeepNumbers text={(r.memo && frenchPunctuation(sys.memo(r.memo))) || contacts || journalTypeLabel(r.type, t)} />
                           </p>
                           <p className="break-words text-xs text-muted-foreground">
-                            {fmtDate(r.date)} · <span className="whitespace-nowrap font-mono">{r.number}</span>{contacts && r.memo ? ` · ${contacts}` : ""}
+                            {fmtDate(r.date)} · <span className="whitespace-nowrap font-mono">{r.number}</span>{contacts && r.memo && contacts !== r.memo ? ` · ${contacts}` : ""}
                           </p>
                         </div>
                         <div className="shrink-0 text-right">

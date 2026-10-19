@@ -48,6 +48,8 @@ interface RunLine {
   netUsd?: string;
   /** Posted runs: the part of the net that came off an advance the employee already had, not paid in cash. */
   advanceUsd?: string;
+  /** Franc runs: those francs, an advance given in francs by its own amount (not its dollars at the run's rate). */
+  advanceNative?: string;
 }
 
 interface PayrollRun {
@@ -285,7 +287,22 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
   const negative = included.find((g) => g.net.isNegative());
   /** Francs are paid in 100 FC notes: only a warning, the amount stays as typed. */
   const notRound = currency === "CDF" ? included.find((g) => g.net.gt(0) && !g.net.mod(100).isZero()) : undefined;
-  const withCents = included.find((g) => [g.salary, g.bonus, g.withheld, g.penalty].some((v) => centsError(v)));
+  // Every row with centimes, each with the fields that have them ("Amani Kabila (salaire), Bahati Mulongo (prime)"):
+  // naming only the first leaves the others to be found after correcting it.
+  const centsFields = (g: (typeof grid)[number]) =>
+    (
+      [
+        [g.salary, t("salary", "salaire")],
+        [g.bonus, t("bonus", "prime")],
+        [g.withheld, t("withheld", "retenue")],
+        [g.penalty, t("penalty", "pénalité")],
+      ] as const
+    )
+      .filter(([v]) => centsError(v))
+      .map(([, label]) => label);
+  const centsRows = included.filter((g) => centsFields(g).length > 0);
+  const withCents = centsRows[0];
+  const centsNames = centsRows.map((g) => `${g.e.name} (${centsFields(g).join(", ")})`).join(", ");
   const gridInvalid = !!withCents || included.some((g) => ![g.salary, g.bonus, g.withheld, g.penalty].every(typedNumberOk));
   const dayInMonth = effectiveDay.slice(0, 7) === month;
   // A salary more than twice, or under half, the usual one is said and confirmed before saving, never refused.
@@ -336,9 +353,16 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
       const cash = usdPart.minus(fromAdvance);
       // In the run's currency, at the run's own rate (the whole net when all of it was settled).
       const native = (x: Decimal) => (netUsd.gt(0) ? x.dividedBy(netUsd).times(d(l.net)) : x);
-      const add = (acc: typeof zero, x: Decimal) =>
-        x.gt(0) ? { usd: acc.usd.plus(x), native: acc.native.plus(native(x)), people: acc.people + 1, each: [...acc.each, { name: e?.name ?? "", usd: x, native: native(x) }] } : acc;
-      return { paidAsAdvance: add(s.paidAsAdvance, cash), backOnAdvance: add(s.backOnAdvance, fromAdvance) };
+      // The advance held before the run by its own francs (200 000 FC, not 200 014 FC at the run's rate); only
+      // what came off after the run, or a part of it, at the run's rate.
+      const before = Decimal.min(d(l.advanceUsd ?? 0), fromAdvance);
+      const nativeFromAdvance =
+        l.advanceNative != null && before.gt(0)
+          ? d(l.advanceNative).times(before).dividedBy(d(l.advanceUsd)).plus(native(fromAdvance.minus(before)))
+          : native(fromAdvance);
+      const add = (acc: typeof zero, x: Decimal, xNative: Decimal) =>
+        x.gt(0) ? { usd: acc.usd.plus(x), native: acc.native.plus(xNative), people: acc.people + 1, each: [...acc.each, { name: e?.name ?? "", usd: x, native: xNative }] } : acc;
+      return { paidAsAdvance: add(s.paidAsAdvance, cash, Decimal.max(native(usdPart).minus(nativeFromAdvance), 0)), backOnAdvance: add(s.backOnAdvance, fromAdvance, nativeFromAdvance) };
     },
     { paidAsAdvance: zero, backOnAdvance: zero },
   );
@@ -522,7 +546,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                 )}
               </p>
             )}
-            {withCents && <p className="text-sm text-destructive">{t(`${withCents.e.name}: franc amounts are whole numbers (no centimes)`, `${withCents.e.name}\u00a0: les montants en FC sont des nombres entiers (sans centimes)`)}</p>}
+            {withCents && <p className="text-sm text-destructive">{t(`${centsNames}: franc amounts are whole numbers (no centimes)`, `${centsNames}\u00a0: les montants en FC sont des nombres entiers (sans centimes)`)}</p>}
             {negative && <p className="text-sm text-destructive">{t(`${negative.e.name}: deductions are more than the salary`, `${negative.e.name}\u00a0: les retenues dépassent le salaire`)}</p>}
             {farOff.length > 0 && !gridInvalid && (
               <div className="space-y-1 text-sm text-amber-800 dark:text-amber-400" data-testid="payroll-far-off">

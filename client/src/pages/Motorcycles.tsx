@@ -342,9 +342,9 @@ function BulkDialog({ units, onClose }: { units: Unit[]; onClose: () => void }) 
                 <span className="font-medium">{units[i].productName}</span>
                 <span className="text-xs text-muted-foreground"> · {units[i].label !== "Standard" ? units[i].label : units[i].sku}</span>
               </div>
-              <Input className="col-span-2 font-mono uppercase placeholder:normal-case placeholder:font-sans sm:col-span-1" aria-label={t("Chassis no.", "N° de châssis")} placeholder={t("Chassis no.", "N° de châssis")} value={r.chassisNo} onChange={(e) => set(i, "chassisNo", e.target.value)} />
-              <Input className="font-mono uppercase placeholder:normal-case placeholder:font-sans" aria-label={t("Engine no.", "N° de moteur")} placeholder={t("Engine no.", "N° de moteur")} value={r.engineNo} onChange={(e) => set(i, "engineNo", e.target.value)} />
-              <Input aria-label={t("Colour", "Couleur")} placeholder={t("Colour", "Couleur")} value={r.color} onChange={(e) => set(i, "color", e.target.value)} />
+              <Input className="col-span-2 font-mono uppercase placeholder:normal-case placeholder:font-sans sm:col-span-1" aria-label={t(`Chassis no., bike ${i + 1} (${units[i].productName})`, `N° de châssis, moto ${i + 1} (${units[i].productName})`)} placeholder={t("Chassis no.", "N° de châssis")} value={r.chassisNo} onChange={(e) => set(i, "chassisNo", e.target.value)} />
+              <Input className="font-mono uppercase placeholder:normal-case placeholder:font-sans" aria-label={t(`Engine no., bike ${i + 1} (${units[i].productName})`, `N° de moteur, moto ${i + 1} (${units[i].productName})`)} placeholder={t("Engine no.", "N° de moteur")} value={r.engineNo} onChange={(e) => set(i, "engineNo", e.target.value)} />
+              <Input aria-label={t(`Colour, bike ${i + 1} (${units[i].productName})`, `Couleur, moto ${i + 1} (${units[i].productName})`)} placeholder={t("Colour", "Couleur")} value={r.color} onChange={(e) => set(i, "color", e.target.value)} />
             </div>
           ))}
         </div>
