@@ -490,7 +490,7 @@ function StatementSection({ partners }: { partners: Partner[] }) {
           <div className="no-print flex gap-2">
             {partners.length > 1 && (
               <Select value={String(partnerId)} onValueChange={(v) => setPartnerId(Number(v))}>
-                <SelectTrigger className="w-48"><SelectValue /></SelectTrigger>
+                <SelectTrigger className="w-48" aria-label={t("Partner", "Associé")}><SelectValue /></SelectTrigger>
                 <SelectContent>
                   {partners.map((p) => (
                     <SelectItem key={p.id} value={String(p.id)}>{p.name}</SelectItem>

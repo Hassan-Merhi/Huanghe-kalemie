@@ -502,8 +502,8 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
                   <LineAccountSelect types={ACCOUNT_TYPES[kind]} value={l.accountId} onChange={(id) => set(l.key, { accountId: id })} />
                 )}
               </div>
-              <Input inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} switchTo={currency === "CDF" ? t("a dollar account", "un compte en $") : t("a franc account", "un compte en FC")} aria-invalid={(isCdf && isAmount(l.amount) && !d(l.amount).isInteger()) || isTiny(l) || undefined} className="text-right tabular" placeholder={t(`Amount (${curLabel(currency)})`, `Montant (${curLabel(currency)})`)} value={l.amount} onChange={(e) => set(l.key, { amount: e.target.value })} />
-              <Input placeholder={t("Note (optional)", "Note (facultatif)")} value={l.memo} onChange={(e) => set(l.key, { memo: e.target.value })} />
+              <Input inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} switchTo={currency === "CDF" ? t("a dollar account", "un compte en $") : t("a franc account", "un compte en FC")} aria-invalid={(isCdf && isAmount(l.amount) && !d(l.amount).isInteger()) || isTiny(l) || undefined} className="text-right tabular" aria-label={t(`Amount, line ${i + 1}`, `Montant, ligne ${i + 1}`)} placeholder={t(`Amount (${curLabel(currency)})`, `Montant (${curLabel(currency)})`)} value={l.amount} onChange={(e) => set(l.key, { amount: e.target.value })} />
+              <Input aria-label={t(`Line note, line ${i + 1}`, `Note de ligne, ligne ${i + 1}`)} placeholder={t("Note (optional)", "Note (facultatif)")} value={l.memo} onChange={(e) => set(l.key, { memo: e.target.value })} />
               <Button variant="ghost" size="icon" className="justify-self-end" disabled={lines.length <= 1} onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} aria-label={t("Remove line", "Retirer la ligne")}>
                 <Trash2 className="h-4 w-4" />
               </Button>
@@ -738,9 +738,9 @@ function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: For
                     <span className="mb-1 block text-xs text-muted-foreground md:hidden">{t("Account", "Compte")} {i + 1}</span>
                     <AccountSelect aria-label={t("Account", "Compte")} value={l.accountId} onChange={(id) => chooseAccount(l, id)} />
                   </div>
-                  <Input inputMode="decimal" usd className="text-right tabular" placeholder={t("Debit", "Débit")} value={l.debit} onChange={(e) => set(l.key, { debit: e.target.value, credit: e.target.value ? "" : l.credit })} />
-                  <Input inputMode="decimal" usd className="text-right tabular" placeholder={t("Credit", "Crédit")} value={l.credit} onChange={(e) => set(l.key, { credit: e.target.value, debit: e.target.value ? "" : l.debit })} />
-                  <Input className="col-span-2 md:col-span-1" placeholder={t("Note (optional)", "Note (facultatif)")} value={l.memo} onChange={(e) => set(l.key, { memo: e.target.value })} />
+                  <Input inputMode="decimal" usd className="text-right tabular" aria-label={t(`Debit, line ${i + 1}`, `Débit, ligne ${i + 1}`)} placeholder={t("Debit", "Débit")} value={l.debit} onChange={(e) => set(l.key, { debit: e.target.value, credit: e.target.value ? "" : l.credit })} />
+                  <Input inputMode="decimal" usd className="text-right tabular" aria-label={t(`Credit, line ${i + 1}`, `Crédit, ligne ${i + 1}`)} placeholder={t("Credit", "Crédit")} value={l.credit} onChange={(e) => set(l.key, { credit: e.target.value, debit: e.target.value ? "" : l.debit })} />
+                  <Input className="col-span-2 md:col-span-1" aria-label={t(`Line note, line ${i + 1}`, `Note de ligne, ligne ${i + 1}`)} placeholder={t("Note (optional)", "Note (facultatif)")} value={l.memo} onChange={(e) => set(l.key, { memo: e.target.value })} />
                   <Button variant="ghost" size="icon" className="col-span-2 justify-self-end md:col-span-1" disabled={lines.length <= 2} onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} aria-label={t("Remove line", "Retirer la ligne")}>
                     <Trash2 className="h-4 w-4" />
                   </Button>

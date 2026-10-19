@@ -110,7 +110,7 @@ function CategoryFilter({ value, onChange, names }: { value: string; onChange: (
   const t = useT();
   return (
     <Select value={value} onValueChange={onChange}>
-      <SelectTrigger className="w-full sm:w-56"><SelectValue /></SelectTrigger>
+      <SelectTrigger className="w-full sm:w-56" aria-label={t("Category", "Catégorie")}><SelectValue /></SelectTrigger>
       <SelectContent>
         <SelectItem value={ALL}>{t("All categories", "Toutes les catégories")}</SelectItem>
         {names.map((n) => (
@@ -250,7 +250,7 @@ function ByLocationTab() {
 
       <div className={cn("flex flex-wrap items-center gap-2", locations.length <= 1 && "hidden")}>
         <Select value={location} onValueChange={setLocation}>
-          <SelectTrigger className="w-full sm:w-56"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-full sm:w-56" aria-label={t("Location", "Emplacement")}><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value={ALL}>{t("All locations", "Tous les emplacements")}</SelectItem>
             {locations.map((l) => (

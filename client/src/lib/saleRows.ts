@@ -1,5 +1,6 @@
 import Decimal from "decimal.js";
-import { d } from "./format";
+import { frPlural } from "@shared/french";
+import { cdf, d, usd } from "./format";
 
 /** A sale as GET /api/sales lists it. */
 export interface SaleListRow {
@@ -34,6 +35,8 @@ export interface SaleListRow {
   avoirUsedUsd?: string;
   /** The same at the sale, before returns: the sale page's "Réglé sur l'avoir". */
   avoirAtSaleUsd?: string;
+  /** A cancelled sale: the part of its credit the customer's avoir had covered, given back to it. */
+  avoirGivenBackUsd?: string | null;
   lineCount?: number;
   firstItem?: string | null;
 }
@@ -96,4 +99,58 @@ export function dailyFigures(data: Daily) {
     onAvoir,
     owedCredit: d(data.credit).minus(onAvoir),
   };
+}
+
+type Words = (en: string, fr: string) => string;
+
+/**
+ * What a cancelled sale gave back, as its page and the Sales list both say it: the money handed back, the
+ * avoir's part returned to the avoir, and only the rest of the credit cancelled (130 $ with 20 $ paid and 110 $
+ * on the avoir: "20,00 $ remboursés · 110,00 $ rendus à l'avoir", no credit cancelled).
+ */
+export function voidedSplit(r: { paidUsd: string; paidKeptUsd?: string; creditUsd: string; avoirGivenBackUsd?: string | null }) {
+  const givenBack = d(r.avoirGivenBackUsd ?? 0);
+  return {
+    refunded: Decimal.max(d(r.paidKeptUsd ?? r.paidUsd), 0),
+    givenBack,
+    cancelledCredit: Decimal.max(d(r.creditUsd).minus(givenBack), 0),
+  };
+}
+
+/** The same in words, one part each: "20,00 $ remboursés", "10,00 $ de crédit annulé", "100,00 $ rendus à l'avoir". */
+export function voidedParts(t: Words, s: ReturnType<typeof voidedSplit>): string[] {
+  const fr = (x: Decimal, word: string) => frPlural(x.toFixed(2), word);
+  return [
+    s.refunded.gt(0) ? t(`${usd(s.refunded.toFixed(2))} refunded`, `${usd(s.refunded.toFixed(2))} ${fr(s.refunded, "remboursé")}`) : null,
+    s.cancelledCredit.gt(0) ? t(`${usd(s.cancelledCredit.toFixed(2))} credit cancelled`, `${usd(s.cancelledCredit.toFixed(2))} de crédit annulé`) : null,
+    s.givenBack.gt(0) ? t(`${usd(s.givenBack.toFixed(2))} back to the customer's credit`, `${usd(s.givenBack.toFixed(2))} ${fr(s.givenBack, "rendu")} à l'avoir`) : null,
+  ].filter((x): x is string => !!x);
+}
+
+/**
+ * The money a cancelled sale handed back, drawer by drawer: its cancellation reversed the sale's journal, so
+ * each drawer gave back what it took, change netted (francs in francs: "75 800 FC remboursés depuis Caisse FC").
+ * A drawer that gave change and took nothing (paid in francs, change in dollars) took that change back.
+ */
+export function voidedRefunds(
+  t: Words,
+  payments: { accountId: number; currency: string; amountNative: string; amountUsd: string }[],
+  accName: (id: number) => string,
+): { accountId: number; text: string; amount: string }[] {
+  const by = new Map<number, { currency: string; native: Decimal }>();
+  for (const p of payments) {
+    const cur = by.get(p.accountId) ?? { currency: p.currency, native: d(0) };
+    cur.native = cur.native.plus(d(p.currency === "CDF" ? p.amountNative : p.amountUsd));
+    by.set(p.accountId, cur);
+  }
+  return [...by.entries()]
+    .filter(([, v]) => !v.native.isZero())
+    .map(([accountId, v]) => {
+      const amount = v.currency === "CDF" ? cdf(v.native.abs().toString()) : usd(v.native.abs().toFixed(2));
+      const name = accName(accountId);
+      const text = v.native.gt(0)
+        ? t(`${amount} refunded from ${name}`, `${amount} ${frPlural(v.native.toString(), "remboursé")} depuis ${name}`)
+        : t(`${amount} of change taken back into ${name}`, `${amount} de monnaie reprise dans ${name}`);
+      return { accountId, text, amount: v.native.gt(0) ? `−${amount}` : `+${amount}` };
+    });
 }

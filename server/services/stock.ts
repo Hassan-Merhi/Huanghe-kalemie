@@ -226,8 +226,15 @@ export async function transferStock(
   await assertLocationOpen(tx, input.toLocationId, "transfer_in");
   const variant = await lockVariant(tx, input.variantId);
   const available = await availableOn(tx, variant.id, input.fromLocationId, input.date, await locationQty(tx, variant.id, input.fromLocationId));
-  if (available.lt(q)) throw conflict(`Not enough stock of ${variant.sku} to transfer`, `Stock insuffisant ${de(variant.sku)} pour le transfert`);
   const [product] = await tx.select({ tracksSerials: products.tracksSerials, unit: products.unit, name: products.name }).from(products).where(eq(products.id, variant.productId));
+  // Says what is there, so the form can be corrected without looking the stock up.
+  if (available.lt(q)) {
+    const label = product?.name ? `${product.name} (${variant.sku})` : variant.sku;
+    throw conflict(
+      `Not enough stock of ${label} to transfer: ${available.toString()} available, ${q.toString()} asked`,
+      `Stock insuffisant ${de(label)} pour le transfert\u00a0: ${frNumber(available)} ${frPlural(available, "disponible")}, ${frNumber(q)} ${frPlural(q, "demandé")}`,
+    );
+  }
   if (!q.isInteger() && wholeUnit(product?.unit)) throw wholeUnitError(`${product?.name ?? ""} (${variant.sku})`.trim());
   if (product?.tracksSerials) {
     // Motorcycles move with their own records.

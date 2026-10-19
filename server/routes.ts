@@ -945,6 +945,9 @@ export function registerRoutes(app: Express) {
         avoirUsedUsd: sql<string>`${salesSvc.avoirUsedSql()}::text`,
         // The same at the sale, before returns took it down, as the sale page shows it (none on a cancelled sale).
         avoirAtSaleUsd: sql<string>`(case when ${sales.status} <> 'voided' then ${salesSvc.avoirPartSql()} else 0 end)::text`,
+        // A cancelled sale: what of its credit the avoir had covered, given back to it, as the sale page says
+        // (S-000026: "20,00 $ remboursés · 110,00 $ rendus à l'avoir", not "crédit annulé"). Read only.
+        avoirGivenBackUsd: sql<string>`(case when ${sales.status} = 'voided' then ${salesSvc.avoirPartSql()} else 0 end)::numeric(20,2)::text`,
         // The francs a sale paid in francs alone kept, net: taken at the till (less change) less handed back on
         // returns. Below zero when a refund at a higher rate gave back more francs than were paid, which the list
         // says apart from the rounding's dollars (+0,02 $ kept at the refund's rate, the drawer 1 000 FC down).
@@ -962,7 +965,7 @@ export function registerRoutes(app: Express) {
       .orderBy(desc(sales.date), desc(sales.id))
       .limit(500);
     const showCost = req.user!.role !== "cashier";
-    res.json(rows.map((r) => ({ ...r.sale, cogs: showCost ? r.sale.cogs : undefined, customerName: r.customerName, cashier: r.cashier, zeroPrice: !!r.zeroPrice, qty: r.qty, returnedQty: r.returnedQty, returnedTotal: r.returnedTotal, returnedCogs: showCost ? r.returnedCogs : undefined, refundedUsd: r.refundedUsd, creditLeftUsd: r.creditLeftUsd, fcRoundingUsd: r.fcRoundingUsd, fcNetNative: r.fcNetNative, paidKeptUsd: salesSvc.paidKept(r.sale, r.saleFcRoundingUsd, r.refundedUsd), avoirUsedUsd: r.avoirUsedUsd, avoirAtSaleUsd: r.avoirAtSaleUsd, lineCount: r.lineCount, firstItem: r.firstItem })));
+    res.json(rows.map((r) => ({ ...r.sale, cogs: showCost ? r.sale.cogs : undefined, customerName: r.customerName, cashier: r.cashier, zeroPrice: !!r.zeroPrice, qty: r.qty, returnedQty: r.returnedQty, returnedTotal: r.returnedTotal, returnedCogs: showCost ? r.returnedCogs : undefined, refundedUsd: r.refundedUsd, creditLeftUsd: r.creditLeftUsd, fcRoundingUsd: r.fcRoundingUsd, fcNetNative: r.fcNetNative, paidKeptUsd: salesSvc.paidKept(r.sale, r.saleFcRoundingUsd, r.refundedUsd), avoirUsedUsd: r.avoirUsedUsd, avoirAtSaleUsd: r.avoirAtSaleUsd, avoirGivenBackUsd: r.avoirGivenBackUsd, lineCount: r.lineCount, firstItem: r.firstItem })));
   }));
   app.get("/api/sales/:id", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
     const sale = await salesSvc.getSale(db, paramId(req));

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { useFieldLabelledBy } from "@/components/ui/field-label";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import {
   AlertDialog,
@@ -157,10 +158,11 @@ export function AccountSelect({
     setSearch("");
   };
   const label = (a: Account) => (hideCode ? a.name : `${a.code} · ${a.name}`);
+  const labelledBy = useFieldLabelledBy({ "aria-label": ariaLabel });
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger asChild>
-        <Button variant="outline" role="combobox" aria-expanded={open} aria-label={ariaLabel} className="w-full justify-between font-normal">
+        <Button variant="outline" role="combobox" aria-expanded={open} aria-label={ariaLabel} aria-labelledby={labelledBy} className="w-full justify-between font-normal">
           <span className={cn("truncate", !selected && "text-muted-foreground")}>{selected ? label(selected) : placeholder ?? t("Choose account", "Choisir le compte")}</span>
           <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
         </Button>
@@ -244,7 +246,8 @@ export function CategorySelect({ value, onChange, allowAll }: { value: number | 
   const { data = [] } = useQuery<Category[]>({ queryKey: ["/api/categories"] });
   return (
     <Select value={value ? String(value) : "all"} onValueChange={(v) => onChange(v === "all" ? null : Number(v))}>
-      <SelectTrigger><SelectValue placeholder={t("Category", "Catégorie")} /></SelectTrigger>
+      {/* As a filter it stands alone, with no Field to name it. */}
+      <SelectTrigger aria-label={allowAll ? t("Category", "Catégorie") : undefined}><SelectValue placeholder={t("Category", "Catégorie")} /></SelectTrigger>
       <SelectContent>
         <SelectItem value="all">{allowAll ? t("All categories", "Toutes les catégories") : t("No category", "Sans catégorie")}</SelectItem>
         {data.filter((c) => c.active).map((c) => (

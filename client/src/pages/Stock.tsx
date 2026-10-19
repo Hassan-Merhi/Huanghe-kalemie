@@ -690,8 +690,9 @@ export function AdjustForm({
               </DialogDescription>
             </DialogHeader>
             <div className="space-y-1 rounded-md border p-3 text-sm">
-              <div className="flex justify-between"><span>{t("Stock found", "Stock retrouvé")}</span><Num className="text-green-800 dark:text-green-400">+{usd(found.toFixed(2))}</Num></div>
-              <div className="flex justify-between"><span>{t("Stock lost", "Stock perdu")}</span><Num className="text-destructive">−{usd(lost.toFixed(2))}</Num></div>
+              {/* A side with nothing on it is left out: no "Stock perdu −0,00 $" on a count that only found stock. */}
+              {d(found.toFixed(2)).gt(0) && <div className="flex justify-between"><span>{t("Stock found", "Stock retrouvé")}</span><Num className="text-green-800 dark:text-green-400">+{usd(found.toFixed(2))}</Num></div>}
+              {d(lost.toFixed(2)).gt(0) && <div className="flex justify-between"><span>{t("Stock lost", "Stock perdu")}</span><Num className="text-destructive">−{usd(lost.toFixed(2))}</Num></div>}
               <div className="flex justify-between border-t pt-1 font-semibold"><span>{t("Net", "Net")}</span><Num className={totalChange.isNegative() ? "text-destructive" : "text-green-800 dark:text-green-400"}>{usd(totalChange.toFixed(2))}</Num></div>
             </div>
             <DialogFooter>
@@ -875,6 +876,10 @@ function TransferForm({ onDone }: { onDone: () => void }) {
   // Quantities shown are for the source location; reset the list when it changes.
   useEffect(() => setLines([]), [fromId]);
 
+  // More than the source holds, said on the line as the till does, and the button held until it is fixed.
+  const overStock = (l: TransferLine) => isPositive(l.qty) && !unclearQty(t, l.qty) && d(l.qty).gt(d(l.variant.locationQty));
+  const short = lines.find(overStock);
+
   function submit() {
     setError(null);
     if (!fromId || !toId || fromId === toId) return setError(t("Pick two different locations.", "Choisissez deux emplacements différents."));
@@ -883,7 +888,7 @@ function TransferForm({ onDone }: { onDone: () => void }) {
       const unclear = unclearQty(t, l.qty);
       if (unclear) return setError(`${unclear} (${l.variant.productName})`);
       if (!isPositive(l.qty)) return setError(t(`Enter a quantity for ${l.variant.productName}.`, `Saisissez une quantité pour ${l.variant.productName}.`));
-      if (d(l.qty).gt(d(l.variant.locationQty))) return setError(t(`Not enough ${l.variant.productName} at the source location.`, `Pas assez ${de(l.variant.productName)} à l'emplacement de départ.`));
+      if (d(l.qty).gt(d(l.variant.locationQty))) return setError(t(`Not enough ${l.variant.productName} at the source location: only ${qtyWithUnit(t, l.variant.locationQty, l.variant.unit)} there.`, `Pas assez ${de(l.variant.productName)} à l'emplacement de départ\u00a0: seulement ${qtyWithUnit(t, l.variant.locationQty, l.variant.unit)}.`));
       if (!d(l.qty).isInteger() && wholeUnit(l.variant.unit)) return setError(t(`${l.variant.productName} is counted in whole units: use a whole number.`, `${l.variant.productName} se compte à l'unité\u00a0: saisissez un nombre entier.`));
       if (l.variant.tracksSerials) {
         if (!d(l.qty).isInteger()) return setError(t("Motorcycles must be whole units.", "Les motos doivent être en unités entières."));
@@ -949,7 +954,13 @@ function TransferForm({ onDone }: { onDone: () => void }) {
                         <div className="text-xs text-muted-foreground">{l.variant.sku}</div>
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-right"><Num>{qtyWithUnit(t, l.variant.locationQty, l.variant.unit)}</Num></TableCell>
-                      <TableCell><Input className="w-24" aria-label={t(`Quantity to transfer: ${l.variant.productName}`, `Quantité à transférer\u00a0: ${l.variant.productName}`)} inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} measured={!wholeUnit(l.variant.unit)} inlineAlert value={l.qty} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} /></TableCell>
+                      <TableCell><Input className="w-24" aria-label={t(`Quantity to transfer: ${l.variant.productName}`, `Quantité à transférer\u00a0: ${l.variant.productName}`)} inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} measured={!wholeUnit(l.variant.unit)} inlineAlert value={l.qty} onChange={(e) => setLines(lines.map((x, j) => (j === i ? { ...x, qty: e.target.value } : x)))} />
+                        {overStock(l) && (
+                          <p className="mt-1 flex items-center gap-1 whitespace-nowrap text-xs text-destructive" role="alert">
+                            <AlertTriangle className="h-3 w-3" /> {t(`Only ${qtyWithUnit(t, l.variant.locationQty, l.variant.unit)} here`, `Seulement ${qtyWithUnit(t, l.variant.locationQty, l.variant.unit)} ici`)}
+                          </p>
+                        )}
+                      </TableCell>
                       <TableCell><Button variant="ghost" size="icon" aria-label={t("Remove", "Retirer")} onClick={() => setLines(lines.filter((_, j) => j !== i))}><Trash2 className="h-4 w-4" /></Button></TableCell>
                     </TableRow>
                     {l.variant.tracksSerials && fromId && isPositive(l.qty) && (
@@ -969,7 +980,7 @@ function TransferForm({ onDone }: { onDone: () => void }) {
       </Card>
       {error && <ErrorText error={error} />}
       <div className="flex justify-end">
-        <SubmitButton onClick={submit} blocked={lines.length === 0 && t("Add at least one item to move", "Ajoutez au moins un article à déplacer")} pending={m.isPending}>{t("Transfer", "Transférer")}</SubmitButton>
+        <SubmitButton onClick={submit} blocked={lines.length === 0 ? t("Add at least one item to move", "Ajoutez au moins un article à déplacer") : short ? t(`More ${short.variant.productName} than the source location holds`, `Plus ${de(short.variant.productName)} que l'emplacement de départ n'en a`) : false} pending={m.isPending}>{t("Transfer", "Transférer")}</SubmitButton>
       </div>
     </div>
   );
