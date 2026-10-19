@@ -529,7 +529,7 @@ export function VariantSearch({
     if (rows.length && debounced === exact) return pick(rows[active] ?? rows[0]);
     // Scanner typed faster than the debounce: look the code up directly.
     const found = await api<VariantRow[]>("GET", withQuery("/api/variants", { search: exact, locationId: locationId ?? undefined, limit: 5 }));
-    const hit = found.find((v) => v.barcode === exact || v.sku === exact.toUpperCase()) ?? (found.length === 1 ? found[0] : null);
+    const hit = found.find((v) => v.barcode === exact || v.sku === exact.toUpperCase() || v.matchedUnit?.chassisNo?.toUpperCase() === exact.toUpperCase()) ?? (found.length === 1 ? found[0] : null);
     if (hit) pick(hit);
     else setOpen(true);
   }
@@ -559,7 +559,7 @@ export function VariantSearch({
           {rows.length === 0 && !q.isFetching && <p className="p-3 text-sm text-muted-foreground">{t("Nothing found", "Rien trouvé")}</p>}
           {rows.map((v, i) => (
             <button
-              key={v.id}
+              key={v.matchedUnit ? `unit-${v.matchedUnit.id}` : v.id}
               type="button"
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => pick(v)}
@@ -567,7 +567,15 @@ export function VariantSearch({
             >
               <span className="min-w-0">
                 <span className="block truncate font-medium">{v.productName}{v.label !== "Standard" ? ` · ${v.label}` : ""}</span>
-                <span className="block truncate text-xs text-muted-foreground">{v.sku}{v.barcode ? ` · ${v.barcode}` : ""}{v.categoryName ? ` · ${v.categoryName}` : ""}</span>
+                {/* A bike found by its chassis number says which one. */}
+                {v.matchedUnit ? (
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {t("Chassis", "Châssis")} <span className="font-mono">{v.matchedUnit.chassisNo}</span>
+                    {v.matchedUnit.engineNo ? ` · ${t("engine", "moteur")} ${v.matchedUnit.engineNo}` : ""}{v.matchedUnit.color ? ` · ${v.matchedUnit.color}` : ""}
+                  </span>
+                ) : (
+                  <span className="block truncate text-xs text-muted-foreground">{v.sku}{v.barcode ? ` · ${v.barcode}` : ""}{v.categoryName ? ` · ${v.categoryName}` : ""}</span>
+                )}
               </span>
               <span className="shrink-0 text-right text-xs">
                 <span className="block font-medium">{usd(v.sellPrice)}</span>

@@ -453,6 +453,7 @@ function voidCashText(t: ReturnType<typeof useT>, sale: SaleFull, accName: (id: 
 function VoidDialog({ sale, accName, onClose }: { sale: SaleFull; accName: (id: number | null) => string; onClose: () => void }) {
   const t = useT();
   const cash = voidCashText(t, sale, accName);
+  const avoirBack = d(sale.avoirAtSaleUsd ?? 0);
   const [reason, setReason] = useState("");
   const [date, setDate] = useState(todayLocal());
   const m = useApiMutation<unknown, SaleFull>("POST", `/api/sales/${sale.id}/void`, { success: t("Sale cancelled", "Vente annulée"), onSuccess: onClose });
@@ -470,6 +471,12 @@ function VoidDialog({ sale, accName, onClose }: { sale: SaleFull; accName: (id: 
         </DialogHeader>
         {/* The books are reversed by the cancellation; the notes in the drawers are swapped back by hand. */}
         {cash && sale.returns.length === 0 && <p className="rounded-md border p-3 text-sm font-medium" data-testid="void-cash">{cash}</p>}
+        {/* Paid partly by the customer's avoir: that part goes back to the avoir, as the cancelled sale then says. */}
+        {sale.returns.length === 0 && avoirBack.gt(0) && (
+          <p className="rounded-md border p-3 text-sm" data-testid="void-avoir">
+            {t(`${usd(avoirBack.toFixed(2))} settled from the customer's credit go back to it.`, `${usd(avoirBack.toFixed(2))} réglés sur l'avoir du client lui sont rendus en avoir.`)}
+          </p>
+        )}
         {sale.returns.length > 0 && (
           <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
             {t("This sale already has returns, so it cannot be cancelled. Return the remaining items instead.", "Cette vente a déjà des retours, elle ne peut pas être annulée. Retournez plutôt les articles restants.")}

@@ -281,7 +281,7 @@ export default function Sales() {
         <Field label={t("Search", "Recherche")}>
           <div className="relative">
             <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-            <Input className="pl-9" placeholder={t("Sale number or customer", "N° de vente ou client")} value={search} onChange={(e) => setSearch(e.target.value)} />
+            <Input className="pl-9" placeholder={t("Sale number or customer", "N° de vente ou client")} aria-label={t("Sale number or customer", "N° de vente ou client")} value={search} onChange={(e) => setSearch(e.target.value)} />
           </div>
         </Field>
         {!isCashier && (

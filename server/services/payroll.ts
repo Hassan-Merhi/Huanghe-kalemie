@@ -38,8 +38,8 @@ export async function employees(tx: Tx) {
  * Advances given after the latest month's payroll was saved: they already came off the salary it owes
  * ("50,00 $ d'avance déjà déduits du salaire d'octobre"), so the Advances tab can say so instead of
  * "Aucune avance en cours". Payments to the employee posted after the run's journal, other than salary
- * payments ("Salaire …") and the franc/yuan advance matching, at most what the run owes them; the
- * caller keeps out what is still to repay. Read only.
+ * payments ("Salaire …" on the line, or "Salaires …" on the voucher) and the franc/yuan advance matching,
+ * at most what the run owes them; the caller keeps out what is still to repay. Read only.
  */
 async function advancesAfterRun(tx: Tx): Promise<Map<number, { month: string; usd: string }>> {
   const out = new Map<number, { month: string; usd: string }>();
@@ -61,7 +61,10 @@ async function advancesAfterRun(tx: Tx): Promise<Map<number, { month: string; us
       and(
         inArray(journalLines.partyId, ids),
         sql`${journals.id} > ${run.journalId}`,
-        sql`coalesce(${journalLines.memo}, '') not like 'Salaire %'`,
+        // A salary paid by an ordinary payment voucher ("Salaires 2026-09", its lines named after each employee)
+        // settles the run: only the memo of the voucher says so.
+        sql`coalesce(${journalLines.memo}, '') !~* '^(salaires?|salary|salaries)\\M'`,
+        sql`coalesce(${journals.memo}, '') !~* '^(salaires?|salary|salaries)\\M'`,
         sql`coalesce(${journals.sourceType}, '') not like 'advance_%'`,
       ),
     )
@@ -92,21 +95,55 @@ export async function listRuns(tx: Tx) {
  * What each employee had as an advance just before the run was posted, at most the run's net: that part of
  * the salary was deducted from the advance (Jean's 421 200 FC from his 150,00 $), not paid out, and on a
  * cancel it goes back onto the advance. The rest of what is no longer owed was paid in cash. Read only.
+ * A franc run also gives `advanceNative`, the francs that came off: an advance given in francs by its own
+ * amount (200 000 FC, not its dollars at the run's rate) and a dollar one by the francs it was matched to.
  */
-async function advancesBeforeRun(tx: Tx, payables: number, run: typeof payrollRuns.$inferSelect): Promise<(PayrollLine & { advanceUsd: string })[]> {
+async function advancesBeforeRun(
+  tx: Tx,
+  payables: number,
+  run: typeof payrollRuns.$inferSelect,
+): Promise<(PayrollLine & { advanceUsd: string; advanceNative?: string })[]> {
   const lines = run.lines as PayrollLine[];
   const ids = lines.map((l) => l.partyId);
   const rows = ids.length
     ? await tx
-        .select({ partyId: journalLines.partyId, usd: sql<string>`sum(${journalLines.debit} - ${journalLines.credit})::text` })
+        .select({
+          partyId: journalLines.partyId,
+          usd: sql<string>`sum(${journalLines.debit} - ${journalLines.credit})::text`,
+          francs: sql<string>`coalesce(sum(${journalLines.nativeAmount}) filter (where ${journalLines.currency} = 'CDF'), 0)::text`,
+        })
         .from(journalLines)
         .where(and(eq(journalLines.accountId, payables), inArray(journalLines.partyId, ids), sql`${journalLines.journalId} < ${run.journalId}`))
         .groupBy(journalLines.partyId)
     : [];
+  // The dollars matched to the run's francs when it was posted (see advanceToFrancLines).
+  const matched =
+    ids.length && run.currency === "CDF"
+      ? await tx
+          .select({ partyId: journalLines.partyId, francs: sql<string>`sum(${journalLines.nativeAmount})::text` })
+          .from(journalLines)
+          .innerJoin(journals, eq(journals.id, journalLines.journalId))
+          .where(
+            and(
+              eq(journalLines.accountId, payables),
+              inArray(journalLines.partyId, ids),
+              eq(journalLines.currency, "CDF"),
+              sql`${journalLines.debit} > 0`,
+              eq(journalLines.memo, "Avance imputée"),
+              eq(journals.sourceType, "advance_payroll"),
+              eq(journals.sourceId, run.id),
+            ),
+          )
+          .groupBy(journalLines.partyId)
+      : [];
   return lines.map((l) => {
-    const before = Decimal.max(dec(rows.find((r) => r.partyId === l.partyId)?.usd ?? 0), 0);
+    const row = rows.find((r) => r.partyId === l.partyId);
+    const before = Decimal.max(dec(row?.usd ?? 0), 0);
     const owed = Decimal.max(dec(l.netUsd ?? (run.currency === "USD" ? l.net : 0)), 0);
-    return { ...l, advanceUsd: Decimal.min(before, owed).toFixed(2) };
+    const advanceUsd = Decimal.min(before, owed);
+    if (run.currency !== "CDF") return { ...l, advanceUsd: advanceUsd.toFixed(2) };
+    const francs = Decimal.max(dec(row?.francs ?? 0), 0).plus(dec(matched.find((r) => r.partyId === l.partyId)?.francs ?? 0));
+    return { ...l, advanceUsd: advanceUsd.toFixed(2), advanceNative: Decimal.min(francs, Decimal.max(dec(l.net), 0)).toFixed(2) };
   });
 }
 

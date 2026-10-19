@@ -22,7 +22,7 @@ import { LocationSelect, useLocations, VariantSearch } from "@/components/picker
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api, withQuery } from "@/lib/api";
 import { d, date, monthStart, qty, qtyTotal, todayLocal, unitCost, usd, variantText, variantUnitCost, unclearQty } from "@/lib/format";
-import { qtyWithUnit, wholeUnit } from "@/lib/units";
+import { qtyWithUnit, unitLabel, wholeUnit } from "@/lib/units";
 import { useAuth } from "@/lib/auth";
 import { useT, count } from "@/lib/i18n";
 import type { MotorcycleUnit, VariantRow } from "@/lib/types";
@@ -185,7 +185,7 @@ function Valuation() {
       <div className="grid gap-3 sm:grid-cols-[1fr_auto_auto] sm:items-center">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input className="pl-9" placeholder={t("Item, SKU, category, size", "Article, code, catégorie, taille")} value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Input className="pl-9" placeholder={t("Item, SKU, category, size", "Article, code, catégorie, taille")} aria-label={t("Item, SKU, category, size", "Article, code, catégorie, taille")} value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <label className="flex items-center gap-2 text-sm"><Switch checked={lowOnly} onCheckedChange={setLowOnly} /> {t("Low stock only", "Stock bas seulement")}</label>
         <label className="flex items-center gap-2 text-sm"><Switch checked={hideEmpty} onCheckedChange={setHideEmpty} /> {t("Hide zero stock", "Masquer stock zéro")}</label>
@@ -401,6 +401,15 @@ export function AdjustForm({
     return n;
   }
 
+  // Half a set (460,5 jeux) is said under the line as it is typed and stops the button, as at the till, not
+  // only once saved.
+  function halfUnit(l: AdjLine) {
+    if (change(l).isInteger()) return null;
+    if (l.variant.tracksSerials) return t("Motorcycles must be whole units.", "Les motos doivent être en unités entières.");
+    if (!wholeUnit(l.variant.unit)) return null;
+    return t(`Counted by the ${unitLabel(t, l.variant.unit, 1)}: enter a whole number`, `Se compte à l'unité (${unitLabel(t, l.variant.unit, 1)})\u00a0: saisissez un nombre entier`);
+  }
+
   function update(key: number, patch: Partial<AdjLine>) {
     setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
   }
@@ -584,6 +593,8 @@ export function AdjustForm({
           {lines.length === 0 && <p className="py-4 text-center text-sm text-muted-foreground">{t("Search or scan items to adjust.", "Cherchez ou scannez les articles à ajuster.")}</p>}
           {lines.map((l) => {
             const c = change(l);
+            const half = halfUnit(l);
+            const item = `${l.variant.productName}${l.variant.label !== "Standard" ? ` · ${l.variant.label}` : ""}`;
             const needsCost = c.gt(0) && d(l.variant.stockQty).lte(0) && !staffCost;
             const fixedCost = c.gt(0) && staffCost && d(l.variant.stockQty).gte(1);
             return (
@@ -605,13 +616,14 @@ export function AdjustForm({
                     <Field
                       label={t("Quantity counted", "Quantité comptée")}
                       hint={t(`In the system here: ${qtyWithUnit(t, l.variant.locationQty, l.variant.unit)}`, `Dans le système ici\u00a0: ${qtyWithUnit(t, l.variant.locationQty, l.variant.unit)}`)}
+                      error={half}
                       required
                     >
-                      <DecimalInput inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} measured={!wholeUnit(l.variant.unit)} inlineAlert value={l.counted ?? ""} onChange={(e) => setCounted(l, e.target.value)} />
+                      <DecimalInput inputMode={wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} measured={!wholeUnit(l.variant.unit)} inlineAlert aria-label={t(`Quantity counted of ${item}`, `Quantité comptée ${de(item)}`)} value={l.counted ?? ""} onChange={(e) => setCounted(l, e.target.value)} />
                     </Field>
                   ) : (
-                    <Field label={onlyRemove ? t("Qty removed", "Qté retirée") : onlyAdd ? t("Qty", "Qté") : t("Qty change (+/−)", "Variation (+/−)")} required>
-                      <DecimalInput inputMode={signed ? "text" : wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} measured={!wholeUnit(l.variant.unit)} inlineAlert value={l.qty} onChange={(e) => setQty(l, e.target.value)} />
+                    <Field label={onlyRemove ? t("Qty removed", "Qté retirée") : onlyAdd ? t("Qty", "Qté") : t("Qty change (+/−)", "Variation (+/−)")} error={half} required>
+                      <DecimalInput inputMode={signed ? "text" : wholeUnit(l.variant.unit) ? "numeric" : "decimal"} whole={wholeUnit(l.variant.unit)} measured={!wholeUnit(l.variant.unit)} inlineAlert aria-label={`${onlyRemove ? t("Qty removed", "Qté retirée") : onlyAdd ? t("Qty", "Qté") : t("Qty change (+/−)", "Variation (+/−)")} · ${item}`} value={l.qty} onChange={(e) => setQty(l, e.target.value)} />
                     </Field>
                   )}
                   {fixedCost && (
@@ -639,7 +651,7 @@ export function AdjustForm({
                   {byCount && isQty(l.counted ?? "") && c.isZero() && (
                     <div className="flex items-end pb-2 text-sm text-muted-foreground">{t("Matches the stock", "Conforme au stock")}</div>
                   )}
-                  {!c.isZero() && (
+                  {!c.isZero() && !half && (
                     <div className="flex items-end pb-2 text-sm">
                       <span className={c.lt(0) ? "text-destructive" : "text-green-800 dark:text-green-400"}>
                         {byCount ? `${t("Difference", "Écart")} ` : ""}{c.gt(0) ? "+" : ""}{qtyWithUnit(t, c.toString(), l.variant.unit)} · ≈ {usd(valueOf(l).toFixed(2))}
@@ -655,9 +667,9 @@ export function AdjustForm({
                     {l.serials.map((s, i) => (
                       <div key={i} className="grid grid-cols-[24px_1fr] gap-2 sm:grid-cols-[24px_1fr_1fr_140px]">
                         <span className="pt-2 text-xs text-muted-foreground">{i + 1}.</span>
-                        <Input className="font-mono uppercase" placeholder={t("Chassis no.", "N° de châssis")} value={s.chassisNo} onChange={(e) => update(l.key, { serials: l.serials.map((x, j) => (j === i ? { ...x, chassisNo: e.target.value } : x)) })} />
-                        <Input className="col-start-2 font-mono uppercase sm:col-start-auto" placeholder={t("Engine no.", "N° de moteur")} value={s.engineNo} onChange={(e) => update(l.key, { serials: l.serials.map((x, j) => (j === i ? { ...x, engineNo: e.target.value } : x)) })} />
-                        <Input className="col-start-2 sm:col-start-auto" placeholder={t("Colour", "Couleur")} value={s.color} onChange={(e) => update(l.key, { serials: l.serials.map((x, j) => (j === i ? { ...x, color: e.target.value } : x)) })} />
+                        <Input className="font-mono uppercase" placeholder={t("Chassis no.", "N° de châssis")} aria-label={t(`Chassis no., bike ${i + 1} (${item})`, `N° de châssis, moto ${i + 1} (${item})`)} value={s.chassisNo} onChange={(e) => update(l.key, { serials: l.serials.map((x, j) => (j === i ? { ...x, chassisNo: e.target.value } : x)) })} />
+                        <Input className="col-start-2 font-mono uppercase sm:col-start-auto" placeholder={t("Engine no.", "N° de moteur")} aria-label={t(`Engine no., bike ${i + 1} (${item})`, `N° de moteur, moto ${i + 1} (${item})`)} value={s.engineNo} onChange={(e) => update(l.key, { serials: l.serials.map((x, j) => (j === i ? { ...x, engineNo: e.target.value } : x)) })} />
+                        <Input className="col-start-2 sm:col-start-auto" placeholder={t("Colour", "Couleur")} aria-label={t(`Colour, bike ${i + 1} (${item})`, `Couleur, moto ${i + 1} (${item})`)} value={s.color} onChange={(e) => update(l.key, { serials: l.serials.map((x, j) => (j === i ? { ...x, color: e.target.value } : x)) })} />
                       </div>
                     ))}
                   </div>
@@ -684,7 +696,7 @@ export function AdjustForm({
               {t("Save as pending", "Mettre en attente")}
             </Button>
           )}
-          <SubmitButton onClick={submit} blocked={lines.length === 0 && t("Add at least one item", "Ajoutez au moins un article")} pending={m.isPending}>{t("Save adjustment", "Enregistrer l'ajustement")}</SubmitButton>
+          <SubmitButton onClick={submit} blocked={(lines.length === 0 && t("Add at least one item", "Ajoutez au moins un article")) || (lines.some((l) => halfUnit(l)) && t("Use whole numbers for items counted by the unit", "Saisissez des nombres entiers pour les articles comptés à l'unité"))} pending={m.isPending}>{t("Save adjustment", "Enregistrer l'ajustement")}</SubmitButton>
         </div>
       )}
       {confirming && (
@@ -934,10 +946,10 @@ function TransferForm({ onDone }: { onDone: () => void }) {
       <Card>
         <CardContent className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
           <Field label={t("Date", "Date")}><Input type="date" value={dateValue} onChange={(e) => setDateValue(e.target.value)} /></Field>
-          <Field label={t("From", "De")} required><LocationSelect value={fromId} onChange={setFromId} /></Field>
+          <Field label={t("From", "De")} required><LocationSelect value={fromId} onChange={setFromId} aria-label={t("From", "De")} /></Field>
           <Field label={t("To", "Vers")} required>
             <Select value={toId ? String(toId) : ""} onValueChange={(v) => setToId(Number(v))}>
-              <SelectTrigger><SelectValue placeholder={t("Choose…", "Choisir…")} /></SelectTrigger>
+              <SelectTrigger aria-label={t("To", "Vers")}><SelectValue placeholder={t("Choose…", "Choisir…")} /></SelectTrigger>
               <SelectContent>
                 {active.filter((l) => l.id !== fromId).map((l) => <SelectItem key={l.id} value={String(l.id)}>{l.name}</SelectItem>)}
               </SelectContent>

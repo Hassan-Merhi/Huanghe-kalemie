@@ -143,7 +143,7 @@ function Chart({ onOpen }: { onOpen: (id: number) => void }) {
             <Field label={t("Account", "Compte")} className="w-full sm:w-64">
               <div className="relative">
                 <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input className="pl-8" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("Code or name…", "Code ou nom…")} />
+                <Input className="pl-8" value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t("Code or name…", "Code ou nom…")} aria-label={t("Code or name…", "Code ou nom…")} />
               </div>
             </Field>
             <div className="flex items-center gap-2 pb-2">
