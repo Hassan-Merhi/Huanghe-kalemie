@@ -69,8 +69,8 @@ export function RatesCard() {
   const refCdf = cdfFar ? own ?? refNear : refNear;
   const cdfGap = gapOf(value, refCdf);
   const cnyGap = cny ? gapOf(cny, refCny) : null;
-  // Far from both, the check itself went by the nearer one (2 950 is 5,06 % from today's 2 808 but 4,9 % from
-  // yesterday's 2 812, so a manager may save it): the confirmation names that one too, with its own gap.
+  // Far from both, the check itself went by the nearer one (2 900 is 3,3 % from today's 2 808 and 3,1 % from
+  // yesterday's 2 812): the confirmation names that one too, with its own gap.
   const checkedApart = cdfFar && refNear && refCdf !== refNear ? refNear : null;
   // The day's own rate, or the last one before it, named with its date so the two never read as one.
   const refName = (ref: string) =>
@@ -82,6 +82,9 @@ export function RatesCard() {
   // A manager cannot save a past day's rate, nor one far from the last (the server refuses both): said
   // here, without offering "save anyway". The owner may save any rate after confirming.
   const managerLimit = Decimal.max(tolerance, 5);
+  // A day that has its rate already is also held to it, as the server does: 2 950 is near yesterday's 2 812
+  // but 5,06 % from today's 2 808.
+  const ownGap = own && d(value).gt(0) && !d(value).equals(d(own)) ? gapOf(value, own) : null;
   const gapText = (gap: Decimal) => gapPct(gap, [tolerance, managerLimit]);
   const ownerOnly = isOwner
     ? null
@@ -92,7 +95,12 @@ export function RatesCard() {
             `More than ${pct(managerLimit.toString(), 0)} away from ${fmtQty(refCdf)} FC: only the owner can save it. Check the figure, or ask the owner.`,
             `Plus de ${pct(managerLimit.toString(), 0)} d'écart avec ${fmtQty(refCdf)}\u00a0FC\u00a0: seul le propriétaire peut l'enregistrer. Vérifiez le chiffre, ou demandez au propriétaire.`,
           )
-        : null;
+        : ownGap && ownGap.gt(managerLimit) && own
+          ? t(
+            `More than ${pct(managerLimit.toString(), 0)} away from the rate already set for this day (${fmtQty(own)} FC): only the owner can save it. Check the figure, or ask the owner.`,
+            `Plus de ${pct(managerLimit.toString(), 0)} d'écart avec le taux déjà saisi pour ce jour (${fmtQty(own)}\u00a0FC)\u00a0: seul le propriétaire peut l'enregistrer. Vérifiez le chiffre, ou demandez au propriétaire.`,
+          )
+          : null;
   const ownerOnlyCny = !isOwner && !ownerOnly && cnyTyped && cnyGap && cnyGap.gt(managerLimit) && refCny
     ? t(
         `More than ${pct(managerLimit.toString(), 0)} away from ${fmtQty(refCny)} ¥: only the owner can save it.`,

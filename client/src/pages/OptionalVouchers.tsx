@@ -131,8 +131,9 @@ export default function OptionalVouchers() {
 
   function actions(r: VoucherDraft, compact?: boolean) {
     return (
-      <div className={cn("flex flex-wrap items-center gap-1", !compact && "justify-end")}>
-        <Button size="sm" variant="ghost" asChild>
+      // One line in the table (three buttons wrapped onto two at 1280 px); a phone card wraps them.
+      <div className={cn("flex items-center gap-1", compact ? "flex-wrap" : "flex-nowrap justify-end")}>
+        <Button size="sm" variant="ghost" className="px-2" asChild>
           <Link href={editHref(r)}>
             {canSave ? <Pencil className="mr-1 h-3.5 w-3.5" /> : <Eye className="mr-1 h-3.5 w-3.5" />}
             {canSave ? t("Edit", "Modifier") : t("View", "Voir")}
@@ -142,7 +143,7 @@ export default function OptionalVouchers() {
           <Button
             size="sm"
             variant="ghost"
-            className="text-emerald-800 dark:text-emerald-400"
+            className="px-2 text-emerald-800 dark:text-emerald-400"
             disabled={!canFinalize(r) || finalize.isPending}
             title={!canFinalize(r) ? t("Only the owner can post a journal entry", "Seul le propriétaire peut passer une écriture") : undefined}
             onClick={() => setConfirm({ action: "finalize", draft: r })}
@@ -151,7 +152,7 @@ export default function OptionalVouchers() {
           </Button>
         )}
         {canSave && (
-          <Button size="sm" variant="ghost" className="text-destructive" disabled={remove.isPending} onClick={() => setConfirm({ action: "delete", draft: r })}>
+          <Button size="sm" variant="ghost" className="px-2 text-destructive" disabled={remove.isPending} onClick={() => setConfirm({ action: "delete", draft: r })}>
             <Trash2 className="mr-1 h-3.5 w-3.5" /> {t("Delete", "Supprimer")}
           </Button>
         )}
@@ -232,7 +233,7 @@ export default function OptionalVouchers() {
                     <TableHead>{t("Description", "Libellé")}</TableHead>
                     <TableHead className="text-right">{t("Total", "Total")}</TableHead>
                     <TableHead>{t("Created by", "Saisi par")}</TableHead>
-                    <TableHead className="text-right">{t("Actions", "Actions")}</TableHead>
+                    <TableHead className="px-2 text-right">{t("Actions", "Actions")}</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -240,10 +241,10 @@ export default function OptionalVouchers() {
                     <TableRow key={r.id}>
                       <TableCell className="whitespace-nowrap">{date(r.date)}</TableCell>
                       <TableCell>{kindBadge(r.kind)}</TableCell>
-                      <TableCell className="max-w-xs truncate">{r.memo || <span className="text-muted-foreground">—</span>}</TableCell>
+                      <TableCell className="max-w-[13rem] truncate" title={r.memo || undefined}>{r.memo || <span className="text-muted-foreground">—</span>}</TableCell>
                       <TableCell className="text-right"><DraftAmount r={r} francs={francsOf(r)} /></TableCell>
                       <TableCell className="whitespace-nowrap text-muted-foreground">{r.createdByName ?? "—"}</TableCell>
-                      <TableCell>{actions(r)}</TableCell>
+                      <TableCell className="px-2">{actions(r)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>

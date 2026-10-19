@@ -271,6 +271,25 @@ function MoreBelow() {
   );
 }
 
+/**
+ * Below 1280 px the menu starts closed (the button at the top opens it): beside it, a 1024 px screen
+ * left the tables 720 px and hid their last columns. Crossing that width opens or closes it again.
+ */
+const WIDE_MENU = "(min-width: 1280px)";
+const wideScreen = () => typeof window === "undefined" || !window.matchMedia || window.matchMedia(WIDE_MENU).matches;
+
+function MenuFollowsWidth() {
+  const { setOpen } = useSidebar();
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mql = window.matchMedia(WIDE_MENU);
+    const onChange = (e: MediaQueryListEvent) => setOpen(e.matches);
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, [setOpen]);
+  return null;
+}
+
 export function AppLayout({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const { lang, setLang, t } = useI18n();
@@ -282,7 +301,8 @@ export function AppLayout({ children }: { children: ReactNode }) {
   }
 
   return (
-    <SidebarProvider>
+    <SidebarProvider defaultOpen={wideScreen()}>
+      <MenuFollowsWidth />
       <Sidebar>
         <SidebarHeader>
           <div className="px-2 py-1">
