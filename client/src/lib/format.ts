@@ -409,6 +409,39 @@ export function usdPerUnit(perUsd: string | null | undefined): string {
 }
 
 /**
+ * Why the server would refuse a container's rate, said under the field before "Créer" (null when it takes it).
+ * The same checks as assertContainerRate, on the USD-per-unit value sent: with no yuan rate on file, a rate
+ * a yuan cannot have (outside 4 to 12,5 ¥ for 1 $: "0,138" typed upside down); with one on file, a gap above
+ * the larger of the tolerance and 5 %. `rateToUsd` is the value sent (usdPerUnit of the typed rate).
+ */
+export function containerRateRefusal(
+  t: (en: string, fr: string) => string,
+  currency: string,
+  rateToUsd: string | null | undefined,
+  onFile: string | null | undefined,
+  tolerancePct: unknown,
+): string | null {
+  const rate = d(rateToUsd);
+  if (currency === "USD" || !rate.gt(0)) return null;
+  const sign = currency === "CDF" ? "FC" : "¥";
+  const shown = perUsdText(rate.toString());
+  if (!onFile || !d(onFile).gt(0)) {
+    if (currency !== "CNY" || (rate.gte("0.08") && rate.lte("0.25"))) return null;
+    return t(
+      `${shown} CNY for $1 looks wrong: one dollar buys about 7.1 CNY. Give how many yuan one dollar buys.`,
+      `${qty(shown)}\u00a0¥ pour 1\u00a0$ semble faux\u00a0: un dollar vaut environ 7,1\u00a0¥. Indiquez combien de yuans vaut 1\u00a0$.`,
+    );
+  }
+  const reference = d(1).dividedBy(d(onFile));
+  const limit = Decimal.max(d(tolerancePct ?? 3), 5);
+  if (!rate.minus(reference).abs().dividedBy(reference).times(100).gt(limit)) return null;
+  return t(
+    `More than ${limit.toString()}% away from the rate on file (1 $ = ${qty(onFile)} ${sign}): check the invoice, or update the day's rate first`,
+    `Plus de ${pct(limit.toString(), 2)} d'écart avec le taux enregistré (1\u00a0$ = ${qty(onFile)}\u00a0${sign})\u00a0: vérifiez la facture, ou mettez d'abord à jour le taux du jour`,
+  );
+}
+
+/**
  * What to say when a quantity counted in whole units was refused by its field as ambiguous ("1.000" pieces):
  * "Précisez la quantité : 1 000 ou 1".
  */

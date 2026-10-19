@@ -62,7 +62,7 @@ import * as backup from "./services/backup";
 import { getSetting } from "./setup";
 import { assertNotFuture, assertPeriodOpen, assertUndoKeepsRefunds, cnyRateFor, rateFor, reverseJournal, setExchangeRate } from "./services/ledger";
 import { containerNumberKey } from "@shared/containerNumber";
-import { lockVariants, transferStock } from "./services/stock";
+import { availableOn, lockVariants, transferStock } from "./services/stock";
 import * as vouchers from "./services/vouchers";
 import { registerErpRoutes } from "./routes/erp";
 
@@ -340,10 +340,17 @@ export function registerRoutes(app: Express) {
   }));
   app.get("/api/variants", requireRole(...EVERYONE), asyncHandler(async (req, res) => {
     const q = z
-      .object({ search: z.string().optional(), locationId: optionalId, limit: z.coerce.number().int().min(1).max(500).optional(), ids: z.string().optional() })
+      .object({ search: z.string().optional(), locationId: optionalId, limit: z.coerce.number().int().min(1).max(500).optional(), ids: z.string().optional(), asOf: isoDate.optional() })
       .parse(req.query);
     const ids = q.ids ? q.ids.split(",").map((x) => id.parse(x)) : undefined;
-    const rows = await catalog.searchVariants(db, { search: q.search, locationId: q.locationId ?? undefined, limit: q.limit, ids });
+    let rows = await catalog.searchVariants(db, { search: q.search, locationId: q.locationId ?? undefined, limit: q.limit, ids });
+    // A back-dated sale's cart: what can leave the location on that day, as the sale itself is checked (a
+    // few items, by id, so one small query each).
+    if (q.asOf && q.locationId && ids && rows.length <= 100) {
+      const day = q.asOf;
+      const loc = q.locationId;
+      rows = await Promise.all(rows.map(async (r) => ({ ...r, locationQty: (await availableOn(db, r.id, loc, day, dec(r.locationQty))).toFixed(3) })));
+    }
     res.json(req.user!.role === "cashier" ? rows.map(({ avgCost, stockValue, keptUnitCost, ...r }) => r) : rows);
   }));
   app.get("/api/variants/:id/movements", requireRole(...READERS), asyncHandler(async (req, res) => {

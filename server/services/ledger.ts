@@ -200,7 +200,7 @@ export async function assertPeriodOpen(tx: Tx, date: string): Promise<void> {
       409,
       `${closed} is closed, so nothing dated in ${month} or earlier can change. Reopen the closed months first.`,
       "PERIOD_CLOSED",
-      `Le mois ${deMonth(closed)} est clôturé : rien de daté ${deMonth(month)} ou avant ne peut changer. Rouvrez d'abord les mois clôturés.`,
+      `Le mois ${deMonth(closed)} est clôturé\u00a0: rien de daté ${deMonth(month)} ou avant ne peut changer. Rouvrez d'abord les mois clôturés.`,
     );
   }
 }

@@ -520,6 +520,13 @@ export async function getSale(tx: Tx, id: number) {
       .where(eq(sales.id, sale.id));
     if (dec(read.atSale).gt(0)) avoir = { usedUsd: dec(read.used).toFixed(2), atSaleUsd: dec(read.atSale).toFixed(2), leftUsd: Decimal.max(dec(read.after).negated(), 0).toFixed(2) };
   }
+  // What a cancelled sale gave back to the avoir, so its page says "10,00 $ de crédit annulé · 100,00 $
+  // rendus à l'avoir" rather than counting the avoir's part as credit cancelled. Read only.
+  let avoirGivenBackUsd: string | null = null;
+  if (sale.customerId && sale.journalId && dec(sale.creditUsd).gt(0) && sale.status === "voided") {
+    const [read] = await tx.select({ atSale: avoirPartSql() }).from(sales).where(eq(sales.id, sale.id));
+    if (dec(read.atSale).gt(0)) avoirGivenBackUsd = dec(read.atSale).toFixed(2);
+  }
   const refunded = sum(returns.map((r) => r.refundUsd ?? 0));
   const [left] = await tx.select({ usd: sql<string>`${creditLeftSql()}::text` }).from(sales).where(eq(sales.id, sale.id));
   return {
@@ -531,6 +538,8 @@ export async function getSale(tx: Tx, id: number) {
     avoirUsedUsd: avoir?.usedUsd ?? null,
     avoirAtSaleUsd: avoir?.atSaleUsd ?? null,
     avoirLeftUsd: avoir?.leftUsd ?? null,
+    /** A cancelled sale only: the part of its credit its customer's avoir had covered, given back to that avoir. */
+    avoirGivenBackUsd,
     /** Credit still on the sale after returns, as the Sales list reads it (see creditLeftSql). */
     creditLeftUsd: dec(left?.usd ?? sale.creditUsd).toFixed(2),
     customer: customer ?? null,

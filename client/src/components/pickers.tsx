@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Field } from "@/components/common";
 import { useI18n, useT } from "@/lib/i18n";
-import { accountLabel, d, money, perUsdText, todayLocal, usd, usdPerUnit, qty as fmtQty } from "@/lib/format";
+import { accountLabel, containerRateRefusal, d, money, perUsdText, todayLocal, usd, usdPerUnit, qty as fmtQty } from "@/lib/format";
 import { api, invalidateAll, withQuery } from "@/lib/api";
 import type { Account, Category, Location, Party, Settings, VariantRow } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
@@ -675,14 +675,15 @@ export function ContainerRateField({ currency, value, onChange, day = todayLocal
   const tolerance = d(settings?.rateTolerancePct ?? "3");
   const gap = onFile && d(onFile).gt(0) && typed.gt(0) ? typed.minus(onFile).abs().dividedBy(onFile).times(100) : null;
   const far = gap !== null && gap.gt(tolerance);
+  const refused = rateQ.data ? containerRateRefusal(t, currency, value, onFile, settings?.rateTolerancePct) : null;
   return (
     <Field
       className={className}
-      label={t(`${label} for $1`, `${label} pour 1 $`)}
+      label={t(`${label} for $1`, `${label} pour 1\u00a0$`)}
       required
-      error={text && !typed.gt(0) ? t("Enter a rate above zero", "Saisissez un taux supérieur à zéro") : null}
+      error={text && !typed.gt(0) ? t("Enter a rate above zero", "Saisissez un taux supérieur à zéro") : refused}
       hint={
-        far ? (
+        refused ? null : far ? (
           <span className="font-medium text-amber-800 dark:text-amber-400">
             {t(
               `Far from the rate on file (1 $ = ${fmtQty(onFile)} ${label}, ${gap!.toDecimalPlaces(0).toString()}% apart): check the invoice`,
@@ -709,6 +710,17 @@ export function ContainerRateField({ currency, value, onChange, day = todayLocal
       />
     </Field>
   );
+}
+
+/** Why the server would refuse a container's rate (see containerRateRefusal), for the form's button to give too. */
+export function useContainerRateRefusal(currency: string, rateToUsd: string, day: string = todayLocal()): string | null {
+  const t = useT();
+  const rate = useRate(day).data;
+  const settings = useQuery<Settings>({ queryKey: ["/api/settings"] }).data;
+  const onFile = currency === "CNY" ? rate?.cnyPerUsd ?? null : currency === "CDF" ? rate?.cdfPerUsd ?? null : null;
+  // Until the day's rate has loaded, nothing is said: the server still checks it.
+  if (!rate) return null;
+  return containerRateRefusal(t, currency, rateToUsd, onFile, settings?.rateTolerancePct);
 }
 
 /**
