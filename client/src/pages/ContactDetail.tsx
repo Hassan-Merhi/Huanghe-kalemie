@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, SubmitButton, unclearAmount } from "@/components/common";
-import { MoneyAccountSelect, PARTY_LABELS, RateInput, useAccounts, useRate, useRateField, useRateTooFar } from "@/components/pickers";
+import { CurrencySwitchNote, MoneyAccountSelect, PARTY_LABELS, RateInput, useAccounts, useCurrencySwitch, useRate, useRateField, useRateTooFar } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
@@ -30,6 +30,7 @@ import { advanceToYuan, paymentSplit, yuanOnDate, type PaymentPart } from "@/lib
 import Decimal from "decimal.js";
 import { BalanceWords, foreignText, PartyDialog, type ForeignBalance } from "@/pages/Contacts";
 import { useSystemText } from "@/lib/systemText";
+import { mergeAdvanceRows } from "@/lib/statement";
 
 interface StatementRow {
   journalId: number;
@@ -94,6 +95,21 @@ export const WIDE_PRINT_CSS = `@media print {
   .print-area th, .print-area td { border-bottom: 1px solid #ccc; padding: 3px 4px; }
 }`;
 
+function DollarPart({ dollars, customer }: { dollars: Decimal; customer: boolean }) {
+  const t = useT();
+  if (dollars.abs().lt(0.005)) return null;
+  const amount = <span className="tabular">{usd(dollars.abs().toFixed(2))}</span>;
+  // Positive: owed to the shop (a customer's dollar debt, an advance paid to a supplier or an employee).
+  const text = customer
+    ? dollars.isNegative()
+      ? t("Credit (avoir): ", "Avoir\u00a0: ")
+      : t("Of which owed in dollars: ", "Dont dû en dollars\u00a0: ")
+    : dollars.isPositive()
+      ? t("Advance paid: ", "Avance versée\u00a0: ")
+      : t("Of which owed in dollars: ", "Dont dû en dollars\u00a0: ");
+  return <p className="mt-1 text-sm text-muted-foreground">{text}{amount}</p>;
+}
+
 export default function ContactDetail() {
   const t = useT();
   const sys = useSystemText();
@@ -122,6 +138,8 @@ export default function ContactDetail() {
   if (q.isLoading || (cashier && customers.isLoading)) return <Loading />;
   if (q.error || !q.data) return <ErrorText error={q.error ?? t("Not found", "Introuvable")} />;
   const { party, rows, balance, foreign } = q.data;
+  // An advance applied reads as one row that moves nothing (display only; the payment dialog keeps every line).
+  const shownRows = mergeAdvanceRows(rows);
   const isCustomer = party.type === "customer";
   const typeLabel = t(PARTY_LABELS[party.type][0], PARTY_LABELS[party.type][1]);
   const canPay = isCustomer ? can("manager", "cashier") : can("manager");
@@ -164,6 +182,9 @@ export default function ContactDetail() {
                 {t("Of which", "Dont")} {foreignText(f, t, isCustomer)} <span className="tabular">({usd(d(f.usd).abs().toFixed(2))})</span>
               </p>
             ))}
+            {/* The dollar side of the balance, so the parts add up: "Dont 75 170,13 ¥ (10 587,35 $)" over "nous
+                devons 9 316,55 $" is the yuans less the 1 270,80 $ advance already paid, which is named. */}
+            {foreign.length > 0 && <DollarPart dollars={d(balance).minus(foreign.reduce((s, f) => s.plus(f.usd), d(0)))} customer={isCustomer} />}
           </CardContent>
         </Card>
         <Card className="sm:col-span-2">
@@ -205,7 +226,7 @@ export default function ContactDetail() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {rows.map((r, i) => (
+                  {shownRows.map((r, i) => (
                     <TableRow key={`${r.journalId}-${i}`}>
                       <TableCell className="whitespace-nowrap">{fmtDate(r.date)}</TableCell>
                       <TableCell className="whitespace-nowrap font-mono text-xs">
@@ -223,7 +244,17 @@ export default function ContactDetail() {
                             {money(d(r.nativeAmount).abs().toString(), r.currency)}
                           </span>
                         )}
-                        {r.tendered && (
+                        {r.advanceUsd && (
+                          <span className="block text-xs text-muted-foreground tabular" data-testid="advance-applied">
+                            {r.advanceNative?.length
+                              ? t(
+                                  `${r.advanceNative.map((n) => money(n.amount, n.currency)).join(" · ")} settled from the ${usd(r.advanceUsd)} advance (balance unchanged)`,
+                                  `${r.advanceNative.map((n) => money(n.amount, n.currency)).join(" · ")} réglés par ${usd(r.advanceUsd)} d'avance (solde inchangé)`,
+                                )
+                              : t(`${usd(r.advanceUsd)} of advance (balance unchanged)`, `${usd(r.advanceUsd)} d'avance (solde inchangé)`)}
+                          </span>
+                        )}
+                        {!r.advanceUsd && r.tendered && (
                           <span className="block text-xs text-muted-foreground tabular" data-testid="tendered">
                             {t(`paid ${cdf(r.tendered)}`, `payé ${cdf(r.tendered)}`)}
                           </span>
@@ -269,6 +300,8 @@ function PaymentDialog({ party, balance, foreign: foreignNow, rows, onClose }: {
   const [memo, setMemo] = useState("");
   const { rate, setRate } = useRateField(day);
   const rateFar = useRateTooFar(day, rate);
+  // Another currency picked to pay from: the amount typed is converted at the day's rate, not kept as typed.
+  const currencySwitch = useCurrencySwitch(day);
   const isCdf = account?.currency === "CDF";
   const usdEquivalent = isCdf && d(rate).gt(0) && !francDecimalsError(t, "CDF", amount) ? d(amount).dividedBy(d(rate)).toFixed(2) : null;
   const mutation = useApiMutation("POST", isCustomer ? "/api/money/customer-receipt" : "/api/money/party-payment", {
@@ -567,7 +600,8 @@ function PaymentDialog({ party, balance, foreign: foreignNow, rows, onClose }: {
             error={drawerShort}
             required
           >
-            <MoneyAccountSelect value={account?.id ?? null} onChange={(_, a) => setAccount(a)} />
+            <MoneyAccountSelect value={account?.id ?? null} onChange={(_, a) => { setAccount(a); setAmount(currencySwitch.convert(amount, account?.currency, a.currency)); }} />
+            <CurrencySwitchNote note={currencySwitch.note} />
           </Field>
           <Field
             label={t(`Amount (${curLabel(account?.currency ?? "USD")})`, `Montant (${curLabel(account?.currency ?? "USD")})`)}
@@ -587,7 +621,7 @@ function PaymentDialog({ party, balance, foreign: foreignNow, rows, onClose }: {
           >
             <div className="flex gap-2">
               {/* Inside a row with the "All" button, so the field's label is not tied to it: named here. */}
-              <Input inputMode="decimal" currency={account?.currency ?? "USD"} switchTo={isCdf ? t("a dollar account", "un compte en $") : t("a franc account", "un compte en FC")} aria-label={t(`Amount (${curLabel(account?.currency ?? "USD")})`, `Montant (${curLabel(account?.currency ?? "USD")})`)} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
+              <Input inputMode="decimal" currency={account?.currency ?? "USD"} switchTo={isCdf ? t("a dollar account", "un compte en $") : t("a franc account", "un compte en FC")} aria-label={t(`Amount (${curLabel(account?.currency ?? "USD")})`, `Montant (${curLabel(account?.currency ?? "USD")})`)} value={amount} onChange={(e) => { setAmount(e.target.value); currencySwitch.clear(); }} placeholder="0" />
               {outstanding && !isCdf && !cnyOwed && (
                 // Francs owed count at the day's rate, the figure that settles them all (as the voucher line's "Tout"),
                 // not as booked: 3 290,10 $ would leave 0,19 $ as an advance.

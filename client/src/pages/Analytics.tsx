@@ -26,6 +26,8 @@ interface Analytics {
   stockByCategory: { name: string; value: string }[];
   position: Position;
   contactBalances?: ContactSides;
+  /** Goods bought in containers not offloaded yet: outside the position until they are. */
+  goodsOnTheWayUsd?: string;
 }
 
 export interface Position { money: string; stock: string; transit: string; receivables: string; payables: string; otherAssets?: string; otherLiabilities?: string; net: string }
@@ -283,14 +285,14 @@ function Body({ a, from, to }: { a: Analytics; from: string; to: string }) {
             )}
           </CardContent>
         </Card>
-        <PositionCard position={a.position} sides={a.contactBalances} />
+        <PositionCard position={a.position} sides={a.contactBalances} goodsOnTheWay={a.goodsOnTheWayUsd} />
       </div>
     </div>
   );
 }
 
 /** What the shop owns minus what it owes, today. */
-export function PositionCard({ position: p, sides }: { position: Position; sides?: ContactSides }) {
+export function PositionCard({ position: p, sides, goodsOnTheWay }: { position: Position; sides?: ContactSides; goodsOnTheWay?: string }) {
   const t = useT();
   // Credit customers hold is owed by us, and an advance to suppliers is owed to us: each said as what it is,
   // contact by contact when known, salary advances apart from the suppliers' (as on the dashboard; the net is the same).
@@ -310,7 +312,9 @@ export function PositionCard({ position: p, sides }: { position: Position; sides
   const rows: [string, string, boolean?][] = [
     [t("Money (cash, bank, mobile)", "Trésorerie (caisse, banque, mobile)"), p.money],
     [t("Stock (at cost)", "Stock (au coût)"), p.stock],
-    [t("Goods on the way", "Marchandises en route"), p.transit],
+    // Only the costs paid on containers not offloaded yet (freight, customs…): the goods themselves are said
+    // under the table, as on the dashboard.
+    [t("Container costs paid (on the way)", "Frais payés (conteneurs en route)"), p.transit],
     ...contactRows,
   ];
   // Other advances and deposits go with the assets, before what is owed.
@@ -337,6 +341,14 @@ export function PositionCard({ position: p, sides }: { position: Position; sides
             </TableRow>
           </TableFooter>
         </Table>
+        {d(goodsOnTheWay ?? 0).gt(0) && (
+          <p className="px-4 pb-3 pt-1 text-xs text-muted-foreground">
+            {t(
+              `Not counted yet: ${usd(goodsOnTheWay!)} of goods bought in containers on the way. They enter stock, with the supplier debt, on offload.`,
+              `Pas encore compté\u00a0: ${usd(goodsOnTheWay!)} de marchandises achetées dans les conteneurs en route. Elles entrent en stock, avec la dette fournisseur, au déchargement.`,
+            )}
+          </p>
+        )}
       </CardContent>
     </Card>
   );

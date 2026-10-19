@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { de } from "@shared/french";
+import { convertedUnitPrice } from "@shared/landedCost";
 import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import { AlertTriangle, ArrowLeft, Bike, ChevronDown, Info, Lock, PackageCheck, Pencil, Plus, Save, Trash2, Undo2, X } from "lucide-react";
 import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, StatCard, SubmitButton, unclearAmount } from "@/components/common";
-import { ContainerRateField, MoneyAccountSelect, PartySelect, perUsdText, useAccounts, useContainerRateRefusal, useRate, VariantSearch } from "@/components/pickers";
+import { ContainerRateField, CurrencySwitchNote, MoneyAccountSelect, PartySelect, perUsdText, useAccounts, useContainerRateRefusal, useCurrencySwitch, useRate, VariantSearch } from "@/components/pickers";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
@@ -234,7 +235,7 @@ export default function ContainerDetail() {
         }
       />
 
-      <HeaderCard c={c} />
+      <HeaderCard c={c} linesDirty={linesDirty} />
 
       {finalized ? (
         <FinalCosts c={c} priceOf={priceOf} />
@@ -263,7 +264,7 @@ export default function ContainerDetail() {
 
 // ---------------------------------------------------------------- Header
 
-function HeaderCard({ c }: { c: ContainerFull }) {
+function HeaderCard({ c, linesDirty }: { c: ContainerFull; linesDirty: boolean }) {
   const t = useT();
   const { can } = useAuth();
   const statusLabel = useStatusLabel();
@@ -334,12 +335,12 @@ function HeaderCard({ c }: { c: ContainerFull }) {
           )}
         </div>
       </CardContent>
-      {editing && <EditDetailsDialog c={c} onClose={() => setEditing(false)} />}
+      {editing && <EditDetailsDialog c={c} linesDirty={linesDirty} onClose={() => setEditing(false)} />}
     </Card>
   );
 }
 
-function EditDetailsDialog({ c, onClose }: { c: ContainerFull; onClose: () => void }) {
+function EditDetailsDialog({ c, linesDirty, onClose }: { c: ContainerFull; linesDirty: boolean; onClose: () => void }) {
   const t = useT();
   const finalized = c.status === "finalized";
   const [shipDate, setShipDate] = useState(c.shipDate ?? "");
@@ -352,11 +353,27 @@ function EditDetailsDialog({ c, onClose }: { c: ContainerFull; onClose: () => vo
   const rateOk = cur === "USD" || d(rate).gt(0);
   // Said before saving, as the server checks the rate sent against today's.
   const rateRefused = useContainerRateRefusal(cur, rate);
+  const newRate = cur === "USD" ? "1" : d(rate).toString();
+  /**
+   * A new invoice currency with lines saved: their prices are converted at the rates (45 000 FC are 16,03 $, not
+   * 45 000 $), or kept as typed when the invoice is being typed again in the new currency. Asked here, convert first.
+   */
+  const switching = !finalized && cur !== c.currency && c.lines.length > 0;
+  const [convert, setConvert] = useState(true);
+  const lineValue = (price: unknown, l: ContainerLine) => d(l.quantity).times(d(price));
+  const valueBefore = c.lines.reduce((s, l) => s.plus(lineValue(l.unitPrice, l)), d(0));
+  const valueAfter = switching && d(newRate).gt(0)
+    ? c.lines.reduce((s, l) => s.plus(lineValue(convertedUnitPrice(l.unitPrice, c.rateToUsd, cur, newRate), l)), d(0))
+    : null;
+  const rates = [c.currency, cur].filter((x, i, all) => x !== "USD" && all.indexOf(x) === i)
+    .map((x) => (x === c.currency || d(newRate).gt(0) ? `1\u00a0$ = ${qty(perUsdText(x === c.currency ? c.rateToUsd : newRate))}\u00a0${curLabel(x)}` : t(`the ${curLabel(x)} rate to enter`, `taux en ${curLabel(x)} à saisir`)))
+    .join(t(" and ", " et "));
   function save() {
     const body: Record<string, unknown> = { shipDate: shipDate || null, arrivalDate: arrivalDate || null, notes: notes.trim() || null };
     if (!finalized) {
       body.currency = cur;
-      body.rateToUsd = cur === "USD" ? "1" : d(rate).toString();
+      body.rateToUsd = newRate;
+      if (switching && convert) body.convertLinePrices = true;
     }
     patch.mutate(body);
   }
@@ -381,6 +398,25 @@ function EditDetailsDialog({ c, onClose }: { c: ContainerFull; onClose: () => vo
                 </Select>
               </Field>
               {cur !== "USD" ? <ContainerRateField key={cur} currency={cur} value={rate} onChange={setRate} /> : <div className="hidden sm:block" />}
+              {switching && (
+                <fieldset className="space-y-2 rounded-md border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/40 dark:text-amber-100 sm:col-span-2" data-testid="convert-lines">
+                  <legend className="px-1 font-medium">{c.lines.length === 1 ? t("Price of the saved line", "Prix de la ligne enregistrée") : t(`Prices of the ${c.lines.length} saved lines`, `Prix des ${c.lines.length}\u00a0lignes enregistrées`)}</legend>
+                  <label className="flex items-start gap-2">
+                    <input type="radio" className="mt-1" name="convert-lines" checked={convert} onChange={() => setConvert(true)} />
+                    <span>{t(`Convert the line prices at the rate (${rates})`, `Convertir les prix des lignes au taux (${rates})`)}</span>
+                  </label>
+                  <label className="flex items-start gap-2">
+                    <input type="radio" className="mt-1" name="convert-lines" checked={!convert} onChange={() => setConvert(false)} />
+                    <span>{t("Keep the amounts (invoice typed again)", "Garder les montants (facture ressaisie)")}</span>
+                  </label>
+                  <p className="text-xs" role="status">
+                    {t("Purchase value: ", "Valeur d'achat\u00a0: ")}{fmtCur(valueBefore.toFixed(2), c.currency)} → {convert ? (valueAfter ? fmtCur(valueAfter.toFixed(2), cur) : "…") : fmtCur(valueBefore.toFixed(2), cur)}.{" "}
+                    {convert
+                      ? t("Each price is converted; check them against the invoice.", "Chaque prix est converti\u00a0; vérifiez-les sur la facture.")
+                      : t(`Each price is kept as typed, now in ${curLabel(cur)}: only if the invoice really is in ${curLabel(cur)}.`, `Chaque prix reste tel que saisi, désormais en ${curLabel(cur)}\u00a0: seulement si la facture est bien en ${curLabel(cur)}.`)}
+                  </p>
+                </fieldset>
+              )}
             </>
           )}
           <Field label={t("Ship date", "Date d'expédition")}>
@@ -397,7 +433,15 @@ function EditDetailsDialog({ c, onClose }: { c: ContainerFull; onClose: () => vo
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
           <SubmitButton
             onClick={save}
-            blocked={cur.length !== 3 ? t("Enter a 3-letter currency code", "Saisissez un code de devise à 3 lettres") : !rateOk ? t("Enter the rate (how much one dollar buys)", "Saisissez le taux (combien vaut 1\u00a0$)") : !finalized ? rateRefused : null}
+            blocked={
+              cur.length !== 3
+                ? t("Enter a 3-letter currency code", "Saisissez un code de devise à 3 lettres")
+                : !rateOk
+                  ? t("Enter the rate (how much one dollar buys)", "Saisissez le taux (combien vaut 1\u00a0$)")
+                  : switching && linesDirty
+                    ? t("Save the lines first", "Enregistrez d'abord les lignes")
+                    : !finalized ? rateRefused : null
+            }
             pending={patch.isPending}
           >
             {t("Save", "Enregistrer")}
@@ -942,6 +986,13 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
 
   const currency: "USD" | "CDF" = mode === "paid" ? (account?.currency ?? "USD") : owedCurrency;
   const isCdf = currency === "CDF";
+  /** The account, the bill's currency or paid/owed changed the amount's currency: converted at the day's rate. */
+  const currencySwitch = useCurrencySwitch(day);
+  const switchCurrency = (next: { mode?: "paid" | "owed"; account?: Account; owedCurrency?: "USD" | "CDF" }) => {
+    const m = next.mode ?? mode;
+    const to = m === "paid" ? (next.account ?? account)?.currency ?? "USD" : next.owedCurrency ?? owedCurrency;
+    setAmount(currencySwitch.convert(amount, currency, to));
+  };
   const amt = d(amount);
   const usdValue = isCdf ? (d(rate).gt(0) ? amt.dividedBy(d(rate)) : null) : amt;
 
@@ -1039,10 +1090,10 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
 
           <div className="space-y-2 sm:col-span-2">
             <div className="inline-flex rounded-md border p-0.5">
-              <Button type="button" size="sm" variant={mode === "paid" ? "default" : "ghost"} onClick={() => setMode("paid")}>
+              <Button type="button" size="sm" variant={mode === "paid" ? "default" : "ghost"} onClick={() => { setMode("paid"); switchCurrency({ mode: "paid" }); }}>
                 {t("Paid now", "Payé maintenant")}
               </Button>
-              <Button type="button" size="sm" variant={mode === "owed" ? "default" : "ghost"} onClick={() => setMode("owed")}>
+              <Button type="button" size="sm" variant={mode === "owed" ? "default" : "ghost"} onClick={() => { setMode("owed"); switchCurrency({ mode: "owed" }); }}>
                 {t("Not paid yet", "Pas encore payé")}
               </Button>
             </div>
@@ -1054,7 +1105,8 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
               error={drawerShort}
               required
             >
-              <MoneyAccountSelect value={account?.id ?? null} onChange={(_, a) => setAccount(a)} />
+              <MoneyAccountSelect value={account?.id ?? null} onChange={(_, a) => { setAccount(a); switchCurrency({ account: a }); }} />
+              <CurrencySwitchNote note={currencySwitch.note} />
             </Field>
           ) : (
             <>
@@ -1062,13 +1114,14 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
                 <PartySelect types={["agent", "supplier"]} value={partyId} onChange={(id) => setPartyId(id)} />
               </Field>
               <Field label={t("Currency of the bill", "Devise de la facture")}>
-                <Select value={owedCurrency} onValueChange={(v) => setOwedCurrency(v as "USD" | "CDF")}>
+                <Select value={owedCurrency} onValueChange={(v) => { setOwedCurrency(v as "USD" | "CDF"); switchCurrency({ owedCurrency: v as "USD" | "CDF" }); }}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="USD">{t("Dollars ($)", "Dollars ($)")}</SelectItem>
                     <SelectItem value="CDF">{t("Francs (FC)", "Francs (FC)")}</SelectItem>
                   </SelectContent>
                 </Select>
+                <CurrencySwitchNote note={currencySwitch.note} />
               </Field>
             </>
           )}
@@ -1078,7 +1131,7 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
             hint={bigText && <span role="alert" className="font-medium text-amber-800 dark:text-amber-400">{bigText}</span>}
             required
           >
-            <Input inputMode="decimal" usd={currency === "USD"} thousands={isCdf} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
+            <Input inputMode="decimal" usd={currency === "USD"} thousands={isCdf} value={amount} onChange={(e) => { setAmount(e.target.value); currencySwitch.clear(); }} placeholder="0" />
           </Field>
           {isCdf && (
             <Field

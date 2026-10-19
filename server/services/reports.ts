@@ -564,6 +564,35 @@ export async function salesByProduct(tx: Tx, from: string, to: string) {
     .sort((a, b) => dec(b.profit).comparedTo(a.profit));
 }
 
+/**
+ * Containers not offloaded yet, each with its purchase value at the container's rate: it reaches the books (stock
+ * and supplier debt) on offload, so the dashboard and the analytics name it beside the net position. Read only.
+ */
+export function containersOnTheWay(tx: Tx) {
+  return tx
+    .select({
+      id: containers.id,
+      number: containers.number,
+      status: containers.status,
+      arrivalDate: containers.arrivalDate,
+      // Purchase value at the container's rate; it reaches the books (stock and supplier debt) on offload.
+      // The outer columns are named in full: a select from one table renders ${containers.id} as a bare "id",
+      // which inside the subquery would be the line's own id.
+      purchaseUsd: sql<string>`coalesce((select round(sum(l.quantity * l.unit_price) * "containers"."rate_to_usd", 2) from container_lines l where l.container_id = "containers"."id"), 0)::text`,
+    })
+    .from(containers)
+    .where(ne(containers.status, "finalized"))
+    .orderBy(asc(containers.arrivalDate));
+}
+
+/**
+ * What the dashboard and the analytics call "goods bought in containers on the way": a draft (not shipped, its
+ * invoice perhaps still being typed) is listed with the others but not counted. Read only.
+ */
+export function goodsOnTheWayUsd(rows: { status: string; purchaseUsd: string }[]) {
+  return sum(rows.filter((c) => c.status !== "draft").map((c) => c.purchaseUsd));
+}
+
 export async function dashboard(tx: Tx, today: string) {
   const month = today.slice(0, 7);
   const { from, to } = monthRange(month);
@@ -599,20 +628,7 @@ export async function dashboard(tx: Tx, today: string) {
     .select({ count: sql<number>`count(*)::int` })
     .from(variants)
     .where(and(eq(variants.active, true), sql`${variants.reorderLevel} > 0`, sql`${variants.stockQty} <= ${variants.reorderLevel}`));
-  const openContainers = await tx
-    .select({
-      id: containers.id,
-      number: containers.number,
-      status: containers.status,
-      arrivalDate: containers.arrivalDate,
-      // Purchase value at the container's rate; it reaches the books (stock and supplier debt) on offload.
-      // The outer columns are named in full: a select from one table renders ${containers.id} as a bare "id",
-      // which inside the subquery would be the line's own id.
-      purchaseUsd: sql<string>`coalesce((select round(sum(l.quantity * l.unit_price) * "containers"."rate_to_usd", 2) from container_lines l where l.container_id = "containers"."id"), 0)::text`,
-    })
-    .from(containers)
-    .where(ne(containers.status, "finalized"))
-    .orderBy(asc(containers.arrivalDate));
+  const openContainers = await containersOnTheWay(tx);
   const recentSales = await tx
     .select({
       id: sales.id,

@@ -308,7 +308,37 @@ export function searchAlternatives(word: string): string[] {
 }
 
 /** Search sellable variants for the POS and pickers: by name, SKU, barcode or size. */
+/**
+ * A search that is a motorcycle's chassis number (scanned, or at least 6 of its characters typed) also finds that
+ * bike: its model first, once per bike in stock (at the location when one is given), with `matchedUnit`, so the
+ * till adds that model with that chassis already chosen. Read only.
+ */
 export async function searchVariants(tx: Tx, opts: { search?: string; locationId?: number; limit?: number; ids?: number[] }) {
+  const rows = await findVariants(tx, opts);
+  const term = opts.search?.trim().toUpperCase();
+  if (!term || opts.ids?.length || /\s/.test(term)) return rows;
+  const units = await tx
+    .select({ id: motorcycleUnits.id, variantId: motorcycleUnits.variantId, chassisNo: motorcycleUnits.chassisNo, engineNo: motorcycleUnits.engineNo, color: motorcycleUnits.color })
+    .from(motorcycleUnits)
+    .where(
+      and(
+        eq(motorcycleUnits.status, "in_stock"),
+        opts.locationId ? eq(motorcycleUnits.locationId, opts.locationId) : undefined,
+        term.length >= 6 ? sql`upper(${motorcycleUnits.chassisNo}) like ${`%${term.replace(/[\\%_]/g, "\\$&")}%`}` : sql`upper(${motorcycleUnits.chassisNo}) = ${term}`,
+      ),
+    )
+    .orderBy(sql`case when upper(${motorcycleUnits.chassisNo}) = ${term} then 0 else 1 end`, asc(motorcycleUnits.chassisNo))
+    .limit(5);
+  if (!units.length) return rows;
+  const models = await findVariants(tx, { ids: Array.from(new Set(units.map((u) => u.variantId))), locationId: opts.locationId, limit: 5 });
+  const bikes = units.flatMap((u) => {
+    const v = models.find((m) => m.id === u.variantId);
+    return v ? [{ ...v, matchedUnit: { id: u.id, chassisNo: u.chassisNo, engineNo: u.engineNo, color: u.color } }] : [];
+  });
+  return [...bikes, ...rows].slice(0, Math.max(opts.limit ?? 50, bikes.length));
+}
+
+async function findVariants(tx: Tx, opts: { search?: string; locationId?: number; limit?: number; ids?: number[] }) {
   const term = opts.search?.trim();
   const conds = [eq(variants.active, true), eq(products.active, true)];
   if (opts.ids?.length) conds.push(inArray(variants.id, opts.ids));

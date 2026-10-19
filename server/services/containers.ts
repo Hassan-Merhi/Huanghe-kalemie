@@ -11,7 +11,7 @@ import {
   variants,
   parties,
 } from "@shared/schema";
-import { computeLandedCost, type AllocationMethod, type LandedCostResult } from "@shared/landedCost";
+import { computeLandedCost, convertedUnitPrice, type AllocationMethod, type LandedCostResult } from "@shared/landedCost";
 import { cents, dec, sum, Decimal, MoneyError } from "@shared/money";
 import { de, frNumber } from "@shared/french";
 import type { Tx } from "../db";
@@ -140,6 +140,28 @@ export async function replaceLines(tx: Tx, containerId: number, lines: Container
       .set({ targetLineId: matches.length === 1 ? matches[0].id : null })
       .where(eq(containerExpenses.id, e.id));
   }
+}
+
+/**
+ * The invoice currency of a container not yet offloaded changed and its lines are to follow: each unit price
+ * is converted from the old rate to the new one, so 10 tyres at 45 000 FC (2 808 FC for $1) become 10 at
+ * 16,025641 $ and not 10 at 45 000 $ (see convertedUnitPrice). Only the lines' prices are rewritten, in place
+ * (the ids, and so the expenses pinned to a line, stay); nothing is posted. The caller holds the container's lock.
+ */
+export async function convertLinePrices(tx: Tx, containerId: number, fromRateToUsd: string, toCurrency: string, toRateToUsd: string) {
+  const [container] = await tx.select().from(containers).where(eq(containers.id, containerId));
+  if (!container) throw notFound("Container", "Conteneur introuvable");
+  if (container.status === "finalized") {
+    throw conflict("This container is finalized. Reverse the offload before changing it.", "Ce conteneur est finalisé. Annulez le déchargement avant de le modifier.");
+  }
+  const from = dec(fromRateToUsd);
+  const to = dec(toRateToUsd);
+  if (!from.gt(0) || !to.gt(0)) throw badRequest("Enter the rate to convert the line prices at", "Saisissez le taux auquel convertir les prix des lignes");
+  const lines = await tx.select({ id: containerLines.id, unitPrice: containerLines.unitPrice }).from(containerLines).where(eq(containerLines.containerId, containerId));
+  for (const l of lines) {
+    await tx.update(containerLines).set({ unitPrice: convertedUnitPrice(l.unitPrice, from, toCurrency, to).toFixed(6) }).where(eq(containerLines.id, l.id));
+  }
+  return lines.length;
 }
 
 export interface ContainerExpenseInput {

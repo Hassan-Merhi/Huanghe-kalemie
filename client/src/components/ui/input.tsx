@@ -130,6 +130,8 @@ const DateInput = React.forwardRef<HTMLInputElement, React.ComponentProps<"input
         type="date"
         tabIndex={-1}
         aria-hidden
+        // Hidden from screen readers; named anyway for checkers that list every date field.
+        aria-label={props["aria-label"] ?? (fr ? "Calendrier" : "Calendar")}
         className="pointer-events-none absolute bottom-0 right-0 h-px w-px opacity-0"
         value={iso}
         min={min}

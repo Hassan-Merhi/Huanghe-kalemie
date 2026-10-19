@@ -21,11 +21,11 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
-import { AccountSelect, MoneyAccountSelect, PartySelect, RateInput, useAccounts, useMoneyAccounts, useRate, useRateField, useRateTooFar } from "@/components/pickers";
+import { AccountSelect, CurrencySwitchNote, MoneyAccountSelect, PartySelect, RateInput, useAccounts, useCurrencySwitch, useMoneyAccounts, useRate, useRateField, useRateTooFar } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api, invalidateAll } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { cdf, curLabel, d, money, number, pct, qty as fmtQty, todayLocal, usd } from "@/lib/format";
+import { cdf, convertedNote, convertTypedAmount, curLabel, d, money, number, pct, qty as fmtQty, todayLocal, typedNumberOk, usd } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import type { Account, Party, Settings } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -310,6 +310,21 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
   const account = moneyAccounts.find((a) => a.id === accountId) ?? null;
   const currency = account?.currency ?? "USD";
   const isCdf = currency === "CDF";
+  /**
+   * "Payé depuis" moved to an account in another currency: the amounts typed are converted at the day's rate
+   * (6 000 $ are not 6 000 FC), and said so under the field until one is typed again.
+   */
+  const dayRate = useRate(day).data?.cdfPerUsd;
+  const [convertNote, setConvertNote] = useState<string | null>(null);
+  function changeAccount(id: number | null) {
+    const next = moneyAccounts.find((a) => a.id === id);
+    setAccountId(id);
+    if (!account || !next || next.currency === account.currency || !lines.some((l) => l.amount.trim())) return setConvertNote(null);
+    const converted = lines.map((l) => convertTypedAmount(l.amount, account.currency, next.currency, dayRate));
+    const ok = converted.every((x) => x !== null);
+    setLines((ls) => ls.map((l, i) => ({ ...l, amount: ok ? converted[i]! : "" })));
+    setConvertNote(convertedNote(t, next.currency, dayRate, ok, lines.filter((l) => l.amount.trim()).length > 1));
+  }
   const rate = d(rateField.rate);
   const total = lines.reduce((s, l) => s.plus(isAmount(l.amount) ? d(l.amount).toDecimalPlaces(2) : 0), d(0));
   const totalUsd = isCdf ? (rate.gt(0) ? total.dividedBy(rate) : null) : total;
@@ -361,7 +376,10 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
     },
   });
 
-  const set = (key: number, patch: Partial<VLine>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  const set = (key: number, patch: Partial<VLine>) => {
+    if (patch.amount !== undefined) setConvertNote(null);
+    setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
+  };
 
   function payload(strict: boolean): Record<string, unknown> | null {
     const out = lines
@@ -417,7 +435,8 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
             error={short}
             required
           >
-            <MoneyAccountSelect value={accountId} onChange={(id) => setAccountId(id)} />
+            <MoneyAccountSelect value={accountId} onChange={changeAccount} />
+            <CurrencySwitchNote note={convertNote} />
           </Field>
           {isCdf && (
             <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} hint={totalUsd && !amountsBad ? `= ${usd(totalUsd.toFixed(2))}` : undefined} required>
@@ -848,6 +867,9 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
   const from = moneyAccounts.find((a) => a.id === fromId) ?? null;
   const to = moneyAccounts.find((a) => a.id === toId) ?? null;
   const sameCurrency = from && to && from.currency === to.currency;
+  // An account changed to another currency: its amount is converted at the day's rate (or cleared), and said so.
+  const fromSwitch = useCurrencySwitch(day);
+  const toSwitch = useCurrencySwitch(day);
 
   // Same currency: the "to" amount follows the "from" amount until edited.
   useEffect(() => {
@@ -890,8 +912,24 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
   const diff = value && received ? value.toDecimalPlaces(2).minus(received.toDecimalPlaces(2)) : null;
   const balOf = (a: Account | null) => {
     const b = a && balances.data?.find((x) => x.id === a.id);
-    return b ? money(a.currency === "CDF" ? b.nativeBalance : b.balance, a.currency) : null;
+    return b ? d(a.currency === "CDF" ? b.nativeBalance : b.balance) : null;
   };
+  // "Solde 0,00 $ → après −100,00 $", as on the payment forms; the money leaving an account it is not in is
+  // stopped here ("Fonds insuffisants"), as the server refuses it. "→ après" only once a usable amount is typed.
+  const balanceHint = (a: Account | null, amount: string, sign: 1 | -1) => {
+    const bal = balOf(a);
+    if (!a || !bal) return undefined;
+    const x = d(amount);
+    const usable = typedNumberOk(amount) && !francDecimalsError(t, a.currency, amount) && x.gt(0);
+    return usable
+      ? `${t("Balance", "Solde")} ${money(bal.toFixed(2), a.currency)} → ${t("after", "après")} ${money(bal.plus(x.times(sign)).toFixed(2), a.currency)}`
+      : `${t("Balance", "Solde")} ${money(bal.toFixed(2), a.currency)}`;
+  };
+  const fromBal = balOf(from);
+  const fromAfter = from && fromBal && typedNumberOk(fromAmount) && fa.gt(0) ? fromBal.minus(fa) : null;
+  const short = from && fromAfter && fromAfter.lt(0)
+    ? t(`Not enough money: the balance would be ${money(fromAfter.toFixed(2), from.currency)}`, `Fonds insuffisants\u00a0: le solde serait de ${money(fromAfter.toFixed(2), from.currency)}`)
+    : null;
 
   const m = useApiMutation<Record<string, unknown>, { id: number }>("POST", "/api/money/transfer", {
     success: t("Transfer recorded", "Transfert enregistré"),
@@ -915,7 +953,7 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
             ? t("Enter the amount in", "Saisissez le montant reçu")
             : rateFar
               ? t("Check the two amounts: their rate is far from today's", "Vérifiez les deux montants\u00a0: leur taux est loin de celui du jour")
-              : null;
+              : short;
 
   function payload(): Record<string, unknown> {
     return {
@@ -943,22 +981,24 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
           <Field label={t("Date", "Date")} className="sm:col-span-2 sm:max-w-[12rem]">
             <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
           </Field>
-          <Field label={t("From account", "Du compte")} required hint={balOf(from) ? `${t("Balance", "Solde")} ${balOf(from)}` : undefined}>
-            <MoneyAccountSelect value={fromId} onChange={(id) => setFromId(id)} />
+          <Field label={t("From account", "Du compte")} required hint={balanceHint(from, fromAmount, -1)} error={short}>
+            <MoneyAccountSelect value={fromId} onChange={(id, a) => { setFromId(id); setFromAmount(fromSwitch.convert(fromAmount, from?.currency, a?.currency)); }} />
+            <CurrencySwitchNote note={fromSwitch.note} />
           </Field>
           <Field label={t(`Amount out${from ? ` (${curLabel(from.currency)})` : ""}`, `Montant sorti${from ? ` (${curLabel(from.currency)})` : ""}`)} error={francDecimalsError(t, from?.currency, fromAmount)} required>
-            <Input inputMode="decimal" usd={from?.currency === "USD"} thousands={from?.currency === "CDF"} value={fromAmount} onChange={(e) => setFromAmount(e.target.value)} placeholder="0" />
+            <Input inputMode="decimal" usd={from?.currency === "USD"} thousands={from?.currency === "CDF"} value={fromAmount} onChange={(e) => { setFromAmount(e.target.value); fromSwitch.clear(); }} placeholder="0" />
           </Field>
           <Field
             label={t("To account", "Vers le compte")}
-            hint={balOf(to) ? `${t("Balance", "Solde")} ${balOf(to)}` : undefined}
+            hint={balanceHint(to, toAmount, 1)}
             error={from && to && from.id === to.id ? t("Pick two different accounts", "Choisissez deux comptes différents") : null}
             required
           >
-            <MoneyAccountSelect value={toId} onChange={(id) => setToId(id)} />
+            <MoneyAccountSelect value={toId} onChange={(id, a) => { setToId(id); setToAmount(toSwitch.convert(toAmount, to?.currency, a?.currency)); }} />
+            <CurrencySwitchNote note={toSwitch.note} />
           </Field>
           <Field label={t(`Amount in${to ? ` (${curLabel(to.currency)})` : ""}`, `Montant reçu${to ? ` (${curLabel(to.currency)})` : ""}`)} error={francDecimalsError(t, to?.currency, toAmount)} required>
-            <Input inputMode="decimal" usd={to?.currency === "USD"} thousands={to?.currency === "CDF"} value={toAmount} onChange={(e) => { setToAmount(e.target.value); setToTouched(true); }} placeholder="0" />
+            <Input inputMode="decimal" usd={to?.currency === "USD"} thousands={to?.currency === "CDF"} value={toAmount} onChange={(e) => { setToAmount(e.target.value); setToTouched(true); toSwitch.clear(); }} placeholder="0" />
           </Field>
           <Field label={t("Note (optional)", "Note (facultatif)")} className="sm:col-span-2">
             <Input value={memo} onChange={(e) => setMemo(e.target.value)} />

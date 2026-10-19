@@ -147,7 +147,7 @@ function PriceList() {
         <Field label={t("Search", "Rechercher")} className="min-w-[200px] flex-1">
           <div className="relative">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-            <Input className="pl-8" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("Name, size, SKU…", "Nom, taille, code…")} />
+            <Input className="pl-8" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("Name, size, SKU…", "Nom, taille, code…")} aria-label={t("Name, size, SKU…", "Nom, taille, code…")} />
           </div>
         </Field>
         <Field label={t("Category", "Catégorie")} className="w-48">

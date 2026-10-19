@@ -98,13 +98,14 @@ export function SubmitButton({
   );
 }
 
-export function StatCard({ label, value, sub, tone }: { label: string; value: ReactNode; sub?: ReactNode; tone?: "good" | "bad" | "warn" | "neutral" }) {
+/** `dense`: one of five cards in a row (Caisse du jour), a size smaller from 1024 px so "−1 472,00 $" keeps its "$". */
+export function StatCard({ label, value, sub, tone, dense }: { label: string; value: ReactNode; sub?: ReactNode; tone?: "good" | "bad" | "warn" | "neutral"; dense?: boolean }) {
   return (
     <Card>
       <CardContent className="p-3 sm:p-4">
         <p className="text-[11px] font-medium uppercase tracking-wide text-muted-foreground sm:text-xs">{label}</p>
         {/* A size step down between 1024 and 1280 px, where four cards sit beside the menu: "13 680,10 $" stays on one line. */}
-        <p className={cn("mt-1 break-words text-lg font-semibold tabular sm:text-2xl lg:text-xl xl:text-2xl", tone === "good" && "text-green-800 dark:text-green-400", tone === "bad" && "text-destructive", tone === "warn" && "text-amber-800 dark:text-amber-400")}>{value}</p>
+        <p className={cn("mt-1 text-lg font-semibold tabular", dense ? "whitespace-nowrap sm:text-xl lg:text-lg xl:text-xl" : "break-words sm:text-2xl lg:text-xl xl:text-2xl", tone === "good" && "text-green-800 dark:text-green-400", tone === "bad" && "text-destructive", tone === "warn" && "text-amber-800 dark:text-amber-400")}>{value}</p>
         {sub && <div className="mt-1 text-xs text-muted-foreground">{sub}</div>}
       </CardContent>
     </Card>

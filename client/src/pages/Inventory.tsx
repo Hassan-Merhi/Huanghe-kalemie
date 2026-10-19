@@ -101,7 +101,7 @@ function SearchBox({ value, onChange, placeholder }: { value: string; onChange: 
   return (
     <div className="relative w-full sm:w-64">
       <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-      <Input className="pl-9" placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} />
+      <Input className="pl-9" placeholder={placeholder} aria-label={placeholder} value={value} onChange={(e) => onChange(e.target.value)} />
     </div>
   );
 }

@@ -48,6 +48,8 @@ export interface VariantRow {
   locationQty: string;
   /** One piece at the list price sells below cost: the till warns staff who may not sell below cost. */
   listBelowCost?: boolean;
+  /** Found by a motorcycle's chassis number: that bike, which the till picks on the line. */
+  matchedUnit?: { id: number; chassisNo: string | null; engineNo: string | null; color: string | null };
 }
 
 export interface ProductVariant {

@@ -313,6 +313,8 @@ interface SaleBody {
   change?: { accountId: number; amount: string; rate?: string } | null;
   /** The franc rate the till showed; the server refuses the sale if the day's rate has moved since. */
   tillRate?: string;
+  /** The customer's balance the till showed; the server refuses the sale if the avoir would now cover it otherwise. */
+  tillBalance?: string;
 }
 
 function ChassisPicker({ line, locationId, takenUnitIds, onChange }: { line: CartLine; locationId: number | null; takenUnitIds: Set<number>; onChange: (unitId: number | null) => void }) {
@@ -386,8 +388,14 @@ export default function POS() {
   const [locationId, setLocationId] = useState<number | null>(null);
   const [lines, setLines] = useState<CartLine[]>([]);
   const [discount, setDiscount] = useState("");
-  const [customer, setCustomer] = useState<Party | null>(null);
+  const [pickedCustomer, setCustomer] = useState<Party | null>(null);
   const [customerId, setCustomerId] = useState<number | null>(null);
+  /**
+   * The customer as the server has them now, read again on the live-rate interval: an avoir another till used
+   * up meanwhile (or a payment made since) shows here before the sale goes, not only on the receipt.
+   */
+  const partiesQ = useQuery<Party[]>({ queryKey: ["/api/parties"], refetchInterval: 60_000 });
+  const customer = (customerId ? partiesQ.data?.find((p) => p.id === customerId) : undefined) ?? pickedCustomer;
   const [note, setNote] = useState("");
   const [pays, setPays] = useState<PayRow[]>([]);
   const [handed, setHanded] = useState("");
@@ -431,13 +439,20 @@ export default function POS() {
   const available = (variantId: number, fallback: string) => d(stockQ.data?.find((v) => v.id === variantId)?.locationQty ?? fallback);
   const qtyInCart = (variantId: number) => lines.filter((l) => l.variant.id === variantId).reduce((s, l) => s.plus(d(l.qty)), d(0));
 
-  function addVariant(v: VariantRow) {
+  function addVariant(found: VariantRow) {
+    // A bike found by its chassis number comes with that chassis chosen; scanned again, it is not added twice.
+    const { matchedUnit, ...v } = found;
+    const unitId = v.tracksSerials && matchedUnit ? matchedUnit.id : null;
     setLines((ls) => {
+      if (unitId && ls.some((l) => l.unitId === unitId)) return ls;
       if (!v.tracksSerials) {
         const existing = ls.find((l) => l.variant.id === v.id);
         if (existing) return ls.map((l) => (l === existing ? { ...l, qty: d(l.qty).plus(1).toString() } : l));
       }
-      return [...ls, { key: keyRef.current++, variant: v, unitId: null, qty: "1", unitPrice: d(v.sellPrice).toFixed(2), lineDiscount: "" }];
+      // The same model scanned by chassis fills a line still waiting for its chassis before it adds one.
+      const waiting = unitId ? ls.find((l) => l.variant.id === v.id && !l.unitId) : undefined;
+      if (waiting) return ls.map((l) => (l === waiting ? { ...l, unitId } : l));
+      return [...ls, { key: keyRef.current++, variant: v, unitId, qty: "1", unitPrice: d(v.sellPrice).toFixed(2), lineDiscount: "" }];
     });
   }
   const updateLine = (key: number, patch: Partial<CartLine>) => setLines((ls) => ls.map((l) => (l.key === key ? { ...l, ...patch } : l)));
@@ -814,9 +829,10 @@ export default function POS() {
       if (user) removeDraft(user.id, sale.locationId, liveSlot.current);
       setDraftsSeen((n) => n + 1);
     },
-    // A refused sale may be one the day's rate moved under: the till shows the new rate at once.
+    // A refused sale may be one the day's rate or the customer's balance moved under: the till shows the new ones at once.
     onError: () => {
       void rateQ.refetch();
+      void partiesQ.refetch();
     },
   });
   const [confirmCross, setConfirmCross] = useState(false);
@@ -855,6 +871,8 @@ export default function POS() {
         : null,
       // Staff francs go at the day's rate: the server checks it is still the one the till worked with.
       ...(user?.role !== "owner" && rateNum.gt(0) ? { tillRate: rateNum.toString() } : {}),
+      // The avoir or debt the till worked with: the server checks the avoir still covers the credit as shown.
+      ...(customerId && customer ? { tillBalance: d(customer.balance).toFixed(2) } : {}),
     });
   }
   const submitRef = useRef(submit);

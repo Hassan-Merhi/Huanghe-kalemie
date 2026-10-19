@@ -296,7 +296,8 @@ function SideSub({ other, otherLabel, link }: { other: string; otherLabel: strin
 
 function PositionCard({ p, onTheWay, sides }: { p: NonNullable<DashboardData["position"]>; onTheWay: DashboardData["openContainers"]; sides?: DashboardData["contactBalances"] }) {
   const t = useT();
-  const purchase = onTheWay.reduce((s, c) => s.plus(d(c.purchaseUsd)), d(0));
+  // A draft container is listed below but its goods are not counted as on the way, as in the analytics.
+  const purchase = onTheWay.reduce((s, c) => (c.status === "draft" ? s : s.plus(d(c.purchaseUsd))), d(0));
   // Credit customers hold is owed by us, and an advance to suppliers is owed to us: each said as what it is,
   // contact by contact when known (the net is the same).
   const contactRows: [string, string, boolean][] = sides

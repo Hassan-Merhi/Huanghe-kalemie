@@ -832,13 +832,14 @@ export function registerRoutes(app: Express) {
     res.json({ ...c, supplierName: supplier?.name, preview, previewError });
   }));
   app.patch("/api/containers/:id", requireRole(...STAFF), asyncHandler(async (req, res) => {
-    const body = containerSchema.partial().parse(req.body);
+    // convertLinePrices: a new invoice currency also converts the saved lines' unit prices (draft lines only).
+    const { convertLinePrices, ...body } = containerSchema.partial().extend({ convertLinePrices: z.boolean().optional() }).parse(req.body);
     const updated = await db.transaction(async (tx) => {
       const [c] = await tx.select().from(containers).where(eq(containers.id, paramId(req))).for("update");
       if (!c) throw notFound("Container", "Conteneur introuvable");
       if (c.status === "finalized") {
         const allowed = Object.keys(body).every((k) => ["notes", "shipDate", "arrivalDate"].includes(k));
-        if (!allowed) throw conflict("This container is finalized. Only dates and notes can change.", "Ce conteneur est finalisé. Seules les dates et les notes peuvent être modifiées.");
+        if (!allowed || convertLinePrices) throw conflict("This container is finalized. Only dates and notes can change.", "Ce conteneur est finalisé. Seules les dates et les notes peuvent être modifiées.");
       }
       if (body.rateToUsd) await containerSvc.assertContainerRate(tx, body.currency ?? c.currency, body.rateToUsd, todayIso());
       if (body.supplierId !== undefined) {
@@ -852,9 +853,10 @@ export function registerRoutes(app: Express) {
         .set({ ...body, ...(body.number && { number: body.number.trim().toUpperCase() }), ...(body.currency && { currency: body.currency.toUpperCase() }) })
         .where(eq(containers.id, c.id))
         .returning();
+      if (convertLinePrices && row.currency !== c.currency) await containerSvc.convertLinePrices(tx, c.id, c.rateToUsd, row.currency, row.rateToUsd);
       return row;
     });
-    await audit(req, "update", "container", updated.id, body);
+    await audit(req, "update", "container", updated.id, convertLinePrices ? { ...body, convertLinePrices } : body);
     res.json(updated);
   }));
   app.put("/api/containers/:id/lines", requireRole(...STAFF), asyncHandler(async (req, res) => {
@@ -988,6 +990,8 @@ export function registerRoutes(app: Express) {
         change: paymentSchema.nullish(),
         // The franc rate the till showed: staff francs go at the day's rate, and a till on an older one is refused.
         tillRate: optionalRate,
+        // The customer's balance the till showed: a sale the avoir would now cover otherwise is refused.
+        tillBalance: optionalDecimal,
       })
       .parse(req.body);
     // Cashiers always sell today.
