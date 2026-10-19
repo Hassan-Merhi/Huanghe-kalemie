@@ -585,6 +585,14 @@ export function containersOnTheWay(tx: Tx) {
     .orderBy(asc(containers.arrivalDate));
 }
 
+/**
+ * What the dashboard and the analytics call "goods bought in containers on the way": a draft (not shipped, its
+ * invoice perhaps still being typed) is listed with the others but not counted. Read only.
+ */
+export function goodsOnTheWayUsd(rows: { status: string; purchaseUsd: string }[]) {
+  return sum(rows.filter((c) => c.status !== "draft").map((c) => c.purchaseUsd));
+}
+
 export async function dashboard(tx: Tx, today: string) {
   const month = today.slice(0, 7);
   const { from, to } = monthRange(month);

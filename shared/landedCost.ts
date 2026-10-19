@@ -160,3 +160,14 @@ export function computeLandedCost(
     landedTotalUsd: fobTotal.plus(expTotal).toFixed(2),
   };
 }
+
+/**
+ * A container's unit price once its invoice currency changes and its lines are converted (rates are USD per
+ * unit, as the container stores them): 45 000 FC at 1/2 808 become 16,025641 $, not 45 000 $. Francs are kept
+ * whole unless that would make a priced item free; other currencies to the six decimals a price is stored with.
+ */
+export function convertedUnitPrice(unitPrice: DecimalInput, fromRateToUsd: DecimalInput, toCurrency: string, toRateToUsd: DecimalInput): Decimal {
+  const exact = dec(unitPrice).times(dec(fromRateToUsd)).dividedBy(dec(toRateToUsd));
+  const price = exact.toDecimalPlaces(toCurrency === "CDF" ? 0 : 6, Decimal.ROUND_HALF_UP);
+  return price.isZero() && exact.gt(0) ? exact.toDecimalPlaces(6, Decimal.ROUND_HALF_UP) : price;
+}
