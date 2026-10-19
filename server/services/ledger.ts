@@ -512,7 +512,7 @@ async function assertNotOverdrawn(tx: Tx, account: typeof accounts.$inferSelect,
  * Refuse moving a contact's yuan (a payment, a refund, a reversal, an offload) dated before the latest
  * entry already on their yuan. Yuan taken out are valued at their average cost as of the posting's date
  * (see costForeignOutflows), while what a container's reversal takes back follows the order postings were
- * made in (see yuanPool): dated back, a payment would be costed against yuan a later entry already took,
+ * made in (see foreignPool): dated back, a payment would be costed against yuan a later entry already took,
  * and leave dollars on no yuan. On the same day or later, the two orders are one. Everyone, the owner too:
  * an entry for an earlier day is dated on the day of the latest one instead. The caller holds the
  * contacts' locks, so no later one is posted in between.
@@ -538,7 +538,7 @@ async function assertYuanInOrder(tx: Tx, values: { accountId: number; partyId: n
         // Only what moved yuan, as above: a month-end revaluation (and the reversal that undoes it when the
         // month is reopened, and those settled since) moves dollars alone, so a reopened month still takes
         // the yuan work dated before its end. Their dollars spread over the yuan held in the order posted
-        // (see yuanPool), and the month closed again revalues what is held by then, in both orders alike.
+        // (see foreignPool), and the month closed again revalues what is held by then, in both orders alike.
         sql`coalesce(${journalLines.nativeAmount}, 0) <> 0`,
         ne(journals.type, "revaluation"),
       ),
@@ -646,7 +646,7 @@ async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string, 
         v.debit = value;
       }
       // Each line's own share, so a journal settling two contacts' yuan (or paid from a franc drawer) keeps
-      // apart what each was given (see yuanPool).
+      // apart what each was given (see foreignPool).
       v.fxUsd = v.debit.minus(v.credit).minus(given);
     } else if (v.partyId === null) cameIn.set(key, (cameIn.get(key) ?? new Decimal(0)).plus(native));
     bal.native = bal.native.plus(native);
@@ -669,6 +669,8 @@ async function costForeignOutflows(tx: Tx, values: PendingLine[], date: string, 
     const all = await foreignBalance(tx, k.accountId, k.partyId, k.currency);
     const asOf = await foreignBalance(tx, k.accountId, k.partyId, k.currency, date);
     if (!all.native.equals(asOf.native) || !all.usd.equals(asOf.usd)) continue;
+    // Dollars of the other sign (a debit brings francs in) cannot carry the francs off: they stay, at none.
+    if (!bal.usd.isZero() && bal.usd.isNegative() !== bal.native.isNegative()) continue;
     values.push({
       accountId: k.accountId,
       debit: bal.usd.isNegative() ? bal.usd.abs() : new Decimal(0),
@@ -953,11 +955,16 @@ export async function revaluedDollarLines(tx: Tx, keys: RevaluedKey[], date: str
  * bills (owed again) and from the claim. The claim and yuan owed never stand side by side: they meet
  * as soon as both exist.
  * The pool's value counts claimed yuan at what was paid for them (their lot's dollars less the exchange
- * difference its journal booked) and yuan owed at what the books carry them at: the bill's own dollars,
- * or, owed again once a payment is undone, the dollars that payment took them out at.
+ * difference its journal booked, plus what a month's revaluation left on them since: see revalue) and yuan
+ * owed at what the books carry them at: the bill's own dollars, or, owed again once a payment is undone,
+ * the dollars that payment took them out at.
+ * A supplier's francs are replayed the same way (see foreignPool): a franc bill, its payments and its
+ * reversal meet as the yuan do, so a reversal takes with the bill its share of what a month-end
+ * revaluation left on the francs, and the francs paid for it come back at what was paid.
  */
 class YuanPool {
-  lots = new Map<number, { paid: Decimal; claim: Decimal }>();
+  /** `reval`: what the months' revaluations left on the lot's claimed yuan (see revalue). */
+  lots = new Map<number, { paid: Decimal; claim: Decimal; reval: Decimal }>();
   /**
    * Yuan owed, oldest bill first, at the dollars per yuan they are carried at. `marked`: owed at a month's
    * end (see mark), so they carry their part of that month's revaluation wherever they go.
@@ -972,9 +979,17 @@ class YuanPool {
 
   value(): Decimal {
     let v = new Decimal(0);
-    for (const l of this.lots.values()) v = v.plus(l.claim.times(l.paid));
+    for (const l of this.lots.values()) v = v.plus(l.claim.times(l.paid)).plus(l.reval);
     for (const s of this.open) v = v.minus(s.q.times(s.rate));
     return v;
+  }
+
+  /** Yuan held: claimed less owed, as the books' balance counts them. */
+  native(): Decimal {
+    let n = new Decimal(0);
+    for (const l of this.lots.values()) n = n.plus(l.claim);
+    for (const s of this.open) n = n.minus(s.q);
+    return n;
   }
 
   /**
@@ -1008,6 +1023,8 @@ class YuanPool {
     claims.forEach(([id, l], i) => {
       const t = i === claims.length - 1 ? take.minus(taken) : take.times(l.claim).dividedBy(total);
       taken = taken.plus(t);
+      // Taken out at the claim's average cost, as the books do: their part of the revaluation goes with them.
+      l.reval = l.reval.minus(l.reval.times(t).dividedBy(l.claim));
       l.claim = l.claim.minus(t);
       this.portions.push({ lot: id, bill, q: t, rate, marked, carries: false });
     });
@@ -1027,7 +1044,7 @@ class YuanPool {
   }
 
   addLot(id: number, q: Decimal, book: Decimal, gain: Decimal) {
-    const lot = { paid: book.minus(gain).dividedBy(q), claim: new Decimal(0) };
+    const lot = { paid: book.minus(gain).dividedBy(q), claim: new Decimal(0), reval: new Decimal(0) };
     this.lots.set(id, lot);
     const met = { usd: new Decimal(0) };
     lot.claim = this.payOpen(id, q, book.dividedBy(q), met);
@@ -1043,6 +1060,11 @@ class YuanPool {
     if (left.gt(0)) this.reopen(id, left, rate);
   }
 
+  /**
+   * A payment undone: its yuan leave the bills (owed again) and the claim. What a revaluation left on its
+   * claimed yuan goes with them: those yuan are claimed no more, so the books hold none of it (see
+   * yuanTrueUpLines, which moves it to exchange differences with the undoing).
+   */
   removeLot(id: number) {
     for (const p of this.portions.filter((x) => x.lot === id)) this.reopen(p.bill, p.q, p.rate, p.marked);
     this.portions = this.portions.filter((x) => x.lot !== id);
@@ -1064,13 +1086,21 @@ class YuanPool {
   }
 
   /**
-   * A month-end revaluation restates the yuan still owed (in proportion); a claim keeps what it holds. So
-   * do the dollars the books move on them when the month is reopened or closed again (see restateSettled).
+   * A month-end revaluation restates the yuan still owed (in proportion), else the yuan claimed: a claim
+   * keeps what it holds, and what the revaluation leaves on it goes with the yuan as they are taken out at
+   * their cost (see takeClaim), or to exchange differences with the payment that is undone (see
+   * removeLot). So do the dollars the books move on them when the month is reopened or closed again (see
+   * restateSettled).
    */
   revalue(usd: Decimal) {
     const owed = sum(this.open.map((s) => s.q));
-    if (!owed.gt(0)) return;
-    for (const s of this.open) s.rate = s.rate.minus(usd.dividedBy(owed));
+    if (owed.gt(0)) {
+      for (const s of this.open) s.rate = s.rate.minus(usd.dividedBy(owed));
+      return;
+    }
+    const claimed = sum([...this.lots.values()].map((l) => l.claim));
+    if (!claimed.gt(0)) return;
+    for (const l of this.lots.values()) l.reval = l.reval.plus(usd.times(l.claim).dividedBy(claimed));
   }
 
   /**
@@ -1098,12 +1128,17 @@ class YuanPool {
   }
 }
 
-/** Lines the books write that move dollars on a supplier's yuan, not the yuan they settle (see yuanPool). */
+/** Lines the books write that move dollars on a supplier's yuan, not the yuan they settle (see foreignPool). */
 const POOL_SKIPPED_KINDS = new Set<string>(["revalued", "residue", "settled_fx"]);
 const poolSkipped = (l: { kind: string | null }) => !!l.kind && POOL_SKIPPED_KINDS.has(l.kind);
 
 /**
- * Replay a supplier's yuan on `payables` into a YuanPool, every journal in the order it was posted.
+ * Replay a supplier's yuan (or francs: `currency`) on `payables` into a YuanPool, every journal in the
+ * order it was posted. Francs in the order of their dates instead (posted in that order on a day): yuan
+ * move dated no earlier than the latest that moved (see assertYuanInOrder), francs can be dated back
+ * (an advance, salaries typed for an earlier day: see francsMetAfter), and a month's revaluation
+ * restates the francs owed at its end, whatever was posted since, as its closing and reopening count
+ * them (see restateSettled).
  * A payment's exchange difference is the one its journal booked on this supplier's own yuan lines (each
  * line keeps its own, so a voucher that also pays another supplier's yuan, or pays from a franc drawer,
  * still counts this one's). A journal posted before lines kept theirs counts the one its journal booked
@@ -1117,10 +1152,11 @@ const poolSkipped = (l: { kind: string | null }) => !!l.kind && POOL_SKIPPED_KIN
  * `markAfter` marks the yuan owed at the end of that day (see YuanPool.mark); `marks` gets, for each
  * journal, the marked yuan owed before and after it, and whether it took a bill away.
  */
-async function yuanPool(
+async function foreignPool(
   tx: Tx,
   payables: number,
   partyId: number,
+  currency: ForeignCurrency,
   opts: { markAfter?: string; marks?: Map<number, { before: Decimal; after: Decimal; removal: boolean }> } = {},
 ) {
   const rows = await tx
@@ -1139,9 +1175,9 @@ async function yuanPool(
     })
     .from(journalLines)
     .innerJoin(journals, eq(journals.id, journalLines.journalId))
-    .where(and(eq(journalLines.accountId, payables), eq(journalLines.partyId, partyId), eq(journalLines.currency, "CNY")))
-    .orderBy(journals.id, journalLines.id);
-  // The lines of each journal, gathered once (in posting order, as the rows come).
+    .where(and(eq(journalLines.accountId, payables), eq(journalLines.partyId, partyId), eq(journalLines.currency, currency)))
+    .orderBy(...(currency === "CDF" ? [journals.date, journals.id, journalLines.id] : [journals.id, journalLines.id]));
+  // The lines of each journal, gathered once (in the order replayed, as the rows come).
   const byJournal = new Map<number, typeof rows>();
   for (const r of rows) {
     const list = byJournal.get(r.journalId);
@@ -1197,7 +1233,7 @@ async function yuanPool(
     if (native.isZero()) return false;
     const kept = own.some((r) => r.fxUsd != null);
     const rest = others.get(id) ?? [];
-    const clean = kept || !rest.some((l) => l.currency !== "USD" && !(l.accountId === payables && l.partyId === partyId && l.currency === "CNY"));
+    const clean = kept || !rest.some((l) => l.currency !== "USD" && !(l.accountId === payables && l.partyId === partyId && l.currency === currency));
     const gain = kept
       ? sum(own.map((r) => dec(r.fxUsd ?? 0)))
       : clean
@@ -1242,17 +1278,17 @@ async function yuanPool(
  * those coming back owed (a payment undone) comes back with them: so reopening that month takes back,
  * or closing it again gives back, the part of the revaluation the yuan still owed carry (see restateSettled).
  */
-export async function yuanMarkedOwed(tx: Tx, payables: number, partyId: number, monthEnd: string) {
+export async function foreignMarkedOwed(tx: Tx, payables: number, partyId: number, currency: ForeignCurrency, monthEnd: string) {
   const marks = new Map<number, { before: Decimal; after: Decimal; removal: boolean }>();
-  await yuanPool(tx, payables, partyId, { markAfter: monthEnd, marks });
+  await foreignPool(tx, payables, partyId, currency, { markAfter: monthEnd, marks });
   return marks;
 }
 
-/** A supplier's yuan lines a journal moves (as YuanPool counts them): those its undoing trues up. */
-async function yuanSuppliersOf(tx: Tx, lines: (typeof journalLines.$inferSelect)[]) {
+/** A supplier's yuan (or franc) lines a journal moves (as YuanPool counts them): those its undoing trues up. */
+async function foreignPartiesOf(tx: Tx, lines: (typeof journalLines.$inferSelect)[], currency: ForeignCurrency) {
   const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
   const suppliers = Array.from(
-    new Set(lines.filter((l) => l.accountId === payables && l.partyId && l.currency === "CNY" && !dec(l.nativeAmount ?? 0).isZero() && !poolSkipped(l)).map((l) => l.partyId!)),
+    new Set(lines.filter((l) => l.accountId === payables && l.partyId && l.currency === currency && !dec(l.nativeAmount ?? 0).isZero() && !poolSkipped(l)).map((l) => l.partyId!)),
   );
   return { payables, suppliers };
 }
@@ -1269,10 +1305,10 @@ export async function assertUndoKeepsRefunds(tx: Tx, journalId: number): Promise
   // Every contact the undoing writes to, all at once and in id order (see lockBalances): the reversal
   // takes them again, and a supplier's lock alone first would take a lower one after it.
   await lockBalances(tx, { parties: lines.map((l) => l.partyId) });
-  const { payables, suppliers } = await yuanSuppliersOf(tx, lines);
+  const { payables, suppliers } = await foreignPartiesOf(tx, lines, "CNY");
   await assertUndoKeepsAdvanceRefunds(tx, journalId, lines, payables);
   for (const partyId of suppliers) {
-    const { pool, kinds, refunds } = await yuanPool(tx, payables, partyId);
+    const { pool, kinds, refunds } = await foreignPool(tx, payables, partyId, "CNY");
     if (kinds.get(journalId)?.kind !== "lot") continue;
     const refunded = sum(pool.portions.filter((p) => p.lot === journalId && refunds.has(p.bill)).map((p) => p.q));
     if (!refunded.gt(0)) continue;
@@ -1334,21 +1370,26 @@ async function assertUndoKeepsAdvanceRefunds(tx: Tx, journalId: number, lines: (
  * (or at another rate) takes that exchange difference back from gains or losses, so refunding exactly
  * what was paid closes the claim; a payment undone after such a takeback gives its share back, so it
  * is not booked off twice; claimed yuan that meet yuan owed again (a payment undone while another
- * container's yuan are claimed) book their difference as the payment that settled them did. The lines
- * move no yuan and no money, only dollars between the supplier's yuan and exchange differences. Never
- * when the yuan left would carry dollars of the other sign. The caller holds the supplier's lock.
+ * container's yuan are claimed) book their difference as the payment that settled them did. A month's
+ * revaluation on the yuan still owed goes with the bill that leaves, in the share of its yuan (so the
+ * yuan still owed keep theirs); on yuan claimed, it goes with the payment undone (the yuan are claimed no
+ * more). The same for a supplier's francs (`currency` "CDF": a franc bill, its payments, its reversal).
+ * The lines move no yuan and no money, only dollars between the supplier's yuan and exchange
+ * differences. Never when the yuan left would carry dollars of the other sign. The caller holds the
+ * supplier's lock.
  */
 export async function yuanTrueUpLines(
   tx: Tx,
-  input: { payables: number; partyId: number } & ({ bill: number; native: Decimal; usd: Decimal; rate: DecimalInput } | { undo: number }),
+  input: { payables: number; partyId: number; currency?: ForeignCurrency } & ({ bill: number; native: Decimal; usd: Decimal; rate: DecimalInput } | { undo: number }),
 ): Promise<PostLine[]> {
   const { payables, partyId } = input;
-  const { pool, kinds } = await yuanPool(tx, payables, partyId);
+  const currency = input.currency ?? "CNY";
+  const { pool, kinds } = await foreignPool(tx, payables, partyId, currency);
   let extra: Decimal;
   let move: Decimal;
   let moved: Decimal;
   let rate: string;
-  const bal = await foreignBalance(tx, payables, partyId, "CNY");
+  const bal = await foreignBalance(tx, payables, partyId, currency);
   if ("bill" in input) {
     // The bill's own dollars leave with it: only its paid yuan's worth moves.
     if (!pool.bills.has(input.bill)) return [];
@@ -1366,19 +1407,45 @@ export async function yuanTrueUpLines(
     move = undone.usd.negated();
     moved = undone.native.negated();
     rate = undone.rate;
+    if (currency === "CDF") {
+      // What its francs settled of a bill dated after them leaves with it too (see reverseJournal): the
+      // bill is then owed as booked, as the pool reopens it.
+      const [met] = await tx
+        .select({ usd: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)` })
+        .from(journalLines)
+        .innerJoin(journals, eq(journals.id, journalLines.journalId))
+        .where(
+          and(
+            eq(journals.sourceType, FRANCS_MET_SOURCE),
+            eq(journals.sourceId, input.undo),
+            isNull(journals.reversedByJournalId),
+            isNull(journals.reversesJournalId),
+            eq(journalLines.accountId, payables),
+            eq(journalLines.partyId, partyId),
+            eq(journalLines.currency, currency),
+          ),
+        );
+      move = move.minus(dec(met.usd));
+    }
     extra = cents(pool.value().minus(before).minus(move));
   }
   // The cents the books' average costs rounded off on the way go too, so refunding exactly what was
-  // paid closes the claim. Only cents: more is not rounding, and stays.
-  const exact = cents(pool.value()).minus(bal.usd).minus(move);
-  if (exact.minus(extra).abs().lte("0.05")) extra = exact;
-  if (extra.isZero()) return [];
+  // paid closes the claim. Only cents: more is not rounding, and stays. Francs can be posted dated back
+  // (see francsMetAfter) and a residue of them cleared (see costForeignOutflows), so the pool's francs
+  // must be the books' for its cents to be theirs.
   const native = bal.native.plus(moved);
+  const exact = cents(pool.value()).minus(bal.usd).minus(move);
+  if (exact.minus(extra).abs().lte("0.05") && (currency === "CNY" || pool.native().equals(native))) extra = exact;
+  // Francs the books carry at other than their average cost (a part paid in dollars at the day's rate
+  // leaves the rest with what the rate does not explain: see contactLines) are not the pool's: what it
+  // would move is left to the balance's emptying or the month's end (see revaluedDollarLines).
+  else if (currency === "CDF") return [];
+  if (extra.isZero()) return [];
   const usd = bal.usd.plus(move).plus(extra);
   if ((native.gt(0) && !usd.gt(0)) || (native.lt(0) && !usd.lt(0))) return [];
   const fx = await systemAccountId(tx, SYSTEM_ACCOUNTS.fx);
   return [
-    { accountId: payables, partyId, debit: extra.isPositive() ? extra : 0, credit: extra.isNegative() ? extra.abs() : 0, currency: "CNY", nativeAmount: "0.00", rate, memo: SETTLED_FX_MEMO, kind: "settled_fx" },
+    { accountId: payables, partyId, debit: extra.isPositive() ? extra : 0, credit: extra.isNegative() ? extra.abs() : 0, currency, nativeAmount: "0.00", rate, memo: SETTLED_FX_MEMO, kind: "settled_fx" },
     { accountId: fx, debit: extra.isNegative() ? extra.abs() : 0, credit: extra.isPositive() ? extra : 0, memo: SETTLED_FX_MEMO, kind: "settled_fx" },
   ];
 }
@@ -1399,14 +1466,23 @@ export async function reverseJournal(
     );
   }
   const lines = await tx.select().from(journalLines).where(eq(journalLines.journalId, journalId));
-  // A supplier's yuan it paid or billed: what a container's reversal took back since is given back
-  // with them (see yuanTrueUpLines). A period close's own reversals move no yuan.
+  // A supplier's yuan (or francs) it paid or billed: what a container's reversal took back since is given
+  // back with them, and a franc bill undone (a container's reversal does its own: see reverseContainer)
+  // takes its share of the revaluations with it (see yuanTrueUpLines). A period close's own reversals
+  // move no yuan.
   const trueUp: PostLine[] = [];
   if (!opts.skipPeriodCheck) {
     // Every contact it writes to, in id order, before the suppliers' yuan are read (see lockBalances).
     await lockBalances(tx, { parties: lines.map((l) => l.partyId) });
-    const { payables, suppliers } = await yuanSuppliersOf(tx, lines);
-    for (const partyId of suppliers) trueUp.push(...(await yuanTrueUpLines(tx, { payables, partyId, undo: journalId })));
+    for (const currency of ["CNY", "CDF"] as const) {
+      const { payables, suppliers } = await foreignPartiesOf(tx, lines, currency);
+      // Not an employee's francs: salaries are paid in parts, in dollars and in francs, often dated back, so
+      // the books carry them at other than their average cost (see contactLines) and the pool's worth is
+      // not theirs; a cancelled run or an advance undone leaves what the rate left to the balance's
+      // emptying (see revaluedDollarLines, clearFrancResidue).
+      const employees = currency === "CDF" && suppliers.length ? new Set((await tx.select({ id: parties.id }).from(parties).where(and(inArray(parties.id, suppliers), eq(parties.type, "employee")))).map((p) => p.id)) : new Set<number>();
+      for (const partyId of suppliers) if (!employees.has(partyId)) trueUp.push(...(await yuanTrueUpLines(tx, { payables, partyId, currency, undo: journalId })));
+    }
   }
 
   const reversalId = await postJournal(tx, {
@@ -1703,6 +1779,11 @@ export async function contactLines(
     // Part of them: whole francs (down, so the dollars never settle more than they buy), and the dollars
     // they are worth: a part of a franc left owed could never be paid off.
     portion = Decimal.min(nativeUsd.times(rate).toDecimalPlaces(0, Decimal.ROUND_FLOOR), fc);
+    // Unless the francs still owed today beyond them (a bill since reversed leaves fewer owed than on
+    // the payment's day) are worth under half a cent: they could never be paid either, so they go too.
+    const now = input.date < shopToday() ? owed(await foreignBalance(tx, input.accountId, input.partyId, "CDF"), "native") : fc;
+    const left = now.minus(portion);
+    if (left.gt(0) && left.dividedBy(rate).lt("0.005")) portion = Decimal.min(now, fc);
     portionUsd = Decimal.min(cents(portion.dividedBy(rate)), nativeUsd);
   }
   if (portionUsd.isZero() || portion.isZero()) return plain;

@@ -60,7 +60,7 @@ import * as reports from "./services/reports";
 import * as checks from "./services/checks";
 import * as backup from "./services/backup";
 import { getSetting } from "./setup";
-import { assertNotFuture, assertPeriodOpen, assertUndoKeepsRefunds, cnyRateFor, rateFor, reverseJournal, setExchangeRate } from "./services/ledger";
+import { assertNotFuture, assertPeriodOpen, assertUndoKeepsRefunds, cnyRateFor, FRANCS_MET_SOURCE, rateFor, reverseJournal, setExchangeRate } from "./services/ledger";
 import { containerNumberKey } from "@shared/containerNumber";
 import { availableOn, lockVariants, transferStock } from "./services/stock";
 import * as vouchers from "./services/vouchers";
@@ -675,6 +675,14 @@ export function registerRoutes(app: Express) {
     if (!j) throw notFound("Journal", "Écriture introuvable");
     if (!["manual", "opening", "transfer", "customer_receipt", "supplier_payment", "partner_contribution", "partner_withdrawal", "payment", "receipt"].includes(j.type)) {
       throw badRequest("Cancel this from its own screen (sale, expense, container or month close)", "Annulez ceci depuis son propre écran (vente, dépense, conteneur ou clôture du mois)");
+    }
+    // The books' own journals on a payment's francs or advance go with that payment or bill, never alone:
+    // undone on their own they leave dollars on no francs, which a payment would then pay out.
+    if (j.sourceType === FRANCS_MET_SOURCE || j.sourceType?.startsWith("advance_")) {
+      throw conflict(
+        "This entry is the books' own, applying francs or an advance to a bill. Cancel the payment or the bill it belongs to instead.",
+        "Cette écriture est passée par la comptabilité elle-même (francs ou avance imputés sur une facture). Annulez plutôt le paiement ou la facture dont elle dépend.",
+      );
     }
     const reversalId = await db.transaction(async (tx) => {
       await assertUndoKeepsRefunds(tx, j.id);
