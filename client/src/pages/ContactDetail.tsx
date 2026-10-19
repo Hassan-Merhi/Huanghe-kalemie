@@ -30,6 +30,7 @@ import { advanceToYuan, paymentSplit, yuanOnDate, type PaymentPart } from "@/lib
 import Decimal from "decimal.js";
 import { BalanceWords, foreignText, PartyDialog, type ForeignBalance } from "@/pages/Contacts";
 import { useSystemText } from "@/lib/systemText";
+import { mergeAdvanceRows } from "@/lib/statement";
 
 interface StatementRow {
   journalId: number;
@@ -137,6 +138,8 @@ export default function ContactDetail() {
   if (q.isLoading || (cashier && customers.isLoading)) return <Loading />;
   if (q.error || !q.data) return <ErrorText error={q.error ?? t("Not found", "Introuvable")} />;
   const { party, rows, balance, foreign } = q.data;
+  // An advance applied reads as one row that moves nothing (display only; the payment dialog keeps every line).
+  const shownRows = mergeAdvanceRows(rows);
   const isCustomer = party.type === "customer";
   const typeLabel = t(PARTY_LABELS[party.type][0], PARTY_LABELS[party.type][1]);
   const canPay = isCustomer ? can("manager", "cashier") : can("manager");
@@ -223,7 +226,7 @@ export default function ContactDetail() {
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {rows.map((r, i) => (
+                  {shownRows.map((r, i) => (
                     <TableRow key={`${r.journalId}-${i}`}>
                       <TableCell className="whitespace-nowrap">{fmtDate(r.date)}</TableCell>
                       <TableCell className="whitespace-nowrap font-mono text-xs">
@@ -241,7 +244,17 @@ export default function ContactDetail() {
                             {money(d(r.nativeAmount).abs().toString(), r.currency)}
                           </span>
                         )}
-                        {r.tendered && (
+                        {r.advanceUsd && (
+                          <span className="block text-xs text-muted-foreground tabular" data-testid="advance-applied">
+                            {r.advanceNative?.length
+                              ? t(
+                                  `${r.advanceNative.map((n) => money(n.amount, n.currency)).join(" · ")} settled from the ${usd(r.advanceUsd)} advance (balance unchanged)`,
+                                  `${r.advanceNative.map((n) => money(n.amount, n.currency)).join(" · ")} réglés par ${usd(r.advanceUsd)} d'avance (solde inchangé)`,
+                                )
+                              : t(`${usd(r.advanceUsd)} of advance (balance unchanged)`, `${usd(r.advanceUsd)} d'avance (solde inchangé)`)}
+                          </span>
+                        )}
+                        {!r.advanceUsd && r.tendered && (
                           <span className="block text-xs text-muted-foreground tabular" data-testid="tendered">
                             {t(`paid ${cdf(r.tendered)}`, `payé ${cdf(r.tendered)}`)}
                           </span>

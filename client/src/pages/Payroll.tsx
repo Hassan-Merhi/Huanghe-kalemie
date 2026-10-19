@@ -30,7 +30,7 @@ import { useI18n, useT, count } from "@/lib/i18n";
 import { curLabel, cdf, d, date as fmtDate, money, number, todayLocal, typedNumberOk, usd } from "@/lib/format";
 import type { Account, Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
-import { PartyDialog } from "@/pages/Contacts";
+import { foreignText, PartyDialog } from "@/pages/Contacts";
 
 // ---------------------------------------------------------------- Types and helpers
 
@@ -1229,7 +1229,13 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
                       <Link href={`/contacts/${e.id}`} className="hover:underline">{e.name}</Link>
                       {e.position && <span className="block text-xs text-muted-foreground">{e.position}</span>}
                     </TableCell>
-                    <TableCell className="text-right"><Num className="font-medium text-amber-800 dark:text-amber-400">{usd(e.balance)}</Num></TableCell>
+                    <TableCell className="text-right">
+                      <Num className="font-medium text-amber-800 dark:text-amber-400">{usd(e.balance)}</Num>
+                      {/* An advance given in francs is repaid in francs: said as on the contact page ("Dont 107 600 FC"). */}
+                      {(e.foreign ?? []).filter((f) => !d(f.native).isZero()).map((f) => (
+                        <span key={f.currency} className="block text-xs text-muted-foreground">{t("Of which", "Dont")} {foreignText(f, t)}</span>
+                      ))}
+                    </TableCell>
                   </TableRow>
                 ))}
               </TableBody>

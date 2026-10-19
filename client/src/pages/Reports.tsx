@@ -411,11 +411,13 @@ function DailyCash() {
               {/* Led by the sales still standing less the day's returns, the dashboard's and the Sales list's figure;
                   the gross sales, cancelled ones included, read below it with the day's cancellations. */}
               <StatCard
+                dense={onAvoir.gt(0)}
                 label={t("Sales", "Ventes")}
                 value={r.netCount ?? r.count}
                 sub={r.netCount != null && r.count > r.netCount ? `+ ${count(t, r.count - r.netCount, ["cancelled", "cancelled"], ["annulée", "annulées"])}` : undefined}
               />
               <StatCard
+                dense={onAvoir.gt(0)}
                 label={t("Total sold", "Total vendu")}
                 value={usd(r.netTotal ?? r.total)}
                 sub={r.netTotal != null && (r.voidsCount > 0 || !d(r.total).eq(r.netTotal)) ? (
@@ -426,9 +428,9 @@ function DailyCash() {
                   </>
                 ) : undefined}
               />
-              <StatCard label={t("Returns", "Retours")} value={`−${usd(r.returnsTotal)}`} sub={count(t, r.returnsCount, ["return", "returns"], ["retour", "retours"])} />
-              <StatCard label={t("On credit", "À crédit")} value={usd(owedCredit.toFixed(2))} />
-              {onAvoir.gt(0) && <StatCard label={t("From customers' credit", "Sur l'avoir")} value={usd(onAvoir.toFixed(2))} sub={t("paid ahead, nothing owed", "payé d'avance, rien de dû")} />}
+              <StatCard dense={onAvoir.gt(0)} label={t("Returns", "Retours")} value={d(r.returnsTotal).gt(0) ? `−${usd(r.returnsTotal)}` : usd(r.returnsTotal)} sub={count(t, r.returnsCount, ["return", "returns"], ["retour", "retours"])} />
+              <StatCard dense={onAvoir.gt(0)} label={t("On credit", "À crédit")} value={usd(owedCredit.toFixed(2))} />
+              {onAvoir.gt(0) && <StatCard dense={onAvoir.gt(0)} label={t("From customers' credit", "Sur l'avoir")} value={usd(onAvoir.toFixed(2))} sub={t("paid ahead, nothing owed", "payé d'avance, rien de dû")} />}
             </div>
             <div className="overflow-x-auto">
               <Table>

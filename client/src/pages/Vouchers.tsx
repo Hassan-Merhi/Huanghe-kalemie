@@ -25,7 +25,7 @@ import { AccountSelect, CurrencySwitchNote, MoneyAccountSelect, PartySelect, Rat
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api, invalidateAll } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { cdf, convertedNote, convertTypedAmount, curLabel, d, money, number, pct, qty as fmtQty, todayLocal, usd } from "@/lib/format";
+import { cdf, convertedNote, convertTypedAmount, curLabel, d, money, number, pct, qty as fmtQty, todayLocal, typedNumberOk, usd } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import type { Account, Party, Settings } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -912,8 +912,24 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
   const diff = value && received ? value.toDecimalPlaces(2).minus(received.toDecimalPlaces(2)) : null;
   const balOf = (a: Account | null) => {
     const b = a && balances.data?.find((x) => x.id === a.id);
-    return b ? money(a.currency === "CDF" ? b.nativeBalance : b.balance, a.currency) : null;
+    return b ? d(a.currency === "CDF" ? b.nativeBalance : b.balance) : null;
   };
+  // "Solde 0,00 $ → après −100,00 $", as on the payment forms; the money leaving an account it is not in is
+  // stopped here ("Fonds insuffisants"), as the server refuses it. "→ après" only once a usable amount is typed.
+  const balanceHint = (a: Account | null, amount: string, sign: 1 | -1) => {
+    const bal = balOf(a);
+    if (!a || !bal) return undefined;
+    const x = d(amount);
+    const usable = typedNumberOk(amount) && !francDecimalsError(t, a.currency, amount) && x.gt(0);
+    return usable
+      ? `${t("Balance", "Solde")} ${money(bal.toFixed(2), a.currency)} → ${t("after", "après")} ${money(bal.plus(x.times(sign)).toFixed(2), a.currency)}`
+      : `${t("Balance", "Solde")} ${money(bal.toFixed(2), a.currency)}`;
+  };
+  const fromBal = balOf(from);
+  const fromAfter = from && fromBal && typedNumberOk(fromAmount) && fa.gt(0) ? fromBal.minus(fa) : null;
+  const short = from && fromAfter && fromAfter.lt(0)
+    ? t(`Not enough money: the balance would be ${money(fromAfter.toFixed(2), from.currency)}`, `Fonds insuffisants\u00a0: le solde serait de ${money(fromAfter.toFixed(2), from.currency)}`)
+    : null;
 
   const m = useApiMutation<Record<string, unknown>, { id: number }>("POST", "/api/money/transfer", {
     success: t("Transfer recorded", "Transfert enregistré"),
@@ -937,7 +953,7 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
             ? t("Enter the amount in", "Saisissez le montant reçu")
             : rateFar
               ? t("Check the two amounts: their rate is far from today's", "Vérifiez les deux montants\u00a0: leur taux est loin de celui du jour")
-              : null;
+              : short;
 
   function payload(): Record<string, unknown> {
     return {
@@ -965,7 +981,7 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
           <Field label={t("Date", "Date")} className="sm:col-span-2 sm:max-w-[12rem]">
             <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
           </Field>
-          <Field label={t("From account", "Du compte")} required hint={balOf(from) ? `${t("Balance", "Solde")} ${balOf(from)}` : undefined}>
+          <Field label={t("From account", "Du compte")} required hint={balanceHint(from, fromAmount, -1)} error={short}>
             <MoneyAccountSelect value={fromId} onChange={(id, a) => { setFromId(id); setFromAmount(fromSwitch.convert(fromAmount, from?.currency, a?.currency)); }} />
             <CurrencySwitchNote note={fromSwitch.note} />
           </Field>
@@ -974,7 +990,7 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
           </Field>
           <Field
             label={t("To account", "Vers le compte")}
-            hint={balOf(to) ? `${t("Balance", "Solde")} ${balOf(to)}` : undefined}
+            hint={balanceHint(to, toAmount, 1)}
             error={from && to && from.id === to.id ? t("Pick two different accounts", "Choisissez deux comptes différents") : null}
             required
           >
