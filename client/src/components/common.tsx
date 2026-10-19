@@ -1,4 +1,4 @@
-import { Fragment, cloneElement, isValidElement, useEffect, useId, type ComponentProps, type ReactElement, type ReactNode } from "react";
+import { Fragment, cloneElement, isValidElement, useEffect, useId, useRef, type ComponentProps, type ReactElement, type ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useT } from "@/lib/i18n";
@@ -6,7 +6,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
 import { FieldLabelContext } from "@/components/ui/field-label";
 import { cn } from "@/lib/utils";
-import { ambiguousReadings, money, refusedUnit, unitMismatchText } from "@/lib/format";
+import { ambiguousReadings, exactMoney, money, refusedUnit, unitMismatchText } from "@/lib/format";
 
 export function PageHeader({ title, description, actions }: { title: string; description?: ReactNode; actions?: ReactNode }) {
   // Each page gets its own browser tab title: "Caisse · Huanghe Kalemie".
@@ -157,8 +157,37 @@ export function unclearAmount(t: (en: string, fr: string) => string, value: stri
   if (unit) return unitMismatchText(unit, currency === "CDF" || currency === "CNY" ? currency : "USD");
   const r = ambiguousReadings(value);
   if (!r) return null;
-  const [big, small] = r.map((x) => money(x, currency));
+  // The small reading exact: "4,125" is 4 125,00 ¥ or 4,125 ¥, not 4,13 ¥.
+  const [big, small] = [money(r[0], currency), exactMoney(r[1], currency)];
   return t(`Say which amount: ${big} or ${small}`, `Précisez le montant : ${big} ou ${small}`);
+}
+
+/**
+ * "Corriger" in a confirmation ("Un montant inhabituel ?") sends the person back to the field it asks about:
+ * focus goes there with its text selected, to type over it, instead of being left on the page. Escape does the
+ * same; "… quand même" leaves focus to the dialog. `field` is the field itself, or the `data-correct` key it
+ * carries (rows of a table: `data-correct={`salary-${id}`}`). Spread `content` on AlertDialogContent and
+ * `cancel` on AlertDialogCancel.
+ */
+export function useCorrectFocus(field: () => HTMLElement | string | null | undefined) {
+  const correcting = useRef(false);
+  return {
+    cancel: { onClick: () => { correcting.current = true; } },
+    content: {
+      onEscapeKeyDown: () => { correcting.current = true; },
+      onCloseAutoFocus: (e: Event) => {
+        if (!correcting.current) return;
+        correcting.current = false;
+        const f = field();
+        // The one on screen: a table and its phone cards may both carry the key.
+        const el = typeof f === "string" ? Array.from(document.querySelectorAll<HTMLElement>(`[data-correct="${CSS.escape(f)}"]`)).find((x) => x.getClientRects().length > 0) : f;
+        if (!el || !el.isConnected || (el as HTMLInputElement).disabled) return;
+        e.preventDefault();
+        el.focus();
+        if (el instanceof HTMLInputElement) el.select();
+      },
+    },
+  };
 }
 
 /** Document numbers in a text ("Vente S-000027 annulée") kept whole: a narrow card never breaks "J-/000044" at its hyphen. */

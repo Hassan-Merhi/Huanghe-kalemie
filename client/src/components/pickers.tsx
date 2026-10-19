@@ -698,12 +698,12 @@ export function ContainerRateField({ currency, value, onChange, day = todayLocal
         refused ? null : far ? (
           <span className="font-medium text-amber-800 dark:text-amber-400">
             {t(
-              `Far from the rate on file (1 $ = ${fmtQty(onFile)} ${label}, ${gap!.toDecimalPlaces(0).toString()}% apart): check the invoice`,
+              `Far from the rate on file ($1 = ${fmtQty(onFile)} ${label}, ${gap!.toDecimalPlaces(0).toString()}% apart): check the invoice`,
               `Loin du taux enregistré (1\u00a0$ = ${fmtQty(onFile)}\u00a0${label}, ${fmtQty(gap!.toDecimalPlaces(0).toString())}\u00a0% d'écart)\u00a0: vérifiez la facture`,
             )}
           </span>
         ) : onFile ? (
-          t(`Rate on file: 1 $ = ${fmtQty(onFile)} ${label}`, `Taux enregistré\u00a0: 1 $ = ${fmtQty(onFile)} ${label}`)
+          t(`Rate on file: $1 = ${fmtQty(onFile)} ${label}`, `Taux enregistré\u00a0: 1\u00a0$ = ${fmtQty(onFile)}\u00a0${label}`)
         ) : currency === "CNY" ? (
           t("No yuan rate on file yet (about 7.1 CNY for $1); it can be entered on the dashboard", "Pas encore de taux du yuan (environ 7,1 CNY pour 1 $)\u00a0; il se saisit sur le tableau de bord")
         ) : null

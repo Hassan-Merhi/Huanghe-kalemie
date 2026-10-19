@@ -618,7 +618,7 @@ const CHECK_TEXT: Record<string, { title: [string, string]; what: [string, strin
   payables: { title: ["Suppliers add up", "Les fournisseurs concordent"], what: ["What we owe each supplier, agent and employee adds up to the payables account.", "Ce que l'on doit à chaque fournisseur, agent et employé égale le compte Fournisseurs."], money: true, expected: ["Account", "Compte"], actual: ["Contacts", "Contacts"] },
   goods_in_transit: { title: ["Container costs add up", "Les frais de conteneur concordent"], what: ["Costs of containers not yet offloaded equal Goods in transit.", "Les frais des conteneurs pas encore déchargés égalent Marchandises en transit."], money: true, expected: ["Account", "Compte"], actual: ["Containers", "Conteneurs"] },
   money_not_negative: { title: ["No cash box below zero", "Aucune caisse sous zéro"], what: ["No cash box, bank or mobile money account holds less than nothing.", "Aucune caisse, banque ou mobile money n'a un solde négatif."], money: false, expected: ["Expected", "Attendu"], actual: ["Accounts below zero", "Comptes sous zéro"] },
-  sales_zero_price: { title: ["No sale at 0 $", "Aucune vente à prix nul"], what: ["Completed sales of the last 90 days with an item sold at 0 $: usually a price typed wrong.", "Ventes des 90 derniers jours avec un article vendu à 0\u00a0$\u00a0: souvent un prix mal saisi."], money: false, expected: ["Expected", "Attendu"], actual: ["Sales at 0 $", "Ventes à prix nul"] },
+  sales_zero_price: { title: ["No sale at $0", "Aucune vente à prix nul"], what: ["Completed sales of the last 90 days with an item sold at $0: usually a price typed wrong.", "Ventes des 90 derniers jours avec un article vendu à 0\u00a0$\u00a0: souvent un prix mal saisi."], money: false, expected: ["Expected", "Attendu"], actual: ["Sales at $0", "Ventes à prix nul"] },
   sales_below_cost: { title: ["No sale below cost", "Aucune vente à perte"], what: ["Completed sales of the last 90 days sold for less than the cost of their items.", "Ventes des 90 derniers jours vendues moins cher que le coût de leurs articles."], money: false, expected: ["Expected", "Attendu"], actual: ["Sales below cost", "Ventes à perte"] },
   franc_lines: { title: ["Francs are counted", "Les francs sont comptés"], what: ["Every movement of a franc account carries its amount in francs and its rate.", "Chaque mouvement d'un compte en francs porte son montant en FC et son taux."], money: false, expected: ["Expected", "Attendu"], actual: ["Lines without francs", "Lignes sans francs"] },
   foreign_balances: { title: ["Francs and yuan match their dollars", "Les francs et les yuans correspondent à leurs dollars"], what: ["No contact holds dollars on francs or yuan worth under half a cent: such a balance comes from a journal typed by hand and needs correcting.", "Aucun contact n'a de dollars sur des francs ou des yuans valant moins d'un demi-centime\u00a0: un tel solde vient d'une écriture saisie à la main et doit être corrigé."], money: false, expected: ["Expected", "Attendu"], actual: ["Balances that differ", "Soldes en écart"] },
@@ -1064,7 +1064,7 @@ function ManualJournalDialog({ onClose }: { onClose: () => void }) {
   if (lines.some((l) => !l.accountId)) problems.push(t("Choose an account on every line", "Choisissez un compte sur chaque ligne"));
   if (lines.some((l) => d(l.debit).gt(0) && d(l.credit).gt(0))) problems.push(t("A line is either debit or credit", "Une ligne est soit au débit soit au crédit"));
   if (lines.some((l) => partyTypes(acc(l.accountId)) && !l.partyId)) problems.push(t("Pick the customer or supplier on receivable/payable lines", "Choisissez le client ou fournisseur sur les lignes créances/dettes"));
-  if (lines.some((l) => isCdf(acc(l.accountId)) && (!d(l.native).gt(0) || !d(l.rate).gt(0)))) problems.push(t("CDF accounts need the CDF amount and the rate", "Les comptes en francs ont besoin du montant en FC et du taux"));
+  if (lines.some((l) => isCdf(acc(l.accountId)) && (!d(l.native).gt(0) || !d(l.rate).gt(0)))) problems.push(t("Franc accounts need the FC amount and the rate", "Les comptes en francs ont besoin du montant en FC et du taux"));
   if (totalDebit.isZero()) problems.push(t("Enter some amounts", "Saisissez des montants"));
   if (!diff.isZero()) problems.push(t("Debits and credits must be equal", "Les débits et crédits doivent être égaux"));
 
@@ -1140,7 +1140,7 @@ function ManualJournalDialog({ onClose }: { onClose: () => void }) {
                 )}
                 {isCdf(a) && (
                   <div className="mt-2 grid grid-cols-2 gap-2">
-                    <Field label={t("Amount in CDF", "Montant en FC")} required>
+                    <Field label={t("Amount in FC", "Montant en FC")} required>
                       <Input inputMode="decimal" thousands value={l.native} onChange={(e) => setNative(l, e.target.value, l.rate)} />
                     </Field>
                     <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} required>
@@ -1196,7 +1196,7 @@ function Ledger() {
   function exportCsv() {
     if (!L) return;
     const head = [t("Date", "Date"), t("No.", "N°"), t("Type", "Type"), t("Details", "Détails"), t("Party", "Tiers"), t("Debit ($)", "Débit ($)"), t("Credit ($)", "Crédit ($)"), t("Balance USD", "Solde USD")];
-    if (cdfAcc) head.push("CDF", t("CDF balance", "Solde en FC"));
+    if (cdfAcc) head.push("CDF", t("FC balance", "Solde en FC"));
     const rows: unknown[][] = [
       [`${L.account.code} · ${sys.account(L.account.name)}`],
       head,
