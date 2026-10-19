@@ -224,7 +224,9 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
       ))}
       {rounding && (
         <ReceiptRow
-          left={<>{t("FC rounding", "Arrondi FC")} <span className="whitespace-nowrap">({rounding.words})</span></>}
+          // The customer's copy: a neutral "Arrondi FC" with its sign; whose few francs they were is for the
+          // staff screens (the till, the sale page), not a receipt handed over the counter.
+          left={t("FC rounding", "Arrondi FC")}
           right={rounding.figure}
         />
       )}

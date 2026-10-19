@@ -127,10 +127,10 @@ export default function Motorcycles() {
       <div className="mb-4 grid gap-3 sm:grid-cols-[1fr_200px_200px]">
         <div className="relative">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input className="pl-9" placeholder={t("Chassis or engine number", "N° de châssis ou de moteur")} value={search} onChange={(e) => setSearch(e.target.value)} />
+          <Input className="pl-9" aria-label={t("Search a motorcycle", "Chercher une moto")} placeholder={t("Chassis or engine number", "N° de châssis ou de moteur")} value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
         <Select value={status} onValueChange={(v) => setStatus(v as typeof status)}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectTrigger aria-label={t("Status", "Statut")}><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="in_stock">{t("In stock", "En stock")}</SelectItem>
             <SelectItem value="sold">{t("Sold", "Vendues")}</SelectItem>
@@ -139,7 +139,7 @@ export default function Motorcycles() {
           </SelectContent>
         </Select>
         <Select value={model} onValueChange={setModel}>
-          <SelectTrigger><SelectValue /></SelectTrigger>
+          <SelectTrigger aria-label={t("Model", "Modèle")}><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">{t("All models", "Tous les modèles")}</SelectItem>
             {models.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}

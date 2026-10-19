@@ -232,6 +232,7 @@ function PriceCell({ row }: { row: Row }) {
   const { toast } = useToast();
   const [value, setValue] = useState(d(row.sellPrice).toFixed(2));
   const [saving, setSaving] = useState(false);
+  const item = [row.productName, variantText(row.attributes)].filter(Boolean).join(" ");
   useEffect(() => setValue(d(row.sellPrice).toFixed(2)), [row.sellPrice]);
   const valid = /^\d+(\.\d{1,2})?$/.test(value.trim());
   const changed = valid && !d(value).eq(d(row.sellPrice));
@@ -277,7 +278,8 @@ function PriceCell({ row }: { row: Row }) {
           inputMode="decimal" usd
           value={value}
           disabled={saving}
-          aria-label={t("Sell price", "Prix de vente")}
+          // Each row's own field: "Prix de vente de Pneu 2.75-17", not forty fields all called "Prix de vente".
+          aria-label={t(`Sell price of ${item}`, `Prix de vente ${de(item)}`)}
           onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter") {
@@ -290,7 +292,7 @@ function PriceCell({ row }: { row: Row }) {
         />
         {(changed || !valid) && (
           <>
-            <Button size="icon" className="h-8 w-8" disabled={!changed || saving} onClick={() => void save()} aria-label={t("Save price", "Enregistrer le prix")} title={t("Save", "Enregistrer")}>
+            <Button size="icon" className="h-8 w-8" disabled={!changed || saving} onClick={() => void save()} aria-label={t(`Save the price of ${item}`, `Enregistrer le prix ${de(item)}`)} title={t("Save", "Enregistrer")}>
               <Check className="h-4 w-4" />
             </Button>
             <Button size="icon" variant="ghost" className="h-8 w-8" disabled={saving} onClick={() => setValue(d(row.sellPrice).toFixed(2))} aria-label={t("Undo", "Annuler")} title={t("Undo", "Annuler")}>

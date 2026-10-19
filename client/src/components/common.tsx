@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button";
 import { useT } from "@/lib/i18n";
 import { Card, CardContent } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
+import { FieldLabelContext } from "@/components/ui/field-label";
 import { cn } from "@/lib/utils";
 import { ambiguousReadings, money, refusedUnit, unitMismatchText } from "@/lib/format";
 
@@ -61,12 +62,12 @@ export function Field({
     : children;
   return (
     <div className={cn("space-y-1.5", className)}>
-      <Label htmlFor={isTextField ? fieldId : undefined}>
+      <Label id={`${id}-label`} htmlFor={isTextField ? fieldId : undefined}>
         {label}
         {required && <span className="ml-0.5 text-destructive" aria-hidden>*</span>}
         {required && !isTextField && <span className="sr-only"> ({t("required", "obligatoire")})</span>}
       </Label>
-      {control}
+      <FieldLabelContext.Provider value={isTextField ? null : `${id}-label`}>{control}</FieldLabelContext.Provider>
       {hint && !error && <p id={noteId} className="text-xs text-muted-foreground">{hint}</p>}
       {error && <p id={noteId} className="text-xs text-destructive">{error}</p>}
     </div>

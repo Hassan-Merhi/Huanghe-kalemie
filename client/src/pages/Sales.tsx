@@ -12,7 +12,7 @@ import { useAuth } from "@/lib/auth";
 import { count, useT } from "@/lib/i18n";
 import { cdf, d, date as fmtDate, fcRateGap, fcRounding, monthStart, pct, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import { cn } from "@/lib/utils";
-import { creditOf, creditSplit, dailyFigures, netOf, type Daily, type SaleListRow } from "@/lib/saleRows";
+import { creditOf, creditSplit, dailyFigures, netOf, voidedParts, voidedSplit, type Daily, type SaleListRow } from "@/lib/saleRows";
 
 function DailySummary() {
   const t = useT();
@@ -221,6 +221,7 @@ function SaleCard({ r, showCost }: { r: SaleListRow; showCost: boolean }) {
         <p className="min-w-0 tabular">
           {t("Qty", "Qté")} {fmtQty(d(r.qty).minus(d(r.returnedQty)).toString())} · {t("Paid", "Payé")} <span className={cn(voided && "line-through")}>{usd((voided ? d(r.paidKeptUsd ?? r.paidUsd) : n.paid).toFixed(2))}</span>
           {!voided && <CreditText r={r} />}
+          {voided && voidedParts(t, voidedSplit(r)).length > 0 && <span className="block">{voidedParts(t, voidedSplit(r)).join(" · ")}</span>}
           <OnAccount r={r} />
           {/* What came back, under the figures so the items above keep their line. */}
           {!voided && n.returned.gt(0) && (
@@ -371,7 +372,8 @@ export default function Sales() {
                           <OnAccount r={r} />
                           {/* What was not paid: owed by the customer, apart from what their avoir covered. */}
                           {voided
-                            ? d(r.creditUsd).gt(0) && <div className="whitespace-nowrap text-xs">{t("credit cancelled", "crédit annulé")}</div>
+                            ? // As the sale page splits it: refunded, back to the avoir, and only the rest as credit cancelled.
+                              voidedParts(t, voidedSplit(r)).map((part) => <div key={part} className="whitespace-nowrap text-xs">{part}</div>)
                             : (
                                 <>
                                   {creditSplit(r).onAvoir.gt(0) && <div className="whitespace-nowrap text-xs text-emerald-800 dark:text-emerald-400">{t("from credit", "sur l'avoir")} {usd(creditSplit(r).onAvoir.toFixed(2))}</div>}

@@ -186,7 +186,7 @@ export default function OptionalVouchers() {
       {/* Du / Au over their fields, so a phone shows the whole "jj/mm/aaaa" and says which date is which. */}
       <div className="mb-4 flex flex-wrap items-end gap-2">
         <Select value={kind} onValueChange={(v) => setKind(v as "all" | VoucherKind)}>
-          <SelectTrigger className="w-full sm:w-52"><SelectValue /></SelectTrigger>
+          <SelectTrigger className="w-full sm:w-52" aria-label={t("Voucher type", "Type de pièce")}><SelectValue /></SelectTrigger>
           <SelectContent>
             <SelectItem value="all">{t("All types", "Tous les types")}</SelectItem>
             {VOUCHER_KINDS.map((k) => <SelectItem key={k} value={k}>{voucherKindLabel(k, t)}</SelectItem>)}

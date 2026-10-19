@@ -295,7 +295,7 @@ export default function Daybook() {
                 <Button variant="outline" size="icon" aria-label={t("Previous day", "Jour précédent")} onClick={() => validDate(day) && setDay(shiftDay(day, -1))}>
                   <ChevronLeft className="h-4 w-4" />
                 </Button>
-                <Input type="date" className="w-40" value={day} onChange={(e) => setDay(e.target.value)} />
+                <Input type="date" className="w-40" aria-label={t("Day", "Jour")} value={day} onChange={(e) => setDay(e.target.value)} />
                 <Button variant="outline" size="icon" aria-label={t("Next day", "Jour suivant")} onClick={() => validDate(day) && setDay(shiftDay(day, 1))}>
                   <ChevronRight className="h-4 w-4" />
                 </Button>
