@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { categories, containerLines, containers, locations, products, variants } from "@shared/schema";
 import { cents, dec } from "@shared/money";
 import type { Tx } from "../db";
-import { badRequest, conflict, notFound } from "../errors";
+import { badRequest, conflict, francDecimalsError, notFound } from "../errors";
 import { addVariant, createProduct } from "./catalog";
 import { replaceLines } from "./containers";
 import { adjustStock } from "./operations";
@@ -283,6 +283,8 @@ export async function importContainerLines(tx: Tx, containerId: number, input: {
       if (q.lte(0)) throw badRequest(`Row ${n}: the quantity must be greater than zero`, `Ligne ${n} : la quantité doit être supérieure à zéro`);
       const price = dec(r.unitPrice, `row ${n} unit price`);
       if (price.isNegative()) throw badRequest(`Row ${n}: the price cannot be negative`, `Ligne ${n} : le prix ne peut pas être négatif`);
+      // A franc invoice is in whole francs: "8 400,5" FC would go into stock as 8 401 FC each but 168 010 FC for 20.
+      if (c.currency === "CDF" && !price.isInteger()) throw francDecimalsError(price);
       const res = await resolveRow(tx, caches, r, n, true);
       results.push(res);
       const tracks = await tx.select({ t: products.tracksSerials }).from(variants).innerJoin(products, eq(products.id, variants.productId)).where(eq(variants.id, res.variantId!));

@@ -130,7 +130,7 @@ export default function VoucherPrint() {
         </Button>
         <div className="flex flex-wrap items-center gap-2">
           <Select value={paper} onValueChange={(x) => setPaper(x as Paper)}>
-            <SelectTrigger className="w-24"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-24" aria-label={t("Paper size", "Format du papier")} title={t("Paper size", "Format du papier")}><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="A5">A5</SelectItem>
               <SelectItem value="A4">A4</SelectItem>

@@ -26,8 +26,9 @@ import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, Table
 import { Textarea } from "@/components/ui/textarea";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useToast } from "@/hooks/use-toast";
+import { api, invalidateAll } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
-import { curLabel, d, date, money, pct, qty, todayLocal, typedNumberOk, unitCost, usd, variantText, unclearQty } from "@/lib/format";
+import { curLabel, d, date, money, number, pct, qty, todayLocal, typedNumberOk, unitCost, usd, variantText, unclearQty } from "@/lib/format";
 import { qtyWithUnit, unitKey, unitLabel, wholeUnit } from "@/lib/units";
 import { useT, count } from "@/lib/i18n";
 import type { Account, Party, VariantRow } from "@/lib/types";
@@ -108,6 +109,9 @@ interface DraftLine {
 // ---------------------------------------------------------------- Helpers
 
 function fmtCur(value: unknown, currency: string) {
+  // A franc price with centimes (typed on a line before they were refused) reads as it is, never rounded to
+  // "8 401 FC l'unité" beside a 168 010 FC line.
+  if (currency === "CDF" && value != null && /^-?\d+\.\d*[1-9]/.test(String(value))) return `${number(value, 6)} FC`;
   return money(value, currency);
 }
 
@@ -1351,9 +1355,21 @@ function OffloadButton({ c, disabledReason, priceOf, productOf }: { c: Container
   const t = useT();
   const [open, setOpen] = useState(false);
   const [offloadDate, setOffloadDate] = useState(todayLocal());
+  const { toast } = useToast();
+  // Offloaded straight from "Brouillon" or "En transit" with no arrival date (or one still to come): it arrived by
+  // the offload, so that date is stamped (a finalized container keeps its dates editable), never "Arrivée : —".
+  const stampArrival = !c.arrivalDate || c.arrivalDate > offloadDate;
   const finalize = useApiMutation<{ offloadDate: string }>("POST", `/api/containers/${c.id}/finalize`, {
-    success: t("Container offloaded into stock", "Conteneur déchargé en stock"),
-    onSuccess: () => setOpen(false),
+    onSuccess: (_, body) => {
+      setOpen(false);
+      toast({
+        title: t("Container offloaded into stock", "Conteneur déchargé en stock"),
+        description: stampArrival
+          ? t(`Arrival dated ${date(body.offloadDate)}, the offload date: change it with the pencil if it arrived another day.`, `Arrivée datée du ${date(body.offloadDate)}, jour du déchargement : modifiez-la avec le crayon s'il est arrivé un autre jour.`)
+          : undefined,
+      });
+      if (stampArrival) void api("PATCH", `/api/containers/${c.id}`, { arrivalDate: body.offloadDate }).then(invalidateAll, () => undefined);
+    },
   });
   const p = c.preview;
   const unpinned = c.expenses.some((e) => e.method === "line" && !c.lines.some((l) => l.id === e.targetLineId));

@@ -120,6 +120,12 @@ export function useVoucherChecks(input: { kind: string; day: string; accountId: 
   let overGrows = 0;
   let growsOnlyCustomers = true;
   const cnyRate = dayRate?.cnyPerUsd && d(dayRate.cnyPerUsd).gt(0) ? d(dayRate.cnyPerUsd) : null;
+  /**
+   * The yuan a contact line settles as saving does (payablesLines): with no yuan rate on file for the day,
+   * at what the yuan cost (their book value), so the line and the "more than is owed" question say it.
+   */
+  const yuanAtBook = !cnyRate;
+  const yuanSettled = new Map<number, { native: string; usd: string }>();
   if (kind && enabled && account && (!isCdf || rate.gt(0))) {
     for (const [id, amount] of Array.from(byParty)) {
       const p = partyOf(id);
@@ -137,6 +143,8 @@ export function useVoucherChecks(input: { kind: string; day: string; accountId: 
         owedCny: kind === "payment" && !customer ? owed.cny : undefined,
         cnyRate: cnyRate ?? (cny && !d(cny.usd).isZero() ? d(cny.native).abs().dividedBy(d(cny.usd).abs()) : null),
       });
+      const yuan = split.find((x) => x.kind === "cny");
+      if (yuan?.native) yuanSettled.set(id, { native: yuan.native, usd: yuan.usd });
       const advance = split.find((x) => x.kind === "advance");
       // Under 100 FC left over is the notes' rounding.
       if (!advance || !(isCdf ? d(advance.usd).times(rate).gte(100) : d(advance.usd).gt(0))) continue;
@@ -148,7 +156,13 @@ export function useVoucherChecks(input: { kind: string; day: string; accountId: 
       // (4 430,10 $ booked, 4 429,91 $ today): the figure says which, as on the contact page's "Payer".
       const booked = Decimal.max(kind === "receipt" ? d(p.balance) : d(p.balance).negated(), 0);
       const atRate = split.some((x) => x.kind === "cdf" || x.kind === "cny") && !owedUsd.toDecimalPlaces(2).eq(booked.toDecimalPlaces(2));
-      const owedText = `${usd(owedUsd.toFixed(2))}${atRate ? t(" at today's rate", " au taux du jour") : ""}`;
+      // The yuan in it are said with how they are valued, as saving settles them.
+      const yuanText = yuan?.native
+        ? yuanAtBook
+          ? t(` (of which ${money(yuan.native, "CNY")} at book value)`, ` (dont ${money(yuan.native, "CNY")} à la valeur comptable)`)
+          : t(` (of which ${money(yuan.native, "CNY")} at today's rate)`, ` (dont ${money(yuan.native, "CNY")} au taux du jour)`)
+        : "";
+      const owedText = `${usd(owedUsd.toFixed(2))}${yuanText || (atRate ? t(" at today's rate", " au taux du jour") : "")}`;
       // What they already owe the other way: owed by them on a payment, owed to them on a receipt.
       const against = some ? d(0) : Decimal.max(kind === "payment" ? d(p.balance) : d(p.balance).negated(), 0);
       if (against.gt(0)) {
@@ -186,5 +200,5 @@ export function useVoucherChecks(input: { kind: string; day: string; accountId: 
   const others = input.lines.filter((l) => l.partyId || l.accountId).length - 1;
   const fallbackMemo = firstName ? `${firstName}${others > 0 ? ` + ${others} ${t(others > 1 ? "others" : "other", others > 1 ? "autres" : "autre")}` : ""}` : null;
 
-  return { unusual, overDebt, overGrows, overGrowsCustomers: overGrows > 0 && growsOnlyCustomers, short, partyOf, settleAll, total, currency, account, fallbackMemo };
+  return { yuanSettled, yuanAtBook, unusual, overDebt, overGrows, overGrowsCustomers: overGrows > 0 && growsOnlyCustomers, short, partyOf, settleAll, total, currency, account, fallbackMemo };
 }

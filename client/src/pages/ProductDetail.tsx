@@ -75,6 +75,7 @@ export default function ProductDetail() {
 
   const variants = p.variants ?? [];
   const usedLocations = locations.filter((l) => l.active || variants.some((v) => v.levels.some((x) => x.locationId === l.id && !d(x.qty).isZero())));
+  const byLocation = usedLocations.length > 1;
   const variantIds = new Set(variants.map((v) => v.id));
   const myUnits = (units.data ?? []).filter((u) => variantIds.has(u.variantId));
   const totalQty = variants.reduce((s, v) => s.plus(d(v.stockQty)), d(0));
@@ -117,14 +118,15 @@ export default function ProductDetail() {
             <TableHeader>
               <TableRow>
                 <TableHead>{t("Variant", "Variante")}</TableHead>
-                <TableHead>{t("SKU", "Code")}</TableHead>
-                <TableHead>{t("Barcode", "Code-barres")}</TableHead>
+                {/* With a column per location, the barcode goes under the code so the table still fits at 1024 px. */}
+                <TableHead>{byLocation ? t("SKU · barcode", "Code · code-barres") : t("SKU", "Code")}</TableHead>
+                {!byLocation && <TableHead>{t("Barcode", "Code-barres")}</TableHead>}
                 <TableHead className="text-right">{t("Price", "Prix")}</TableHead>
                 <TableHead className="text-right">{t("Reorder", "Seuil")}</TableHead>
                 <TableHead className="text-right">{t("Stock", "Stock")}</TableHead>
                 {showCost && <TableHead className="text-right">{t("Avg cost", "Coût moyen")}</TableHead>}
                 {showCost && <TableHead className="text-right">{t("Value", "Valeur")}</TableHead>}
-                {usedLocations.length > 1 && usedLocations.map((l) => <TableHead key={l.id} className="text-right">{l.name}</TableHead>)}
+                {byLocation && usedLocations.map((l) => <TableHead key={l.id} className="text-right">{l.name}</TableHead>)}
                 <TableHead />
               </TableRow>
             </TableHeader>
@@ -137,8 +139,11 @@ export default function ProductDetail() {
                       {v.label}
                       {!v.active && <Badge variant="secondary" className="ml-2">{t("Inactive", "Inactif")}</Badge>}
                     </TableCell>
-                    <TableCell className="whitespace-nowrap font-mono text-xs">{v.sku}</TableCell>
-                    <TableCell className="whitespace-nowrap font-mono text-xs">{v.barcode ?? "—"}</TableCell>
+                    <TableCell className="whitespace-nowrap font-mono text-xs">
+                      {v.sku}
+                      {byLocation && v.barcode && <span className="block text-muted-foreground">{v.barcode}</span>}
+                    </TableCell>
+                    {!byLocation && <TableCell className="whitespace-nowrap font-mono text-xs">{v.barcode ?? "—"}</TableCell>}
                     <TableCell className="text-right"><Num>{usd(v.sellPrice)}</Num></TableCell>
                     <TableCell className="text-right"><Num>{qty(v.reorderLevel)}</Num></TableCell>
                     <TableCell className="text-right">
@@ -147,7 +152,7 @@ export default function ProductDetail() {
                     </TableCell>
                     {showCost && <TableCell className="text-right"><Num>{variantUnitCost(v)}</Num></TableCell>}
                     {showCost && <TableCell className="text-right"><Num>{usd(v.stockValue)}</Num></TableCell>}
-                    {usedLocations.length > 1 &&
+                    {byLocation &&
                       usedLocations.map((l) => (
                         <TableCell key={l.id} className="text-right"><Num>{qty(v.levels.find((x) => x.locationId === l.id)?.qty ?? 0)}</Num></TableCell>
                       ))}

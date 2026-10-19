@@ -901,6 +901,11 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onContainer,
   const localError = (r: ContainerRowIn) => {
     if (!r.quantity || !/^\d+(\.\d+)?$/.test(r.quantity) || d(r.quantity).lte(0)) return t("Quantity must be above zero", "La quantité doit être supérieure à zéro");
     if (!r.unitPrice || !/^\d+(\.\d+)?$/.test(r.unitPrice)) return t("Enter the unit price", "Entrez le prix unitaire");
+    // A franc invoice is in whole francs, as the server checks: "8 400,5" FC is asked about here, not offloaded
+    // as 8 401 FC each beside a 168 010 FC line.
+    if (currency.toUpperCase() === "CDF" && !d(r.unitPrice).isInteger()) {
+      return t(`Franc prices are whole numbers (${number(r.unitPrice, 6)} FC has decimals): correct the file`, `Les prix en FC sont des nombres entiers (${number(r.unitPrice, 6)} FC a des décimales) : corrigez le fichier`);
+    }
     return null;
   };
   // Weights and volumes always, and quantities in litres or kilos: "12,375" kg is 12,375 kg, as typed by hand.
