@@ -32,7 +32,11 @@ const runOnce = db.transaction.bind(db);
 db.transaction = async (fn, config) => {
   for (let attempt = 0; ; attempt++) {
     try {
-      return await runOnce(fn, config);
+      return await runOnce(async (tx) => {
+        const result = await fn(tx);
+        await runAtEnd(tx);
+        return result;
+      }, config);
     } catch (e) {
       const code = pgCode(e);
       if (attempt >= TRANSACTION_RETRIES || !code || !RETRYABLE.has(code)) throw e;
@@ -42,6 +46,24 @@ db.transaction = async (fn, config) => {
     }
   }
 };
+
+/** Work a transaction does once everything else it was asked to do is written (see atTransactionEnd). */
+const atEnd = new WeakMap<object, (() => Promise<void>)[]>();
+
+/**
+ * Run `fn` at the end of the transaction `tx`, after the rest of its work and before it commits (what a
+ * posting dated before others leaves to restate, see postJournal). Outside a transaction it runs at once.
+ */
+export async function atTransactionEnd(tx: object, fn: () => Promise<void>): Promise<void> {
+  if (typeof (tx as { rollback?: unknown }).rollback !== "function") return fn();
+  const list = atEnd.get(tx);
+  if (list) list.push(fn);
+  else atEnd.set(tx, [fn]);
+}
+
+async function runAtEnd(tx: object) {
+  for (let fn = atEnd.get(tx)?.shift(); fn; fn = atEnd.get(tx)?.shift()) await fn();
+}
 
 export type Db = NodePgDatabase<typeof schema>;
 /** A database handle or an open transaction. */

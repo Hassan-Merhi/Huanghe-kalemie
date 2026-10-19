@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray, lt, lte, ne, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull, lt, lte, ne, sql } from "drizzle-orm";
 import { deMonth, frDate, frMoney, frNumber } from "@shared/french";
 import {
   accounts,
@@ -17,7 +17,7 @@ import {
   type JournalType,
 } from "@shared/schema";
 import { cents, dec, sum, Decimal, type DecimalInput } from "@shared/money";
-import type { Tx } from "../db";
+import { atTransactionEnd, type Tx } from "../db";
 import { AppError, badRequest, conflict, francDecimalsError } from "../errors";
 
 export const SYSTEM_ACCOUNTS = {
@@ -427,7 +427,43 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
     entityId: journal.id,
     data: { number, date: input.date, memo: input.memo ?? null, total: total.toFixed(2), sourceType: input.sourceType ?? null, sourceId: input.sourceId ?? null },
   });
+  if (!input.skipPeriodCheck && input.type !== "revaluation") {
+    await noteRestate(
+      tx,
+      values.filter((v) => (v.currency === "CDF" || v.currency === "CNY") && !!v.nativeAmount && !dec(v.nativeAmount).isZero() && !byId.get(v.accountId)?.isMoney),
+      input.date,
+      input.userId ?? null,
+      journal.id,
+    );
+  }
   return journal.id;
+}
+
+/**
+ * What the months' revaluations leave on the francs and yuan a transaction's postings moved, once it is
+ * done (see restateSettled in periods.ts, which sets it): a posting dated before others on a balance can
+ * empty it on a later day, or no longer, and the month's revaluation goes with that as a close would.
+ */
+type Restater = (tx: Tx, keys: RevaluedKey[], from: string, posted: number[], userId: number | null) => Promise<void>;
+let restater: Restater | null = null;
+export function setRestater(fn: Restater) {
+  restater = fn;
+}
+const toRestate = new WeakMap<object, { keys: Map<string, RevaluedKey>; from: string; posted: number[]; userId: number | null }>();
+
+async function noteRestate(tx: Tx, lines: { accountId: number; partyId: number | null; currency: string }[], date: string, userId: number | null, journalId: number) {
+  if (!lines.length || !restater) return;
+  const known = toRestate.get(tx);
+  const pending = known ?? { keys: new Map<string, RevaluedKey>(), from: date, posted: [] as number[], userId };
+  pending.posted.push(journalId);
+  if (date < pending.from) pending.from = date;
+  for (const l of lines) pending.keys.set(`${l.accountId}|${l.partyId ?? ""}|${l.currency}`, { accountId: l.accountId, partyId: l.partyId, currency: l.currency as ForeignCurrency });
+  if (known) return;
+  toRestate.set(tx, pending);
+  await atTransactionEnd(tx, async () => {
+    toRestate.delete(tx);
+    await restater!(tx, [...pending.keys.values()], pending.from, pending.posted, pending.userId);
+  });
 }
 
 /** Today in Kalemie (UTC+2). */
@@ -672,6 +708,9 @@ export const SETTLED_FX_MEMO = "Écart de change du règlement repris à l'annul
 
 type RevaluedKey = { accountId: number; partyId: number | null; currency: ForeignCurrency };
 
+/** Sources of the journals a month's revaluation posts, all with the month's period as their source (see restateSettled). */
+export const REVALUATION_SOURCES = ["period", "period_settled", "period_reopened"];
+
 /**
  * Mark the lines the books wrote before lines kept their kind (a backup made before then, restored): by
  * their memo and their shape, never in a journal typed by hand. The same as migration 0015.
@@ -694,7 +733,7 @@ export async function markSystemLines(tx: Tx): Promise<void> {
       )`);
 }
 
-/** Memo of the lines that take a revaluation off a balance settled after the month's end (see settledRevaluations). */
+/** Memo of the lines that take a revaluation off a balance settled after the month's end (see restateSettled in periods.ts). */
 export const REVALUATION_SETTLED_MEMO = "Réévaluation soldée\u00a0: devises réglées après la fin du mois";
 
 /** The labels of the lines the books write themselves (see LineKind). */
@@ -768,6 +807,8 @@ export async function revaluedDollarLines(tx: Tx, keys: RevaluedKey[], date: str
         date: journals.date,
         type: journals.type,
         reverses: journals.reversesJournalId,
+        sourceType: journals.sourceType,
+        sourceId: journals.sourceId,
         native: journalLines.nativeAmount,
         usd: sql<string>`${journalLines.debit} - ${journalLines.credit}`,
         rate: journalLines.rate,
@@ -790,11 +831,33 @@ export async function revaluedDollarLines(tx: Tx, keys: RevaluedKey[], date: str
     if (!noYuanLeft && rows.some((r) => r.date > date)) continue;
     // Every line, by journal in the order they were posted, the journal being posted last: a reversal
     // dated back before a payment it follows must not start the window after that payment.
-    // A revaluation and the reversal that undid it (a month reopened) count as one, so closing and
-    // reopening a month again and again cannot widen what revaluations explain.
+    // A month's revaluation, the reversal that undid it (the month reopened) and what closing or reopening
+    // it moved on the balances settled since count as one, so closing and reopening a month again and again
+    // cannot widen what revaluations explain.
     // A container's reversal takes them back, and undoing what paid or billed the yuan gives them back
     // (see yuanTrueUpLines): only the lines the books wrote as such (their kind), never a memo typed by hand.
-    const posted = rows.map((r) => ({ group: r.journalId, origin: r.reverses ?? r.journalId, revaluation: r.type === "revaluation", cleared: r.kind === "revalued" || r.kind === "settled_fx", takenBack: r.kind === "settled_fx", native: dec(r.native ?? 0), usd: dec(r.usd), rate: r.rate }));
+    // A journal undone since, and its undoing, count as neither: the francs or yuan it took out came back
+    // with their dollars (a payment that emptied the balance, undone, brings back the revaluations it took
+    // with it), so the window runs from before it; the dollars the undoing moved beyond its own lines (what
+    // a container's reversal took back, given back) stay, in its place.
+    const family = (r: (typeof rows)[number]) =>
+      r.type === "revaluation" && r.sourceId && r.sourceType && REVALUATION_SOURCES.includes(r.sourceType) ? -r.sourceId : (r.reverses ?? r.journalId);
+    const ids = new Set(rows.map((r) => r.journalId));
+    const undone = new Set(rows.filter((r) => r.reverses && r.type !== "revaluation" && ids.has(r.reverses)).map((r) => r.reverses!));
+    const paired = (r: (typeof rows)[number]) => undone.has(r.journalId) || (!!r.reverses && undone.has(r.reverses) && r.type !== "revaluation");
+    const pairOf = (r: (typeof rows)[number]) => (undone.has(r.journalId) ? r.journalId : r.reverses!);
+    const left = new Map<number, Decimal>();
+    for (const r of rows) if (paired(r)) left.set(pairOf(r), (left.get(pairOf(r)) ?? new Decimal(0)).plus(dec(r.usd)));
+    const lastOf = new Map(rows.map((r, i) => [r.journalId, i]));
+    const posted = rows.flatMap((r, i) => {
+      if (paired(r)) {
+        // Only on the undoing's last line, once: what the pair still moves.
+        const last = !undone.has(r.journalId) && lastOf.get(r.journalId) === i;
+        const net = last ? (left.get(pairOf(r)) ?? new Decimal(0)) : new Decimal(0);
+        return net.isZero() ? [] : [{ group: r.journalId, origin: r.journalId, revaluation: false, cleared: true, takenBack: true, native: new Decimal(0), usd: net, rate: null }];
+      }
+      return [{ group: r.journalId, origin: family(r), revaluation: r.type === "revaluation", cleared: r.kind === "revalued" || r.kind === "settled_fx", takenBack: r.kind === "settled_fx", native: dec(r.native ?? 0), usd: dec(r.usd), rate: r.rate }];
+    });
     const all = [...posted, ...own.map((v) => ({ group: 0, origin: 0, revaluation: false, cleared: v.kind === "settled_fx", takenBack: v.kind === "settled_fx", native: dec(v.nativeAmount ?? 0), usd: v.debit.minus(v.credit), rate: v.rate }))];
     const revaluedIn = (some: typeof all) => {
       const net = new Map<number, Decimal>();
@@ -895,12 +958,17 @@ export async function revaluedDollarLines(tx: Tx, keys: RevaluedKey[], date: str
  */
 class YuanPool {
   lots = new Map<number, { paid: Decimal; claim: Decimal }>();
-  /** Yuan owed, oldest bill first, at the dollars per yuan they are carried at. */
-  open: { bill: number; q: Decimal; rate: Decimal }[] = [];
+  /**
+   * Yuan owed, oldest bill first, at the dollars per yuan they are carried at. `marked`: owed at a month's
+   * end (see mark), so they carry their part of that month's revaluation wherever they go.
+   */
+  open: { bill: number; q: Decimal; rate: Decimal; marked: boolean }[] = [];
   /** A lot's yuan matched to a bill's: when they part, the bill's yuan are owed again at `rate`. */
-  portions: { lot: number; bill: number; q: Decimal; rate: Decimal }[] = [];
+  portions: { lot: number; bill: number; q: Decimal; rate: Decimal; marked: boolean; carries: boolean }[] = [];
   /** Each bill and its own dollars per yuan. */
   bills = new Map<number, Decimal>();
+  /** The month's revaluation (see mark) is on the yuan owed. */
+  revalued = false;
 
   value(): Decimal {
     let v = new Decimal(0);
@@ -922,14 +990,16 @@ class YuanPool {
       s.q = s.q.minus(t);
       left = left.minus(t);
       if (met) met.usd = met.usd.plus(t.times(s.rate));
-      this.portions.push({ lot, bill: s.bill, q: t, rate: rate ?? s.rate });
+      // Paid once the month's revaluation is on them, the marked yuan carry their part of it with them; met
+      // by a removed bill's paid yuan, they leave it with that bill (see removeBill).
+      this.portions.push({ lot, bill: s.bill, q: t, rate: rate ?? s.rate, marked: s.marked, carries: s.marked && rate !== null && this.revalued });
     }
     this.open = this.open.filter((s) => s.q.gt(0));
     return left;
   }
 
   /** Up to `q` claimed yuan meet `bill`'s, from every lot in proportion; returns the yuan left over. */
-  private takeClaim(q: Decimal, bill: number, rate: Decimal): Decimal {
+  private takeClaim(q: Decimal, bill: number, rate: Decimal, marked = false): Decimal {
     const claims = [...this.lots].filter(([, l]) => l.claim.gt(0));
     const total = sum(claims.map(([, l]) => l.claim));
     if (!total.gt(0) || !q.gt(0)) return q;
@@ -939,27 +1009,31 @@ class YuanPool {
       const t = i === claims.length - 1 ? take.minus(taken) : take.times(l.claim).dividedBy(total);
       taken = taken.plus(t);
       l.claim = l.claim.minus(t);
-      this.portions.push({ lot: id, bill, q: t, rate });
+      this.portions.push({ lot: id, bill, q: t, rate, marked, carries: false });
     });
     return q.minus(take);
   }
 
   /** Claimed yuan meet yuan owed again (a payment or a refund undone left both). */
   private meet() {
-    for (const s of this.open) s.q = this.takeClaim(s.q, s.bill, s.rate);
+    for (const s of this.open) s.q = this.takeClaim(s.q, s.bill, s.rate, s.marked);
     this.open = this.open.filter((s) => s.q.gt(0));
   }
 
-  private reopen(bill: number, q: Decimal, rate: Decimal) {
+  private reopen(bill: number, q: Decimal, rate: Decimal, marked = false) {
     if (!this.bills.has(bill) || !q.gt(0)) return;
-    this.open.push({ bill, q, rate });
+    this.open.push({ bill, q, rate, marked });
     this.open.sort((a, b) => a.bill - b.bill);
   }
 
   addLot(id: number, q: Decimal, book: Decimal, gain: Decimal) {
     const lot = { paid: book.minus(gain).dividedBy(q), claim: new Decimal(0) };
     this.lots.set(id, lot);
-    lot.claim = this.payOpen(id, q, book.dividedBy(q));
+    const met = { usd: new Decimal(0) };
+    lot.claim = this.payOpen(id, q, book.dividedBy(q), met);
+    // The books take yuan owed out at what they carry them at on average (see bookValue), not the oldest
+    // bill's: the yuan still owed carry the difference, as the books' do.
+    if (!lot.claim.gt(0)) this.revalue(book.minus(met.usd));
   }
 
   addBill(id: number, q: Decimal, given: Decimal) {
@@ -970,13 +1044,29 @@ class YuanPool {
   }
 
   removeLot(id: number) {
-    for (const p of this.portions.filter((x) => x.lot === id)) this.reopen(p.bill, p.q, p.rate);
+    for (const p of this.portions.filter((x) => x.lot === id)) this.reopen(p.bill, p.q, p.rate, p.marked);
     this.portions = this.portions.filter((x) => x.lot !== id);
     this.lots.delete(id);
     this.meet();
   }
 
-  /** A month-end revaluation restates the yuan still owed (in proportion); a claim keeps what it holds. */
+  /** The yuan owed now are those owed at a month's end (see yuanMarkedOwed). */
+  mark() {
+    for (const s of this.open) s.marked = true;
+  }
+
+  /**
+   * Of the yuan of the bills now, those owed at the month's end marked: owed still, or paid since the
+   * month's revaluation was on them, so they still carry their part of it until their bill is taken away.
+   */
+  markedOwed(): Decimal {
+    return sum([...this.open.filter((s) => s.marked), ...this.portions.filter((p) => p.carries)].map((s) => s.q));
+  }
+
+  /**
+   * A month-end revaluation restates the yuan still owed (in proportion); a claim keeps what it holds. So
+   * do the dollars the books move on them when the month is reopened or closed again (see restateSettled).
+   */
   revalue(usd: Decimal) {
     const owed = sum(this.open.map((s) => s.q));
     if (!owed.gt(0)) return;
@@ -1019,12 +1109,24 @@ const poolSkipped = (l: { kind: string | null }) => !!l.kind && POOL_SKIPPED_KIN
  * still counts this one's). A journal posted before lines kept theirs counts the one its journal booked
  * when its only francs or yuan are this supplier's (another balance's difference in the same journal
  * cannot be told apart, so none is counted: its yuan are claimed back at their book cost).
- * `skip` leaves journals out of the replay; `values` gets the pool's value after each journal.
+ * A journal the books post for a month's revaluation (the revaluation, its undoing when the month is
+ * reopened, what closing or reopening the month moves on the balances settled since) moves dollars on the
+ * yuan and no yuan: all of it restates the yuan still owed when it is posted, as it moves the books' own
+ * dollars on them, so the pool's yuan owed stay at what the books carry them at, in whatever order the
+ * month is closed and reopened.
+ * `markAfter` marks the yuan owed at the end of that day (see YuanPool.mark); `marks` gets, for each
+ * journal, the marked yuan owed before and after it, and whether it took a bill away.
  */
-async function yuanPool(tx: Tx, payables: number, partyId: number, opts: { skip?: Set<number>; values?: Map<number, Decimal> } = {}) {
+async function yuanPool(
+  tx: Tx,
+  payables: number,
+  partyId: number,
+  opts: { markAfter?: string; marks?: Map<number, { before: Decimal; after: Decimal; removal: boolean }> } = {},
+) {
   const rows = await tx
     .select({
       journalId: journalLines.journalId,
+      date: journals.date,
       type: journals.type,
       reverses: journals.reversesJournalId,
       sourceType: journals.sourceType,
@@ -1065,9 +1167,16 @@ async function yuanPool(tx: Tx, payables: number, partyId: number, opts: { skip?
   const refunds = new Set<number>(); // receipts: the supplier's refunds of yuan they owed back
   const kinds = new Map<number, { kind: "lot" | "bill"; native: Decimal; usd: Decimal; rate: string }>();
   const liveBill = new Map<number, number>(); // container -> the journal that billed it
-  const step = (id: number, lines: typeof rows) => {
+  /** Replays one journal; true when it took a bill away. */
+  const step = (id: number, lines: typeof rows): boolean => {
+    if (lines[0].type === "revaluation") {
+      // A month closed (or reopened, its revaluation undone), and what either moved on the balances settled
+      // since: dollars, no yuan, every line of it (see above).
+      if (sum(lines.map((r) => dec(r.native ?? 0))).isZero()) pool.revalue(sum(lines.map((r) => dec(r.usd))));
+      return false;
+    }
     const own = lines.filter((r) => !poolSkipped(r));
-    if (!own.length) return;
+    if (!own.length) return false;
     const j = own[0];
     const native = sum(own.map((r) => dec(r.native ?? 0)));
     const usd = sum(own.map((r) => dec(r.usd)));
@@ -1075,19 +1184,17 @@ async function yuanPool(tx: Tx, payables: number, partyId: number, opts: { skip?
       const bill = j.sourceId ? liveBill.get(j.sourceId) : undefined;
       if (bill) pool.removeBill(bill);
       if (j.sourceId) liveBill.delete(j.sourceId);
-      return;
-    }
-    if (j.type === "revaluation") {
-      // A month closed (or reopened, its revaluation undone): moves dollars, no yuan.
-      if (native.isZero()) pool.revalue(usd);
-      return;
+      return !!bill;
     }
     if (j.reverses) {
       if (pool.lots.has(j.reverses)) pool.removeLot(j.reverses);
-      else if (pool.bills.has(j.reverses)) pool.removeBill(j.reverses);
-      return;
+      else if (pool.bills.has(j.reverses)) {
+        pool.removeBill(j.reverses);
+        return true;
+      }
+      return false;
     }
-    if (native.isZero()) return;
+    if (native.isZero()) return false;
     const kept = own.some((r) => r.fxUsd != null);
     const rest = others.get(id) ?? [];
     const clean = kept || !rest.some((l) => l.currency !== "USD" && !(l.accountId === payables && l.partyId === partyId && l.currency === "CNY"));
@@ -1097,7 +1204,7 @@ async function yuanPool(tx: Tx, payables: number, partyId: number, opts: { skip?
         ? sum(rest.filter((l) => l.accountId === fx && l.kind === "cost_fx").map((l) => dec(l.usd)))
         : new Decimal(0);
     const rate = own.find((r) => r.rate && dec(r.rate).gt(0))?.rate;
-    if (!rate) return;
+    if (!rate) return false;
     if (native.gt(0)) {
       pool.addLot(id, native, usd, gain);
       kinds.set(id, { kind: "lot", native, usd, rate });
@@ -1109,27 +1216,36 @@ async function yuanPool(tx: Tx, payables: number, partyId: number, opts: { skip?
       if (j.type === "receipt" || j.type === "customer_receipt") refunds.add(id);
       if (j.type === "container_finalize" && j.sourceType === "container" && j.sourceId) liveBill.set(j.sourceId, id);
     }
+    return false;
   };
+  // No yuan move dated before the latest that moved (see assertYuanInOrder): the yuan owed at the end of a
+  // day are those owed before the first journal dated after it that moves any.
+  let marked = !opts.markAfter;
   for (const [id, lines] of byJournal) {
-    if (!opts.skip?.has(id)) step(id, lines);
-    opts.values?.set(id, pool.value());
+    if (!marked && lines[0].type !== "revaluation" && lines[0].date > opts.markAfter!) {
+      pool.mark();
+      marked = true;
+    }
+    const before = pool.markedOwed();
+    const removal = step(id, lines);
+    if (opts.markAfter && lines[0].type === "revaluation" && lines[0].sourceType === "period" && !lines[0].reverses && lines[0].date === opts.markAfter) pool.revalued = true;
+    opts.marks?.set(id, { before, after: pool.markedOwed(), removal });
   }
   return { pool, kinds, refunds };
 }
 
 /**
- * What a month-end revaluation (`revaluation`, undone by `undone` when its month is reopened) still adds
- * to a supplier's yuan after each journal, as YuanPool counts them: the pool's value with it less its value
- * without it. A container's reversal that takes its bill away moves that share to exchange differences
- * with the payments' own (see yuanTrueUpLines); reopening the month takes back only that share.
+ * A supplier's yuan owed at the end of `monthEnd` (a month's revaluation restated them, each by as much),
+ * as they leave and come back, journal by journal (see YuanPool): how many of them each journal leaves
+ * owed, and whether it took a bill away. A container's reversal that takes its bill away moves the share
+ * of the revaluation those leaving held to exchange differences (see yuanTrueUpLines), and the share of
+ * those coming back owed (a payment undone) comes back with them: so reopening that month takes back,
+ * or closing it again gives back, the part of the revaluation the yuan still owed carry (see restateSettled).
  */
-export async function yuanRevaluationShare(tx: Tx, payables: number, partyId: number, revaluation: number, undone: number | null): Promise<Map<number, Decimal>> {
-  const withIt = new Map<number, Decimal>();
-  const without = new Map<number, Decimal>();
-  const skip = undone ? [undone] : [];
-  await yuanPool(tx, payables, partyId, { skip: new Set(skip), values: withIt });
-  await yuanPool(tx, payables, partyId, { skip: new Set([...skip, revaluation]), values: without });
-  return new Map([...withIt].map(([id, v]) => [id, v.minus(without.get(id) ?? 0)]));
+export async function yuanMarkedOwed(tx: Tx, payables: number, partyId: number, monthEnd: string) {
+  const marks = new Map<number, { before: Decimal; after: Decimal; removal: boolean }>();
+  await yuanPool(tx, payables, partyId, { markAfter: monthEnd, marks });
+  return marks;
 }
 
 /** A supplier's yuan lines a journal moves (as YuanPool counts them): those its undoing trues up. */
@@ -1319,8 +1435,19 @@ export async function reverseJournal(
   });
   if (!reversalId) throw new AppError(500, "Nothing to reverse", "LEDGER", "Rien à contre-passer");
   await tx.update(journals).set({ reversedByJournalId: reversalId }).where(eq(journals.id, original.id));
+  // What its francs settled of a franc bill dated after them goes with them (see francsMetAfter).
+  if (!opts.skipPeriodCheck) {
+    const met = await tx
+      .select({ id: journals.id, date: journals.date })
+      .from(journals)
+      .where(and(eq(journals.sourceType, FRANCS_MET_SOURCE), eq(journals.sourceId, original.id), isNull(journals.reversedByJournalId), isNull(journals.reversesJournalId)));
+    for (const m of met) await reverseJournal(tx, m.id, { date: opts.date < m.date ? m.date : opts.date, userId: opts.userId });
+  }
   return reversalId;
 }
+
+/** Source of the journal by which francs paid dated before a franc bill already booked settle it (see francsMetAfter). */
+export const FRANCS_MET_SOURCE = "francs_met";
 
 /** CDF per 1 USD for a date: that day's rate, else the latest before it, else the default setting. */
 export async function rateFor(tx: Tx, date: string): Promise<{ rate: Decimal; source: string }> {
