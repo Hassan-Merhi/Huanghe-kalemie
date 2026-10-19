@@ -711,13 +711,14 @@ export function assertMemoNotReserved(memo: string | null | undefined, line: num
   // symbols, spaces and invisible characters (a zero-width space, a soft hyphen) are dropped before comparing.
   const fold = (t: string) => t.normalize("NFKD").replace(/[\p{M}\p{P}\p{S}\p{Z}\p{C}\s]/gu, "").toLowerCase();
   const typed = Array.from(fold(memo));
-  // The labels fold to Latin letters and digits alone: a Cyrillic or Greek letter (a Cyrillic "е", a Greek
-  // "ο"), or a Latin one no accent folds ("ø"), stands for whichever letter it sits in place of, while most
-  // of the label is there as typed. A note written in another alphabet (Chinese, Russian) is never one.
-  const lookalike = (c: string) => /[\p{Script=Cyrillic}\p{Script=Greek}\p{Script=Latin}]/u.test(c) && !/[a-z]/.test(c);
+  // The labels fold to Latin letters alone: any other letter, of whatever alphabet (a Cyrillic "е", a Greek
+  // "ο", an Armenian "օ", a Cherokee "ꭼ", a Latin "ø" no accent folds), or a digit (a "0" for an "o"), stands
+  // for whichever letter it sits in place of, while most of the label is there as typed. A note written in
+  // another alphabet (Chinese, Russian) is never one.
+  const lookalike = (c: string, want: string) => (/\p{L}/u.test(c) && !/[a-z]/.test(c)) || (/\p{N}/u.test(c) && /[a-z]/.test(want));
   const same = (label: string) => {
     const want = Array.from(fold(label));
-    if (want.length !== typed.length || !want.every((c, i) => typed[i] === c || lookalike(typed[i]))) return false;
+    if (want.length !== typed.length || !want.every((c, i) => typed[i] === c || lookalike(typed[i], c))) return false;
     return want.filter((c, i) => typed[i] === c).length * 2 > want.length;
   };
   if (!RESERVED_MEMOS.some(same)) return;
