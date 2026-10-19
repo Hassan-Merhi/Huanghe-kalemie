@@ -717,10 +717,11 @@ function PaySalariesDialog({ month, run, employees, saved, onClose }: { month: s
     if (!isCdf) return owedOf(e).toFixed(2);
     const fc = owedFc(e);
     const dollars = owedOf(e).minus(fc.usd);
-    // Francs are paid in 100 FC notes: the suggestion is rounded to the nearest 100 FC (at least 100 FC when something is owed).
+    // The exact net, to the franc: rounding it up to 100 FC would book the few francs over as an advance
+    // (870 500 FC paid on 870 480 FC owed leaves 0,01 $ to repay). The note below says when it is not in 100 FC notes.
     const owed = fc.native.plus(dollars.gt(0) && r.gt(0) ? dollars.times(r) : 0);
     if (!owed.gt(0)) return "0";
-    return Decimal.max(owed.dividedBy(100).toDecimalPlaces(0, Decimal.ROUND_HALF_UP), 1).times(100).toFixed(0);
+    return owed.toDecimalPlaces(0).toFixed(0);
   };
   /** What is owed, in francs first when it is paid in francs or was earned in francs: "On lui doit 702 000 FC (250,00 $)". */
   const owedText = (e: Party) => {
@@ -743,18 +744,29 @@ function PaySalariesDialog({ month, run, employees, saved, onClose }: { month: s
     return fc.native.plus(dollars.gt(0) && r.gt(0) ? dollars.times(r) : 0).toDecimalPlaces(0);
   };
   // More than is owed becomes an advance: "7 520 000" typed for 752 000 FC is said in words and confirmed
-  // before paying. In francs the suggestion's rounding up to 100 FC is not an overpayment.
+  // before paying. So does rounding francs up to the next 100 FC: there is no rounding line on a payment, the
+  // few francs over are an advance like any other (no server option absorbs them).
   const excessOf = (e: Party) => {
     const a = d(amountOf(e));
     if (!typedNumberOk(amountOf(e)) || !a.gt(0)) return null;
     const owed = owedHere(e);
-    const allowed = isCdf ? Decimal.max(owed, d(suggested(e))) : owed;
-    return a.gt(allowed) ? { paid: a, owed, excess: a.minus(owed) } : null;
+    return a.gt(owed) ? { paid: a, owed, excess: a.minus(owed) } : null;
+  };
+  /** Francs rounded up by less than 100 FC: said plainly, with a one-click way back to the exact net. */
+  const roundedUp = (e: Party) => {
+    const x = isCdf ? excessOf(e) : null;
+    return x && x.owed.gt(0) && x.excess.lt(100) ? x : null;
   };
   const fmtPay = (x: Decimal) => (isCdf ? cdf(x.toFixed(0)) : usd(x.toFixed(2)));
   const overText = (e: Party) => {
     const x = excessOf(e);
     if (!x) return null;
+    if (roundedUp(e)) {
+      return t(
+        `${e.name} is owed ${fmtPay(x.owed)}: the extra ${fmtPay(x.excess)} will become an advance to repay`,
+        `On doit ${fmtPay(x.owed)} à ${e.name}\u00a0: les ${fmtPay(x.excess)} en plus deviendront une avance à rembourser`,
+      );
+    }
     return x.owed.gt(0)
       ? t(
           `${e.name} gets ${fmtPay(x.paid)}; they are owed ${fmtPay(x.owed)}: the extra ${fmtPay(x.excess)} becomes an advance`,
@@ -867,7 +879,12 @@ function PaySalariesDialog({ month, run, employees, saved, onClose }: { month: s
                           <Input className="w-full text-right sm:w-28" inputMode="decimal" usd={!isCdf} thousands={isCdf} aria-label={t(`Amount paid to ${e.name}`, `Montant payé à ${e.name}`)} aria-invalid={(isCdf && !!francDecimalsError(t, "CDF", amountOf(e))) || undefined} value={amountOf(e)} onChange={(ev) => setAmounts((p) => ({ ...p, [keyOf(e)]: ev.target.value }))} />
                           <span className="w-6 text-left text-xs text-muted-foreground">{isCdf ? "FC" : "$"}</span>
                         </div>
-                        {overText(e) && <p role="alert" className="mt-1 max-w-[18rem] text-right text-xs font-medium text-amber-800 dark:text-amber-400">{overText(e)}</p>}
+                        {overText(e) && <p role="alert" className="ml-auto mt-1 max-w-[18rem] text-right text-xs font-medium text-amber-800 dark:text-amber-400">{overText(e)}</p>}
+                        {roundedUp(e) && (
+                          <button type="button" className="mt-1 rounded border px-2 py-1 text-xs font-medium hover:bg-muted" onClick={() => setAmounts((p) => ({ ...p, [keyOf(e)]: roundedUp(e)!.owed.toFixed(0) }))}>
+                            {t(`Pay exactly ${fmtPay(roundedUp(e)!.owed)}`, `Payer exactement ${fmtPay(roundedUp(e)!.owed)}`)}
+                          </button>
+                        )}
                         {isCdf && francDecimalsError(t, "CDF", amountOf(e)) ? (
                           <p className="mt-1 text-xs text-destructive">{t("No centimes in francs", "Pas de centimes en FC")}</p>
                         ) : isCdf && d(amountOf(e)).gt(0) && !d(amountOf(e)).mod(100).isZero() && (

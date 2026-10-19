@@ -21,7 +21,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
-import { AccountSelect, MoneyAccountSelect, PartySelect, RateInput, useAccounts, useMoneyAccounts, useRate, useRateField } from "@/components/pickers";
+import { AccountSelect, MoneyAccountSelect, PartySelect, RateInput, useAccounts, useMoneyAccounts, useRate, useRateField, useRateTooFar } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api, invalidateAll } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -331,6 +331,12 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
   const after = current ? (kind === "payment" ? current.minus(total) : current.plus(total)) : null;
   // A payment the account cannot cover is stopped here, like the pending-voucher and supplier dialogs: the
   // server would refuse it anyway, after the "more than is owed" question.
+  // A rate the server refuses ("Plus de 3 % d'écart" under the field) stops Enregistrer with that reason, as on
+  // the other payment forms, before the "Montant inhabituel" question quotes dollars at that rate.
+  // Only the owner's rate is kept (staff take the day's), so only the owner is stopped by it.
+  const isOwner = useAuth().user?.role === "owner";
+  const rateFarText = useRateTooFar(day, rateField.rate);
+  const rateFar = isCdf && isOwner ? rateFarText : null;
   const short = after && after.lt(0) && kind === "payment" ? t(`Not enough money: the balance would be ${money(after.toFixed(2), currency)}`, `Fonds insuffisants\u00a0: le solde serait de ${money(after.toFixed(2), currency)}`) : null;
 
   // An unusual payment, or a contact paid (or paying) more than is owed, is said and confirmed before saving.
@@ -381,7 +387,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
       if (!isAmount(l.amount) || !d(l.amount).gt(0)) return setError(t(`Line ${i + 1}: enter an amount greater than zero.`, `Ligne ${i + 1}\u00a0: saisissez un montant supérieur à zéro.`));
     }
     if (slipText) return setError(slipText);
-    if (short) return;
+    if (short || rateFar) return;
     if (unusual.length && !confirmed) return setConfirmUnusual("save");
     m.mutate({ date: day, ...payload(true) });
   }
@@ -533,7 +539,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
         <Button variant="outline" disabled={savingDraft} onClick={() => saveDraft()}>
           {t("Save as pending", "Mettre en attente")}
         </Button>
-        <SubmitButton onClick={() => save()} blocked={short} pending={m.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
+        <SubmitButton onClick={() => save()} blocked={rateFar || short} pending={m.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
       </ActionBar>
       <AlertDialog open={!!confirmUnusual} onOpenChange={(o) => !o && setConfirmUnusual(null)}>
         <AlertDialogContent>

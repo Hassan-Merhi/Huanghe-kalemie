@@ -45,6 +45,9 @@ function ReturnDialog({ sale, owes, onClose, onDone }: { sale: SaleFull; owes: D
     ? t(`Paid ${paidIn.map(([id, x]) => `${drawerAmount(x)} into ${moneyAccounts.find((a) => a.id === id)?.name ?? `#${id}`}`).join(" + ")}`, `Payée ${paidIn.map(([id, x]) => `${drawerAmount(x)} en ${moneyAccounts.find((a) => a.id === id)?.name ?? `#${id}`}`).join(" + ")}`)
     : null;
   const account: Account | null = moneyAccounts.find((a) => a.id === accountId) ?? null;
+  const accLabel = (id: number) => moneyAccounts.find((a) => a.id === id)?.name ?? `#${id}`;
+  // The drawers the customer paid into besides the one refunding: 10,00 $ in Caisse USD beside 68 800 FC.
+  const otherDrawers = paidIn.length > 1 && accountId && paidIn.some(([id]) => id === accountId) ? paidIn.filter(([id]) => id !== accountId) : [];
   const [rate, setRate] = useState<string | null>(null);
   // Checked again every minute while the dialog is open, as at the till: a staff refund goes at the day's rate.
   const rateQ = useRate(date, { live: true });
@@ -228,7 +231,7 @@ function ReturnDialog({ sale, owes, onClose, onDone }: { sale: SaleFull; owes: D
             </div>
             {mode === "account" ? (
               <div className="grid gap-3 sm:grid-cols-2">
-                <Field label={t("Refund from", "Rembourser depuis")} required hint={paidInText ?? (accountId && accountId === paidInto ? t("The account the customer paid into", "Le compte où le client a payé") : undefined)}>
+                <Field label={t("Refund from", "Rembourser depuis")} required hint={otherDrawers.length > 0 ? undefined : paidInText ?? (accountId && accountId === paidInto ? t("The account the customer paid into", "Le compte où le client a payé") : undefined)}>
                   <MoneyAccountSelect value={accountId} onChange={(id) => setAccountId(id)} />
                 </Field>
                 {isCdf && (
@@ -236,6 +239,25 @@ function ReturnDialog({ sale, owes, onClose, onDone }: { sale: SaleFull; owes: D
                   <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} hint={`${t("Pay out:", "À rendre\u00a0:")} ${cdf((payOutFc ?? d(0)).toString())} ${t("(rounded down to 100 FC)", "(arrondi à 100\u00a0FC inférieurs)")}`} required={isOwner}>
                     <RateInput day={date} value={effRate} onChange={setRate} ownerOnly />
                   </Field>
+                )}
+                {/* A return pays back from one account (the server takes one): the customer who paid in two
+                    drawers is told so, with the other drawer a click away, rather than all of it in francs. */}
+                {otherDrawers.length > 0 && (
+                  <div className="space-y-1.5 rounded-md border border-amber-300 bg-amber-50 p-2.5 text-sm text-amber-900 dark:border-amber-800 dark:bg-amber-950/30 dark:text-amber-200 sm:col-span-2" data-testid="return-mixed">
+                    <p>
+                      {t(
+                        `The customer also paid ${otherDrawers.map(([id, x]) => `${drawerAmount(x)} into ${accLabel(id)}`).join(" and ")}. A return is paid back from one account only: pick the one that suits the customer.`,
+                        `Le client a aussi payé ${otherDrawers.map(([id, x]) => `${drawerAmount(x)} en ${accLabel(id)}`).join(" et ")}. Un retour se rembourse depuis un seul compte\u00a0: choisissez celui qui convient au client.`,
+                      )}
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {otherDrawers.map(([id]) => (
+                        <Button key={id} type="button" size="sm" variant="outline" className="h-auto bg-background py-1.5" onClick={() => setAccountId(id)}>
+                          {t(`Refund from ${accLabel(id)}`, `Rembourser depuis ${accLabel(id)}`)}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
                 )}
               </div>
             ) : (

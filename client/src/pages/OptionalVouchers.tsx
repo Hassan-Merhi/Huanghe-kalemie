@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { Check, Eye, Pencil, Plus, Search, Trash2, X } from "lucide-react";
@@ -22,8 +22,8 @@ import { EmptyState, ErrorText, Loading, Num, PageHeader, StatCard } from "@/com
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
-import { useAccounts } from "@/components/pickers";
-import { cdf, d, date, usd } from "@/lib/format";
+import { useAccounts, useRateTooFar } from "@/components/pickers";
+import { cdf, d, date, number, usd } from "@/lib/format";
 import { useT } from "@/lib/i18n";
 import { cn } from "@/lib/utils";
 import { useVoucherChecks } from "@/lib/voucherChecks";
@@ -57,6 +57,8 @@ function DraftAmount({ r, francs, className }: { r: VoucherDraft; francs: string
   );
 }
 
+const isAmount = (s: string) => /^\d+(\.\d+)?$/.test(s.trim());
+
 const KIND_TONE: Record<VoucherKind, string> = {
   payment: "border-red-500/40 text-red-700 dark:text-red-400",
   receipt: "border-emerald-500/40 text-emerald-800 dark:text-emerald-400",
@@ -85,6 +87,11 @@ export default function OptionalVouchers() {
   const [confirm, setConfirm] = useState<{ action: "finalize" | "delete"; draft: VoucherDraft } | null>(null);
   // A payment the drawer cannot cover is refused by the server: Valider waits, with the reason, as on the voucher form.
   const [short, setShort] = useState<string | null>(null);
+  const [shortFix, setShortFix] = useState<string | null>(null);
+  const onShort = useCallback((reason: string | null, fix: string | null) => {
+    setShort(reason);
+    setShortFix(fix);
+  }, []);
 
   const rows = useMemo(() => {
     const s = search.trim().toLowerCase();
@@ -131,7 +138,7 @@ export default function OptionalVouchers() {
 
   function actions(r: VoucherDraft, compact?: boolean) {
     return (
-      // One line in the table (three buttons wrapped onto two at 1280 px); a phone card wraps them.
+      // One line in the table; a phone card wraps them.
       <div className={cn("flex items-center gap-1", compact ? "flex-wrap" : "flex-nowrap justify-end")}>
         <Button size="sm" variant="ghost" className="px-2" asChild>
           <Link href={editHref(r)}>
@@ -241,10 +248,14 @@ export default function OptionalVouchers() {
                     <TableRow key={r.id}>
                       <TableCell className="whitespace-nowrap">{date(r.date)}</TableCell>
                       <TableCell>{kindBadge(r.kind)}</TableCell>
-                      <TableCell className="max-w-[13rem] truncate" title={r.memo || undefined}>{r.memo || <span className="text-muted-foreground">—</span>}</TableCell>
+                      {/* The description takes the row's spare width, so the actions stay on one line in view: cut to one
+                          line under 1280 px, on two lines from 1280 px (cut only beyond that). */}
+                      <TableCell className="w-full min-w-[8rem] max-w-0 truncate xl:min-w-[10rem] xl:whitespace-normal" title={r.memo || undefined}>
+                        <span className="xl:line-clamp-2">{r.memo || <span className="text-muted-foreground">—</span>}</span>
+                      </TableCell>
                       <TableCell className="text-right"><DraftAmount r={r} francs={francsOf(r)} /></TableCell>
                       <TableCell className="whitespace-nowrap text-muted-foreground">{r.createdByName ?? "—"}</TableCell>
-                      <TableCell className="px-2">{actions(r)}</TableCell>
+                      <TableCell className="whitespace-nowrap px-2">{actions(r)}</TableCell>
                     </TableRow>
                   ))}
                 </TableBody>
@@ -290,12 +301,12 @@ export default function OptionalVouchers() {
                   )
                 : t("Nothing was posted from it, so nothing else changes. This cannot be undone.", "Rien n'a été passé à partir d'elle, donc rien d'autre ne change. Action irréversible.")}
             </AlertDialogDescription>
-            {confirm && <DraftSummary key={confirm.draft.id} draft={confirm.draft} check={confirm.action === "finalize"} onShort={setShort} />}
+            {confirm && <DraftSummary key={confirm.draft.id} draft={confirm.draft} check={confirm.action === "finalize"} onShort={onShort} />}
           </AlertDialogHeader>
           <AlertDialogFooter className="sm:items-center">
             {confirm?.action === "finalize" && short && (
               <p className="order-last text-center text-xs text-muted-foreground sm:order-none sm:mr-auto sm:text-left" role="status">
-                {t("Add money to the account or lower the amount first.", "Approvisionnez le compte ou réduisez le montant d'abord.")}
+                {shortFix}
               </p>
             )}
             <AlertDialogCancel>{t("Cancel", "Annuler")}</AlertDialogCancel>
@@ -317,7 +328,7 @@ export default function OptionalVouchers() {
  * The pending voucher in the confirmation: its description (or what the day book will call it), and on
  * "Valider" the same unusual-amount and over-debt questions as the voucher form, since this posts it.
  */
-function DraftSummary({ draft, check, onShort }: { draft: VoucherDraft; check: boolean; onShort?: (reason: string | null) => void }) {
+function DraftSummary({ draft, check, onShort }: { draft: VoucherDraft; check: boolean; onShort?: (reason: string | null, fix: string | null) => void }) {
   const t = useT();
   const p = draft.payload;
   const lines = Array.isArray(p.lines) ? (p.lines as Record<string, unknown>[]) : [];
@@ -330,11 +341,38 @@ function DraftSummary({ draft, check, onShort }: { draft: VoucherDraft; check: b
     enabled: check,
   });
   const warnings = check ? [...checks.unusual, ...checks.overDebt] : [];
-  const short = check ? checks.short : null;
+  // A rate the server would refuse stops Valider with its reason, as on the voucher form: the owner's rate is
+  // kept on a franc voucher (staff's is replaced by the day's), and a transfer's two amounts make one.
+  const isOwner = useAuth().user?.role === "owner";
+  const accounts = useAccounts().data;
+  const accOf = (x: unknown) => accounts?.find((a) => a.id === Number(x));
+  const from = accOf(p.fromAccountId);
+  const to = accOf(p.toAccountId);
+  const fa = d(isAmount(String(p.fromAmount ?? "")) ? String(p.fromAmount) : 0);
+  const ta = d(isAmount(String(p.toAmount ?? "")) ? String(p.toAmount) : 0);
+  const implied = draft.kind === "transfer" && from && to && from.currency !== to.currency && fa.gt(0) && ta.gt(0)
+    ? from.currency === "CDF" && to.currency === "USD" ? fa.dividedBy(ta) : from.currency === "USD" && to.currency === "CDF" ? ta.dividedBy(fa) : null
+    : null;
+  const voucherRate = (draft.kind === "payment" || draft.kind === "receipt") && isOwner && checks.currency === "CDF" && p.rate ? String(p.rate) : "";
+  const tooFar = useRateTooFar(draft.date, implied ? implied.toString() : voucherRate);
+  const rateFar = tooFar && implied
+    ? t(
+        `These amounts mean 1 $ = ${number(implied.toDecimalPlaces(2).toString())} FC, too far from the day's rate`,
+        `Ces montants donnent 1\u00a0$ = ${number(implied.toDecimalPlaces(2).toString())}\u00a0FC, trop loin du taux du jour`,
+      )
+    : tooFar;
+  const short = check ? checks.short ?? rateFar : null;
+  const fix = !short
+    ? null
+    : checks.short
+      ? t("Add money to the account or lower the amount first.", "Approvisionnez le compte ou réduisez le montant d'abord.")
+      : implied
+        ? t("Correct the two amounts with Edit, or change the day's rate.", "Corrigez les deux montants avec Modifier, ou modifiez le taux du jour.")
+        : t("Correct the rate with Edit, or change the day's rate.", "Corrigez le taux avec Modifier, ou modifiez le taux du jour.");
   useEffect(() => {
-    onShort?.(short);
-    return () => onShort?.(null);
-  }, [short, onShort]);
+    onShort?.(short, fix);
+    return () => onShort?.(null, null);
+  }, [short, fix, onShort]);
   const memo = draft.memo || checks.fallbackMemo || t("no description", "sans libellé");
   // Francs as typed, then their dollars: the francs are what leave (or come into) the drawer.
   const amount = checks.currency === "CDF" && checks.total.gt(0)
