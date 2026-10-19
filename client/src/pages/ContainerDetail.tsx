@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import { AlertTriangle, ArrowLeft, Bike, ChevronDown, Info, Lock, PackageCheck, Pencil, Plus, Save, Trash2, Undo2, X } from "lucide-react";
 import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, StatCard, SubmitButton, unclearAmount } from "@/components/common";
-import { ContainerRateField, MoneyAccountSelect, PartySelect, perUsdText, useAccounts, useContainerRateRefusal, useRate, VariantSearch } from "@/components/pickers";
+import { ContainerRateField, CurrencySwitchNote, MoneyAccountSelect, PartySelect, perUsdText, useAccounts, useContainerRateRefusal, useCurrencySwitch, useRate, VariantSearch } from "@/components/pickers";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
@@ -942,6 +942,13 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
 
   const currency: "USD" | "CDF" = mode === "paid" ? (account?.currency ?? "USD") : owedCurrency;
   const isCdf = currency === "CDF";
+  /** The account, the bill's currency or paid/owed changed the amount's currency: converted at the day's rate. */
+  const currencySwitch = useCurrencySwitch(day);
+  const switchCurrency = (next: { mode?: "paid" | "owed"; account?: Account; owedCurrency?: "USD" | "CDF" }) => {
+    const m = next.mode ?? mode;
+    const to = m === "paid" ? (next.account ?? account)?.currency ?? "USD" : next.owedCurrency ?? owedCurrency;
+    setAmount(currencySwitch.convert(amount, currency, to));
+  };
   const amt = d(amount);
   const usdValue = isCdf ? (d(rate).gt(0) ? amt.dividedBy(d(rate)) : null) : amt;
 
@@ -1039,10 +1046,10 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
 
           <div className="space-y-2 sm:col-span-2">
             <div className="inline-flex rounded-md border p-0.5">
-              <Button type="button" size="sm" variant={mode === "paid" ? "default" : "ghost"} onClick={() => setMode("paid")}>
+              <Button type="button" size="sm" variant={mode === "paid" ? "default" : "ghost"} onClick={() => { setMode("paid"); switchCurrency({ mode: "paid" }); }}>
                 {t("Paid now", "Payé maintenant")}
               </Button>
-              <Button type="button" size="sm" variant={mode === "owed" ? "default" : "ghost"} onClick={() => setMode("owed")}>
+              <Button type="button" size="sm" variant={mode === "owed" ? "default" : "ghost"} onClick={() => { setMode("owed"); switchCurrency({ mode: "owed" }); }}>
                 {t("Not paid yet", "Pas encore payé")}
               </Button>
             </div>
@@ -1054,7 +1061,8 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
               error={drawerShort}
               required
             >
-              <MoneyAccountSelect value={account?.id ?? null} onChange={(_, a) => setAccount(a)} />
+              <MoneyAccountSelect value={account?.id ?? null} onChange={(_, a) => { setAccount(a); switchCurrency({ account: a }); }} />
+              <CurrencySwitchNote note={currencySwitch.note} />
             </Field>
           ) : (
             <>
@@ -1062,13 +1070,14 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
                 <PartySelect types={["agent", "supplier"]} value={partyId} onChange={(id) => setPartyId(id)} />
               </Field>
               <Field label={t("Currency of the bill", "Devise de la facture")}>
-                <Select value={owedCurrency} onValueChange={(v) => setOwedCurrency(v as "USD" | "CDF")}>
+                <Select value={owedCurrency} onValueChange={(v) => { setOwedCurrency(v as "USD" | "CDF"); switchCurrency({ owedCurrency: v as "USD" | "CDF" }); }}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     <SelectItem value="USD">{t("Dollars ($)", "Dollars ($)")}</SelectItem>
                     <SelectItem value="CDF">{t("Francs (FC)", "Francs (FC)")}</SelectItem>
                   </SelectContent>
                 </Select>
+                <CurrencySwitchNote note={currencySwitch.note} />
               </Field>
             </>
           )}
@@ -1078,7 +1087,7 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
             hint={bigText && <span role="alert" className="font-medium text-amber-800 dark:text-amber-400">{bigText}</span>}
             required
           >
-            <Input inputMode="decimal" usd={currency === "USD"} thousands={isCdf} value={amount} onChange={(e) => setAmount(e.target.value)} placeholder="0" />
+            <Input inputMode="decimal" usd={currency === "USD"} thousands={isCdf} value={amount} onChange={(e) => { setAmount(e.target.value); currencySwitch.clear(); }} placeholder="0" />
           </Field>
           {isCdf && (
             <Field

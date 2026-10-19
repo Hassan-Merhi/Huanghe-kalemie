@@ -498,6 +498,8 @@ export function AdjustForm({
    * at the cost typed (else the exact average), stock lost as its share of the item's stock value.
    */
   const valueOf = (l: AdjLine) => {
+    // Half a set cannot be saved: it counts for nothing in the estimate, as its line shows no value.
+    if (halfUnit(l)) return d(0);
     const c = change(l);
     const sq = d(l.variant.stockQty);
     const sv = d(l.variant.stockValue);

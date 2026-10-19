@@ -72,6 +72,10 @@ const PATTERNS: [RegExp, (...m: string[]) => string][] = [
   [/^Retour (\S+) sur la vente (\S+)$/, (n, s) => `Return ${n} on sale ${s}`],
   [/^Paiement à (.+)$/s, (p) => `Payment to ${p}`],
   [/^Paiement de (.+)$/s, (p) => `Payment from ${p}`],
+  // An advance the server applied on an offload or a franc bill (see applyAdvances); the expense's description stays as typed.
+  [/^Avance imputée sur le conteneur (\S+)$/, (n) => `Advance applied to container ${n}`],
+  [/^Avance imputée sur les frais du conteneur (\S+)$/, (n) => `Advance applied to the costs of container ${n}`],
+  [/^Avance imputée sur la dépense (.+)$/s, (d) => `Advance applied to the expense ${d}`],
   [/^Contre-passation de (\S+)$/, (n) => `Reversal of ${n}`],
   [/^Annulation du déchargement du conteneur (\S+)$/, (n) => `Offload of container ${n} undone`],
   [/^Déchargement du conteneur (\S+)$/, (n) => `Offload of container ${n}`],

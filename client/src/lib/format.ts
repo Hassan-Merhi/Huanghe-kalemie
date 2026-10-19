@@ -263,6 +263,37 @@ export function curLabel(currency: string | null | undefined): string {
   return currency === "CDF" ? "FC" : currency === "USD" ? "$" : currency === "CNY" ? "¥" : currency ?? "";
 }
 
+/**
+ * An amount typed for one paying account, carried over when the account changes to one in another currency:
+ * 6 000 $ from the dollar box are 16 848 000 FC from the franc box at 2 808, not 6 000 FC. Francs are whole,
+ * dollars to the cent. "" stays "", the same currency keeps the amount as typed; null when it cannot be
+ * converted (no rate, an amount that cannot be read, a currency other than $ and FC): the caller clears it.
+ */
+export function convertTypedAmount(amount: string, from: string | null | undefined, to: string | null | undefined, cdfPerUsd: unknown): string | null {
+  const typed = amount.trim();
+  if (!typed || !from || !to || from === to) return amount;
+  if (!/^\d+(\.\d+)?$/.test(typed)) return null;
+  const rate = d(cdfPerUsd);
+  if (!rate.gt(0)) return null;
+  const value = new Decimal(typed);
+  if (from === "USD" && to === "CDF") return value.times(rate).toDecimalPlaces(0, Decimal.ROUND_HALF_UP).toString();
+  if (from === "CDF" && to === "USD") return value.dividedBy(rate).toDecimalPlaces(2, Decimal.ROUND_HALF_UP).toFixed(2);
+  return null;
+}
+
+/** What a form says under its account once amounts were converted (or cleared) on a change of currency. */
+export function convertedNote(t: (en: string, fr: string) => string, to: string, cdfPerUsd: unknown, converted: boolean, many = false): string {
+  const rate = `${qty(cdfPerUsd)}${NB}FC`;
+  if (!converted) {
+    return many
+      ? t(`Amounts cleared: enter them in ${curLabel(to)}.`, `Montants effacés\u00a0: saisissez-les en ${curLabel(to)}.`)
+      : t(`Amount cleared: enter it in ${curLabel(to)}.`, `Montant effacé\u00a0: saisissez-le en ${curLabel(to)}.`);
+  }
+  return many
+    ? t(`Amounts converted at the day's rate (${rate} per $1): check them.`, `Montants convertis au taux du jour (${rate} pour 1\u00a0$)\u00a0: vérifiez-les.`)
+    : t(`Amount converted at the day's rate (${rate} per $1): check it.`, `Montant converti au taux du jour (${rate} pour 1\u00a0$)\u00a0: vérifiez-le.`);
+}
+
 /** An account name with its currency, unless the name already says it: "M-Pesa ($)", "Caisse FC". */
 export function accountLabel(name: string, currency: string | null | undefined): string {
   if (/\b(FC|CDF|USD|\$|CNY|RMB)\b|\$/i.test(name)) return name;

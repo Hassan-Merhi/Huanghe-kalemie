@@ -64,6 +64,12 @@ export interface CreateSaleInput {
    * a till still on an older one is refused rather than booked partly on credit. Left out, nothing is checked.
    */
   tillRate?: string | null;
+  /**
+   * The customer's balance the till showed (+ owed, − avoir). A sale whose credit the avoir would now cover
+   * differently (used up by another sale since, or a payment made since) is refused rather than booked
+   * otherwise than the till said. Left out, nothing is checked.
+   */
+  tillBalance?: string | null;
 }
 
 export interface PriceRules {
@@ -96,9 +102,11 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
     .where(inArray(variants.id, variantIds));
   const byId = new Map(variantRows.map((v) => [v.id, v]));
 
+  let customerName = "";
   if (input.customerId) {
     const [c] = await tx.select().from(parties).where(eq(parties.id, input.customerId));
     if (!c || c.type !== "customer") throw badRequest("Customer not found", "Client introuvable");
+    customerName = c.name;
   }
 
   // Line amounts before the sale-level discount.
@@ -247,6 +255,19 @@ export async function createSale(tx: Tx, input: CreateSaleInput, userId: number,
     );
   }
   if (credit.gt(0) && !input.customerId) throw badRequest("Choose a customer to sell on credit", "Choisissez un client pour vendre à crédit");
+  // "Réglé sur l'avoir 25 $" on the till is saved as 25 $ on credit if another sale used the avoir up meanwhile:
+  // the cashier checks the payment again against the customer's balance now. Only a change in what the
+  // avoir covers is refused; a debt that grew or shrank leaves the sale as the till showed it.
+  if (input.customerId && input.tillBalance != null && credit.gt(0)) {
+    const [row] = await tx.select({ balance: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)` }).from(journalLines).where(eq(journalLines.partyId, input.customerId));
+    const covers = (balance: DecimalInput) => Decimal.min(credit, Decimal.max(dec(balance).negated(), 0));
+    if (!covers(input.tillBalance).equals(covers(row?.balance ?? 0))) {
+      throw conflict(
+        `${customerName}'s balance has changed: check the payment`,
+        `Le solde de ${customerName} a changé\u00a0: vérifiez le paiement`,
+      );
+    }
+  }
 
   const number = await nextNumber(tx, "sale", "S-");
   const [sale] = await tx
