@@ -6,8 +6,10 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Loading, Num, PageHeader, StatCard } from "@/components/common";
-import { accountLabel, axisLines, compactUsd, d, num, pct, qty as fmtQty, usd, variantText } from "@/lib/format";
-import { count, useT } from "@/lib/i18n";
+import { everyDay } from "@/lib/days";
+import { accountLabel, axisLines, compactUsd, d, num, pct, qty as fmtQty, todayLocal, usd, variantText } from "@/lib/format";
+import { count, useI18n, useT } from "@/lib/i18n";
+import { useSystemText } from "@/lib/systemText";
 import { cn } from "@/lib/utils";
 import { RangePicker, useRange } from "@/pages/Reports";
 
@@ -47,9 +49,10 @@ const TOOLTIP = {
 const axisUsd = (v: number) => compactUsd(v);
 const tipUsd = (v: unknown) => usd(v);
 
-function monthLabel(m: string) {
+/** "janv 26", "févr" in French; "Jan 26", "Feb" in English. */
+function monthLabel(m: string, lang: string) {
   const [y, mo] = m.split("-").map(Number);
-  return new Date(Date.UTC(y, mo - 1, 1)).toLocaleDateString("fr-FR", { month: "short", timeZone: "UTC" }).replace(".", "") + (mo === 1 ? ` ${String(y).slice(2)}` : "");
+  return new Date(Date.UTC(y, mo - 1, 1)).toLocaleDateString(lang === "en" ? "en-GB" : "fr-FR", { month: "short", timeZone: "UTC" }).replace(".", "") + (mo === 1 ? ` ${String(y).slice(2)}` : "");
 }
 
 /** Month tick on two lines (month, then the year under January) so all twelve fit and none is skipped. */
@@ -113,27 +116,32 @@ export default function AnalyticsPage() {
       <div className="mb-4"><RangePicker range={range} /></div>
       <ErrorText error={q.error} />
       {q.isLoading && <Loading />}
-      {a && <Body a={a} />}
+      {a && <Body a={a} from={range.from} to={range.to} />}
     </div>
   );
 }
 
-function Body({ a }: { a: Analytics }) {
+function Body({ a, from, to }: { a: Analytics; from: string; to: string }) {
   const t = useT();
+  const { lang } = useI18n();
+  // Account names the server created ("Salaires", "Caisse USD") in the chosen language.
+  const sys = useSystemText();
   const income = d(a.totals.income);
   const marginPct = income.gt(0) ? d(a.totals.grossProfit).div(income).times(100).toFixed(1) : null;
 
-  const daily = a.daily.map((x) => ({ date: x.date.slice(8, 10) + "/" + x.date.slice(5, 7), revenue: num(x.revenue), grossProfit: num(x.grossProfit) }));
-  const trend = a.trend.map((x) => ({ month: monthLabel(x.month), income: num(x.income), grossProfit: num(x.grossProfit), netProfit: num(x.netProfit) }));
+  // Every day of the range, the days without sales at zero, so 13/10 is never drawn next to 19/10.
+  const days = everyDay(a.daily, from, to, (date) => ({ date, revenue: "0", cogs: "0", grossProfit: "0", expenses: "0" }), todayLocal());
+  const daily = days.map((x) => ({ date: x.date.slice(8, 10) + "/" + x.date.slice(5, 7), revenue: num(x.revenue), grossProfit: num(x.grossProfit) }));
+  const trend = a.trend.map((x) => ({ month: monthLabel(x.month, lang), income: num(x.income), grossProfit: num(x.grossProfit), netProfit: num(x.netProfit) }));
   const byCat = [...a.byCategory].sort((x, y) => num(y.revenue) - num(x.revenue)).slice(0, 10).map((x) => ({ name: x.name || t("No category", "Sans catégorie"), revenue: num(x.revenue) }));
-  const payments = [...a.payments].sort((x, y) => num(y.usd) - num(x.usd)).map((x) => ({ name: x.currency === "CDF" ? accountLabel(x.name, "CDF") : x.name, usd: num(x.usd) }));
+  const payments = [...a.payments].sort((x, y) => num(y.usd) - num(x.usd)).map((x) => ({ name: x.currency === "CDF" ? accountLabel(sys.account(x.name), "CDF") : sys.account(x.name), usd: num(x.usd) }));
   // Credit as the Sales list counts it: after returns, and the part an avoir covered apart (it is not owed).
   const creditOwed = a.sales.creditOwed ?? a.sales.credit;
   const onAvoir = d(a.sales.creditOnAvoir ?? 0);
   const credit = num(creditOwed);
   if (credit > 0) payments.push({ name: t("On credit", "À crédit"), usd: credit });
   if (onAvoir.gt(0)) payments.push({ name: t("From customers' credit", "Sur l'avoir"), usd: num(onAvoir) });
-  const expenses = [...a.expenses].sort((x, y) => num(y.amount) - num(x.amount)).slice(0, 10).map((x) => ({ name: x.name, amount: num(x.amount) }));
+  const expenses = [...a.expenses].sort((x, y) => num(y.amount) - num(x.amount)).slice(0, 10).map((x) => ({ name: sys.account(x.name), amount: num(x.amount) }));
   const stock = [...a.stockByCategory].sort((x, y) => num(y.value) - num(x.value)).slice(0, 10).map((x) => ({ name: x.name || t("No category", "Sans catégorie"), value: num(x.value) }));
   const barH = (n: number) => Math.max(160, n * 30 + 40);
   const yCat = { type: "category" as const, dataKey: "name", width: 112, tick: <CategoryTick />, tickLine: false, axisLine: false, interval: 0 };
@@ -164,7 +172,7 @@ function Body({ a }: { a: Analytics }) {
       </p>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <ChartCard title={t("Daily income and gross profit", "Recettes et marge brute par jour")} empty={!daily.length}>
+        <ChartCard title={t("Daily income and gross profit", "Recettes et marge brute par jour")} empty={!a.daily.length}>
           <AreaChart data={daily} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
             <CartesianGrid stroke={GRID} strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="date" tick={AXIS} tickLine={false} axisLine={false} minTickGap={16} />

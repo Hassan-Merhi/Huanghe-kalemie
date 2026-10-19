@@ -81,7 +81,33 @@ export async function salaryAccountId(tx: Tx) {
 }
 
 export async function listRuns(tx: Tx) {
-  return tx.select().from(payrollRuns).orderBy(asc(payrollRuns.month), asc(payrollRuns.id));
+  const runs = await tx.select().from(payrollRuns).orderBy(asc(payrollRuns.month), asc(payrollRuns.id));
+  const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
+  // Read only: each posted run's lines with `advanceUsd` (see advancesBeforeRun), so cancelling it can say
+  // which part of a salary went back onto an advance and which part was paid in cash.
+  return Promise.all(runs.map(async (r) => (r.status === "posted" && r.journalId ? { ...r, lines: await advancesBeforeRun(tx, payables, r) } : r)));
+}
+
+/**
+ * What each employee had as an advance just before the run was posted, at most the run's net: that part of
+ * the salary was deducted from the advance (Jean's 421 200 FC from his 150,00 $), not paid out, and on a
+ * cancel it goes back onto the advance. The rest of what is no longer owed was paid in cash. Read only.
+ */
+async function advancesBeforeRun(tx: Tx, payables: number, run: typeof payrollRuns.$inferSelect): Promise<(PayrollLine & { advanceUsd: string })[]> {
+  const lines = run.lines as PayrollLine[];
+  const ids = lines.map((l) => l.partyId);
+  const rows = ids.length
+    ? await tx
+        .select({ partyId: journalLines.partyId, usd: sql<string>`sum(${journalLines.debit} - ${journalLines.credit})::text` })
+        .from(journalLines)
+        .where(and(eq(journalLines.accountId, payables), inArray(journalLines.partyId, ids), sql`${journalLines.journalId} < ${run.journalId}`))
+        .groupBy(journalLines.partyId)
+    : [];
+  return lines.map((l) => {
+    const before = Decimal.max(dec(rows.find((r) => r.partyId === l.partyId)?.usd ?? 0), 0);
+    const owed = Decimal.max(dec(l.netUsd ?? (run.currency === "USD" ? l.net : 0)), 0);
+    return { ...l, advanceUsd: Decimal.min(before, owed).toFixed(2) };
+  });
 }
 
 export interface PayrollRunInput {

@@ -37,6 +37,8 @@ const ACCOUNTS: Record<string, string> = {
 
 const MEMOS: Record<string, string> = {
   "Avance imputée": "Advance applied",
+  // The libellé an advance on the Payroll page is given when none is typed.
+  "Avance sur salaire": "Salary advance",
   "Monnaie rendue": "Change given back",
   "Arrondi FC": "FC rounding",
   "Écart de change (coût moyen des devises)": "Exchange difference (average cost of the currency)",
@@ -78,6 +80,7 @@ const PATTERNS: [RegExp, (...m: string[]) => string][] = [
   [/^Apport en capital ((?:de |d'|d’|du |des ).+)$/s, (p) => `Capital put in by ${of(p)}`],
   [/^Retrait ((?:de |d'|d’|du |des ).+)$/s, (p) => `Withdrawal by ${of(p)}`],
   [/^Annulation des salaires (.+)$/, (m) => `Salaries of ${month(m)} cancelled`],
+  [/^Avance déduite du salaire (\S+ \d{4}|\d{4}-\d{2})$/, (m) => `Advance deducted from the ${month(m)} salary`],
   [/^Retenues sur salaires (\S+ \d{4}|\d{4}-\d{2})$/, (m) => `Salary withholdings ${month(m)}`],
   [/^Salaires? (\S+ \d{4}|\d{4}-\d{2})$/, (m) => `Salaries ${month(m)}`],
   [new RegExp(`^Clôture (.+?)${C}partage du bénéfice entre associés$`), (m) => `Close of ${month(of(m))}: profit split between partners`],
