@@ -21,6 +21,7 @@ import { wholeUnit } from "@shared/units";
 import {
   assertMemoNotReserved,
   cnyRateFor,
+  COST_FX_MEMO,
   contactLines,
   foreignBalance,
   bookValue,
@@ -312,15 +313,21 @@ export async function advanceToYuanLines(tx: Tx, payables: number, partyId: numb
   return lines;
 }
 
-/** Lines applying a dollar advance to francs a supplier or employee is owed, at the day's franc rate. */
+/**
+ * Lines applying a dollar advance to francs a supplier or employee is owed, at the day's franc rate.
+ * Francs paid to them settle francs owed before dollars do, in date order: on a day before today, only
+ * the francs still owed both that day and today take dollars (francs paid since settle the rest).
+ */
 export async function advanceToFrancLines(tx: Tx, payables: number, partyId: number, date: string): Promise<PostLine[]> {
   await lockBalances(tx, { parties: [partyId] });
   const fc = await foreignBalance(tx, payables, partyId, "CDF", date);
-  if (!fc.native.isNegative() || !fc.usd.isNegative()) return [];
+  const today = shopToday();
+  const now = date < today ? await foreignBalance(tx, payables, partyId, "CDF", today) : fc;
+  if (!fc.native.isNegative() || !fc.usd.isNegative() || !now.native.isNegative()) return [];
   const advance = Decimal.max((await foreignBalance(tx, payables, partyId, "USD", date)).usd, 0);
   if (advance.isZero()) return [];
   const fcRate = (await rateFor(tx, date)).rate;
-  const owedNative = fc.native.abs();
+  const owedNative = Decimal.min(fc.native.abs(), now.native.abs());
   const owedUsd = cents(owedNative.dividedBy(fcRate));
   let applyUsd = Decimal.min(advance, owedUsd);
   let francs = owedNative;
@@ -391,8 +398,45 @@ export async function applyAdvances(
       const id = await post(on, more);
       first ??= id;
     }
+    if (currency === "CDF") {
+      const id = await francsMetLines(tx, payables, partyId, date, days.filter((d) => d.paid).map((d) => String(d.date)), post);
+      first ??= id;
+    }
   }
   return first;
+}
+
+/**
+ * Francs paid to a contact after a franc bill dated before them settle it as they come (they are the same
+ * balance), before any dollar advance does (see advanceToFrancLines). They were booked at what they cost
+ * then, the bill at its own rate: on the first day they leave no francs owed or held, the dollars left
+ * between the two go to exchange differences, as they would have had the bill been booked first (see
+ * costForeignOutflows). Only what the rates of those francs explain: the bill's francs at the lowest
+ * against the highest rate, plus a cent a line; more is for a person to correct (see selfCheck).
+ * Undone with the bill's advances (see reverseAdvances).
+ */
+async function francsMetLines(tx: Tx, payables: number, partyId: number, date: string, paidOn: string[], post: (on: string, lines: PostLine[]) => Promise<number | null>) {
+  for (const on of Array.from(new Set(paidOn)).sort()) {
+    const bal = await foreignBalance(tx, payables, partyId, "CDF", on);
+    if (!bal.native.isZero() || bal.usd.isZero()) continue;
+    const rows = await tx
+      .select({ native: journalLines.nativeAmount, rate: journalLines.rate })
+      .from(journalLines)
+      .innerJoin(journals, eq(journals.id, journalLines.journalId))
+      .where(and(eq(journalLines.accountId, payables), eq(journalLines.partyId, partyId), eq(journalLines.currency, "CDF"), sql`${journals.date} >= ${date}`, lte(journals.date, on)));
+    const posts = rows.filter((r) => r.native && !dec(r.native).isZero() && r.rate && dec(r.rate).gt(0));
+    if (!posts.length) return null;
+    const rates = posts.map((r) => dec(r.rate!));
+    const billed = sum(posts.filter((r) => dec(r.native!).isNegative()).map((r) => dec(r.native!).abs()));
+    const bound = billed.times(new Decimal(1).dividedBy(Decimal.min(...rates)).minus(new Decimal(1).dividedBy(Decimal.max(...rates)))).plus(new Decimal("0.01").times(posts.length));
+    if (bal.usd.abs().gt(bound)) return null;
+    const fx = await systemAccountId(tx, SYSTEM_ACCOUNTS.fx);
+    return post(on, [
+      { accountId: payables, partyId, currency: "CDF", nativeAmount: "0", rate: (await rateFor(tx, on)).rate.toFixed(4), debit: bal.usd.isNegative() ? bal.usd.abs() : 0, credit: bal.usd.isPositive() ? bal.usd : 0, memo: COST_FX_MEMO, kind: "cost_fx" },
+      { accountId: fx, debit: bal.usd.isPositive() ? bal.usd : 0, credit: bal.usd.isNegative() ? bal.usd.abs() : 0, memo: COST_FX_MEMO, kind: "cost_fx" },
+    ]);
+  }
+  return null;
 }
 
 export type AdvanceSource = "expense" | "container_expense" | "container" | "payroll";
