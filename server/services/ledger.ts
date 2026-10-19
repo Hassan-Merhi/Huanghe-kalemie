@@ -1019,8 +1019,9 @@ const poolSkipped = (l: { kind: string | null }) => !!l.kind && POOL_SKIPPED_KIN
  * still counts this one's). A journal posted before lines kept theirs counts the one its journal booked
  * when its only francs or yuan are this supplier's (another balance's difference in the same journal
  * cannot be told apart, so none is counted: its yuan are claimed back at their book cost).
+ * `skip` leaves journals out of the replay; `values` gets the pool's value after each journal.
  */
-async function yuanPool(tx: Tx, payables: number, partyId: number) {
+async function yuanPool(tx: Tx, payables: number, partyId: number, opts: { skip?: Set<number>; values?: Map<number, Decimal> } = {}) {
   const rows = await tx
     .select({
       journalId: journalLines.journalId,
@@ -1064,9 +1065,9 @@ async function yuanPool(tx: Tx, payables: number, partyId: number) {
   const refunds = new Set<number>(); // receipts: the supplier's refunds of yuan they owed back
   const kinds = new Map<number, { kind: "lot" | "bill"; native: Decimal; usd: Decimal; rate: string }>();
   const liveBill = new Map<number, number>(); // container -> the journal that billed it
-  for (const [id, lines] of byJournal) {
+  const step = (id: number, lines: typeof rows) => {
     const own = lines.filter((r) => !poolSkipped(r));
-    if (!own.length) continue;
+    if (!own.length) return;
     const j = own[0];
     const native = sum(own.map((r) => dec(r.native ?? 0)));
     const usd = sum(own.map((r) => dec(r.usd)));
@@ -1074,19 +1075,19 @@ async function yuanPool(tx: Tx, payables: number, partyId: number) {
       const bill = j.sourceId ? liveBill.get(j.sourceId) : undefined;
       if (bill) pool.removeBill(bill);
       if (j.sourceId) liveBill.delete(j.sourceId);
-      continue;
+      return;
     }
     if (j.type === "revaluation") {
       // A month closed (or reopened, its revaluation undone): moves dollars, no yuan.
       if (native.isZero()) pool.revalue(usd);
-      continue;
+      return;
     }
     if (j.reverses) {
       if (pool.lots.has(j.reverses)) pool.removeLot(j.reverses);
       else if (pool.bills.has(j.reverses)) pool.removeBill(j.reverses);
-      continue;
+      return;
     }
-    if (native.isZero()) continue;
+    if (native.isZero()) return;
     const kept = own.some((r) => r.fxUsd != null);
     const rest = others.get(id) ?? [];
     const clean = kept || !rest.some((l) => l.currency !== "USD" && !(l.accountId === payables && l.partyId === partyId && l.currency === "CNY"));
@@ -1096,7 +1097,7 @@ async function yuanPool(tx: Tx, payables: number, partyId: number) {
         ? sum(rest.filter((l) => l.accountId === fx && l.kind === "cost_fx").map((l) => dec(l.usd)))
         : new Decimal(0);
     const rate = own.find((r) => r.rate && dec(r.rate).gt(0))?.rate;
-    if (!rate) continue;
+    if (!rate) return;
     if (native.gt(0)) {
       pool.addLot(id, native, usd, gain);
       kinds.set(id, { kind: "lot", native, usd, rate });
@@ -1108,8 +1109,27 @@ async function yuanPool(tx: Tx, payables: number, partyId: number) {
       if (j.type === "receipt" || j.type === "customer_receipt") refunds.add(id);
       if (j.type === "container_finalize" && j.sourceType === "container" && j.sourceId) liveBill.set(j.sourceId, id);
     }
+  };
+  for (const [id, lines] of byJournal) {
+    if (!opts.skip?.has(id)) step(id, lines);
+    opts.values?.set(id, pool.value());
   }
   return { pool, kinds, refunds };
+}
+
+/**
+ * What a month-end revaluation (`revaluation`, undone by `undone` when its month is reopened) still adds
+ * to a supplier's yuan after each journal, as YuanPool counts them: the pool's value with it less its value
+ * without it. A container's reversal that takes its bill away moves that share to exchange differences
+ * with the payments' own (see yuanTrueUpLines); reopening the month takes back only that share.
+ */
+export async function yuanRevaluationShare(tx: Tx, payables: number, partyId: number, revaluation: number, undone: number | null): Promise<Map<number, Decimal>> {
+  const withIt = new Map<number, Decimal>();
+  const without = new Map<number, Decimal>();
+  const skip = undone ? [undone] : [];
+  await yuanPool(tx, payables, partyId, { skip: new Set(skip), values: withIt });
+  await yuanPool(tx, payables, partyId, { skip: new Set([...skip, revaluation]), values: without });
+  return new Map([...withIt].map(([id, v]) => [id, v.minus(without.get(id) ?? 0)]));
 }
 
 /** A supplier's yuan lines a journal moves (as YuanPool counts them): those its undoing trues up. */
