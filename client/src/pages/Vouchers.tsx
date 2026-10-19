@@ -488,12 +488,25 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
                           <BalanceWords balance={pty.balance} customer={pty.type === "customer"} />
                           {fcBooked && !d(fcBooked.native).isZero() && <span className="text-muted-foreground">({t("of which", "dont")} {cdf(d(fcBooked.native).abs().toFixed(0))})</span>}
                           {cnyBooked && <span className="text-muted-foreground">({t("of which", "dont")} {money(d(cnyBooked.native).abs().toFixed(2), "CNY")})</span>}
-                          {cnyBooked && (
-                            <span className="w-full text-muted-foreground" data-testid="line-owed-cny">
-                              {t("Yuan are settled with ", "Les yuans se règlent avec «\u00a0Payer\u00a0» sur ")}
-                              <Link href={`/contacts/${pty.id}`} className="underline underline-offset-2">{t("“Pay” on the contact page", "la fiche du contact")}</Link>.
-                            </span>
-                          )}
+                          {cnyBooked && (() => {
+                            // Said as saving does it: a payment to a supplier, agent or employee owed no francs settles
+                            // the yuan after the dollars owed (at book value with no yuan rate on file), so the line
+                            // never says they are only settled from the contact page.
+                            const settles = kind === "payment" && pty.type !== "customer" && !(fcBooked && !d(fcBooked.native).isZero());
+                            const yuan = settles ? checks.yuanSettled.get(pty.id) : undefined;
+                            const at = checks.yuanAtBook ? t("at book value", "à la valeur comptable") : t("at today's rate", "au taux du jour");
+                            const link = <Link href={`/contacts/${pty.id}`} className="underline underline-offset-2">{t("“Pay” on the contact page", "la fiche du contact")}</Link>;
+                            return (
+                              <span className="w-full text-muted-foreground" data-testid="line-owed-cny">
+                                {yuan
+                                  ? t(`This payment will also settle ${money(yuan.native, "CNY")} (${usd(yuan.usd)}) ${at}; to choose the yuan settled, use `, `Ce paiement règlera aussi ${money(yuan.native, "CNY")} (${usd(yuan.usd)}) ${at}\u00a0; pour choisir les yuans réglés, utilisez «\u00a0Payer\u00a0» sur `)
+                                  : settles
+                                    ? t(`Paid beyond the dollars owed, the yuan are settled ${at}; to choose the yuan settled, use `, `Au-delà des dollars dus, un paiement règle les yuans ${at}\u00a0; pour choisir les yuans réglés, utilisez «\u00a0Payer\u00a0» sur `)
+                                    : t("Yuan are settled with ", "Les yuans se règlent avec «\u00a0Payer\u00a0» sur ")}
+                                {link}.
+                              </span>
+                            );
+                          })()}
                           {all && (
                             <span className={cn("inline-flex items-center gap-1.5", all.fc.gt(0) && !isCdf && "w-full")}>
                               {all.fc.gt(0) && !isCdf && <span className="text-muted-foreground">{t(`All of it at today's rate: ${usd(all.amount)}`, `Le tout au taux du jour\u00a0: ${usd(all.amount)}`)}</span>}

@@ -828,7 +828,8 @@ function AdjustmentHistory() {
                   <TableCell className="whitespace-nowrap">{date(a.date)}</TableCell>
                   <TableCell className="whitespace-nowrap">{a.locationName ?? locations.find((l) => l.id === a.locationId)?.name ?? `#${a.locationId}`}</TableCell>
                   <TableCell><Badge variant={a.kind === "opening" ? "default" : a.kind === "damage" || a.kind === "loss" ? "destructive" : "outline"}>{kindLabel(t, a.kind)}</Badge></TableCell>
-                  <TableCell className="max-w-[320px] truncate" title={sys.memo(a.reason)}>{sys.memo(a.reason)}</TableCell>
+                  {/* Wraps rather than truncates: a one-line reason ("Stock d'ouverture importé") widened the table past 1024 and 1280 px. */}
+                  <TableCell className="max-w-[320px] break-words">{sys.memo(a.reason)}</TableCell>
                   <TableCell className="text-right"><Num>{lines.length}</Num></TableCell>
                   <TableCell className="text-right">{a.value !== undefined && <Num className={cn("font-medium", tone(a.value))}>{signed(a.value)}</Num>}</TableCell>
                 </TableRow>

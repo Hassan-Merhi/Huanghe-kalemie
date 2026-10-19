@@ -3,7 +3,7 @@ import { capitalize, de, deMonth, monthText } from "@shared/french";
 import { createPortal } from "react-dom";
 import { useQuery } from "@tanstack/react-query";
 import Decimal from "decimal.js";
-import { AlertTriangle, Banknote, Minus, Plus, Printer, ShoppingCart, Trash2 } from "lucide-react";
+import { AlertTriangle, Banknote, History, Minus, Plus, Printer, ShoppingCart, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -13,11 +13,13 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { EmptyState, Field, Num, PageHeader, SubmitButton, unclearAmount } from "@/components/common";
-import { LocationSelect, MoneyAccountSelect, PartySelect, RateInput, VariantSearch, useAccounts, useMoneyAccounts, useRate } from "@/components/pickers";
+import { LocationSelect, MoneyAccountSelect, PartySelect, RateInput, VariantSearch, useAccounts, useLocations, useMoneyAccounts, useRate } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
+import { api, withQuery } from "@/lib/api";
+import { findDraft, removeDraft, resumedPrice, saveDraft, DRAFT_VERSION, type PosDraft } from "@/lib/posDraft";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
-import { cdf, curLabel, d, date as fmtDate, fcRounding, frenchPunctuation, MINUS, money, pct as fmtPct, qty as fmtQty, refusedUnit, todayLocal, typedNumberOk, unclearQty, usd, variantText } from "@/lib/format";
+import { cdf, curLabel, d, date as fmtDate, dateTime, fcRounding, frenchPunctuation, MINUS, money, pct as fmtPct, qty as fmtQty, refusedUnit, todayLocal, typedNumberOk, unclearQty, usd, variantText } from "@/lib/format";
 import { cartCount, unitLabel, wholeUnit } from "@/lib/units";
 import type { Account, MotorcycleUnit, Party, Settings, VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -394,7 +396,8 @@ export default function POS() {
   const [changeAmt, setChangeAmt] = useState("");
   /** "Tout rendre en francs" was pressed: the francs drawer was chosen on purpose, so no second question. */
   const [francsChosen, setFrancsChosen] = useState(false);
-  const [handedCur, setHandedCur] = useState<"USD" | "CDF">("USD");
+  /** The calculator's currency once picked by hand; until then it follows the payments (see handedCur). */
+  const [handedPick, setHandedPick] = useState<"USD" | "CDF" | null>(null);
   const [receipt, setReceipt] = useState<SaleFull | null>(null);
   const keyRef = useRef(1);
   const searchBox = useRef<HTMLDivElement>(null);
@@ -771,11 +774,21 @@ export default function POS() {
   const allOnCredit = creditSale && !paid.gt(0);
   // Francs handed over are counted in francs against the francs asked, so 75 800 FC for 75 800 FC leaves
   // nothing and 80 000 FC gives back 4 200 FC, in notes.
+  // Unless picked by hand, the calculator counts in the first payment's currency: francs when the sale is paid
+  // in francs, so 100 000 typed after "Tout en espèces FC" is 100 000 FC, not 100 000 $.
+  const firstPay = pays.find((p) => accById(p.accountId));
+  const handedCur: "USD" | "CDF" = handedPick ?? (firstPay && accById(firstPay.accountId)!.currency === "CDF" ? "CDF" : "USD");
   const changeFcExact = toPayFc && handedCur === "CDF" ? d(handed).toDecimalPlaces(0, ROUND).minus(toPayFc) : null;
   const handedUsd = handedCur === "CDF" ? (rateNum.gt(0) ? d(handed).dividedBy(rateNum) : d(0)) : d(handed);
   const change = changeFcExact ? (changeFcExact.isZero() || !rateNum.gt(0) ? d(0) : changeFcExact.dividedBy(rateNum)) : handedUsd.minus(toPay);
   // Dollar change is exact to the cent; its franc figure goes in 100 FC steps, as the till gives francs back.
   const changeFc = changeFcExact ? changeFcExact.abs() : rateNum.gt(0) ? change.abs().times(rateNum).dividedBy(FRANC_ROUNDING).toDecimalPlaces(0, ROUND).times(FRANC_ROUNDING) : null;
+  /**
+   * Far more handed over than is due (100 000 $ on a 30 $ sale): francs typed in the dollar field, or a zero
+   * too many. Asked beside the figure, with the switch to the other currency; the calculator is only a helper.
+   */
+  const HANDED_FAR = 20;
+  const handedFar = !!handed && typedNumberOk(handed) && toPay.gt(0) && handedUsd.gt(toPay.times(HANDED_FAR)) ? (handedCur === "USD" ? "USD" : "CDF") : null;
 
   // ---- submit
   function reset() {
@@ -786,6 +799,7 @@ export default function POS() {
     setNote("");
     setPays([]);
     setHanded("");
+    setHandedPick(null);
     setChangeAccId(null);
     setChangeAmt("");
     setFrancsChosen(false);
@@ -795,6 +809,8 @@ export default function POS() {
     onSuccess: (sale) => {
       setReceipt(sale);
       reset();
+      // The sale is recorded: its draft goes at once, not only once the empty cart is saved over it.
+      if (user) removeDraft(user.id, sale.locationId);
     },
     // A refused sale may be one the day's rate moved under: the till shows the new rate at once.
     onError: () => {
@@ -859,6 +875,120 @@ export default function POS() {
     setTimeout(() => searchBox.current?.querySelector("input")?.focus(), 50);
   }
 
+
+  // ---- sale in progress (kept across navigation and reloads, see posDraft)
+  const { data: locations = [] } = useLocations();
+  /** A draft found on opening the till, offered until resumed or discarded; nothing is saved over it meanwhile. */
+  const [offered, setOffered] = useState<PosDraft | null>(null);
+  const [resumeNotes, setResumeNotes] = useState<string[]>([]);
+  const [resuming, setResuming] = useState(false);
+  // State, not a ref: the save below must first run with the draft found already offered, or it would save the
+  // empty cart over it.
+  const [looked, setLooked] = useState(false);
+  useEffect(() => {
+    if (looked || !user || !locationId) return;
+    setOffered(findDraft(user.id, locationId));
+    setLooked(true);
+  }, [looked, user, locationId]);
+  // Saved on every change, under this user and location; an empty cart removes it. Moving the cart to another
+  // location moves its draft too.
+  const draftLocation = useRef<number | null>(null);
+  useEffect(() => {
+    if (!user || !locationId || !looked || offered || resuming) return;
+    if (draftLocation.current && draftLocation.current !== locationId) removeDraft(user.id, draftLocation.current);
+    draftLocation.current = locationId;
+    saveDraft({
+      v: DRAFT_VERSION, userId: user.id, locationId, savedAt: Date.now(), day: today, cdfRate: dayRate,
+      lines: lines.map(({ variant, unitId, qty, unitPrice, lineDiscount }) => ({ variant, unitId, qty, unitPrice, lineDiscount })),
+      discount, customerId, customer, note,
+      pays: pays.map(({ accountId, amount, rate }) => ({ accountId, amount, rate })),
+      changeAccId, changeAmt, francsChosen,
+    });
+  }, [user, locationId, looked, offered, resuming, today, dayRate, lines, discount, customerId, customer, note, pays, changeAccId, changeAmt, francsChosen]);
+
+  function discardDraft() {
+    if (user && offered) removeDraft(user.id, offered.locationId);
+    setOffered(null);
+  }
+  /**
+   * Puts the draft back in the till, reading again what may have moved since: the items (gone, or a new list
+   * price for a line sold at the old one), the motorcycles chosen (sold since), the accounts, the customer's
+   * balance and the day's rate. The stock at the location is the till's live figure, as for any cart, and the
+   * server checks the sale as always (a franc rate that moved again before "Valider" is still refused).
+   */
+  async function resumeDraft() {
+    const draft = offered;
+    if (!draft || resuming) return;
+    setResuming(true);
+    const notes: string[] = [];
+    try {
+      const ids = Array.from(new Set(draft.lines.map((l) => l.variant.id)));
+      const fresh = ids.length ? await api<VariantRow[]>("GET", withQuery("/api/variants", { ids: ids.join(","), locationId: draft.locationId, limit: 500 })) : [];
+      const restored: CartLine[] = [];
+      for (const l of draft.lines) {
+        const v = fresh.find((x) => x.id === l.variant.id);
+        const name = String(l.variant.productName ?? "");
+        if (!v) {
+          notes.push(t(`${name} is no longer sold: taken out of the cart.`, `${name} n'est plus en vente\u00a0: retiré du panier.`));
+          continue;
+        }
+        const price = resumedPrice(l, l.variant.sellPrice, v.sellPrice);
+        if (price.changed) notes.push(t(`${v.productName}: new list price ${usd(v.sellPrice)} (was ${usd(l.variant.sellPrice)}).`, `${v.productName}\u00a0: nouveau prix de liste ${usd(v.sellPrice)} (au lieu de ${usd(l.variant.sellPrice)}).`));
+        let unitId = v.tracksSerials ? l.unitId : null;
+        if (unitId) {
+          const units = await api<MotorcycleUnit[]>("GET", withQuery("/api/units", { variantId: v.id, status: "in_stock", locationId: draft.locationId }));
+          if (!units.some((u) => u.id === unitId)) {
+            unitId = null;
+            notes.push(t(`${v.productName}: the chassis chosen is no longer in stock here, choose another.`, `${v.productName}\u00a0: le châssis choisi n'est plus en stock ici, choisissez-en un autre.`));
+          }
+        }
+        restored.push({ key: keyRef.current++, variant: v, unitId, qty: l.qty, unitPrice: price.unitPrice, lineDiscount: l.lineDiscount });
+      }
+      // Payments into an account that is gone are dropped; the others keep their amounts as typed.
+      const keptPays = draft.pays.filter((p) => !p.accountId || accById(p.accountId));
+      if (keptPays.length < draft.pays.length) notes.push(t("A payment into an account that is no longer open was taken out.", "Un paiement sur un compte qui n'est plus ouvert a été retiré."));
+      let party: Party | null = null;
+      if (draft.customerId) {
+        party = (await api<Party[]>("GET", "/api/parties")).find((p) => p.id === draft.customerId && p.active) ?? null;
+        if (!party) notes.push(t("The customer is no longer active: choose them again.", "Le client n'est plus actif\u00a0: choisissez-le à nouveau."));
+      }
+      // The day's rate now: francs typed stay as typed, so their dollars are worked out again at it.
+      const rateNow = (await rateQ.refetch()).data?.cdfPerUsd;
+      const francsPaid = keptPays.some((p) => accById(p.accountId)?.currency === "CDF" && p.amount.trim() !== "" && p.rate === null);
+      if (francsPaid && draft.cdfRate && rateNow && !d(rateNow).equals(d(draft.cdfRate))) {
+        notes.push(t(
+          `The day's rate moved from ${fmtQty(draft.cdfRate)} to ${fmtQty(rateNow)} FC/$ since: check the franc payments.`,
+          `Le taux du jour est passé de ${fmtQty(draft.cdfRate)} à ${fmtQty(rateNow)} FC/$ depuis\u00a0: vérifiez les paiements en francs.`,
+        ));
+      }
+      if (draft.day !== today) notes.push(t(`Started on ${fmtDate(draft.day)}: the sale is dated today.`, `Commencée le ${fmtDate(draft.day)}\u00a0: la vente est datée d'aujourd'hui.`));
+      // Set before the location: the change of location must not clear the motorcycles just put back.
+      prevLocation.current = draft.locationId;
+      draftLocation.current = draft.locationId;
+      setLocationId(draft.locationId);
+      setSaleDate(today);
+      setLines(restored);
+      setDiscount(draft.discount);
+      setCustomerId(party ? party.id : null);
+      setCustomer(party);
+      setNote(draft.note);
+      setPays(keptPays.map((p) => ({ ...p, key: keyRef.current++ })));
+      setChangeAccId(draft.changeAccId && accById(draft.changeAccId) ? draft.changeAccId : null);
+      setChangeAmt(draft.changeAmt);
+      setFrancsChosen(draft.francsChosen);
+      setHanded("");
+      setResumeNotes(notes);
+      setOffered(null);
+    } catch (e) {
+      setResumeNotes([e instanceof Error ? e.message : String(e)]);
+    } finally {
+      setResuming(false);
+    }
+  }
+  const offeredTotal = offered
+    ? offered.lines.reduce((s2, l) => s2.plus(c2(d(l.qty).times(d(l.unitPrice))).minus(c2(d(l.lineDiscount)))), d(0)).minus(c2(d(offered.discount)))
+    : null;
+
   const payCard = useRef<HTMLDivElement>(null);
   const [tried, setTried] = useState(false);
   function mobilePay() {
@@ -900,6 +1030,36 @@ export default function POS() {
           </div>
         }
       />
+
+      {offered && (
+        <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200" role="status" data-testid="pos-draft">
+          <p className="flex min-w-[14rem] flex-1 items-start gap-2">
+            <History className="mt-0.5 h-4 w-4 shrink-0" />
+            <span>
+            <span className="font-medium">{t("A sale was left unfinished", "Une vente n'a pas été terminée")}</span>
+            {t(": ", "\u00a0: ")}
+            {cartCount(t, offered.lines.map((l) => ({ qty: l.qty, unit: String(l.variant.unit ?? "pcs") })))}
+            {offeredTotal && offeredTotal.gt(0) ? ` · ${usd(offeredTotal.toFixed(2))}` : ""}
+            {offered.locationId !== locationId && locations.find((l) => l.id === offered.locationId) ? ` · ${locations.find((l) => l.id === offered.locationId)!.name}` : ""}
+            {" · "}{dateTime(new Date(offered.savedAt))}
+            </span>
+          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" onClick={() => void resumeDraft()} disabled={resuming}>{t("Resume the sale in progress", "Reprendre la vente en cours")}</Button>
+            <Button size="sm" variant="outline" onClick={discardDraft} disabled={resuming}>{t("Discard it", "Abandonner")}</Button>
+          </div>
+        </div>
+      )}
+      {resumeNotes.length > 0 && (
+        <div className="mb-4 flex items-start gap-2 rounded-lg border p-3 text-sm" role="status" data-testid="pos-draft-notes">
+          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-amber-700 dark:text-amber-400" />
+          <div className="min-w-0 flex-1 space-y-0.5">
+            <p className="font-medium">{t("Sale resumed. Checked again:", "Vente reprise. Revérifié\u00a0:")}</p>
+            {resumeNotes.map((n) => <p key={n}>{n}</p>)}
+          </div>
+          <Button size="sm" variant="ghost" onClick={() => setResumeNotes([])}>{t("OK", "OK")}</Button>
+        </div>
+      )}
 
       {/* minmax(0,1fr) and min-w-0 below lg too: an implicit column would grow to a long item name and widen the page. */}
       <div className="grid grid-cols-[minmax(0,1fr)] gap-4 lg:grid-cols-[minmax(0,1fr)_380px]">
@@ -1205,7 +1365,7 @@ export default function POS() {
                   <p className="text-xs text-muted-foreground">{t("Only a helper: record the money kept above, not what the customer handed over.", "Seulement une aide\u00a0: enregistrer ci-dessus l'argent gardé, pas ce que le client a donné.")}</p>
                   <div className="flex gap-2">
                     <Input inputMode="decimal" usd={handedCur === "USD"} thousands={handedCur === "CDF"} switchTo={handedCur === "USD" ? t("FC beside it", "FC à côté") : t("$ beside it", "$ à côté")} aria-label={t("Cash handed over", "Montant reçu")} placeholder={t("Cash handed over", "Montant reçu")} value={handed} onChange={(e) => setHanded(e.target.value)} />
-                    <Select value={handedCur} onValueChange={(v) => setHandedCur(v as "USD" | "CDF")}>
+                    <Select value={handedCur} onValueChange={(v) => setHandedPick(v as "USD" | "CDF")}>
                       <SelectTrigger className="w-24" aria-label={t("Currency handed over", "Devise reçue")}><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="USD">$</SelectItem>
@@ -1224,6 +1384,17 @@ export default function POS() {
                       <div className="flex justify-between"><span>{creditSale ? t("To pay now", "À payer maintenant") : t("To pay", "À payer")}</span><Num>{usd(toPay.toFixed(2))}{toPayFc ? ` · ${cdf(toPayFc.toString())}` : ""}</Num></div>
                       {creditSale && <div className="flex justify-between text-amber-800 dark:text-amber-400" data-testid="calc-credit-part"><span>{t("On credit", "À crédit")}</span><Num>{usd(onCredit.toFixed(2))}</Num></div>}
                     </>
+                  )}
+                  {handedFar && !allOnCredit && (
+                    <p className="flex flex-wrap items-center gap-x-1.5 text-xs font-medium text-amber-800 dark:text-amber-400" data-testid="calc-handed-far">
+                      <AlertTriangle className="h-3 w-3 shrink-0" />
+                      {handedFar === "USD"
+                        ? <>
+                            {t(`${usd(d(handed).toFixed(2))}? Is it francs?`, `${usd(d(handed).toFixed(2))}\u00a0? Ce sont des FC\u00a0?`)}
+                            {rateNum.gt(0) && <button type="button" className="font-medium text-primary underline-offset-2 hover:underline" onClick={() => setHandedPick("CDF")}>{t("Count it in FC", "Compter en FC")}</button>}
+                          </>
+                        : t(`${cdf(d(handed).toFixed(0))}? Check the zeros.`, `${cdf(d(handed).toFixed(0))}\u00a0? Vérifiez les zéros.`)}
+                    </p>
                   )}
                   {handed && !allOnCredit && (
                     <div className={cn("flex justify-between font-semibold", change.lt(0) && "text-destructive")}>

@@ -46,6 +46,8 @@ interface RunLine {
   deduction: string;
   net: string;
   netUsd?: string;
+  /** Posted runs: the part of the net that came off an advance the employee already had, not paid in cash. */
+  advanceUsd?: string;
 }
 
 interface PayrollRun {
@@ -318,19 +320,26 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
       setPaying(true);
     },
   });
-  // What cancelling turns into advances: the part of each net pay already paid out. An employee owed nothing
-  // more on this run was paid it all; reversing the salary leaves that money as an advance to repay.
-  const paidAsAdvance = (run?.lines ?? []).reduce(
+  // What cancelling changes for the part of each net pay no longer owed. Paid out in cash, reversing the salary
+  // leaves that money as an advance to repay; deducted from an advance the employee already had (or one given
+  // after the run, which came off it), it simply goes back onto that advance: said apart, by what happened.
+  const zero = { usd: d(0), native: d(0), people: 0 };
+  const { paidAsAdvance, backOnAdvance } = (run?.lines ?? []).reduce(
     (s, l) => {
-      const bal = d(data.employees.find((e) => e.id === l.partyId)?.balance);
+      const e = data.employees.find((x) => x.id === l.partyId);
+      const bal = d(e?.balance);
       const netUsd = d(l.netUsd ?? (run!.currency === "USD" ? l.net : 0));
       const usdPart = Decimal.max(bal.plus(netUsd), 0).minus(Decimal.max(bal, 0));
       if (!usdPart.gt(0)) return s;
-      // In the run's currency, at the run's own rate (the whole net when all of it was paid).
-      const native = netUsd.gt(0) ? usdPart.dividedBy(netUsd).times(d(l.net)) : usdPart;
-      return { usd: s.usd.plus(usdPart), native: s.native.plus(native) };
+      const after = e?.advanceDeducted?.month === run!.month ? d(e.advanceDeducted.usd) : d(0);
+      const fromAdvance = Decimal.min(d(l.advanceUsd ?? 0).plus(after), usdPart);
+      const cash = usdPart.minus(fromAdvance);
+      // In the run's currency, at the run's own rate (the whole net when all of it was settled).
+      const native = (x: Decimal) => (netUsd.gt(0) ? x.dividedBy(netUsd).times(d(l.net)) : x);
+      const add = (acc: typeof zero, x: Decimal) => (x.gt(0) ? { usd: acc.usd.plus(x), native: acc.native.plus(native(x)), people: acc.people + 1 } : acc);
+      return { paidAsAdvance: add(s.paidAsAdvance, cash), backOnAdvance: add(s.backOnAdvance, fromAdvance) };
     },
-    { usd: d(0), native: d(0) },
+    { paidAsAdvance: zero, backOnAdvance: zero },
   );
   const cancel = useApiMutation<Record<string, unknown>>("POST", `/api/payroll/runs/${month}/cancel`, {
     success: t("Payroll cancelled", "Paie annulée"),
@@ -608,8 +617,8 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
             <AlertDialogTitle>{t(`Cancel the ${monthLabel(month)} payroll?`, `Annuler la paie ${deMonth(month)}\u00a0?`)}</AlertDialogTitle>
             <AlertDialogDescription>
               {t(`The salary entry for ${monthLabel(month)} will be reversed.`, `L'écriture des salaires ${deMonth(month)} sera annulée.`)}{" "}
-              {paidAsAdvance.usd.gt(0)
-                ? run?.currency === "CDF"
+              {paidAsAdvance.usd.gt(0) &&
+                (run?.currency === "CDF"
                   ? t(
                       `${cdf(paidAsAdvance.native.toFixed(0))} already paid will become advances (${usd(paidAsAdvance.usd.toFixed(2))}) to repay or deduct from the next salaries.`,
                       `${cdf(paidAsAdvance.native.toFixed(0))} déjà payés deviendront des avances (${usd(paidAsAdvance.usd.toFixed(2))}) à rembourser ou à déduire des prochains salaires.`,
@@ -617,8 +626,16 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                   : t(
                       `${usd(paidAsAdvance.usd.toFixed(2))} already paid will become advances to repay or deduct from the next salaries.`,
                       `${usd(paidAsAdvance.usd.toFixed(2))} déjà payés deviendront des avances à rembourser ou à déduire des prochains salaires.`,
-                    )
-                : t("Nothing has been paid on it yet.", "Rien n'a encore été payé dessus.")}
+                    ))}{" "}
+              {/* No cash paid: the salary only came off an advance, which gets that money back. */}
+              {backOnAdvance.usd.gt(0) &&
+                (() => {
+                  const amount = run?.currency === "CDF" ? `${cdf(backOnAdvance.native.toFixed(0))} (${usd(backOnAdvance.usd.toFixed(2))})` : usd(backOnAdvance.usd.toFixed(2));
+                  return backOnAdvance.people === 1
+                    ? t(`${amount} already deducted from the advance go back onto it.`, `${amount} déjà déduits de son avance y sont remis.`)
+                    : t(`${amount} already deducted from their advances go back onto them.`, `${amount} déjà déduits de leurs avances y sont remis.`);
+                })()}
+              {!paidAsAdvance.usd.gt(0) && !backOnAdvance.usd.gt(0) && t("Nothing has been paid on it yet.", "Rien n'a encore été payé dessus.")}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
@@ -1044,6 +1061,7 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
 
   function submit() {
     if (!account || !partyId) return;
+    // Stored in French like the server's own memos; systemText says it in English.
     const m = memo.trim() || "Avance sur salaire";
     give.mutate({
       date: day,
