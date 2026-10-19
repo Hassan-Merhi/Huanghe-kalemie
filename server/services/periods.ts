@@ -6,7 +6,7 @@ import type { Tx } from "../db";
 import { badRequest, conflict } from "../errors";
 import { deMonth, frDate, frNumber, monthText } from "@shared/french";
 import { cents } from "@shared/money";
-import { cnyRateFor, lockPeriodsExclusive, postJournal, rateFor, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
+import { cnyRateFor, lockPeriodsExclusive, postJournal, rateFor, REVALUATION_SETTLED_MEMO, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, type PostLine } from "./ledger";
 import { todayIso } from "../http";
 
 export function monthRange(month: string): { from: string; to: string } {
@@ -132,8 +132,8 @@ export async function revaluationLines(
   return { lines, gain, rate, cnyRate };
 }
 
-/** Memo of the lines that take a revaluation off a balance settled after the month's end (see settledRevaluations). */
-export const REVALUATION_SETTLED_MEMO = "Réévaluation soldée\u00a0: devises réglées après la fin du mois";
+/** Memo of the lines that take a revaluation off a balance settled after the month's end (kept in ledger.ts, as a books' own label). */
+export { REVALUATION_SETTLED_MEMO };
 
 /** Source of the journals that take a revaluation off the balances settled after the month's end (see settledRevaluations). */
 const SETTLED_SOURCE = "period_settled";

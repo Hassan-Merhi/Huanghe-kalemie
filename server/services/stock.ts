@@ -123,8 +123,9 @@ async function addLocationQty(tx: Tx, variantId: number, locationId: number, del
 }
 
 /**
- * Add stock at a known total value. `unitCost`, the cost per unit it was entered at, is kept on the movement
- * to six decimals when the value is that cost times the quantity to the cent (see shownUnitCost).
+ * Add stock at a known total value. `unitCost`, the cost per unit a person typed for it, is kept on the
+ * movement to six decimals when the value is that cost times the quantity to the cent (see shownUnitCost).
+ * A cost the books worked out (an average) is not passed: the cost shown falls back to the latest typed.
  */
 export async function receiveStock(
   tx: Tx,
