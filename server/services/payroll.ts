@@ -1,4 +1,4 @@
-import { and, asc, eq, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { accounts, journalLines, journals, parties, payrollRuns, type PayrollLine } from "@shared/schema";
 import { allocateCents, cents, dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
@@ -22,12 +22,57 @@ import { partyBalances } from "./reports";
 export async function employees(tx: Tx) {
   const rows = await tx.select().from(parties).where(eq(parties.type, "employee")).orderBy(asc(parties.name));
   const balances = await partyBalances(tx, "employee");
+  const deducted = await advancesAfterRun(tx);
   return rows.map((p) => {
     const b = balances.find((x) => x.id === p.id);
     // Party balance is positive when they owe us (an advance not yet earned).
     const balance = b?.balance ?? "0.00";
-    return { ...p, balance, foreign: b?.foreign ?? [] };
+    // What is still to repay is not deducted (an advance given once the salary was paid stays an advance).
+    const after = deducted.get(p.id);
+    const off = after ? Decimal.min(dec(after.usd), dec(after.usd).minus(Decimal.max(dec(balance), 0))) : null;
+    return { ...p, balance, foreign: b?.foreign ?? [], advanceDeducted: after && off!.gt(0) ? { month: after.month, usd: off!.toFixed(2) } : null };
   });
+}
+
+/**
+ * Advances given after the latest month's payroll was saved: they already came off the salary it owes
+ * ("50,00 $ d'avance déjà déduits du salaire d'octobre"), so the Advances tab can say so instead of
+ * "Aucune avance en cours". Payments to the employee posted after the run's journal, other than salary
+ * payments ("Salaire …") and the franc/yuan advance matching, at most what the run owes them; the
+ * caller keeps out what is still to repay. Read only.
+ */
+async function advancesAfterRun(tx: Tx): Promise<Map<number, { month: string; usd: string }>> {
+  const out = new Map<number, { month: string; usd: string }>();
+  const [run] = await tx
+    .select()
+    .from(payrollRuns)
+    .where(eq(payrollRuns.status, "posted"))
+    .orderBy(sql`${payrollRuns.month} desc`, sql`${payrollRuns.id} desc`)
+    .limit(1);
+  if (!run?.journalId) return out;
+  const lines = run.lines as PayrollLine[];
+  const ids = lines.map((l) => l.partyId);
+  if (!ids.length) return out;
+  const rows = await tx
+    .select({ partyId: journalLines.partyId, usd: sql<string>`sum(${journalLines.debit} - ${journalLines.credit})::text` })
+    .from(journalLines)
+    .innerJoin(journals, eq(journals.id, journalLines.journalId))
+    .where(
+      and(
+        inArray(journalLines.partyId, ids),
+        sql`${journals.id} > ${run.journalId}`,
+        sql`coalesce(${journalLines.memo}, '') not like 'Salaire %'`,
+        sql`coalesce(${journals.sourceType}, '') not like 'advance_%'`,
+      ),
+    )
+    .groupBy(journalLines.partyId);
+  for (const r of rows) {
+    const line = lines.find((l) => l.partyId === r.partyId);
+    const owed = dec(line?.netUsd ?? (run.currency === "USD" ? line?.net ?? 0 : 0));
+    const given = Decimal.min(dec(r.usd), owed);
+    if (r.partyId && given.gt(0)) out.set(r.partyId, { month: run.month, usd: given.toFixed(2) });
+  }
+  return out;
 }
 
 export async function salaryAccountId(tx: Tx) {

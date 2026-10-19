@@ -77,9 +77,10 @@ async function assertLocationOpen(tx: Tx, locationId: number, type: MovementType
 
 /**
  * What can leave a location on `date` without any later day going below zero: an entry typed for
- * an earlier day cannot take stock that only arrived after it.
+ * an earlier day cannot take stock that only arrived after it. Read-only: the till also asks it for a
+ * back-dated sale's cart (GET /api/variants?asOf=).
  */
-async function availableOn(tx: Tx, variantId: number, locationId: number, date: string, current: Decimal): Promise<Decimal> {
+export async function availableOn(tx: Tx, variantId: number, locationId: number, date: string, current: Decimal): Promise<Decimal> {
   const result = await tx.execute<{ as_of: string | null; later_min: string | null }>(sql`
     with d as (
       select ${stockMovements.date} as day, sum(${stockMovements.qty}) as q from ${stockMovements}

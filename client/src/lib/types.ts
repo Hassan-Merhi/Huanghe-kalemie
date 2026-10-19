@@ -113,6 +113,8 @@ export interface Party {
   balance: string;
   /** The part of the balance kept in francs or yuan. */
   foreign?: { currency: "CDF" | "CNY"; native: string; usd: string }[];
+  /** Employees: advances given after the latest payroll was saved, already taken off the salary it owes. */
+  advanceDeducted?: { month: string; usd: string } | null;
 }
 
 export interface Partner {

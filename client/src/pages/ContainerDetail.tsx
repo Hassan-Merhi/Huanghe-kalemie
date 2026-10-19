@@ -4,7 +4,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import { AlertTriangle, ArrowLeft, Bike, Info, Lock, PackageCheck, Pencil, Plus, Save, Trash2, Undo2, X } from "lucide-react";
 import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, StatCard, SubmitButton, unclearAmount } from "@/components/common";
-import { ContainerRateField, MoneyAccountSelect, PartySelect, perUsdText, useAccounts, useRate, VariantSearch } from "@/components/pickers";
+import { ContainerRateField, MoneyAccountSelect, PartySelect, perUsdText, useAccounts, useContainerRateRefusal, useRate, VariantSearch } from "@/components/pickers";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
@@ -318,6 +318,8 @@ function EditDetailsDialog({ c, onClose }: { c: ContainerFull; onClose: () => vo
   const patch = useApiMutation<Record<string, unknown>>("PATCH", `/api/containers/${c.id}`, { success: t("Saved", "Enregistré"), onSuccess: onClose });
   const cur = currency.trim().toUpperCase();
   const rateOk = cur === "USD" || d(rate).gt(0);
+  // Said before saving, as the server checks the rate sent against today's.
+  const rateRefused = useContainerRateRefusal(cur, rate);
   function save() {
     const body: Record<string, unknown> = { shipDate: shipDate || null, arrivalDate: arrivalDate || null, notes: notes.trim() || null };
     if (!finalized) {
@@ -363,7 +365,7 @@ function EditDetailsDialog({ c, onClose }: { c: ContainerFull; onClose: () => vo
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
           <SubmitButton
             onClick={save}
-            blocked={cur.length !== 3 ? t("Enter a 3-letter currency code", "Saisissez un code de devise à 3 lettres") : !rateOk ? t("Enter the rate (how much one dollar buys)", "Saisissez le taux (combien vaut 1 $)") : null}
+            blocked={cur.length !== 3 ? t("Enter a 3-letter currency code", "Saisissez un code de devise à 3 lettres") : !rateOk ? t("Enter the rate (how much one dollar buys)", "Saisissez le taux (combien vaut 1\u00a0$)") : !finalized ? rateRefused : null}
             pending={patch.isPending}
           >
             {t("Save", "Enregistrer")}
