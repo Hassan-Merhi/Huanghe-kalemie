@@ -114,6 +114,40 @@ export function saveDraft(draft: PosDraft): void {
   }
 }
 
+/** Hours after which a sale left unfinished is no longer announced in full, only from "Vente mise de côté". */
+export const DRAFT_NAG_HOURS = 4;
+
+const saleKey = (userId: number) => `hk.pos.lastSale.${userId}`;
+
+/** Notes that the user completed a sale now: the sales left unfinished before it step back (see draftNags). */
+export function noteSale(userId: number, at = Date.now()): void {
+  try {
+    storage()?.setItem(saleKey(userId), String(at));
+  } catch {
+    /* blocked storage: the draft is announced as before */
+  }
+}
+
+/** When the user last completed a sale in this tab (ms), or null. */
+export function lastSaleAt(userId: number): number | null {
+  try {
+    const v = Number(storage()?.getItem(saleKey(userId)));
+    return Number.isFinite(v) && v > 0 ? v : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether a sale left unfinished is announced in full (the amber banner) rather than from a small link: while
+ * it is less than DRAFT_NAG_HOURS old and no sale has been completed since it was last saved. Nothing is lost
+ * either way; an old draft only stops nagging through the day's work.
+ */
+export function draftNags(draft: Pick<PosDraft, "savedAt">, lastSale: number | null, now = Date.now()): boolean {
+  if (now - draft.savedAt > DRAFT_NAG_HOURS * 3600_000) return false;
+  return lastSale === null || draft.savedAt > lastSale;
+}
+
 export function removeDraft(userId: number, locationId: number, slot?: string | null): void {
   try {
     storage()?.removeItem(draftKey(userId, locationId, slot));

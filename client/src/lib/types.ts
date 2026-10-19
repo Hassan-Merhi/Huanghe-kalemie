@@ -39,6 +39,8 @@ export interface VariantRow {
   stockQty: string;
   stockValue: string;
   avgCost: string;
+  /** The cost per unit its latest receipt was typed at, when it still gives the value (see variantUnitCost). */
+  keptUnitCost?: string | null;
   reorderLevel: string;
   productId: number;
   productName: string;

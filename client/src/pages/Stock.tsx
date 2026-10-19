@@ -21,7 +21,7 @@ import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, Submi
 import { LocationSelect, useLocations, VariantSearch } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api, withQuery } from "@/lib/api";
-import { d, date, monthStart, qty, qtyTotal, todayLocal, unitCost, usd, variantText, variantUnitCost, unclearQty } from "@/lib/format";
+import { d, date, monthStart, qty, qtyTotal, todayLocal, unitCost, usd, variantText, variantUnitCost, variantUnitCostValue, unclearQty } from "@/lib/format";
 import { qtyWithUnit, unitLabel, wholeUnit } from "@/lib/units";
 import { useAuth } from "@/lib/auth";
 import { useT, count } from "@/lib/i18n";
@@ -436,7 +436,8 @@ export function AdjustForm({
 
   function addVariant(v: VariantRow) {
     if (lines.some((l) => l.variant.id === v.id)) return;
-    const cost = d(v.stockQty).gt(0) ? d(v.avgCost).toDecimalPlaces(4).toString() : "";
+    // The cost shown for the item (variantUnitCost), so the form reads as its page does.
+    const cost = d(v.stockQty).gt(0) ? d(variantUnitCostValue(v)).toDecimalPlaces(4).toString() : "";
     setLines((ls) => [...ls, { key: lineKey++, variant: v, qty: "", unitCost: cost, serials: [], unitIds: [] }]);
   }
 

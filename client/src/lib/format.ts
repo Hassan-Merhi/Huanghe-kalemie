@@ -374,8 +374,16 @@ export function unitCost(value: unknown): string {
 
 /** A variant's average cost by the rule of Stock › Valorisation: its value to the cent over its quantity, 0,125 $ and not 0,1244 $ (nor 0,13 $ for 1 L entered at 0,125 $). */
 export function variantUnitCost(v: { avgCost: unknown; stockValue?: string | null; stockQty?: string | null; keptUnitCost?: string | null }): string {
-  if (v.stockValue != null && v.stockQty != null && new Decimal(num(v.stockQty)).gt(0)) return unitCost(shownUnitCost(v.stockValue, v.stockQty, v.keptUnitCost).toString());
-  return unitCost(v.avgCost);
+  return unitCost(variantUnitCostValue(v));
+}
+
+/**
+ * The same cost per unit as a number string, for a field prefilled with it (the count form): 4,125 $ kept
+ * for 5 pieces at 20,63 $, as the item's page shows it, not the 4,126 $ of value ÷ quantity.
+ */
+export function variantUnitCostValue(v: { avgCost: unknown; stockValue?: string | null; stockQty?: string | null; keptUnitCost?: string | null }): string {
+  if (v.stockValue != null && v.stockQty != null && new Decimal(num(v.stockQty)).gt(0)) return shownUnitCost(v.stockValue, v.stockQty, v.keptUnitCost).toString();
+  return String(v.avgCost ?? "0");
 }
 
 export function date(value: string | null | undefined): string {

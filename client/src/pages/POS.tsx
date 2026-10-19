@@ -1,7 +1,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { capitalize, de, deMonth, monthText } from "@shared/french";
 import { createPortal } from "react-dom";
-import { useQuery } from "@tanstack/react-query";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import Decimal from "decimal.js";
 import { AlertTriangle, Banknote, History, Minus, Plus, Printer, ShoppingCart, Trash2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import { EmptyState, Field, Num, PageHeader, SubmitButton, unclearAmount, useCor
 import { LocationSelect, MoneyAccountSelect, PartySelect, RateInput, VariantSearch, useAccounts, useLocations, useMoneyAccounts, useRate } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api, withQuery } from "@/lib/api";
-import { draftEmpty, listDrafts, newSlot, removeDraft, resumedPrice, saveDraft, DRAFT_VERSION, type PosDraft } from "@/lib/posDraft";
+import { draftEmpty, draftNags, lastSaleAt, listDrafts, newSlot, noteSale, removeDraft, resumedPrice, saveDraft, DRAFT_VERSION, type PosDraft } from "@/lib/posDraft";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
 import { cdf, curLabel, d, date as fmtDate, dateTime, dollarRate, fcRounding, frenchPunctuation, MINUS, money, pct as fmtPct, qty as fmtQty, refusedUnit, todayLocal, typedNumberOk, unclearQty, usd, variantText } from "@/lib/format";
@@ -469,18 +469,6 @@ export default function POS() {
   // ---- totals (exact decimals)
   const lineAmount = (l: CartLine) => c2(d(l.qty).times(d(l.unitPrice))).minus(c2(d(l.lineDiscount)));
   const subtotal = lines.reduce((s, l) => s.plus(lineAmount(l)), d(0));
-  /** Lines sold for less than they cost: allowed (owner, clearance) but worth a second look. */
-  const belowCost = (l: CartLine) => d(l.unitPrice).gt(0) && d(l.variant.avgCost).gt(0) && lineAmount(l).lt(c2(d(l.qty).times(d(l.variant.avgCost))));
-  // The server refuses a line below cost from staff without the right (priceLimits): said on the line before
-  // "Valider", not as a 403 after it. A cashier is not shown the cost, only that the list price is below it.
-  const mayBelowCost = user?.role === "owner" || (user?.role === "manager" && shop?.managerBelowCost === true);
-  const costRefusal = (l: CartLine): "list" | "line" | null => {
-    if (!user || mayBelowCost) return null;
-    const listLow = (stockQ.data?.find((v) => v.id === l.variant.id)?.listBelowCost ?? l.variant.listBelowCost) === true;
-    const atList = lineAmount(l).lte(c2(d(l.qty).times(d(l.variant.sellPrice))));
-    if (listLow && atList) return "list";
-    return user.role !== "cashier" && belowCost(l) ? "line" : null;
-  };
   const saleDiscount = c2(d(discount));
   const total = subtotal.minus(saleDiscount);
   // Shown like the receipt: subtotal before any discount, then all discounts together.
@@ -488,6 +476,43 @@ export default function POS() {
   const totalDiscount = grossSubtotal.minus(total);
   /** Discounts above the prices, or a price or discount that cannot be read: no change, "Payé" or "Reste" is worked out from it. */
   const totalBad = total.lt(0) || !typedNumberOk(discount) || lines.some((l) => !typedNumberOk(l.unitPrice) || !typedNumberOk(l.qty) || !typedNumberOk(l.lineDiscount));
+  /** Lines sold for less than they cost: allowed (owner, clearance) but worth a second look. */
+  const belowCost = (l: CartLine) => d(l.unitPrice).gt(0) && d(l.variant.avgCost).gt(0) && lineAmount(l).lt(c2(d(l.qty).times(d(l.variant.avgCost))));
+  // The server refuses a line below cost from staff without the right (priceLimits): said on the line before
+  // "Valider", not as a 403 after it. A cashier is not shown the cost, only that the list price is below it,
+  // or, for a price typed over a list price that is (a 0 $ item), that the sale would refuse it: the server
+  // is asked (price-check) a yes or no per line, a moment after the typing stops.
+  const mayBelowCost = user?.role === "owner" || (user?.role === "manager" && shop?.managerBelowCost === true);
+  const checkWanted = useMemo(() => {
+    if (user?.role !== "cashier") return "";
+    const asked = lines
+      .filter((l) => typedNumberOk(l.unitPrice) && typedNumberOk(l.qty) && typedNumberOk(l.lineDiscount) && d(l.unitPrice).gt(0) && d(l.qty).gt(0) && lineAmount(l).gte(0))
+      // The sale discount is shared over the lines by their amount, as the server does.
+      .map((l) => ({ variantId: l.variant.id, qty: l.qty, amount: (subtotal.gt(0) ? lineAmount(l).minus(saleDiscount.times(lineAmount(l)).dividedBy(subtotal)) : lineAmount(l)).toFixed(2) }));
+    return asked.length ? JSON.stringify(asked) : "";
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [user, lines, discount]);
+  const [checkAsked, setCheckAsked] = useState("");
+  useEffect(() => {
+    const timer = setTimeout(() => setCheckAsked(checkWanted), 400);
+    return () => clearTimeout(timer);
+  }, [checkWanted]);
+  const checkQ = useQuery<{ refused: number[] }>({
+    queryKey: ["/api/sales/price-check", checkAsked],
+    queryFn: () => api("POST", "/api/sales/price-check", { lines: JSON.parse(checkAsked) }),
+    enabled: checkAsked !== "",
+    // The last answer holds while the next is fetched, so "Valider" does not blink on each keystroke.
+    placeholderData: keepPreviousData,
+  });
+  const refusedByServer = useMemo(() => new Set(checkAsked !== "" ? checkQ.data?.refused ?? [] : []), [checkAsked, checkQ.data]);
+  const costRefusal = (l: CartLine): "list" | "line" | "low" | null => {
+    if (!user || mayBelowCost) return null;
+    const listLow = (stockQ.data?.find((v) => v.id === l.variant.id)?.listBelowCost ?? l.variant.listBelowCost) === true;
+    const atList = lineAmount(l).lte(c2(d(l.qty).times(d(l.variant.sellPrice))));
+    if (listLow && atList) return "list";
+    if (user.role === "cashier") return refusedByServer.has(l.variant.id) ? "low" : null;
+    return belowCost(l) ? "line" : null;
+  };
 
   const payUsd = (p: PayRow) => {
     const acc = accById(p.accountId);
@@ -629,6 +654,7 @@ export default function POS() {
     // A 0 $ price is already a problem above; the list price being under cost is no second one.
     if (costRefusal(l) === "list" && typedNumberOk(l.unitPrice) && d(l.unitPrice).gt(0)) problems.push(t(`${l.variant.productName}: price below cost, for the owner to raise`, `${l.variant.productName}\u00a0: prix sous le coût, à relever par le propriétaire`));
     if (costRefusal(l) === "line") problems.push(t(`${l.variant.productName}: below cost; only the owner can sell below cost`, `${l.variant.productName}\u00a0: sous le coût\u00a0; seul le propriétaire peut vendre à perte`));
+    if (costRefusal(l) === "low" && typedNumberOk(l.unitPrice) && d(l.unitPrice).gt(0)) problems.push(t(`${l.variant.productName}: price too low, ask the owner`, `${l.variant.productName}\u00a0: prix trop bas, demandez au propriétaire`));
     if (l.variant.tracksSerials && !l.unitId) problems.push(t(`Choose the chassis number for ${l.variant.productName}`, `Choisissez le numéro de châssis pour ${l.variant.productName}`));
   }
   if (maxDiscountPct && subtotal.gt(0)) {
@@ -851,7 +877,11 @@ export default function POS() {
       reset();
       // The sale is recorded: its own draft goes at once, not only once the empty cart is saved over it. Only
       // this cart's: a sale left unfinished and still offered stays offered.
-      if (user) removeDraft(user.id, sale.locationId, liveSlot.current);
+      if (user) {
+        removeDraft(user.id, sale.locationId, liveSlot.current);
+        // Sales left unfinished before this one step back to the "Vente mise de côté" link (draftNags).
+        noteSale(user.id);
+      }
       setDraftsSeen((n) => n + 1);
     },
     // A refused sale may be one the day's rate or the customer's balance moved under: the till shows the new ones at once.
@@ -944,6 +974,10 @@ export default function POS() {
     [user, locationId, draftsSeen],
   );
   const offered: PosDraft | null = parked[0] ?? null;
+  // Announced in full while it is recent and no sale was completed since; after that, a small link opens the
+  // banner, so an old sale set aside does not nag through the day's work.
+  const [draftOpened, setDraftOpened] = useState(false);
+  const draftShown = !!offered && (draftOpened || draftNags(offered, user ? lastSaleAt(user.id) : null));
   const [resumeNotes, setResumeNotes] = useState<string[]>([]);
   const [resuming, setResuming] = useState(false);
   const [confirmResume, setConfirmResume] = useState(false);
@@ -967,6 +1001,7 @@ export default function POS() {
 
   function discardDraft() {
     if (user && offered) removeDraft(user.id, offered.locationId, offered.slot);
+    setDraftOpened(false);
     setDraftsSeen((n) => n + 1);
   }
   /**
@@ -1042,6 +1077,7 @@ export default function POS() {
       setFrancsChosen(draft.francsChosen);
       setHanded("");
       setResumeNotes(notes);
+      setDraftOpened(false);
       setDraftsSeen((n) => n + 1);
     } catch (e) {
       setResumeNotes([e instanceof Error ? e.message : String(e)]);
@@ -1095,7 +1131,20 @@ export default function POS() {
         }
       />
 
-      {offered && (
+      {offered && !draftShown && (
+        <p className="mb-4 text-xs text-muted-foreground" data-testid="pos-draft-link">
+          <button type="button" className="inline-flex items-center gap-1 underline underline-offset-2 hover:text-foreground" onClick={() => setDraftOpened(true)}>
+            <History className="h-3 w-3 shrink-0" />
+            {t("Sale set aside", "Vente mise de côté")}
+          </button>
+          {t(": ", "\u00a0: ")}
+          {cartCount(t, offered.lines.map((l) => ({ qty: l.qty, unit: String(l.variant.unit ?? "pcs") })))}
+          {offeredTotal && offeredTotal.gt(0) ? ` · ${usd(offeredTotal.toFixed(2))}` : ""}
+          {" · "}{dateTime(new Date(offered.savedAt))}
+          {parked.length > 1 ? ` · ${t(`${parked.length - 1} more`, `${parked.length - 1} autre${parked.length > 2 ? "s" : ""}`)}` : ""}
+        </p>
+      )}
+      {offered && draftShown && (
         <div className="mb-4 flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-amber-400 bg-amber-50 p-3 text-sm text-amber-900 dark:bg-amber-950/30 dark:text-amber-200" role="status" data-testid="pos-draft">
           <p className="flex min-w-[14rem] flex-1 items-start gap-2">
             <History className="mt-0.5 h-4 w-4 shrink-0" />
@@ -1213,6 +1262,8 @@ export default function POS() {
                             <AlertTriangle className="h-3 w-3 shrink-0" />
                             {costRefusal(l) === "list"
                               ? t("List price below cost: the owner must raise the price.", "Prix de catalogue sous le coût\u00a0: le propriétaire doit relever le prix.")
+                              : costRefusal(l) === "low"
+                              ? t("This price is too low: ask the owner.", "Ce prix est trop bas\u00a0: demandez au propriétaire.")
                               : t(`Below cost (cost ${usd(d(l.variant.avgCost).toFixed(2))} each): only the owner can sell below cost.`, `Sous le coût (coût ${usd(d(l.variant.avgCost).toFixed(2))} l'unité)\u00a0: seul le propriétaire peut vendre à perte.`)}
                           </p>
                         ) : belowCost(l) && (
