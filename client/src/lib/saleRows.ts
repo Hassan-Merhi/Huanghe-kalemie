@@ -59,6 +59,17 @@ export interface Daily {
 }
 
 /**
+ * The till's franc rounding for the receipt, in dollars: the sale's own, before any return. On a cancelled
+ * sale the reversal takes it back, so `saleFcRoundingUsd` nets to zero there; the receipt shows the sale as
+ * it was made, so it is read back from "Payé" (paidKeptUsd = paidUsd + the till's rounding on a cancelled
+ * sale), and a reprint reads "−40 FC (−0,01 $)" like the receipt handed over. Null when the server gave neither.
+ */
+export function receiptFcRoundingUsd(sale: { status: string; paidUsd: string; saleFcRoundingUsd?: string; paidKeptUsd?: string }): Decimal | null {
+  if (sale.status === "voided" && sale.paidKeptUsd !== undefined) return d(sale.paidKeptUsd).minus(sale.paidUsd);
+  return sale.saleFcRoundingUsd !== undefined ? d(sale.saleFcRoundingUsd) : null;
+}
+
+/**
  * A sale as the list shows it: net of the goods brought back, and paid net of the cash refunded, as the cash
  * really kept (as on the sale page), so Payé − Total is the "Arrondi FC" under it.
  */

@@ -21,7 +21,7 @@ import { Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
+import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton, useCorrectFocus } from "@/components/common";
 import { useToast } from "@/hooks/use-toast";
 import { api, invalidateAll } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
@@ -381,6 +381,7 @@ function BulkPriceDialog({ rows, onClose }: { rows: Row[]; onClose: () => void }
   // "100" typed for "10" doubles every price at once: from +50 % or −30 %, the change is asked first, as a single price is.
   const unusual = valid && (d(pct).gte(50) || d(pct).lte(-30));
   const [confirming, setConfirming] = useState(false);
+  const correct = useCorrectFocus(() => "bulk-pct");
   const sample = changes[0];
 
   // One request for the whole list: either every price changes or none does.
@@ -418,7 +419,7 @@ function BulkPriceDialog({ rows, onClose }: { rows: Row[]; onClose: () => void }
             error={pct.trim() && !valid ? t(`Enter a number other than 0, above ${MINUS}100`, `Saisissez un nombre différent de 0 et supérieur à ${MINUS}100`) : null}
             required
           >
-            <Input inputMode="decimal" percent value={typedPct} onChange={(e) => setPct(e.target.value)} disabled={running} placeholder="10" />
+            <Input inputMode="decimal" percent data-correct="bulk-pct" value={typedPct} onChange={(e) => setPct(e.target.value)} disabled={running} placeholder="10" />
           </Field>
           <Field label={t("Round to", "Arrondir à")}>
             <Select value={round} onValueChange={setRound} disabled={running}>
@@ -482,7 +483,7 @@ function BulkPriceDialog({ rows, onClose }: { rows: Row[]; onClose: () => void }
         </DialogFooter>
       </DialogContent>
       <AlertDialog open={confirming} onOpenChange={setConfirming}>
-        <AlertDialogContent>
+        <AlertDialogContent {...correct.content}>
           <AlertDialogHeader>
             <AlertDialogTitle>{t("An unusual change?", "Un changement inhabituel\u00a0?")}</AlertDialogTitle>
             <AlertDialogDescription asChild>
@@ -498,7 +499,7 @@ function BulkPriceDialog({ rows, onClose }: { rows: Row[]; onClose: () => void }
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+            <AlertDialogCancel {...correct.cancel}>{t("Correct it", "Corriger")}</AlertDialogCancel>
             <AlertDialogAction onClick={() => void apply(true)}>{t("Apply anyway", "Appliquer quand même")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

@@ -302,7 +302,7 @@ function Statement({ id, range, type }: { id: number; range: ReturnType<typeof u
   function exportCsv() {
     if (!L) return;
     const head = [t("Date", "Date"), t("No.", "N°"), t("Type", "Type"), t("Details", "Libellé"), t("Contact", "Tiers"), t("Debit ($)", "Débit ($)"), t("Credit ($)", "Crédit ($)"), t("Balance ($)", "Solde ($)"), t("Side", "Sens")];
-    if (cdfAcc) head.push("CDF", t("CDF balance", "Solde en FC"));
+    if (cdfAcc) head.push("CDF", t("FC balance", "Solde en FC"));
     const side = (v: string) => (num(v) > 0 ? t("Dr", "D") : num(v) < 0 ? t("Cr", "C") : "");
     downloadCsv(`releve_${L.account.code}_${range.from}_${range.to}.csv`, [
       [`${L.account.code} · ${L.account.name}`, `${range.from} → ${range.to}`],

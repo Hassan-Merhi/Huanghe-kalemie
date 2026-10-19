@@ -20,7 +20,7 @@ import {
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, SubmitButton } from "@/components/common";
+import { ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, SubmitButton, useCorrectFocus } from "@/components/common";
 import { AccountSelect, CurrencySwitchNote, MoneyAccountSelect, PartySelect, RateInput, useAccounts, useCurrencySwitch, useMoneyAccounts, useRate, useRateField, useRateTooFar } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api, invalidateAll } from "@/lib/api";
@@ -366,6 +366,11 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
   const unusual = [...checks.unusual, ...checks.overDebt, ...checks.advanceUse];
   // The same question before "Mettre en attente": the owner validating it later should not be the first to see it.
   const [confirmUnusual, setConfirmUnusual] = useState<null | "save" | "draft">(null);
+  // "Corriger" goes back to the biggest amount, where an extra zero would be.
+  const correctUnusual = useCorrectFocus(() => {
+    const big = lines.filter((l) => typedNumberOk(l.amount) && d(l.amount).gt(0)).sort((a, b) => d(b.amount).comparedTo(d(a.amount)))[0];
+    return big ? `amount-${big.key}` : null;
+  });
 
   const m = useApiMutation<Record<string, unknown>, { id: number; total: string }>("POST", `/api/vouchers/${kind}`, {
     success: kind === "payment" ? t("Payment recorded", "Paiement enregistré") : t("Receipt recorded", "Recette enregistrée"),
@@ -395,7 +400,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
   function save(confirmed = false) {
     setError(null);
     if (!account) return setError(t("Choose the money account.", "Choisissez le compte de trésorerie."));
-    if (isCdf && !rate.gt(0)) return setError(t("Enter the rate (CDF per 1 USD).", "Saisissez le taux (FC pour 1 $)."));
+    if (isCdf && !rate.gt(0)) return setError(t("Enter the rate (FC per $1).", "Saisissez le taux (FC pour 1 $)."));
     const used = lines.filter((l) => l.partyId || l.accountId || l.amount.trim());
     if (!used.length) return setError(t("Add at least one line.", "Ajoutez au moins une ligne."));
     for (const [i, l] of used.entries()) {
@@ -555,7 +560,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
                   <LineAccountSelect types={ACCOUNT_TYPES[kind]} value={l.accountId} onChange={(id) => set(l.key, { accountId: id })} />
                 )}
               </div>
-              <Input inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} switchTo={currency === "CDF" ? t("a dollar account", "un compte en $") : t("a franc account", "un compte en FC")} aria-invalid={(isCdf && isAmount(l.amount) && !d(l.amount).isInteger()) || isTiny(l) || undefined} className="text-right tabular" aria-label={t(`Amount, line ${i + 1}`, `Montant, ligne ${i + 1}`)} placeholder={t(`Amount (${curLabel(currency)})`, `Montant (${curLabel(currency)})`)} value={l.amount} onChange={(e) => set(l.key, { amount: e.target.value })} />
+              <Input inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} switchTo={currency === "CDF" ? t("a dollar account", "un compte en $") : t("a franc account", "un compte en FC")} aria-invalid={(isCdf && isAmount(l.amount) && !d(l.amount).isInteger()) || isTiny(l) || undefined} className="text-right tabular" data-correct={`amount-${l.key}`} aria-label={t(`Amount, line ${i + 1}`, `Montant, ligne ${i + 1}`)} placeholder={t(`Amount (${curLabel(currency)})`, `Montant (${curLabel(currency)})`)} value={l.amount} onChange={(e) => set(l.key, { amount: e.target.value })} />
               <Input aria-label={t(`Line note, line ${i + 1}`, `Note de ligne, ligne ${i + 1}`)} placeholder={t("Note (optional)", "Note (facultatif)")} value={l.memo} onChange={(e) => set(l.key, { memo: e.target.value })} />
               <Button variant="ghost" size="icon" className="justify-self-end" disabled={lines.length <= 1} onClick={() => setLines((ls) => ls.filter((x) => x.key !== l.key))} aria-label={t("Remove line", "Retirer la ligne")}>
                 <Trash2 className="h-4 w-4" />
@@ -590,7 +595,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
         <SubmitButton onClick={() => save()} blocked={rateFar || short} pending={m.isPending}>{t("Save", "Enregistrer")}</SubmitButton>
       </ActionBar>
       <AlertDialog open={!!confirmUnusual} onOpenChange={(o) => !o && setConfirmUnusual(null)}>
-        <AlertDialogContent>
+        <AlertDialogContent {...correctUnusual.content}>
           <AlertDialogHeader>
             <AlertDialogTitle>
               {!checks.unusual.length && !checks.overDebt.length && checks.advanceUse.length
@@ -632,7 +637,7 @@ function VoucherForm({ kind, draft, canSave, savingDraft, onSaveDraft, onPosted,
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+            <AlertDialogCancel {...correctUnusual.cancel}>{t("Correct it", "Corriger")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
                 const what = confirmUnusual;
@@ -716,7 +721,7 @@ function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: For
   if (lines.some((l) => !l.accountId)) problems.push(t("Choose an account on every line", "Choisissez un compte sur chaque ligne"));
   if (lines.some((l) => d(l.debit).gt(0) && d(l.credit).gt(0))) problems.push(t("A line is either debit or credit", "Une ligne est soit au débit soit au crédit"));
   if (lines.some((l) => partyTypes(acc(l.accountId)) && !l.partyId)) problems.push(t("Pick the contact on receivable/payable lines", "Choisissez le contact sur les lignes créances/dettes"));
-  if (lines.some((l) => isCdf(acc(l.accountId)) && (!d(l.native).gt(0) || !d(l.rate).gt(0)))) problems.push(t("CDF accounts need the CDF amount and the rate", "Les comptes en francs ont besoin du montant en FC et du taux"));
+  if (lines.some((l) => isCdf(acc(l.accountId)) && (!d(l.native).gt(0) || !d(l.rate).gt(0)))) problems.push(t("Franc accounts need the FC amount and the rate", "Les comptes en francs ont besoin du montant en FC et du taux"));
   if (totalDebit.isZero()) problems.push(t("Enter some amounts", "Saisissez des montants"));
   if (!diff.isZero()) problems.push(t("Debits and credits must be equal", "Les débits et crédits doivent être égaux"));
 
@@ -813,7 +818,7 @@ function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: For
                 )}
                 {isCdf(a) && (
                   <div className="mt-2 grid grid-cols-2 gap-2 md:max-w-md">
-                    <Field label={t("Amount in CDF", "Montant en FC")} required>
+                    <Field label={t("Amount in FC", "Montant en FC")} required>
                       <Input inputMode="decimal" thousands value={l.native} onChange={(e) => setNative(l, e.target.value, l.rate)} />
                     </Field>
                     <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} required>
@@ -903,7 +908,7 @@ function TransferForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: Fo
   const rateFar = !!rateGap && rateGap.gt(tolerance);
   const rateFarText = rateFar
     ? t(
-        `These amounts mean 1 $ = ${number(implied!.toDecimalPlaces(2).toString())} FC, more than ${pct(tolerance.toString(), 2)} away from today's rate (${number(dayCdf.toString())} FC). Check both amounts.`,
+        `These amounts mean $1 = ${number(implied!.toDecimalPlaces(2).toString())} FC, more than ${pct(tolerance.toString(), 2)} away from today's rate (${number(dayCdf.toString())} FC). Check both amounts.`,
         `Ces montants donnent 1\u00a0$ = ${number(implied!.toDecimalPlaces(2).toString())}\u00a0FC, soit plus de ${pct(tolerance.toString(), 2)} d'écart avec le taux du jour (${number(dayCdf.toString())}\u00a0FC). Vérifiez les deux montants.`,
       )
     : null;

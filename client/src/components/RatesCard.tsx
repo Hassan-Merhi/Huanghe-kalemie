@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import Decimal from "decimal.js";
 import { useQuery } from "@tanstack/react-query";
 import { Landmark } from "lucide-react";
-import { Field, Num, SubmitButton } from "@/components/common";
+import { Field, Num, SubmitButton, useCorrectFocus } from "@/components/common";
 import { useRate } from "@/components/pickers";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -115,12 +115,14 @@ export function RatesCard() {
   const farHint = (gap: Decimal, ref: string, sign: string): ReactNode => (
     <span className="font-medium text-amber-800 dark:text-amber-400">
       {t(
-        `Far from the rate on file (1 $ = ${fmtQty(ref)} ${sign}, ${gapText(gap)} apart): check it`,
+        `Far from the rate on file ($1 = ${fmtQty(ref)} ${sign}, ${gapText(gap)} apart): check it`,
         `Loin du taux enregistré (1\u00a0$ = ${fmtQty(ref)}\u00a0${sign}, ${gapText(gap)} d'écart)\u00a0: vérifiez-le`,
       )}
     </span>
   );
   const [confirming, setConfirming] = useState(false);
+  // "Corriger" goes back to the rate asked about: the franc rate, else the yuan rate.
+  const correct = useCorrectFocus(() => (cdfFar ? "rate-cdf" : "rate-cny"));
   const save = () => m.mutate({ date: day, cdfPerUsd: d(value).toString(), cnyPerUsd: cny && d(cny).gt(0) ? d(cny).toString() : null });
 
   return (
@@ -149,7 +151,7 @@ export function RatesCard() {
               <Input type="date" value={day} onChange={(e) => setDay(e.target.value)} />
             </Field>
             <Field label={t("FC per $1", "FC pour 1\u00a0$")} required className="min-w-[7rem] flex-1" hint={ownerOnly ? <span className="font-medium text-amber-800 dark:text-amber-400">{ownerOnly}</span> : cdfFar && refCdf ? farHint(cdfGap!, refCdf, "FC") : undefined}>
-              <Input inputMode="decimal" thousands rate value={value} onChange={(e) => setValue(e.target.value)} />
+              <Input inputMode="decimal" thousands rate data-correct="rate-cdf" value={value} onChange={(e) => setValue(e.target.value)} />
             </Field>
             <Field
               // A short label, on one line like its neighbour, so both fields sit at the same height.
@@ -157,7 +159,7 @@ export function RatesCard() {
               hint={ownerOnlyCny ? <span className="font-medium text-amber-800 dark:text-amber-400">{ownerOnlyCny}</span> : cnyFar && refCny ? farHint(cnyGap!, refCny, "¥") : cnyOdd ? <span className="font-medium text-amber-800 dark:text-amber-400">{t("A dollar buys about 7.1 ¥: check it", "Un dollar vaut environ 7,1\u00a0¥\u00a0: vérifiez-le")}</span> : lastCny ? t("Optional", "Facultatif") : t("Optional, about 7.1", "Facultatif, environ 7,1")}
               className="min-w-[7rem] flex-1"
             >
-              <Input inputMode="decimal" rate value={cny} onChange={(e) => setCny(e.target.value)} />
+              <Input inputMode="decimal" rate data-correct="rate-cny" value={cny} onChange={(e) => setCny(e.target.value)} />
             </Field>
             <SubmitButton
               className="w-full sm:flex-col sm:items-stretch [&>button]:w-full"
@@ -170,7 +172,7 @@ export function RatesCard() {
           </div>
         )}
         <AlertDialog open={confirming} onOpenChange={setConfirming}>
-          <AlertDialogContent>
+          <AlertDialogContent {...correct.content}>
             <AlertDialogHeader>
               <AlertDialogTitle>{t("Save this rate?", "Enregistrer ce taux\u00a0?")}</AlertDialogTitle>
               <AlertDialogDescription asChild>
@@ -179,20 +181,20 @@ export function RatesCard() {
                     <p>
                       {checkedApart
                         ? t(
-                          `1 $ = ${fmtQty(value)} FC is ${gapText(cdfGap!)} away from ${refName(refCdf)} and ${gapText(nearGap!)} from ${refName(checkedApart)}, the nearer.`,
+                          `$1 = ${fmtQty(value)} FC is ${gapText(cdfGap!)} away from ${refName(refCdf)} and ${gapText(nearGap!)} from ${refName(checkedApart)}, the nearer.`,
                           `1\u00a0$ = ${fmtQty(value)}\u00a0FC s'écarte de ${gapText(cdfGap!)} ${refName(refCdf)} et de ${gapText(nearGap!)} ${refName(checkedApart)}, le plus proche.`,
                         )
                         : t(
-                          `1 $ = ${fmtQty(value)} FC is ${gapText(cdfGap!)} away from ${refName(refCdf)}.`,
+                          `$1 = ${fmtQty(value)} FC is ${gapText(cdfGap!)} away from ${refName(refCdf)}.`,
                           `1\u00a0$ = ${fmtQty(value)}\u00a0FC s'écarte de ${gapText(cdfGap!)} ${refName(refCdf)}.`,
                         )}
                     </p>
                   )}
-                  {cnyOdd && <p>{t(`1 $ = ${fmtQty(cny)} ¥ is far from the usual rate (about 7.1 ¥).`, `1\u00a0$ = ${fmtQty(cny)}\u00a0¥ est loin du taux habituel (environ 7,1\u00a0¥).`)}</p>}
+                  {cnyOdd && <p>{t(`$1 = ${fmtQty(cny)} ¥ is far from the usual rate (about 7.1 ¥).`, `1\u00a0$ = ${fmtQty(cny)}\u00a0¥ est loin du taux habituel (environ 7,1\u00a0¥).`)}</p>}
                   {cnyFar && refCny && (
                     <p>
                       {t(
-                        `1 $ = ${fmtQty(cny)} ¥ is ${gapText(cnyGap!)} away from the last yuan rate (${fmtQty(refCny)} ¥).`,
+                        `$1 = ${fmtQty(cny)} ¥ is ${gapText(cnyGap!)} away from the last yuan rate (${fmtQty(refCny)} ¥).`,
                         `1\u00a0$ = ${fmtQty(cny)}\u00a0¥ s'écarte de ${gapText(cnyGap!)} du dernier taux du yuan (${fmtQty(refCny)}\u00a0¥).`,
                       )}
                     </p>
@@ -205,7 +207,7 @@ export function RatesCard() {
               </AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+              <AlertDialogCancel {...correct.cancel}>{t("Correct it", "Corriger")}</AlertDialogCancel>
               <AlertDialogAction
                 disabled={m.isPending}
                 onClick={() => {

@@ -102,7 +102,7 @@ function ShopTab() {
         <ErrorText error={q.error} />
         <Field label={t("Shop name", "Nom de la boutique")} required><Input value={shopName} onChange={(e) => setShopName(e.target.value)} /></Field>
         <Field
-          label={t("Default CDF rate (CDF per 1 USD)", "Taux par défaut (FC pour 1 $)")}
+          label={t("Default franc rate (FC per $1)", "Taux par défaut (FC pour 1 $)")}
           hint={q.data?.latestRate ? t(`Latest daily rate: ${cdf(q.data.latestRate.cdfPerUsd)} on ${fmtDate(q.data.latestRate.date)}. The default is used only for days before any daily rate.`, `Dernier taux du jour\u00a0: ${cdf(q.data.latestRate.cdfPerUsd)} le ${fmtDate(q.data.latestRate.date)}. Le taux par défaut sert seulement s'il n'y a aucun taux du jour.`) : undefined}
           error={rate.trim() && !d(rate).gt(0) ? t("Enter a rate above zero", "Saisissez un taux supérieur à zéro") : null}
           required

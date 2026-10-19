@@ -12,14 +12,15 @@ import { Separator } from "@/components/ui/separator";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
-import { EmptyState, Field, Num, PageHeader, SubmitButton, unclearAmount } from "@/components/common";
+import { EmptyState, Field, Num, PageHeader, SubmitButton, unclearAmount, useCorrectFocus } from "@/components/common";
 import { LocationSelect, MoneyAccountSelect, PartySelect, RateInput, VariantSearch, useAccounts, useLocations, useMoneyAccounts, useRate } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { api, withQuery } from "@/lib/api";
 import { draftEmpty, listDrafts, newSlot, removeDraft, resumedPrice, saveDraft, DRAFT_VERSION, type PosDraft } from "@/lib/posDraft";
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
-import { cdf, curLabel, d, date as fmtDate, dateTime, fcRounding, frenchPunctuation, MINUS, money, pct as fmtPct, qty as fmtQty, refusedUnit, todayLocal, typedNumberOk, unclearQty, usd, variantText } from "@/lib/format";
+import { cdf, curLabel, d, date as fmtDate, dateTime, dollarRate, fcRounding, frenchPunctuation, MINUS, money, pct as fmtPct, qty as fmtQty, refusedUnit, todayLocal, typedNumberOk, unclearQty, usd, variantText } from "@/lib/format";
+import { receiptFcRoundingUsd } from "@/lib/saleRows";
 import { cartCount, unitLabel, wholeUnit } from "@/lib/units";
 import type { Account, MotorcycleUnit, Party, Settings, VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -169,7 +170,7 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
   // cents (35,61 − 8,62 for 27,00 $): the receipt shows that rounding as its own line, the till's own (the
   // returns come later, on their slips), signed as the books and the Sales list keep it.
   const paymentsUsd = sale.payments.reduce((s, p) => s.plus(d(p.amountUsd)), d(0));
-  const keptUsd = sale.saleFcRoundingUsd !== undefined ? d(sale.saleFcRoundingUsd) : paymentsUsd.minus(sale.paidUsd);
+  const keptUsd = receiptFcRoundingUsd(sale) ?? paymentsUsd.minus(sale.paidUsd);
   const paidInFrancs = sale.payments.some((p) => p.currency === "CDF");
   // The same rounding in francs, as the till showed it: what was handed over less what was counted as paid,
   // each franc payment at its own rate (16 FC, where 0,01 $ alone would not say how many francs). Shown even
@@ -248,7 +249,7 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
       )}
       {avoir.toPay.gt(0) && <ReceiptRow bold left={t("On credit (to pay)", "À crédit (reste à payer)")} right={usd(avoir.toPay.toFixed(2))} />}
       {cdfRate && d(cdfRate).gt(0) && (
-        <p className="mt-1">{t("Rate", "Taux")}{"\u00a0"}: 1 $ = {fmtQty(cdfRate)} FC</p>
+        <p className="mt-1">{t("Rate:", "Taux\u00a0:")} {dollarRate(cdfRate)}</p>
       )}
       {sale.note && <p className="mt-1">{sale.note}</p>}
       {dash}
@@ -625,7 +626,8 @@ export default function POS() {
       const on = backDated ? t(` on ${fmtDate(saleDate)}`, ` le ${fmtDate(saleDate)}`) : "";
       problems.push(t(`${l.variant.productName}: ${inCart} in the cart, only ${here} in stock here${on}`, `${l.variant.productName}\u00a0: ${inCart} au panier, seulement ${here} en stock ici${on}`));
     }
-    if (costRefusal(l) === "list") problems.push(t(`${l.variant.productName}: price below cost, for the owner to raise`, `${l.variant.productName}\u00a0: prix sous le coût, à relever par le propriétaire`));
+    // A 0 $ price is already a problem above; the list price being under cost is no second one.
+    if (costRefusal(l) === "list" && typedNumberOk(l.unitPrice) && d(l.unitPrice).gt(0)) problems.push(t(`${l.variant.productName}: price below cost, for the owner to raise`, `${l.variant.productName}\u00a0: prix sous le coût, à relever par le propriétaire`));
     if (costRefusal(l) === "line") problems.push(t(`${l.variant.productName}: below cost; only the owner can sell below cost`, `${l.variant.productName}\u00a0: sous le coût\u00a0; seul le propriétaire peut vendre à perte`));
     if (l.variant.tracksSerials && !l.unitId) problems.push(t(`Choose the chassis number for ${l.variant.productName}`, `Choisissez le numéro de châssis pour ${l.variant.productName}`));
   }
@@ -688,7 +690,7 @@ export default function POS() {
     if (!acc && d(p.amount).gt(0)) problems.push(t("Choose the account for each payment", "Choisissez le compte pour chaque paiement"));
     // An empty payment row is simply ignored when the sale is saved.
     if (acc && d(p.amount).lt(0)) problems.push(t("A payment cannot be negative", "Un paiement ne peut pas être négatif"));
-    if (acc?.currency === "CDF" && d(p.amount).gt(0) && rateNum.lte(0)) problems.push(t("Enter the exchange rate for CDF payments", "Saisissez le taux pour les paiements en francs"));
+    if (acc?.currency === "CDF" && d(p.amount).gt(0) && rateNum.lte(0)) problems.push(t("Enter the exchange rate for franc payments", "Saisissez le taux pour les paiements en francs"));
     if (acc?.currency === "CDF" && !d(p.amount).isInteger()) problems.push(t("Franc amounts are whole numbers", "Les montants en FC sont des nombres entiers"));
   }
   if (!typedNumberOk(changeAmt)) problems.push(t("Correct the change given back", "Corrigez la monnaie rendue"));
@@ -861,6 +863,14 @@ export default function POS() {
   const [confirmCross, setConfirmCross] = useState(false);
   const [confirmPrice, setConfirmPrice] = useState(false);
   const [confirmCash, setConfirmCash] = useState(false);
+  // "Corriger" goes back to the price or the amount asked about: the first raised price; the biggest payment
+  // when the cash is far above the sale, else the change.
+  const correctPrice = useCorrectFocus(() => (raisedLines[0] ? `price-${raisedLines[0].key}` : null));
+  const correctCash = useCorrectFocus(() => {
+    if (!unusualReceived) return "change";
+    const biggest = pays.filter((p) => d(p.amount).gt(0)).sort((a, b) => payUsd(b).comparedTo(payUsd(a)))[0];
+    return biggest ? `pay-${biggest.key}` : null;
+  });
   // Each check asks once, the raised prices first; confirmed, the sale goes through as typed.
   function submit(confirmed: { price?: boolean; cash?: boolean; cross?: boolean } = {}) {
     if (!valid || mutation.isPending || !locationId) return;
@@ -1175,7 +1185,7 @@ export default function POS() {
                           </div>
                           <div>
                             <p className="mb-1 text-xs text-muted-foreground">{t("Unit price $", "Prix unitaire $")}</p>
-                            <Input className="h-9" inputMode="decimal" usd aria-label={t(`Unit price of ${l.variant.productName} ($)`, `Prix unitaire ${de(l.variant.productName)} ($)`)} value={l.unitPrice} onChange={(e) => updateLine(l.key, { unitPrice: e.target.value })} />
+                            <Input className="h-9" inputMode="decimal" usd data-correct={`price-${l.key}`} aria-label={t(`Unit price of ${l.variant.productName} ($)`, `Prix unitaire ${de(l.variant.productName)} ($)`)} value={l.unitPrice} onChange={(e) => updateLine(l.key, { unitPrice: e.target.value })} />
                           </div>
                           <div>
                             <p className="mb-1 text-xs text-muted-foreground">{t("Discount $", "Remise $")}</p>
@@ -1197,7 +1207,8 @@ export default function POS() {
                             {t(`${priceRise(l)} on the list price (${usd(d(l.variant.sellPrice).toFixed(2))}): check the zeros`, `${priceRise(l)} sur le prix de liste (${usd(d(l.variant.sellPrice).toFixed(2))}) — vérifiez les zéros`)}
                           </p>
                         )}
-                        {costRefusal(l) ? (
+                        {/* A 0 $ price is said once, above: "sous le coût" would only contradict "saisissez le prix". */}
+                        {typedNumberOk(l.unitPrice) && d(l.unitPrice).lte(0) ? null : costRefusal(l) ? (
                           <p className="flex items-center gap-1 text-xs font-medium text-destructive" data-testid="pos-below-cost">
                             <AlertTriangle className="h-3 w-3 shrink-0" />
                             {costRefusal(l) === "list"
@@ -1256,7 +1267,7 @@ export default function POS() {
                 {/* The francs asked, in 100 FC notes as the change calculator and "Tout en espèces FC" say; the exact figure under it. */}
                 {rateNum.gt(0) && total.gt(0) && (
                   <p className="text-right text-xs text-muted-foreground" data-testid="total-fc">
-                    {cdf(francsFor(total, true).toString())} · 1 $ = {fmtQty(rateNum.toString())} FC
+                    {cdf(francsFor(total, true).toString())} · {dollarRate(rateNum.toString())}
                     {!francsFor(total, true).equals(francsFor(total, false)) && <span className="block">{t("exactly", "exactement")} {cdf(francsFor(total, false).toString())}</span>}
                   </p>
                 )}
@@ -1267,7 +1278,7 @@ export default function POS() {
                   <Banknote className="mr-1 hidden h-4 w-4 min-[400px]:inline" /> {t("All in $ cash", "Tout en espèces $")}
                 </Button>
                 <Button variant="secondary" size="sm" className="h-auto min-h-8 whitespace-normal py-1.5" onClick={() => payAllIn("CDF")} disabled={total.lte(0) || !findCash("CDF") || rateNum.lte(0)}>
-                  <Banknote className="mr-1 hidden h-4 w-4 min-[400px]:inline" /> {t("All in CDF cash", "Tout en espèces FC")}
+                  <Banknote className="mr-1 hidden h-4 w-4 min-[400px]:inline" /> {t("All in FC cash", "Tout en espèces FC")}
                 </Button>
               </div>
 
@@ -1287,6 +1298,7 @@ export default function POS() {
                           inputMode="decimal" currency={acc?.currency ?? "USD"}
                           switchTo={acc?.currency === "CDF" ? findCash("USD")?.name : findCash("CDF")?.name}
                           className="pr-10"
+                          data-correct={`pay-${p.key}`}
                           aria-label={acc?.currency === "CDF" ? t("Amount in FC", "Montant en FC") : t("Amount in $", "Montant en $")}
                           placeholder={t("Amount", "Montant")}
                           value={p.amount}
@@ -1339,6 +1351,7 @@ export default function POS() {
                         inputMode={changeAcc?.currency === "CDF" ? "numeric" : "decimal"} usd={changeAcc?.currency === "USD"}
                         thousands={changeAcc?.currency === "CDF"}
                         className="pr-10"
+                        data-correct="change"
                         aria-label={changeAcc?.currency === "CDF" ? t("Change given back in FC", "Monnaie rendue en FC") : t("Change given back in $", "Monnaie rendue en $")}
                         placeholder={t("Other", "Autre")}
                         value={changeAmt}
@@ -1559,7 +1572,7 @@ export default function POS() {
       </AlertDialog>
 
       <AlertDialog open={confirmPrice} onOpenChange={setConfirmPrice}>
-        <AlertDialogContent>
+        <AlertDialogContent {...correctPrice.content}>
           <AlertDialogHeader>
             <AlertDialogTitle>{t("Sell at these prices?", "Vendre à ces prix ?")}</AlertDialogTitle>
             <AlertDialogDescription asChild>
@@ -1577,14 +1590,14 @@ export default function POS() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+            <AlertDialogCancel {...correctPrice.cancel}>{t("Correct it", "Corriger")}</AlertDialogCancel>
             <AlertDialogAction onClick={() => submit({ price: true })}>{t("Sell anyway", "Vendre quand même")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
 
       <AlertDialog open={confirmCash} onOpenChange={setConfirmCash}>
-        <AlertDialogContent>
+        <AlertDialogContent {...correctCash.content}>
           <AlertDialogHeader>
             <AlertDialogTitle>{unusualReceived ? t("An unusual amount received?", "Montant reçu inhabituel\u00a0?") : t("An unusual amount?", "Un montant inhabituel\u00a0?")}</AlertDialogTitle>
             <AlertDialogDescription asChild>
@@ -1595,7 +1608,7 @@ export default function POS() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+            <AlertDialogCancel {...correctCash.cancel}>{t("Correct it", "Corriger")}</AlertDialogCancel>
             <AlertDialogAction onClick={() => submit({ price: true, cash: true })}>{t("Save anyway", "Enregistrer quand même")}</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

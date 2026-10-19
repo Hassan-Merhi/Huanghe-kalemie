@@ -20,6 +20,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Loading, Num, PageHeader, StatCard } from "@/components/common";
 import { useApiMutation } from "@/hooks/useApiMutation";
+import { ApiError } from "@/lib/api";
 import { useToast } from "@/hooks/use-toast";
 import { useAuth } from "@/lib/auth";
 import { useAccounts, useRateTooFar } from "@/components/pickers";
@@ -67,6 +68,11 @@ const KIND_TONE: Record<VoucherKind, string> = {
   adjustment: "border-amber-500/40 text-amber-800 dark:text-amber-400",
 };
 
+/** The row of a draft changed under the owner's "Valider" (409), once the list reloaded with its new amount. */
+const CHANGED_TONE = "bg-amber-100 dark:bg-amber-950/50";
+const CHANGED_ROW = `${CHANGED_TONE} [&>td:first-child]:border-l-4 [&>td:first-child]:border-amber-500`;
+const CHANGED_CARD = `${CHANGED_TONE} border-amber-500`;
+
 interface FinalizeResult {
   kind: VoucherKind;
   result: { id?: number; journalId?: number | null };
@@ -79,7 +85,9 @@ export default function OptionalVouchers() {
   const canSave = can("manager");
   const isOwner = user?.role === "owner";
   const francsOf = useDraftFrancs();
-  const q = useQuery<VoucherDraft[]>({ queryKey: ["/api/voucher-drafts"] });
+  // A manager edits a draft while the owner has this list open on another screen: it refreshes on its own
+  // (every 15 s and on coming back to the window), so the amount read before "Valider" is the current one.
+  const q = useQuery<VoucherDraft[]>({ queryKey: ["/api/voucher-drafts"], refetchInterval: 15_000, refetchOnWindowFocus: true });
   const [kind, setKind] = useState<"all" | VoucherKind>("all");
   const [from, setFrom] = useState("");
   const [to, setTo] = useState("");
@@ -106,9 +114,12 @@ export default function OptionalVouchers() {
   const total = rows.reduce((sum, r) => sum.plus(r.totalUsd ? d(r.totalUsd) : 0), d(0));
   const filtered = kind !== "all" || !!from || !!to || !!search.trim();
 
-  // The draft's updatedAt goes with it: a draft changed since it was shown here is refused (409) and the list reloads.
+  // The draft's updatedAt goes with it: a draft changed since it was shown here is refused (409) and the list
+  // reloads, with the changed row marked until it is opened or validated again, so the new amount is seen.
+  const [changed, setChanged] = useState<number | null>(null);
   const finalize = useApiMutation<{ id: number; updatedAt: string }, FinalizeResult>("POST", (b) => `/api/voucher-drafts/${b.id}/finalize`, {
-    onError: () => {
+    onError: (e, body) => {
+      if (e instanceof ApiError && e.status === 409) setChanged(body.id);
       void q.refetch();
     },
     onSuccess: (res) => {
@@ -128,6 +139,7 @@ export default function OptionalVouchers() {
   function run() {
     if (!confirm) return;
     if (confirm.action === "finalize" && short) return;
+    if (confirm.draft.id === changed) setChanged(null);
     if (confirm.action === "finalize") finalize.mutate({ id: confirm.draft.id, updatedAt: confirm.draft.updatedAt });
     else remove.mutate({ id: confirm.draft.id });
     setConfirm(null);
@@ -141,7 +153,7 @@ export default function OptionalVouchers() {
       // One line in the table; a phone card wraps them.
       <div className={cn("flex items-center gap-1", compact ? "flex-wrap" : "flex-nowrap justify-end")}>
         <Button size="sm" variant="ghost" className="px-2" asChild>
-          <Link href={editHref(r)}>
+          <Link href={editHref(r)} onClick={() => r.id === changed && setChanged(null)}>
             {canSave ? <Pencil className="mr-1 h-3.5 w-3.5" /> : <Eye className="mr-1 h-3.5 w-3.5" />}
             {canSave ? t("Edit", "Modifier") : t("View", "Voir")}
           </Link>
@@ -167,6 +179,7 @@ export default function OptionalVouchers() {
     );
   }
 
+  const changedTitle = t("Changed since it was shown: check the amount before validating", "Modifiée depuis son affichage\u00a0: vérifiez le montant avant de valider");
   const kindBadge = (k: VoucherKind) => (
     <Badge variant="outline" className={cn("whitespace-nowrap", KIND_TONE[k])}>{voucherKindLabel(k, t)}</Badge>
   );
@@ -245,7 +258,7 @@ export default function OptionalVouchers() {
                 </TableHeader>
                 <TableBody>
                   {rows.map((r) => (
-                    <TableRow key={r.id}>
+                    <TableRow key={r.id} className={cn(r.id === changed && CHANGED_ROW)} data-changed={r.id === changed || undefined} title={r.id === changed ? changedTitle : undefined}>
                       <TableCell className="whitespace-nowrap">{date(r.date)}</TableCell>
                       <TableCell>{kindBadge(r.kind)}</TableCell>
                       {/* The description takes the row's spare width, so the actions stay on one line in view: on up to
@@ -266,7 +279,7 @@ export default function OptionalVouchers() {
           {/* Mobile */}
           <div className="space-y-2 md:hidden">
             {rows.map((r) => (
-              <Card key={r.id}>
+              <Card key={r.id} className={cn(r.id === changed && CHANGED_CARD)} data-changed={r.id === changed || undefined} title={r.id === changed ? changedTitle : undefined}>
                 <CardContent className="space-y-2 p-3">
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
@@ -357,7 +370,7 @@ function DraftSummary({ draft, check, onShort }: { draft: VoucherDraft; check: b
   const tooFar = useRateTooFar(draft.date, implied ? implied.toString() : voucherRate);
   const rateFar = tooFar && implied
     ? t(
-        `These amounts mean 1 $ = ${number(implied.toDecimalPlaces(2).toString())} FC, too far from the day's rate`,
+        `These amounts mean $1 = ${number(implied.toDecimalPlaces(2).toString())} FC, too far from the day's rate`,
         `Ces montants donnent 1\u00a0$ = ${number(implied.toDecimalPlaces(2).toString())}\u00a0FC, trop loin du taux du jour`,
       )
     : tooFar;

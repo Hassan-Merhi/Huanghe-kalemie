@@ -22,7 +22,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, StatCard, SubmitButton, unclearAmount } from "@/components/common";
+import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, StatCard, SubmitButton, unclearAmount, useCorrectFocus } from "@/components/common";
 import { AccountSelect, CurrencySwitchNote, MoneyAccountSelect, MonthSelect, PartySelect, RateInput, useAccounts, useCurrencySwitch, useRateField, useRateTooFar } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
@@ -245,6 +245,8 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
   const [justSaved, setJustSaved] = useState(false);
   const [confirmCancel, setConfirmCancel] = useState(false);
   const [confirmFar, setConfirmFar] = useState(false);
+  // "Corriger" goes back to the first unusual salary.
+  const correctFar = useCorrectFocus(() => (farOff[0] ? `salary-${farOff[0].e.id}` : null));
   const [currency, setCurrency] = useState<"USD" | "CDF">("USD");
 
   useEffect(() => {
@@ -509,7 +511,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                         {g.e.position && <span className="block text-xs text-muted-foreground">{g.e.position}</span>}
                       </TableCell>
                       <TableCell className="text-right">
-                        <Input className="w-full text-right sm:ml-auto sm:w-28" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Salary of ${g.e.name}`, `Salaire ${de(g.e.name)}`)} aria-invalid={!!centsError(g.salary) || undefined} value={g.salary} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { salary: ev.target.value })} />
+                        <Input className="w-full text-right sm:ml-auto sm:w-28" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} data-correct={`salary-${g.e.id}`} aria-label={t(`Salary of ${g.e.name}`, `Salaire ${de(g.e.name)}`)} aria-invalid={!!centsError(g.salary) || undefined} value={g.salary} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { salary: ev.target.value })} />
                       </TableCell>
                       <TableCell className="text-right">
                         <Input className="w-full text-right sm:ml-auto sm:w-24" inputMode="decimal" usd={currency === "USD"} thousands={currency === "CDF"} aria-label={t(`Bonus for ${g.e.name}`, `Prime ${de(g.e.name)}`)} placeholder="—" aria-invalid={!!centsError(g.bonus) || undefined} value={g.bonus} disabled={!canEdit} onChange={(ev) => setEdit(g.e.id, { bonus: ev.target.value })} />
@@ -613,7 +615,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
       {paying && <PaySalariesDialog month={month} run={run} employees={data.employees} saved={justSaved} onClose={() => { setPaying(false); setJustSaved(false); }} />}
 
       <AlertDialog open={confirmFar} onOpenChange={setConfirmFar}>
-        <AlertDialogContent>
+        <AlertDialogContent {...correctFar.content}>
           <AlertDialogHeader>
             <AlertDialogTitle>{farOff.length === 1 ? t("An unusual salary?", "Un salaire inhabituel\u00a0?") : t(`${farOff.length} unusual salaries?`, `${farOff.length} salaires inhabituels\u00a0?`)}</AlertDialogTitle>
             <AlertDialogDescription asChild>
@@ -624,7 +626,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+            <AlertDialogCancel {...correctFar.cancel}>{t("Correct it", "Corriger")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
                 setConfirmFar(false);
@@ -837,6 +839,11 @@ function PaySalariesDialog({ month, run, employees, saved, onClose }: { month: s
     return t(`Not payable exactly in notes: ${parts}.`, `Pas payable exactement en billets\u00a0: ${parts}.`);
   };
   const [confirmOver, setConfirmOver] = useState(false);
+  // "Corriger" goes back to the first amount above what is owed.
+  const correctOver = useCorrectFocus(() => {
+    const e = rows.find((r) => excessOf(r));
+    return e ? `paid-${keyOf(e)}` : null;
+  });
 
   /** Amount in the paying account's currency, and its dollar value. */
   const lines = rows
@@ -938,7 +945,7 @@ function PaySalariesDialog({ month, run, employees, saved, onClose }: { month: s
                       </div>
                       <div className="w-full text-right sm:w-auto">
                         <div className="flex items-center justify-end gap-1">
-                          <Input className="w-full text-right sm:w-28" inputMode="decimal" usd={!isCdf} thousands={isCdf} aria-label={t(`Amount paid to ${e.name}`, `Montant payé à ${e.name}`)} aria-invalid={(isCdf && !!francDecimalsError(t, "CDF", amountOf(e))) || undefined} value={amountOf(e)} onChange={(ev) => setAmounts((p) => ({ ...p, [keyOf(e)]: ev.target.value }))} />
+                          <Input className="w-full text-right sm:w-28" inputMode="decimal" usd={!isCdf} thousands={isCdf} data-correct={`paid-${keyOf(e)}`} aria-label={t(`Amount paid to ${e.name}`, `Montant payé à ${e.name}`)} aria-invalid={(isCdf && !!francDecimalsError(t, "CDF", amountOf(e))) || undefined} value={amountOf(e)} onChange={(ev) => setAmounts((p) => ({ ...p, [keyOf(e)]: ev.target.value }))} />
                           <span className="w-6 text-left text-xs text-muted-foreground">{isCdf ? "FC" : "$"}</span>
                         </div>
                         {overText(e) && <p role="alert" className="ml-auto mt-1 max-w-[18rem] text-right text-xs font-medium text-amber-800 dark:text-amber-400">{overText(e)}</p>}
@@ -994,7 +1001,7 @@ function PaySalariesDialog({ month, run, employees, saved, onClose }: { month: s
         </DialogFooter>
       </DialogContent>
       <AlertDialog open={confirmOver} onOpenChange={setConfirmOver}>
-        <AlertDialogContent>
+        <AlertDialogContent {...correctOver.content}>
           <AlertDialogHeader>
             <AlertDialogTitle>{t("Pay more than is owed?", "Payer plus que ce qui est dû\u00a0?")}</AlertDialogTitle>
             <AlertDialogDescription asChild>
@@ -1005,7 +1012,7 @@ function PaySalariesDialog({ month, run, employees, saved, onClose }: { month: s
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+            <AlertDialogCancel {...correctOver.cancel}>{t("Correct it", "Corriger")}</AlertDialogCancel>
             <AlertDialogAction
               onClick={() => {
                 setConfirmOver(false);
@@ -1076,6 +1083,7 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
       )
     : null;
   const [confirmUnusual, setConfirmUnusual] = useState(false);
+  const correctUnusual = useCorrectFocus(() => "advance-amount");
 
   const give = useApiMutation<Record<string, unknown>, { id: number; total: string }>("POST", "/api/vouchers/payment", {
     success: t("Advance recorded", "Avance enregistrée"),
@@ -1133,7 +1141,7 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
                 error={francDecimalsError(t, account?.currency, amount)}
                 required
               >
-                <Input inputMode="decimal" usd={!isCdf} thousands={isCdf} aria-invalid={!!amountError || undefined} value={amount} onChange={(e) => { edit(setAmount)(e.target.value); currencySwitch.clear(); }} placeholder="0" />
+                <Input inputMode="decimal" usd={!isCdf} thousands={isCdf} data-correct="advance-amount" aria-invalid={!!amountError || undefined} value={amount} onChange={(e) => { edit(setAmount)(e.target.value); currencySwitch.clear(); }} placeholder="0" />
               </Field>
               {isCdf && (
                 <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} required>
@@ -1173,7 +1181,7 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
             </div>
           </CardContent>
           <AlertDialog open={confirmUnusual} onOpenChange={setConfirmUnusual}>
-            <AlertDialogContent>
+            <AlertDialogContent {...correctUnusual.content}>
               <AlertDialogHeader>
                 <AlertDialogTitle>{t("An unusual amount?", "Un montant inhabituel\u00a0?")}</AlertDialogTitle>
                 <AlertDialogDescription asChild>
@@ -1184,7 +1192,7 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
                 </AlertDialogDescription>
               </AlertDialogHeader>
               <AlertDialogFooter>
-                <AlertDialogCancel>{t("Correct it", "Corriger")}</AlertDialogCancel>
+                <AlertDialogCancel {...correctUnusual.cancel}>{t("Correct it", "Corriger")}</AlertDialogCancel>
                 <AlertDialogAction
                   onClick={() => {
                     setConfirmUnusual(false);
