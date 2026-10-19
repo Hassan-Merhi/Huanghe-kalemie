@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lte, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lte, ne, notInArray, sql } from "drizzle-orm";
 import { accounts, exchangeRates, journalLines, journals, partners, periods } from "@shared/schema";
 import { splitProfit, type PartnerSplitResult } from "@shared/partnerSplit";
 import { dec, sum, Decimal } from "@shared/money";
@@ -6,7 +6,7 @@ import type { Tx } from "../db";
 import { badRequest, conflict } from "../errors";
 import { deMonth, frDate, frNumber, monthText } from "@shared/french";
 import { cents } from "@shared/money";
-import { cnyRateFor, lockPeriodsExclusive, postJournal, rateFor, REVALUATION_SETTLED_MEMO, REVALUED_MEMO, reverseJournal, SYSTEM_ACCOUNTS, systemAccountId, yuanRevaluationShare, type PostLine } from "./ledger";
+import { cnyRateFor, lockPeriodsExclusive, postJournal, rateFor, REVALUATION_SETTLED_MEMO, REVALUATION_SOURCES, REVALUED_MEMO, reverseJournal, setRestater, SYSTEM_ACCOUNTS, systemAccountId, yuanMarkedOwed, type PostLine } from "./ledger";
 import { todayIso } from "../http";
 
 export function monthRange(month: string): { from: string; to: string } {
@@ -135,111 +135,28 @@ export async function revaluationLines(
 /** Memo of the lines that take a revaluation off a balance settled after the month's end (kept in ledger.ts, as a books' own label). */
 export { REVALUATION_SETTLED_MEMO };
 
-/** Source of the journals that take a revaluation off the balances settled after the month's end (see settledRevaluations). */
+/** Source of the journals by which closing a month takes its revaluation off the balances settled since its end (see restateSettled). */
 const SETTLED_SOURCE = "period_settled";
 
-/**
- * A balance in francs or yuan held at the month's end but settled after it, before the month was
- * closed, was taken out at what it cost then: the revaluation, dated the month's end, leaves its dollars
- * on a balance with no francs or yuan. They go to exchange differences on the day it was first emptied,
- * as the next revaluation would have done, so from that day the balance is what those postings saw. On
- * contacts and other accounts that are not money only (a drawer keeps its revaluation, see selfCheck);
- * the balances that still hold their francs or yuan keep it. Posted with the close, undone with it.
- */
-async function settledRevaluations(tx: Tx, month: string, revaluation: PostLine[], periodId: number, userId: number) {
-  const { to } = monthRange(month);
-  const keyOf = (k: { accountId: number; partyId?: number | null; currency?: string | null }) => `${k.accountId}|${k.partyId ?? ""}|${k.currency}`;
-  const money = new Set((await tx.select({ id: accounts.id }).from(accounts).where(eq(accounts.isMoney, true))).map((a) => a.id));
-  const revalued = revaluation.filter((l) => l.currency && !money.has(l.accountId));
-  if (!revalued.length) return;
-  const balance = { native: sql<string>`coalesce(sum(${journalLines.nativeAmount}), 0)`, usd: sql<string>`coalesce(sum(${journalLines.debit} - ${journalLines.credit}), 0)` };
-  const held = await tx
-    .select({ ...balance, accountId: journalLines.accountId, partyId: journalLines.partyId, currency: journalLines.currency })
-    .from(journalLines)
-    .innerJoin(journals, eq(journals.id, journalLines.journalId))
-    .where(and(inArray(journalLines.currency, ["CDF", "CNY"]), lte(journals.date, to)))
-    .groupBy(journalLines.accountId, journalLines.partyId, journalLines.currency);
-  const after = await tx
-    .select({ ...balance, accountId: journalLines.accountId, partyId: journalLines.partyId, currency: journalLines.currency, date: journals.date })
-    .from(journalLines)
-    .innerJoin(journals, eq(journals.id, journalLines.journalId))
-    .where(and(inArray(journalLines.currency, ["CDF", "CNY"]), gt(journals.date, to)))
-    .groupBy(journalLines.accountId, journalLines.partyId, journalLines.currency, journals.date)
-    .orderBy(journals.date);
-  const byDay = new Map<string, PostLine[]>();
-  for (const l of revalued) {
-    const start = held.find((h) => keyOf(h) === keyOf(l));
-    if (!start || dec(start.native).isZero()) continue;
-    const bal = { native: dec(start.native), usd: dec(start.usd) };
-    const emptied = after.filter((a) => keyOf(a) === keyOf(l)).find((a) => {
-      bal.native = bal.native.plus(a.native);
-      bal.usd = bal.usd.plus(a.usd);
-      return bal.native.isZero();
-    });
-    if (!emptied) continue;
-    // Only the revaluation's dollars still on it that day: a reversal since may have taken them already
-    // (see revaluedDollarLines), when the month is closed again after being reopened.
-    const diff = dec(l.debit ?? 0).minus(dec(l.credit ?? 0));
-    if (bal.usd.isZero() || bal.usd.isNegative() !== diff.isNegative()) continue;
-    const take = bal.usd.abs().lt(diff.abs()) ? bal.usd : diff;
-    byDay.set(emptied.date, [...(byDay.get(emptied.date) ?? []), { ...l, debit: take.isNegative() ? take.abs() : 0, credit: take.isPositive() ? take : 0 }]);
-  }
-  const fx = await systemAccountId(tx, SYSTEM_ACCOUNTS.fx);
-  for (const [date, lines] of byDay) {
-    const cdf = (await rateFor(tx, date)).rate;
-    const cny = await cnyRateFor(tx, date);
-    const gain = sum(lines.map((l) => dec(l.debit ?? 0).minus(dec(l.credit ?? 0))));
-    await postJournal(tx, {
-      date,
-      type: "revaluation",
-      memo: `Réévaluation au ${frDate(to)} soldée\u00a0: ces devises ont été réglées depuis`,
-      sourceType: SETTLED_SOURCE,
-      sourceId: periodId,
-      userId,
-      exactValues: true,
-      lines: [
-        ...lines.map((l) => ({ ...l, rate: l.currency === "CNY" ? (cny ?? l.rate) : cdf, memo: REVALUATION_SETTLED_MEMO })),
-        { accountId: fx, debit: gain.isNegative() ? gain.abs() : 0, credit: gain.isPositive() ? gain : 0, memo: REVALUATION_SETTLED_MEMO },
-      ],
-    });
-  }
-}
-
-/** Source of the journals by which a reopened month takes back what reversals since cleared of its revaluation (see takeBackCleared). */
+/** Source of the journals by which reopening a month takes back what was settled since of its revaluation (see restateSettled). */
 const REOPENED_SOURCE = "period_reopened";
 
-type ForeignKey = { accountId: number; partyId?: number | null; currency?: string | null };
-const foreignKeyOf = (k: ForeignKey) => `${k.accountId}|${k.partyId ?? ""}|${k.currency}`;
-
-/**
- * The dollars, day by day, that take back the part of `moves` (a balance's signed dollars by day, in date
- * order) that runs against `cap`: at most cap in all, with its sign, counted on their running total, so a
- * day that undoes an earlier one takes its share back too.
- */
-function against(moves: { date: string; usd: Decimal }[], cap: Decimal): { date: string; usd: Decimal }[] {
-  const sign = cap.isNegative() ? -1 : 1;
-  const part = (total: Decimal) => Decimal.min(Decimal.max(total.times(-sign), 0), cap.abs()).times(sign);
-  const out: { date: string; usd: Decimal }[] = [];
-  let total = new Decimal(0);
-  let taken = new Decimal(0);
-  for (const m of moves) {
-    total = total.plus(m.usd);
-    const now = part(total);
-    if (!now.equals(taken)) out.push({ date: m.date, usd: now.minus(taken) });
-    taken = now;
-  }
-  return out;
-}
+type ForeignKey = { accountId: number; partyId: number | null; currency: "CDF" | "CNY" };
+const foreignKeyOf = (k: { accountId: number; partyId?: number | null; currency?: string | null }) => `${k.accountId}|${k.partyId ?? ""}|${k.currency}`;
 
 /** `usd` kept between none and `cap`, on cap's side. */
 const clampTo = (usd: Decimal, cap: Decimal) => (cap.isNegative() ? Decimal.min(Decimal.max(usd, cap), 0) : Decimal.max(Decimal.min(usd, cap), 0));
 
-/** Post `posts` (the dollars to move on each balance, by day) against exchange differences, one journal a day. */
+/**
+ * Post `posts` (the dollars to move on each balance, by day) against exchange differences, one journal a day.
+ * Closing a month labels its lines as a settled revaluation, reopening it as what a reversal cleared.
+ */
 async function postAgainstFx(
   tx: Tx,
-  posts: { key: ForeignKey & { currency: "CDF" | "CNY" }; date: string; usd: Decimal }[],
-  journal: { memo: string; sourceType: string; sourceId: number; userId: number },
+  posts: { key: ForeignKey; date: string; usd: Decimal }[],
+  journal: { memo: string; sourceType: string; sourceId: number; userId: number | null; settled: boolean },
 ) {
+  const label = journal.settled ? { memo: REVALUATION_SETTLED_MEMO, kind: null } : { memo: REVALUED_MEMO, kind: "revalued" as const };
   const fx = await systemAccountId(tx, SYSTEM_ACCOUNTS.fx);
   for (const date of Array.from(new Set(posts.map((p) => p.date))).sort()) {
     const day = posts.filter((p) => p.date === date);
@@ -257,164 +174,190 @@ async function postAgainstFx(
       lines: [
         ...day.map((p): PostLine => ({
           accountId: p.key.accountId,
-          partyId: p.key.partyId ?? null,
+          partyId: p.key.partyId,
           currency: p.key.currency,
           nativeAmount: "0",
           rate: p.key.currency === "CNY" ? (cny ?? cdf) : cdf,
           debit: p.usd.isPositive() ? p.usd : 0,
           credit: p.usd.isNegative() ? p.usd.abs() : 0,
-          memo: REVALUED_MEMO,
-          kind: "revalued",
+          ...label,
         })),
-        { accountId: fx, debit: gain.isNegative() ? gain.abs() : 0, credit: gain.isPositive() ? gain : 0, memo: REVALUED_MEMO, kind: "revalued" },
+        { accountId: fx, debit: gain.isNegative() ? gain.abs() : 0, credit: gain.isPositive() ? gain : 0, ...label },
       ],
     });
   }
 }
 
 /**
- * Reopening a month undoes its revaluation, dated its last day. A reversal since that emptied a contact's
- * francs or yuan (or another balance that is not money) moved that revaluation's dollars to exchange
- * differences (see revaluedDollarLines, yuanTrueUpLines): undone, they would come back on a balance that
- * no longer holds them. So the revaluation's own part of what those lines moved is taken back on their
- * own days: the balance is then what it would be had the month never been closed. Closing the month
- * again books its revaluation and clears it once more (see clearTakenBack).
- * Counted on each balance in the order posted, from the revaluation on, with what of it is still there:
- * - a reversal's lines that empty the balance (revaluedDollarLines) clear all of it, whatever else they
- *   clear with it (an earlier month's revaluation the other way): only while the francs or yuan have not
- *   stood at none since the revaluation, as those lines count only the dollars since then;
- * - a supplier's yuan trued up when a container is undone (yuanTrueUpLines) clear the part of it that its
- *   share in their yuan still owed lost with the bill (see yuanRevaluationShare), never the payments' own
- *   exchange difference the same lines hold;
- * - a journal since the close that settles the balance in full, francs or yuan and dollars, took it into
- *   its exchange difference at what the balance cost (as settledRevaluations takes it off a balance
- *   settled before the close);
- * - what this close itself took off it (see settledRevaluations, clearTakenBack) is gone from it;
- * - undoing such a reversal gives back what it cleared; and other months' takebacks and clearings clear
- *   none of it.
+ * What a month's revaluation leaves, day by day, on each balance in francs or yuan of a contact (or another
+ * account that is not money) it restated, once the month is closed (`state` "closed") or reopened ("open"):
+ * the books' journals for it (its revaluation, undone when it is reopened, and what closing or reopening it
+ * moved since: see REVALUATION_SOURCES) are brought to that, by one journal a day against exchange
+ * differences. Worked out afresh each time from everything else on the balance, so reopening a month and
+ * closing it again with nothing in between books exactly what was there, however often it is done, and in
+ * whatever order postings since were made or dated.
+ * Closed, the balance holds the revaluation from the month's end; reopened, none of it. From the month's
+ * end on, in date order and each day in the order they were posted, two kinds of posting settle it, closed
+ * or reopened alike (what the day ends with is posted on it):
+ * - one after which the balance holds no francs or yuan: it holds no dollars either. Whatever else is on
+ *   it then (a payment since that took the revaluation with it at what the balance cost, a reversal that
+ *   cleared it, a settlement before the close that did not) leaves to the revaluation only the dollars
+ *   needed for that, never beyond what it restated nor the other way (more is for a person to correct, see
+ *   selfCheck). As settled once the month is closed: a balance settled before the close has the
+ *   revaluation taken off on that day, one settled at the revalued cost keeps it there;
+ * - a container's reversal that takes a supplier's yuan bill away: of the revaluation still on their yuan
+ *   owed (or paid since it was posted), the share of those it leaves stays (see yuanMarkedOwed), the rest
+ *   left with the bill. Otherwise, a posting that turns what is owed into a claim (or a claim into yuan or
+ *   francs owed) leaves none of it. Posted with the month closed, the posting moved it to exchange differences, so reopened it is taken
+ *   back there; posted with it reopened, closing it again moves it there.
+ * Drawers keep their revaluation (see selfCheck): only the revaluation and its undoing are on them.
  */
-async function takeBackCleared(tx: Tx, month: string, revaluationJournalId: number, undoneJournalId: number, periodId: number, userId: number) {
+async function restateSettled(tx: Tx, month: string, periodId: number, revaluationJournalId: number | null, state: "closed" | "open", userId: number | null, only?: { keys: Set<string>; from: string }) {
   const { to } = monthRange(month);
   const money = new Set((await tx.select({ id: accounts.id }).from(accounts).where(eq(accounts.isMoney, true))).map((a) => a.id));
-  const revalued = (await tx.select().from(journalLines).where(eq(journalLines.journalId, revaluationJournalId))).filter(
-    (l) => (l.currency === "CDF" || l.currency === "CNY") && !money.has(l.accountId),
-  );
-  if (!revalued.length) return;
+  const ofMonth = (j: { type: string; sourceType: string | null; sourceId: number | null }) =>
+    j.type === "revaluation" && j.sourceId === periodId && !!j.sourceType && REVALUATION_SOURCES.includes(j.sourceType);
+  // What the revaluation restated on each balance.
+  const restated = new Map<string, Decimal>();
+  const keys = new Map<string, ForeignKey>();
+  const add = (l: { accountId: number; partyId: number | null; currency: string }) => {
+    if ((l.currency !== "CDF" && l.currency !== "CNY") || money.has(l.accountId)) return null;
+    const k = foreignKeyOf(l);
+    if (!keys.has(k)) keys.set(k, { accountId: l.accountId, partyId: l.partyId, currency: l.currency });
+    return k;
+  };
+  if (revaluationJournalId) {
+    for (const l of await tx.select().from(journalLines).where(eq(journalLines.journalId, revaluationJournalId))) {
+      const k = add(l);
+      if (k) restated.set(k, (restated.get(k) ?? new Decimal(0)).plus(dec(l.debit)).minus(dec(l.credit)));
+    }
+  }
+  // And every balance the month's journals moved since its end, whatever the revaluation restates now.
+  const moved = await tx
+    .selectDistinct({ accountId: journalLines.accountId, partyId: journalLines.partyId, currency: journalLines.currency })
+    .from(journalLines)
+    .innerJoin(journals, eq(journals.id, journalLines.journalId))
+    .where(and(eq(journals.type, "revaluation"), eq(journals.sourceId, periodId), inArray(journals.sourceType, REVALUATION_SOURCES), inArray(journalLines.currency, ["CDF", "CNY"]), gt(journals.date, to)));
+  for (const m of moved) add(m);
+  if (only) for (const k of Array.from(keys.keys())) if (!only.keys.has(k)) keys.delete(k);
+  if (!keys.size) return;
+  // When the month was closed: from each of its revaluations until the reversal that undid it.
+  const closes = await tx
+    .select({ id: journals.id, reversedBy: journals.reversedByJournalId })
+    .from(journals)
+    .where(and(eq(journals.type, "revaluation"), eq(journals.sourceType, "period"), eq(journals.sourceId, periodId), isNull(journals.reversesJournalId)));
+  const postedClosed = (id: number) => closes.some((c) => c.id < id && (!c.reversedBy || c.reversedBy > id));
   const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
-  const posts: { key: ForeignKey & { currency: "CDF" | "CNY" }; date: string; usd: Decimal }[] = [];
-  for (const l of revalued) {
-    const restated = dec(l.debit).minus(l.credit);
-    if (restated.isZero()) continue;
-    const key = { accountId: l.accountId, partyId: l.partyId, currency: l.currency as "CDF" | "CNY" };
-    // Every line on the balance, by journal in the order posted.
+  const posts: { key: ForeignKey; date: string; usd: Decimal }[] = [];
+  for (const [k, key] of keys) {
+    const cap = restated.get(k) ?? new Decimal(0);
     const rows = await tx
-      .select({ journalId: journalLines.journalId, date: journals.date, type: journals.type, sourceType: journals.sourceType, sourceId: journals.sourceId, reverses: journals.reversesJournalId, native: journalLines.nativeAmount, usd: sql<string>`${journalLines.debit} - ${journalLines.credit}`, kind: journalLines.kind })
+      .select({ journalId: journalLines.journalId, date: journals.date, type: journals.type, sourceType: journals.sourceType, sourceId: journals.sourceId, native: journalLines.nativeAmount, usd: sql<string>`${journalLines.debit} - ${journalLines.credit}` })
       .from(journalLines)
       .innerJoin(journals, eq(journals.id, journalLines.journalId))
-      .where(
-        and(
-          eq(journalLines.accountId, key.accountId),
-          key.partyId ? eq(journalLines.partyId, key.partyId) : isNull(journalLines.partyId),
-          eq(journalLines.currency, key.currency),
-          lte(journals.id, undoneJournalId),
-        ),
-      )
-      .orderBy(journals.id, journalLines.id);
-    const byJournal = new Map<number, typeof rows>();
-    for (const r of rows) byJournal.set(r.journalId, [...(byJournal.get(r.journalId) ?? []), r]);
-    const trued = rows.some((r) => r.journalId > revaluationJournalId && r.kind === "settled_fx");
-    const share = trued && l.currency === "CNY" && l.accountId === payables && l.partyId ? await yuanRevaluationShare(tx, payables, l.partyId, revaluationJournalId, undoneJournalId) : null;
+      .where(and(eq(journalLines.accountId, key.accountId), key.partyId ? eq(journalLines.partyId, key.partyId) : isNull(journalLines.partyId), eq(journalLines.currency, key.currency)))
+      .orderBy(journals.date, journals.id, journalLines.id);
+    const marks = key.currency === "CNY" && key.accountId === payables && key.partyId ? await yuanMarkedOwed(tx, payables, key.partyId, to) : null;
     let native = new Decimal(0);
-    let usd = new Decimal(0);
-    let left: Decimal | null = null; // the revaluation's dollars still on the balance, once posted
-    let before = new Decimal(0); // its share in the supplier's yuan after the journal before
-    const cleared = new Map<number, Decimal>();
-    for (const [id, own] of byJournal) {
-      if (id === undoneJournalId) break;
-      native = native.plus(sum(own.map((r) => dec(r.native ?? 0))));
-      usd = usd.plus(sum(own.map((r) => dec(r.usd))));
-      const after = share?.get(id) ?? new Decimal(0);
-      if (id === revaluationJournalId) left = restated;
-      else if (left) {
-        const j = own[0];
-        let part = new Decimal(0);
-        if (j.type === "revaluation" && j.sourceType === SETTLED_SOURCE && j.sourceId === periodId) {
-          // What this close took off it (see settledRevaluations, clearTakenBack): undone with the close,
-          // while what an earlier reopening took back for it stays.
-          left = left.plus(sum(own.map((r) => dec(r.usd))));
-        } else if (j.type !== "revaluation" && j.date > to) {
-          if (j.reverses && cleared.has(j.reverses)) part = cleared.get(j.reverses)!.negated();
-          else if (own.some((r) => r.kind === "revalued")) part = left.negated();
-          else if (own.some((r) => r.kind === "settled_fx")) {
-            // The same part of what is still there as of its share in the supplier's yuan.
-            if (share && !before.isZero() && before.isNegative() === left.isNegative()) part = cents(left.times(after.minus(before)).dividedBy(before));
-          } else if (native.isZero() && usd.isZero() && own.some((r) => !dec(r.native ?? 0).isZero())) {
-            // Settled in full since the close, at what the balance cost then: its exchange difference has
-            // the revaluation in it, as settledRevaluations takes it off a balance settled before the close.
-            part = left.negated();
-          }
+    let others = new Decimal(0); // the dollars everything but the month's own journals put on it
+    let current = new Decimal(0); // what the month's own journals put on it since its end
+    let posted = new Decimal(0);
+    // The revaluation's dollars on it, closed and reopened.
+    let closed = cap;
+    let open = new Decimal(0);
+    for (let i = 0; i < rows.length; ) {
+      const date = rows[i].date;
+      let end = i;
+      while (end < rows.length && rows[end].date === date) end++;
+      // Journal by journal, in the order they were posted: a payment that empties the balance settles it
+      // even when a reversal the same day then leaves a claim. What other months' revaluations moved that
+      // day first, as they restate the day as a whole.
+      const day = [...rows.slice(i, end).filter((r) => r.type === "revaluation" && !ofMonth(r)), ...rows.slice(i, end).filter((r) => r.type !== "revaluation" || ofMonth(r))];
+      i = end;
+      for (let j = 0; j < day.length; ) {
+        const id = day[j].journalId;
+        const was = native;
+        for (; j < day.length && day[j].journalId === id; j++) {
+          const r = day[j];
+          native = native.plus(dec(r.native ?? 0));
+          if (ofMonth(r)) {
+            if (date > to) current = current.plus(dec(r.usd));
+          } else others = others.plus(dec(r.usd));
         }
-        if (!part.isZero()) {
-          // Never beyond what it restated, nor the other way.
-          const kept = clampTo(left.plus(part), restated);
-          part = kept.minus(left);
+        if (date <= to) continue;
+        const m = ofMonth(day[j - 1]) ? undefined : marks?.get(id);
+        // What was owed turned into a claim, or the other way: none of what the revaluation restated is
+        // left, so none of it stays.
+        const shared = !!m?.removal && m.before.gt(0) && !m.after.equals(m.before);
+        const crossed = !shared && !ofMonth(day[j - 1]) && !was.isZero() && !native.isZero() && was.isNegative() !== native.isNegative();
+        if (shared || crossed) {
+          const kept = shared ? cents(closed.minus(open).times(m!.after).dividedBy(m!.before)) : new Decimal(0);
+          if (postedClosed(id)) open = closed.minus(kept);
+          else closed = open.plus(kept);
         }
-        if (!part.isZero()) {
-          cleared.set(id, part);
-          posts.push({ key, date: j.date, usd: part.negated() });
-        }
-        left = clampTo(left.plus(part), restated);
+        // Only a posting empties a balance: a revaluation moves no yuan or francs.
+        if (native.isZero() && day[j - 1].type !== "revaluation") closed = open = clampTo(others.negated(), cap);
       }
-      // Francs or yuan at none: what emptied them took the revaluation's dollars with them.
-      if (left && native.isZero()) left = new Decimal(0);
-      before = after;
+      if (date <= to) continue;
+      // Closed, the revaluation itself puts `cap` on it at the month's end.
+      const want = (state === "closed" ? closed.minus(cap) : open).minus(current).minus(posted);
+      // After a posting (see restateAfter), only what it can change: the days from its date on.
+      if (only && date < only.from) {
+        posted = posted.plus(want);
+        continue;
+      }
+      if (!want.isZero()) {
+        posts.push({ key, date, usd: want });
+        posted = posted.plus(want);
+      }
     }
   }
   if (!posts.length) return;
   await postAgainstFx(tx, posts, {
-    memo: `Réouverture ${deMonth(month)} : réévaluation du ${frDate(to)} reprise sur les devises soldées depuis`,
-    sourceType: REOPENED_SOURCE,
+    memo:
+      state === "closed"
+        ? `Réévaluation au ${frDate(to)} soldée : ces devises ont été réglées depuis`
+        : `Réouverture ${deMonth(month)} : réévaluation du ${frDate(to)} reprise sur les devises soldées depuis`,
+    sourceType: state === "closed" ? SETTLED_SOURCE : REOPENED_SOURCE,
     sourceId: periodId,
     userId,
+    settled: state === "closed",
   });
 }
 
+
 /**
- * Closing a month again: what reopening it took back (see takeBackCleared) is cleared again on the same
- * days, up to what the new revaluation restates on each balance, so the books are as they were before
- * it was reopened. Posted with the close as a settled revaluation, undone with it.
+ * Once a transaction posted on francs or yuan from `from` on, with other postings on them dated that day or
+ * after: what each month's revaluation (closed, or reopened) leaves on them, as closing or reopening it would
+ * now (see restateSettled), so a balance a back-dated posting empties on a later day (or no longer empties on
+ * its own day) is restated as a close would, and closing the month again books nothing new. Months in order,
+ * as they close.
  */
-async function clearTakenBack(tx: Tx, month: string, revaluation: PostLine[], periodId: number, userId: number) {
-  const taken = await tx
-    .select({ accountId: journalLines.accountId, partyId: journalLines.partyId, currency: journalLines.currency, date: journals.date, usd: sql<string>`sum(${journalLines.debit} - ${journalLines.credit})` })
-    .from(journalLines)
-    .innerJoin(journals, eq(journals.id, journalLines.journalId))
-    .where(
-      and(
-        eq(journals.sourceType, REOPENED_SOURCE),
-        eq(journals.sourceId, periodId),
-        isNull(journals.reversedByJournalId),
-        isNull(journals.reversesJournalId),
-        inArray(journalLines.currency, ["CDF", "CNY"]),
-      ),
-    )
-    .groupBy(journalLines.accountId, journalLines.partyId, journalLines.currency, journals.date)
-    .orderBy(journals.date);
-  if (!taken.length) return;
-  const keys = new Map(taken.map((t) => [foreignKeyOf(t), { accountId: t.accountId, partyId: t.partyId, currency: t.currency as "CDF" | "CNY" }]));
-  const posts = [...keys].flatMap(([k, key]) => {
-    const restated = sum(revaluation.filter((l) => l.currency && foreignKeyOf(l) === k).map((l) => dec(l.debit ?? 0).minus(dec(l.credit ?? 0))));
-    const moves = taken.filter((t) => foreignKeyOf(t) === k).map((t) => ({ date: t.date, usd: dec(t.usd) }));
-    return against(moves, restated.negated()).map((p) => ({ key, ...p }));
-  });
-  if (!posts.length) return;
-  await postAgainstFx(tx, posts, {
-    memo: `Réévaluation au ${frDate(monthRange(month).to)} soldée de nouveau : ces devises ont été réglées depuis`,
-    sourceType: SETTLED_SOURCE,
-    sourceId: periodId,
-    userId,
-  });
+async function restateAfter(tx: Tx, keys: ForeignKey[], from: string, posted: number[], userId: number | null) {
+  const later: string[] = [];
+  for (const key of keys) {
+    const [row] = await tx
+      .select({ id: journalLines.id })
+      .from(journalLines)
+      .innerJoin(journals, eq(journals.id, journalLines.journalId))
+      .where(and(eq(journalLines.accountId, key.accountId), key.partyId ? eq(journalLines.partyId, key.partyId) : isNull(journalLines.partyId), eq(journalLines.currency, key.currency), gte(journals.date, from), notInArray(journals.id, posted)))
+      .limit(1);
+    if (row) later.push(foreignKeyOf(key));
+  }
+  if (!later.length) return;
+  const only = { keys: new Set(later), from };
+  const revaluations = await tx
+    .select({ id: journals.id, periodId: journals.sourceId })
+    .from(journals)
+    .where(and(eq(journals.type, "revaluation"), eq(journals.sourceType, "period"), isNull(journals.reversesJournalId)));
+  for (const period of await tx.select().from(periods).orderBy(asc(periods.month))) {
+    const last = revaluations.filter((r) => r.periodId === period.id).reduce<number | null>((m, r) => (m === null || r.id > m ? r.id : m), null);
+    if (period.status === "closed") {
+      if (period.revaluationJournalId) await restateSettled(tx, period.month, period.id, period.revaluationJournalId, "closed", userId, only);
+    } else if (last) await restateSettled(tx, period.month, period.id, last, "open", userId, only);
+  }
 }
+setRestater((tx, keys, from, posted, userId) => restateAfter(tx, keys as ForeignKey[], from, posted, userId));
 
 export async function activePartners(tx: Tx) {
   return tx.select().from(partners).where(eq(partners.active, true)).orderBy(asc(partners.id));
@@ -529,10 +472,8 @@ export async function closePeriod(tx: Tx, month: string, userId: number) {
         lines: reval.lines,
       })
     : null;
-  if (revaluationJournalId) {
-    await clearTakenBack(tx, month, reval.lines, period.id, userId);
-    await settledRevaluations(tx, month, reval.lines, period.id, userId);
-  }
+  // The balances settled since the month's end, as they stand now (see restateSettled).
+  await restateSettled(tx, month, period.id, revaluationJournalId, "closed", userId);
 
   const preview = await previewPeriod(tx, month);
   const ps = await sharesFor(tx, period.shares);
@@ -600,23 +541,17 @@ export async function reopenPeriod(tx: Tx, month: string, userId: number) {
       skipPeriodCheck: true,
     });
   }
-  const settled = await tx
-    .select({ id: journals.id, date: journals.date })
-    .from(journals)
-    .where(and(eq(journals.sourceType, SETTLED_SOURCE), eq(journals.sourceId, period.id), isNull(journals.reversedByJournalId), isNull(journals.reversesJournalId)));
-  for (const j of settled) {
-    await reverseJournal(tx, j.id, { date: j.date, type: "revaluation", memo: `Réouverture ${deMonth(month)}\u00a0: annulation de la réévaluation soldée`, userId, skipPeriodCheck: true });
-  }
   if (period.revaluationJournalId) {
-    const undone = await reverseJournal(tx, period.revaluationJournalId, {
+    await reverseJournal(tx, period.revaluationJournalId, {
       date: monthRange(month).to,
       type: "revaluation",
       memo: `Réouverture ${deMonth(month)}\u00a0: annulation de la réévaluation`,
       userId,
       skipPeriodCheck: true,
     });
-    await takeBackCleared(tx, month, period.revaluationJournalId, undone, period.id, userId);
   }
+  // What was settled since of the revaluation, as reopened (see restateSettled).
+  await restateSettled(tx, month, period.id, period.revaluationJournalId, "open", userId);
   await tx
     .update(periods)
     .set({ status: "open", closingJournalId: null, revaluationJournalId: null, result: null, grossProfit: null, operatingExpenses: null, closedAt: null, closedBy: null })
