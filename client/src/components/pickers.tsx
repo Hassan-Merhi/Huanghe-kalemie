@@ -19,7 +19,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Field } from "@/components/common";
 import { useI18n, useT } from "@/lib/i18n";
-import { accountLabel, containerRateRefusal, d, money, perUsdText, todayLocal, usd, usdPerUnit, qty as fmtQty } from "@/lib/format";
+import { accountLabel, containerRateRefusal, convertedNote, convertTypedAmount, d, money, perUsdText, todayLocal, usd, usdPerUnit, qty as fmtQty } from "@/lib/format";
 import { api, invalidateAll, withQuery } from "@/lib/api";
 import type { Account, Category, Location, Party, Settings, VariantRow } from "@/lib/types";
 import { useAuth } from "@/lib/auth";
@@ -354,7 +354,8 @@ export function PartySelect({
   };
   return (
     <>
-      <Popover open={open} onOpenChange={setOpen}>
+      {/* Opened, the list is read again: the balances shown beside the choice are today's, not the cached ones. */}
+      <Popover open={open} onOpenChange={(o) => { setOpen(o); if (o) void q.refetch(); }}>
         <PopoverTrigger asChild>
           <Button
             variant="outline"
@@ -754,6 +755,36 @@ export function useRateField(day: string) {
       setTouched(true);
     },
   };
+}
+
+/**
+ * A paying account (or a bill's currency) changed to another currency: the amount typed is converted at the
+ * day's rate, or cleared when it cannot be, so 6 000 $ do not stay as 6 000 FC. `note` says which, under the
+ * account, until an amount is typed again (`clear`).
+ */
+export function useCurrencySwitch(day: string) {
+  const t = useT();
+  const dayRate = useRate(day).data?.cdfPerUsd;
+  const [note, setNote] = useState<string | null>(null);
+  return {
+    note,
+    clear: () => setNote(null),
+    /** The amount to keep once `from` became `to`. */
+    convert: (amount: string, from: string | null | undefined, to: string | null | undefined): string => {
+      if (!from || !to || from === to || !amount.trim()) {
+        setNote(null);
+        return amount;
+      }
+      const converted = convertTypedAmount(amount, from, to, dayRate);
+      setNote(convertedNote(t, to, dayRate, converted !== null));
+      return converted ?? "";
+    },
+  };
+}
+
+/** The note `useCurrencySwitch` gives, as the forms show it under the account. */
+export function CurrencySwitchNote({ note }: { note: string | null }) {
+  return note ? <p className="mt-1 text-xs text-amber-800 dark:text-amber-400" role="status">{note}</p> : null;
 }
 
 /**

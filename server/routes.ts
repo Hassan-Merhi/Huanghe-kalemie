@@ -988,6 +988,8 @@ export function registerRoutes(app: Express) {
         change: paymentSchema.nullish(),
         // The franc rate the till showed: staff francs go at the day's rate, and a till on an older one is refused.
         tillRate: optionalRate,
+        // The customer's balance the till showed: a sale the avoir would now cover otherwise is refused.
+        tillBalance: optionalDecimal,
       })
       .parse(req.body);
     // Cashiers always sell today.

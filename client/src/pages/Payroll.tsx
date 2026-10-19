@@ -23,7 +23,7 @@ import {
 } from "@/components/ui/alert-dialog";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, StatCard, SubmitButton, unclearAmount } from "@/components/common";
-import { AccountSelect, MoneyAccountSelect, MonthSelect, PartySelect, RateInput, useAccounts, useRateField, useRateTooFar } from "@/components/pickers";
+import { AccountSelect, CurrencySwitchNote, MoneyAccountSelect, MonthSelect, PartySelect, RateInput, useAccounts, useCurrencySwitch, useRateField, useRateTooFar } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useAuth } from "@/lib/auth";
 import { useI18n, useT, count } from "@/lib/i18n";
@@ -501,7 +501,7 @@ function MonthTab({ data, canEdit }: { data: PayrollData; canEdit: boolean }) {
                           checked={g.include}
                           disabled={!canEdit}
                           onChange={(ev) => setEdit(g.e.id, { include: ev.target.checked })}
-                          aria-label={t("Include", "Inclure")}
+                          aria-label={t(`Include ${g.e.name}`, `Inclure ${g.e.name}`)}
                         />
                       </TableCell>
                       <TableCell className="min-w-36 font-medium">
@@ -1033,6 +1033,8 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
   const rateFar = useRateTooFar(day, rate);
   const [memo, setMemo] = useState("");
   const [doneId, setDoneId] = useState<number | null>(null);
+  // Another currency picked to pay from: the amount typed is converted at the day's rate, not kept as typed.
+  const currencySwitch = useCurrencySwitch(day);
   const isCdf = account?.currency === "CDF";
   const r = d(rate);
   const a = d(amount);
@@ -1119,7 +1121,8 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
                 error={drawerShort}
                 required
               >
-                <MoneyAccountSelect value={account?.id ?? null} onChange={(_, acc) => { setDoneId(null); setAccount(acc); }} />
+                <MoneyAccountSelect value={account?.id ?? null} onChange={(_, acc) => { setDoneId(null); setAccount(acc); setAmount(currencySwitch.convert(amount, account?.currency, acc.currency)); }} />
+                <CurrencySwitchNote note={currencySwitch.note} />
               </Field>
               <Field label={t("Date", "Date")}>
                 <Input type="date" aria-label={t("Payment date", "Date du paiement")} value={day} onChange={(e) => edit(setDay)(e.target.value)} />
@@ -1130,7 +1133,7 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
                 error={francDecimalsError(t, account?.currency, amount)}
                 required
               >
-                <Input inputMode="decimal" usd={!isCdf} thousands={isCdf} aria-invalid={!!amountError || undefined} value={amount} onChange={(e) => edit(setAmount)(e.target.value)} placeholder="0" />
+                <Input inputMode="decimal" usd={!isCdf} thousands={isCdf} aria-invalid={!!amountError || undefined} value={amount} onChange={(e) => { edit(setAmount)(e.target.value); currencySwitch.clear(); }} placeholder="0" />
               </Field>
               {isCdf && (
                 <Field label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")} required>
