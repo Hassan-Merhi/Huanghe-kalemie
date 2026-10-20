@@ -1,5 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
-import type { ReactNode } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import {
   Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
@@ -61,8 +61,28 @@ function monthLabel(m: string, lang: string) {
 }
 
 /** Month tick on two lines (month, then the year under January) so all twelve fit and none is skipped. */
-function MonthTick({ x, y, payload }: { x?: number; y?: number; payload?: { value: string } }) {
-  const [month, year] = String(payload?.value ?? "").split(" ");
+/** A phone-width screen, where the 12-month chart has no room for twelve month labels. */
+const NARROW = "(max-width: 479px)";
+function useNarrow() {
+  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && !!window.matchMedia && window.matchMedia(NARROW).matches);
+  useEffect(() => {
+    if (!window.matchMedia) return;
+    const mql = window.matchMedia(NARROW);
+    const onChange = () => setNarrow(mql.matches);
+    mql.addEventListener("change", onChange);
+    return () => mql.removeEventListener("change", onChange);
+  }, []);
+  return narrow;
+}
+
+/**
+ * Months on the 12-month chart's axis, the year under January. On a phone (under 480 px) twelve labels
+ * collide ("févrmars"), so only every other month is written, January among them so the year stays.
+ */
+function MonthTick({ x, y, payload, lang, narrow }: { x?: number; y?: number; payload?: { value: string }; lang: string; narrow: boolean }) {
+  const ym = String(payload?.value ?? "");
+  if (narrow && Number(ym.slice(5)) % 2 === 0) return null;
+  const [month, year] = monthLabel(ym, lang).split(" ");
   return (
     <text x={x} y={y} textAnchor="middle" fontSize={10} fill="hsl(var(--muted-foreground))">
       <tspan x={x} dy="0.9em">{month}</tspan>
@@ -129,6 +149,7 @@ export default function AnalyticsPage() {
 function Body({ a, from, to }: { a: Analytics; from: string; to: string }) {
   const t = useT();
   const { lang } = useI18n();
+  const narrow = useNarrow();
   // Account names the server created ("Salaires", "Caisse USD") in the chosen language.
   const sys = useSystemText();
   const income = d(a.totals.income);
@@ -137,7 +158,7 @@ function Body({ a, from, to }: { a: Analytics; from: string; to: string }) {
   // Every day of the range, the days without sales at zero, so 13/10 is never drawn next to 19/10.
   const days = everyDay(a.daily, from, to, (date) => ({ date, revenue: "0", cogs: "0", grossProfit: "0", expenses: "0" }), todayLocal());
   const daily = days.map((x) => ({ date: x.date.slice(8, 10) + "/" + x.date.slice(5, 7), revenue: num(x.revenue), grossProfit: num(x.grossProfit) }));
-  const trend = a.trend.map((x) => ({ month: monthLabel(x.month, lang), income: num(x.income), grossProfit: num(x.grossProfit), netProfit: num(x.netProfit) }));
+  const trend = a.trend.map((x) => ({ month: x.month, income: num(x.income), grossProfit: num(x.grossProfit), netProfit: num(x.netProfit) }));
   const byCat = [...a.byCategory].sort((x, y) => num(y.revenue) - num(x.revenue)).slice(0, 10).map((x) => ({ name: x.name || t("No category", "Sans catégorie"), revenue: num(x.revenue) }));
   const payments = [...a.payments].sort((x, y) => num(y.usd) - num(x.usd)).map((x) => ({ name: x.currency === "CDF" ? accountLabel(sys.account(x.name), "CDF") : sys.account(x.name), usd: num(x.usd) }));
   // Credit as the Sales list counts it: after returns, and the part an avoir covered apart (it is not owed).
@@ -192,9 +213,9 @@ function Body({ a, from, to }: { a: Analytics; from: string; to: string }) {
         <ChartCard title={t("Last 12 months", "12 derniers mois")} empty={!trend.length}>
           <BarChart data={trend} margin={{ top: 8, right: 8, left: 0, bottom: 0 }}>
             <CartesianGrid stroke={GRID} strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="month" tick={<MonthTick />} tickLine={false} axisLine={false} interval={0} height={36} />
+            <XAxis dataKey="month" tick={<MonthTick lang={lang} narrow={narrow} />} tickLine={false} axisLine={false} interval={0} height={36} />
             <YAxis tick={AXIS} tickLine={false} axisLine={false} tickFormatter={axisUsd} width={52} />
-            <Tooltip {...TOOLTIP} formatter={tipUsd} />
+            <Tooltip {...TOOLTIP} formatter={tipUsd} labelFormatter={(v) => monthLabel(String(v), lang)} />
             <Legend wrapperStyle={{ fontSize: 12 }} formatter={legendText} />
             <Bar dataKey="income" name={t("Income", "Recettes")} fill={C_MAIN} radius={[2, 2, 0, 0]} />
             <Bar dataKey="grossProfit" name={t("Gross profit", "Marge brute")} fill={C_MUTED} radius={[2, 2, 0, 0]} />

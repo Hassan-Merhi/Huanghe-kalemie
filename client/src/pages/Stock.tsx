@@ -451,12 +451,21 @@ export function AdjustForm({
       const unclear = unclearQty(t, byCount ? l.counted : l.qty);
       if (unclear) return setError(`${unclear} (${l.variant.productName} · ${l.variant.sku})`);
     }
+    // A count equal to the system stock ("Conforme au stock") is a line with nothing to post: on a real shelf
+    // count most lines match, so those are left out and the rest saves, never sent as a zero movement.
+    const conforming = (l: AdjLine) => byCount && isQty(l.counted ?? "") && d(l.qty).isZero();
     const active = lines.filter((l) => !change(l).isZero());
-    if (active.length === 0) return setError(t("Add at least one item with a quantity.", "Ajoutez au moins un article avec une quantité."));
+    if (active.length === 0) {
+      return setError(
+        lines.length > 0 && lines.every(conforming)
+          ? t("Every count matches the stock: nothing to adjust.", "Tous les comptages correspondent au stock\u00a0: rien à ajuster.")
+          : t("Add at least one item with a quantity.", "Ajoutez au moins un article avec une quantité."),
+      );
+    }
     const payload = [];
     for (const l of lines) {
       const name = `${l.variant.productName} (${l.variant.sku})`;
-      if (byCount && isQty(l.counted ?? "") && d(l.qty).isZero()) return setError(t(`${name}: the count matches the stock, nothing to adjust. Remove the line.`, `${name}\u00a0: le comptage correspond au stock, rien à ajuster. Retirez la ligne.`));
+      if (conforming(l)) continue;
       if (!isQty(l.qty) || d(l.qty).isZero()) return setError(t(`Enter a quantity for ${name} or remove the line.`, `Saisissez une quantité pour ${name} ou retirez la ligne.`));
       const c = change(l);
       if (l.variant.tracksSerials && !c.isInteger()) return setError(t("Motorcycles must be whole units.", "Les motos doivent être en unités entières."));

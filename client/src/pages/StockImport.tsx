@@ -30,53 +30,14 @@ import { api } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
 import { curLabel, d, MINUS, money, number, pct as fmtPct, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import { useI18n, useT, count } from "@/lib/i18n";
-import { amountCellUnsure, csvAmountText, downloadXlsx, readNumberCell, readSheet, toWire } from "@/lib/sheets";
+import { amountCellUnsure, CONTAINER_FIELDS, csvAmountText, downloadXlsx, PRICE_FIELDS, readNumberCell, readSheet, STOCK_FIELDS, toWire } from "@/lib/sheets";
 import { knownUnit, qtyWithUnit, unitLabel, wholeUnit } from "@/lib/units";
 import type { Product } from "@/lib/types";
 import { type Decimal, typedCurrencyMark } from "@shared/money";
 
 type T = (en: string, fr: string) => string;
 
-// ---------------------------------------------------------------- Shared: header aliases and helpers
-
-/** Header names accepted for each field (case, accents, spaces and punctuation are ignored). */
-const ITEM_ALIASES = {
-  name: ["name", "article", "item", "designation", "désignation", "produit", "product", "nom"],
-  category: ["category", "catégorie", "categorie"],
-  brand: ["brand", "marque"],
-  unit: ["unit", "unité", "unite"],
-  size: ["size", "taille", "dimension"],
-  colour: ["colour", "color", "couleur"],
-  sku: ["sku", "code", "référence", "reference", "ref"],
-  barcode: ["barcode", "code-barres", "code barre", "ean", "upc"],
-  motorcycle: ["motorcycle", "moto", "moto (oui/non)", "motorcycle (yes/no)"],
-};
-
-export const STOCK_FIELDS = {
-  ...ITEM_ALIASES,
-  sellPrice: ["price", "prix", "prix de vente", "sell price", "selling price", "pv"],
-  reorderLevel: ["reorder", "seuil", "seuil de réapprovisionnement", "reorder level", "seuil d'alerte"],
-  qty: ["qty", "quantité", "quantite", "quantity", "stock", "qté"],
-  unitCost: ["cost", "coût", "cout", "coût unitaire", "unit cost", "prix d'achat", "purchase price"],
-};
-
-export const CONTAINER_FIELDS = {
-  ...ITEM_ALIASES,
-  sellPrice: ["prix de vente", "sell price", "selling price", "pv"],
-  quantity: ["qty", "quantité", "quantite", "quantity", "qté"],
-  unitPrice: [
-    "prix unitaire", "prix unitaire (devise de la facture)", "unit price", "unit price (invoice currency)",
-    "price", "prix", "fob", "prix d'achat", "cost", "coût", "coût unitaire", "unit cost",
-  ],
-  weightKg: ["poids", "poids total", "poids total (kg)", "poids (kg)", "weight", "weight (kg)", "total weight (kg)", "kg"],
-  volumeCbm: ["volume", "volume total", "volume total (m³)", "volume (m³)", "total volume (m³)", "cbm", "m3", "m³"],
-};
-
-const PRICE_FIELDS = {
-  sku: ["sku", "code", "référence", "reference", "ref"],
-  barcode: ["barcode", "code-barres", "code barre", "ean", "upc"],
-  sellPrice: ["price", "prix", "prix de vente", "sell price", "selling price", "nouveau prix", "new price"],
-};
+// ---------------------------------------------------------------- Shared: helpers (the header aliases are in lib/sheets)
 
 /** "12,5" (French decimal comma) becomes "12.5"; other text is left to the server. */
 export function numCell(v: string | null): string | null {
@@ -116,6 +77,23 @@ function PreviewCounts({ rows }: { rows: { status: PreviewRow["status"] }[] }) {
       <Badge variant="outline">{count(t, n("new_item"), ["new item", "new items"], ["nouvel article", "nouveaux articles"])}</Badge>
       {n("error") > 0 && <Badge variant="destructive">{count(t, n("error"), ["error", "errors"], ["erreur", "erreurs"])}</Badge>}
     </div>
+  );
+}
+
+/**
+ * The file's columns no field reads ("Variante" before it was an alias, "Fournisseur", "Remarque"): said
+ * before importing, so a column the shop relies on is not dropped silently and its rows merged or left nameless.
+ */
+function IgnoredColumns({ headers }: { headers: string[] }) {
+  const t = useT();
+  if (!headers.length) return null;
+  const list = headers.map((h) => `«\u00a0${h}\u00a0»`).join(", ");
+  return (
+    <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm" data-testid="import-ignored">
+      {headers.length === 1
+        ? t(`Column ${list} is not recognised and is ignored. Nothing from it is imported.`, `Colonne ${list} non reconnue et ignorée. Rien de cette colonne n'est importé.`)
+        : t(`Columns ${list} are not recognised and are ignored. Nothing from them is imported.`, `Colonnes ${list} non reconnues et ignorées. Rien de ces colonnes n'est importé.`)}
+    </p>
   );
 }
 
@@ -313,6 +291,7 @@ function ItemsImport() {
   const [cells, setCells] = useState<Cells[]>([]);
   const [csv, setCsv] = useState(false);
   const [preview, setPreview] = useState<PreviewRow[]>([]);
+  const [ignored, setIgnored] = useState<string[]>([]);
   const [fileError, setFileError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [locationId, setLocationId] = useState<number | null>(null);
@@ -338,8 +317,9 @@ function ItemsImport() {
     setRows([]);
     setPreview([]);
     setAddExisting(false);
+    setIgnored([]);
     try {
-      const { rows: raw, found, cells: rawCells, csv: isCsv } = await readSheet(file, STOCK_FIELDS);
+      const { rows: raw, found, cells: rawCells, csv: isCsv, ignored: dropped } = await readSheet(file, STOCK_FIELDS);
       if (!found.includes("name")) {
         setFileError(t("No item name column found. Name a column \"Article\" (or \"Item\", \"Désignation\").", "Aucune colonne de nom d'article trouvée. Nommez une colonne «\u00a0Article\u00a0» (ou «\u00a0Item\u00a0», «\u00a0Désignation\u00a0»)."));
         return;
@@ -352,6 +332,7 @@ function ItemsImport() {
       setRows(clean);
       setCells(rawCells);
       setCsv(isCsv);
+      setIgnored(dropped);
       setBusy(true);
       const p = await api<PreviewRow[]>("POST", "/api/import/items/preview", { rows: clean.map(({ qty: _q, unitCost: _c, ...r }) => toWire(r)) });
       setPreview(p);
@@ -450,6 +431,7 @@ function ItemsImport() {
           </CardHeader>
           <CardContent className="space-y-4">
             <PreviewCounts rows={merged} />
+            <IgnoredColumns headers={ignored} />
             {ownerOnly && (
               <p className="rounded-md border border-amber-500/40 bg-amber-500/10 p-3 text-sm" data-testid="import-owner-only">
                 {t(
@@ -866,6 +848,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onContainer,
   const [cells, setCells] = useState<Cells[]>([]);
   const [csv, setCsv] = useState(false);
   const [preview, setPreview] = useState<PreviewRow[]>([]);
+  const [ignored, setIgnored] = useState<string[]>([]);
   const [fileError, setFileError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [mode, setMode] = useState<"append" | "replace">("append");
@@ -888,8 +871,9 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onContainer,
     setFileError(null);
     setRows([]);
     setPreview([]);
+    setIgnored([]);
     try {
-      const { rows: raw, found, cells: rawCells, csv: isCsv } = await readSheet(file, CONTAINER_FIELDS);
+      const { rows: raw, found, cells: rawCells, csv: isCsv, ignored: dropped } = await readSheet(file, CONTAINER_FIELDS);
       if (!found.includes("name")) {
         setFileError(t("No item name column found. Name a column \"Article\" (or \"Item\").", "Aucune colonne de nom d'article trouvée. Nommez une colonne «\u00a0Article\u00a0» (ou «\u00a0Item\u00a0»)."));
         return;
@@ -902,6 +886,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onContainer,
       setRows(clean);
       setCells(rawCells);
       setCsv(isCsv);
+      setIgnored(dropped);
       setBusy(true);
       setPreview(await api<PreviewRow[]>("POST", "/api/import/items/preview", { rows: clean.map(({ quantity: _q, unitPrice: _p, weightKg: _w, volumeCbm: _v, ...r }) => toWire(r)) }));
     } catch (e) {
@@ -976,6 +961,7 @@ function ContainerImportDialog({ containerId, currency, linesDirty, onContainer,
           {rows.length > 0 && !busy && (
             <>
               <PreviewCounts rows={merged} />
+              <IgnoredColumns headers={ignored} />
               <div className="max-h-[320px] overflow-auto rounded-md border">
                 <Table>
                   <TableHeader>
