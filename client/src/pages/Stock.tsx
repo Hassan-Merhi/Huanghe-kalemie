@@ -299,6 +299,9 @@ export function AdjustForm({
   const [reason, setReason] = useState("");
   const [lines, setLines] = useState<AdjLine[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // The message under the form is about the lines as they were when saving was tried ("Précisez la quantité",
+  // "rien à ajuster"): once any line, the location, the kind or the reason changes it no longer holds, so it goes.
+  useEffect(() => setError(null), [lines, locationId, kind, reason]);
   const onlyRemove = kind === "damage" || kind === "loss";
   const onlyAdd = kind === "opening";
   const signed = !onlyRemove && !onlyAdd;
@@ -911,6 +914,8 @@ function TransferForm({ onDone }: { onDone: () => void }) {
   const [note, setNote] = useState("");
   const [lines, setLines] = useState<TransferLine[]>([]);
   const [error, setError] = useState<string | null>(null);
+  // As on the adjustment form: a stale message goes once a line or a location changes.
+  useEffect(() => setError(null), [lines, fromId, toId]);
   const m = useApiMutation("POST", "/api/stock/transfers", {
     success: t("Stock transferred", "Stock transféré"),
     onSuccess: () => { setLines([]); setNote(""); onDone(); },

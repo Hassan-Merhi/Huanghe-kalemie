@@ -60,6 +60,12 @@ function monthLabel(m: string, lang: string) {
   return new Date(Date.UTC(y, mo - 1, 1)).toLocaleDateString(lang === "en" ? "en-GB" : "fr-FR", { month: "short", timeZone: "UTC" }).replace(".", "") + (mo === 1 ? ` ${String(y).slice(2)}` : "");
 }
 
+/** The month in full with its year for the 12-month tooltip ("avril 2026", "April 2026"), since on a phone the axis names only every other month. */
+function monthTitle(m: string, lang: string) {
+  const [y, mo] = m.split("-").map(Number);
+  return new Date(Date.UTC(y, mo - 1, 1)).toLocaleDateString(lang === "en" ? "en-GB" : "fr-FR", { month: "long", year: "numeric", timeZone: "UTC" });
+}
+
 /** Month tick on two lines (month, then the year under January) so all twelve fit and none is skipped. */
 /** A phone-width screen, where the 12-month chart has no room for twelve month labels. */
 const NARROW = "(max-width: 479px)";
@@ -215,7 +221,7 @@ function Body({ a, from, to }: { a: Analytics; from: string; to: string }) {
             <CartesianGrid stroke={GRID} strokeDasharray="3 3" vertical={false} />
             <XAxis dataKey="month" tick={<MonthTick lang={lang} narrow={narrow} />} tickLine={false} axisLine={false} interval={0} height={36} />
             <YAxis tick={AXIS} tickLine={false} axisLine={false} tickFormatter={axisUsd} width={52} />
-            <Tooltip {...TOOLTIP} formatter={tipUsd} labelFormatter={(v) => monthLabel(String(v), lang)} />
+            <Tooltip {...TOOLTIP} formatter={tipUsd} labelFormatter={(v) => monthTitle(String(v), lang)} />
             <Legend wrapperStyle={{ fontSize: 12 }} formatter={legendText} />
             <Bar dataKey="income" name={t("Income", "Recettes")} fill={C_MAIN} radius={[2, 2, 0, 0]} />
             <Bar dataKey="grossProfit" name={t("Gross profit", "Marge brute")} fill={C_MUTED} radius={[2, 2, 0, 0]} />
