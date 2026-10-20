@@ -121,7 +121,7 @@ export default function Dashboard() {
                   sub={
                     <>
                       {d(data.contactBalances.salariesOwed ?? 0).gt(0) && <span className="block">{t("salaries owed", "salaires dus")} {usd(data.contactBalances.salariesOwed!)}</span>}
-                      {d(data.contactBalances.salaryAdvances ?? 0).gt(0) && <span className="block">{t("salary advances", "avances sur salaire")} {usd(data.contactBalances.salaryAdvances!)}</span>}
+                      {d(data.contactBalances.salaryAdvances ?? 0).gt(0) && <span className="block">{t("salary advances (staff owe us)", "avances sur salaire (dues par le personnel)")} {usd(data.contactBalances.salaryAdvances!)}</span>}
                       <SideSub other={data.contactBalances.supplierAdvances} otherLabel={t("advances to suppliers", "avances aux fournisseurs")} link={t("See suppliers", "Voir les fournisseurs")} />
                     </>
                   }

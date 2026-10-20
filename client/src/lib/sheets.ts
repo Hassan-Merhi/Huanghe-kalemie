@@ -62,6 +62,47 @@ export function csvSeparator(text: string): string {
   return counts.sort((a, b) => b[1] - a[1])[0][1] > 0 ? counts[0][0] : ",";
 }
 
+// ---------------------------------------------------------------- Header aliases of the import pages
+
+/** Header names accepted for each field (case, accents, spaces and punctuation are ignored). */
+const ITEM_ALIASES = {
+  name: ["name", "article", "item", "designation", "désignation", "produit", "product", "nom"],
+  category: ["category", "catégorie", "categorie"],
+  brand: ["brand", "marque"],
+  unit: ["unit", "unité", "unite"],
+  size: ["size", "taille", "dimension", "variante", "variant"],
+  colour: ["colour", "color", "couleur"],
+  sku: ["sku", "code", "référence", "reference", "ref"],
+  barcode: ["barcode", "code-barres", "code barre", "ean", "upc"],
+  motorcycle: ["motorcycle", "moto", "moto (oui/non)", "motorcycle (yes/no)"],
+};
+
+export const STOCK_FIELDS = {
+  ...ITEM_ALIASES,
+  sellPrice: ["price", "prix", "prix de vente", "sell price", "selling price", "pv"],
+  reorderLevel: ["reorder", "seuil", "seuil de réapprovisionnement", "reorder level", "seuil d'alerte"],
+  qty: ["qty", "quantité", "quantite", "quantity", "stock", "qté"],
+  unitCost: ["cost", "coût", "cout", "coût unitaire", "unit cost", "prix d'achat", "purchase price"],
+};
+
+export const CONTAINER_FIELDS = {
+  ...ITEM_ALIASES,
+  sellPrice: ["prix de vente", "sell price", "selling price", "pv"],
+  quantity: ["qty", "quantité", "quantite", "quantity", "qté"],
+  unitPrice: [
+    "prix unitaire", "prix unitaire (devise de la facture)", "unit price", "unit price (invoice currency)",
+    "price", "prix", "fob", "prix d'achat", "cost", "coût", "coût unitaire", "unit cost",
+  ],
+  weightKg: ["poids", "poids total", "poids total (kg)", "poids (kg)", "weight", "weight (kg)", "total weight (kg)", "kg"],
+  volumeCbm: ["volume", "volume total", "volume total (m³)", "volume (m³)", "total volume (m³)", "cbm", "m3", "m³"],
+};
+
+export const PRICE_FIELDS = {
+  sku: ["sku", "code", "référence", "reference", "ref"],
+  barcode: ["barcode", "code-barres", "code barre", "ean", "upc"],
+  sellPrice: ["price", "prix", "prix de vente", "sell price", "selling price", "nouveau prix", "new price"],
+};
+
 /** Columns that hold numbers: "12,50" and "1 250,00" are read the French way. */
 const NUMBER_FIELDS = new Set(["sellPrice", "reorderLevel", "qty", "unitCost", "quantity", "unitPrice", "weightKg", "volumeCbm"]);
 /** Prices and costs, where text such as "4,125" or "1.350" is asked about, as the server refuses it (see ambiguousTypedAmount). */
@@ -84,23 +125,30 @@ async function readWorkbook(file: File) {
  * Read the first sheet of a file into objects keyed by our field names.
  * `fields` maps a field to the header names it accepts (any case, accents and spaces ignored).
  * Returns the rows, the fields whose column was found, each row's number cells as they were in the
- * file (a page that knows the unit reads "2,250" litres again as 2,25: see parseTypedNumber), and whether
- * it is a CSV, whose cells cannot be Excel numbers.
+ * file (a page that knows the unit reads "2,250" litres again as 2,25: see parseTypedNumber), whether
+ * it is a CSV, whose cells cannot be Excel numbers, and the headers no field accepts (`ignored`, as
+ * written in the file), for the page to say that the column was dropped rather than read it silently.
  */
 export async function readSheet<F extends string>(file: File, fields: Record<F, string[]>) {
   const wb = await readWorkbook(file);
   const ws = wb.Sheets[wb.SheetNames[0]];
   const csv = isCsv(file);
-  if (!ws) return { rows: [] as Record<F, string | null>[], found: [] as F[], cells: [] as Partial<Record<F, string | number>>[], csv };
+  if (!ws) return { rows: [] as Record<F, string | null>[], found: [] as F[], cells: [] as Partial<Record<F, string | number>>[], csv, ignored: [] as string[] };
   const grid = XLSX.utils.sheet_to_json<unknown[]>(ws, { header: 1, raw: true, defval: null, blankrows: false });
-  const header = (grid[0] ?? []).map((h) => strip(String(h ?? "")));
+  const headerText = (grid[0] ?? []).map((h) => String(h ?? "").trim());
+  const header = headerText.map(strip);
   const colOf = {} as Record<F, number>;
   const found: F[] = [];
+  const used = new Set<number>();
   for (const [field, names] of Object.entries(fields) as [F, string[]][]) {
     const idx = header.findIndex((h) => names.map(strip).includes(h));
     colOf[field] = idx;
-    if (idx >= 0) found.push(field);
+    if (idx >= 0) {
+      found.push(field);
+      used.add(idx);
+    }
   }
+  const ignored = headerText.filter((h, i) => h !== "" && !used.has(i));
   const cells: Partial<Record<F, string | number>>[] = [];
   const rows = grid
     .slice(1)
@@ -117,7 +165,7 @@ export async function readSheet<F extends string>(file: File, fields: Record<F, 
       cells.push(raw);
       return o;
     });
-  return { rows, found, cells, csv };
+  return { rows, found, cells, csv, ignored };
 }
 
 /**
