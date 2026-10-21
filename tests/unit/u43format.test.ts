@@ -65,11 +65,12 @@ describe("thirty-seventh UI audit: the till's sale in progress, daily charts, En
       expect(draft.findDraft(3, 1)?.locationId).toBe(1);
       expect(draft.findDraft(3, 9)?.locationId).toBe(2);
       expect(draft.findDraft(7, 1)).toBeNull();
-      // A cart emptied (no item, no payment typed) takes its draft away; a payment alone is kept.
+      // A cart emptied (no item) takes its draft away; since audit 52 a payment left alone does too (u57ui).
       draft.saveDraft(base({ lines: [], pays: [{ accountId: 2, amount: "", rate: null }] }));
       expect(s.map.has("hk.pos.draft.3.1")).toBe(false);
+      draft.saveDraft(base());
       draft.saveDraft(base({ lines: [] }));
-      expect(s.map.has("hk.pos.draft.3.1")).toBe(true);
+      expect(s.map.has("hk.pos.draft.3.1")).toBe(false);
       draft.removeDraft(3, 1);
       draft.removeDraft(3, 2);
       expect(draft.findDraft(3, 1)).toBeNull();
