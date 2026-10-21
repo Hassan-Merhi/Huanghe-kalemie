@@ -5,7 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link, useParams } from "wouter";
 import { AlertTriangle, ArrowLeft, Bike, ChevronDown, Info, Lock, PackageCheck, Pencil, Plus, Save, Trash2, Undo2, X } from "lucide-react";
 import { EmptyState, ErrorText, Field, francDecimalsError, Loading, Num, PageHeader, StatCard, SubmitButton, unclearAmount, useCorrectFocus } from "@/components/common";
-import { ContainerRateField, CurrencySwitchNote, MoneyAccountSelect, PartySelect, perUsdText, useAccounts, useContainerRateRefusal, useCurrencySwitch, useRate, VariantSearch } from "@/components/pickers";
+import { ContainerRateField, CurrencySwitchNote, MoneyAccountSelect, PartySelect, perUsdText, useAccounts, useContainerRateRefusal, useCurrencySwitch, useRate, useRateTooFar, VariantSearch } from "@/components/pickers";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Button } from "@/components/ui/button";
@@ -1003,6 +1003,9 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
   };
   const amt = d(amount);
   const usdValue = isCdf ? (d(rate).gt(0) ? amt.dividedBy(d(rate)) : null) : amt;
+  // The server refuses a rate more than the tolerance from the day's (280 for 2 808): said under the field and
+  // stops Ajouter, as on the transfer voucher, rather than a red toast after the click.
+  const rateFar = useRateTooFar(day, rate);
 
   const create = useApiMutation<Record<string, unknown>>("POST", `/api/containers/${c.id}/expenses`, {
     success: t("Cost added", "Frais ajoutés"),
@@ -1028,7 +1031,9 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
           ? t("Enter an amount above zero", "Saisissez un montant supérieur à zéro")
           : isCdf && !d(rate).gt(0)
             ? t("Enter the exchange rate", "Saisissez le taux de change")
-            : method === "line" && !targetLineId
+            : isCdf && rateFar
+              ? rateFar
+              : method === "line" && !targetLineId
               ? t("Choose the line", "Choisissez la ligne")
               : drawerShort);
 
@@ -1146,6 +1151,7 @@ function AddExpenseDialog({ c, onClose }: { c: ContainerFull; onClose: () => voi
             <Field
               label={t("Rate (FC per $1)", "Taux (FC pour 1 $)")}
               hint={usdValue ? `= ${usd(usdValue.toFixed(2))}` : undefined}
+              error={rateFar}
               required
             >
               <Input inputMode="decimal" thousands rate value={rate} onChange={(e) => { setRate(e.target.value); setRateTouched(true); }} />
