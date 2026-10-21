@@ -267,8 +267,9 @@ describe.skipIf(!hasDb)("Guards found by the thirty-fifth audit", async () => {
       const left = await h.owed(s, "CNY");
       const fx = await h.fxBooked();
       await h.reopen(m1);
-      // The 900 ¥ still owed keep the earlier month's revaluation only: 900 × 0,140845 + 900/2 900 × 20,41.
-      expect(await h.owed(s, "CNY")).toEqual(["-900.00", "-133.09"]);
+      // The 900 ¥ still owed keep their share of the earlier month's revaluation only: 900 × 0,140845 +
+      // 900/5 000 × 20,41 (A43: the 2 100 ¥ paid before the close released theirs, see restateSettled).
+      expect(await h.owed(s, "CNY")).toEqual(["-900.00", "-130.43"]);
       await h.reopen(m2);
       expect(await h.owed(s, "CNY")).toEqual(["-900.00", "-126.76"]);
       expect(await h.selfOk()).toEqual([]);
