@@ -1,5 +1,5 @@
 import { and, asc, desc, eq, gt, gte, inArray, isNotNull, isNull, lte, ne, notInArray, sql } from "drizzle-orm";
-import { accounts, exchangeRates, journalLines, journals, partners, periods } from "@shared/schema";
+import { accounts, exchangeRates, journalLines, journals, parties, partners, periods } from "@shared/schema";
 import { splitProfit, type PartnerSplitResult } from "@shared/partnerSplit";
 import { dec, sum, Decimal } from "@shared/money";
 import type { Tx } from "../db";
@@ -214,7 +214,12 @@ async function postAgainstFx(
  *   foreignMarkedOwed), the rest left with the bill. Otherwise, a posting that turns what is owed into a
  *   claim (or a claim into yuan or francs owed) leaves none of it. Posted with the month closed, the
  *   posting moved it to exchange differences (see yuanTrueUpLines), so reopened it is taken back there;
- *   posted with it reopened, closing it again moves it there.
+ *   posted with it reopened, closing it again moves it there;
+ * - a part of them paid (or refunded) before the month was closed, at what they cost before the
+ *   revaluation, or taken away by the undoing of a posting from before the month's end at what it booked
+ *   them: its share of the revaluation leaves with it (closed, the state is the same whether the month was
+ *   closed before or after it), as a part paid with the month closed takes its share at the revalued cost.
+ *   The undoing of a posting since the month's end gives back what that posting took.
  * Drawers keep their revaluation (see selfCheck): only the revaluation and its undoing are on them.
  */
 async function restateSettled(tx: Tx, month: string, periodId: number, revaluationJournalId: number | null, state: "closed" | "open", userId: number | null, only?: { keys: Set<string>; from: string }) {
@@ -253,16 +258,24 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
     .where(and(eq(journals.type, "revaluation"), eq(journals.sourceType, "period"), eq(journals.sourceId, periodId), isNull(journals.reversesJournalId)));
   const postedClosed = (id: number) => closes.some((c) => c.id < id && (!c.reversedBy || c.reversedBy > id));
   const payables = await systemAccountId(tx, SYSTEM_ACCOUNTS.payables);
+  // Not an employee's francs: a cancelled run leaves what the rate left with them (see reverseJournal), so
+  // their francs are counted as any balance's, not as a supplier's bills (see foreignMarkedOwed).
+  const partyIds = Array.from(new Set(Array.from(keys.values()).filter((k) => k.accountId === payables && k.partyId).map((k) => k.partyId!)));
+  const employees = new Set(partyIds.length ? (await tx.select({ id: parties.id }).from(parties).where(and(inArray(parties.id, partyIds), eq(parties.type, "employee")))).map((p) => p.id) : []);
   const posts: { key: ForeignKey; date: string; usd: Decimal }[] = [];
   for (const [k, key] of keys) {
     const cap = restated.get(k) ?? new Decimal(0);
     const rows = await tx
-      .select({ journalId: journalLines.journalId, date: journals.date, type: journals.type, sourceType: journals.sourceType, sourceId: journals.sourceId, native: journalLines.nativeAmount, usd: sql<string>`${journalLines.debit} - ${journalLines.credit}` })
+      .select({ journalId: journalLines.journalId, date: journals.date, type: journals.type, reverses: journals.reversesJournalId, sourceType: journals.sourceType, sourceId: journals.sourceId, native: journalLines.nativeAmount, usd: sql<string>`${journalLines.debit} - ${journalLines.credit}` })
       .from(journalLines)
       .innerJoin(journals, eq(journals.id, journalLines.journalId))
       .where(and(eq(journalLines.accountId, key.accountId), key.partyId ? eq(journalLines.partyId, key.partyId) : isNull(journalLines.partyId), eq(journalLines.currency, key.currency)))
       .orderBy(journals.date, journals.id, journalLines.id);
-    const marks = key.accountId === payables && key.partyId ? await foreignMarkedOwed(tx, payables, key.partyId, key.currency, to) : null;
+    const marks = key.accountId === payables && key.partyId && !employees.has(key.partyId) ? await foreignMarkedOwed(tx, payables, key.partyId, key.currency, to, postedClosed) : null;
+    const dateOf = new Map(rows.map((r) => [r.journalId, r.date]));
+    // What each part paid since the month's end took off the revaluation, closed and reopened: undone, its
+    // francs or yuan come back as they left (see reverseJournal), and what it took comes back with them.
+    const took = new Map<number, { closed: Decimal; open: Decimal }>();
     let native = new Decimal(0);
     let others = new Decimal(0); // the dollars everything but the month's own journals put on it
     let current = new Decimal(0); // what the month's own journals put on it since its end
@@ -282,6 +295,7 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
       for (let j = 0; j < day.length; ) {
         const id = day[j].journalId;
         const was = native;
+        const before = { closed, open };
         for (; j < day.length && day[j].journalId === id; j++) {
           const r = day[j];
           native = native.plus(dec(r.native ?? 0));
@@ -290,18 +304,47 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
           } else others = others.plus(dec(r.usd));
         }
         if (date <= to) continue;
-        const m = ofMonth(day[j - 1]) ? undefined : marks?.get(id);
+        const last = day[j - 1];
+        const undoes = last.reverses && last.type !== "revaluation" && dateOf.has(last.reverses) ? last.reverses : null;
+        const restored = !!undoes && took.has(undoes) && !!marks;
+        if (restored) {
+          closed = closed.plus(took.get(undoes!)!.closed);
+          open = open.plus(took.get(undoes!)!.open);
+        }
+        const m = restored || ofMonth(last) ? undefined : marks?.get(id);
         // What was owed turned into a claim, or the other way: none of what the revaluation restated is
         // left, so none of it stays.
         const shared = !!m?.removal && m.before.gt(0) && !m.after.equals(m.before);
-        const crossed = !shared && !ofMonth(day[j - 1]) && !was.isZero() && !native.isZero() && was.isNegative() !== native.isNegative();
-        if (shared || crossed) {
-          const kept = shared ? cents(closed.minus(open).times(m!.after).dividedBy(m!.before)) : new Decimal(0);
-          if (postedClosed(id)) open = closed.minus(kept);
+        const crossed = !restored && !shared && !ofMonth(last) && !was.isZero() && !native.isZero() && was.isNegative() !== native.isNegative();
+        // A part of them paid (or refunded) before the month was closed, at what they cost before the
+        // revaluation, or taken away by the undoing of a posting from before the month's end (a cancelled
+        // salary run, a sale returned), which gives them back at what they were booked: its share of the
+        // revaluation leaves with it, as a payment made once the month is closed takes its share at the
+        // revalued cost: the share of the supplier's yuan or francs owed at the month's end it took (see
+        // foreignMarkedOwed: a bill since, paid or taken away, leaves them as they were). A supplier's bills
+        // only: other balances (an employee's francs, the withholdings) keep the rules above. Not the
+        // undoing of a posting since the month's end.
+        const owedPart = !!m && m.before.gt(0) && m.after.lt(m.before);
+        // A supplier's franc claim (francs they owe back, none of their bills owed at the month's end)
+        // refunded in part: its share in proportion to the francs, closed or reopened alike. Not yuan: a
+        // yuan claim's revaluation goes with the yuan refunded in the pool, and the true-up books it (see
+        // YuanPool.takeClaim, yuanTrueUpLines), while the franc true-up can be skipped (see there).
+        const claimPart = key.currency === "CDF" && !!m && !m.before.gt(0) && was.gt(0) && native.gt(0) && native.lt(was);
+        const ratio = owedPart ? m!.after.dividedBy(m!.before) : claimPart ? native.dividedBy(was) : null;
+        const part = !restored && !shared && !crossed && last.type !== "revaluation" && (claimPart || !postedClosed(id) || !!undoes) && !(undoes && dateOf.get(undoes)! > to) && ratio !== null;
+        if (shared || crossed || part) {
+          const kept = shared ? cents(closed.minus(open).times(m!.after).dividedBy(m!.before)) : part ? cents(closed.minus(open).times(ratio!)) : new Decimal(0);
+          // Posted with the month closed, a payment took its share at the revalued cost, and a bill's
+          // removal moved it to exchange differences (see yuanTrueUpLines): reopened, it is taken back.
+          if (postedClosed(id) && !(part && undoes)) open = closed.minus(kept);
           else closed = open.plus(kept);
         }
-        // Only a posting empties a balance: a revaluation moves no yuan or francs.
-        if (native.isZero() && day[j - 1].type !== "revaluation") closed = open = clampTo(others.negated(), cap);
+        // Only a posting empties a balance: a revaluation moves no yuan or francs. The undoing of a posting
+        // since the month's end too: its francs or yuan come back as they left, but the balance they come
+        // back to may hold none by then (its bill taken away since).
+        if (native.isZero() && last.type !== "revaluation") closed = open = clampTo(others.negated(), cap);
+        // What a part released (see above) comes back with its undoing; the other cases have their own.
+        if (part && !native.isZero()) took.set(id, { closed: before.closed.minus(closed), open: before.open.minus(open) });
       }
       if (date <= to) continue;
       // Closed, the revaluation itself puts `cap` on it at the month's end.
@@ -340,7 +383,19 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
  */
 async function restateAfter(tx: Tx, keys: ForeignKey[], from: string, posted: number[], userId: number | null) {
   const later: string[] = [];
+  // An undoing changes what the months' revaluations leave on its own day (what the posting it undoes
+  // took off them comes back, a posting from before a month's end taken away leaves with its share: see
+  // restateSettled), whatever is dated after.
+  const [undoing] = await tx
+    .select({ id: journals.id })
+    .from(journals)
+    .where(and(inArray(journals.id, posted), isNotNull(journals.reversesJournalId)))
+    .limit(1);
   for (const key of keys) {
+    if (undoing) {
+      later.push(foreignKeyOf(key));
+      continue;
+    }
     const [row] = await tx
       .select({ id: journalLines.id })
       .from(journalLines)
