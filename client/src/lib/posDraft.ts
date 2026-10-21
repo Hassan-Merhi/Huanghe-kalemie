@@ -55,9 +55,12 @@ export const newSlot = () => `${Date.now().toString(36)}${Math.random().toString
 export const sameDraft = (a: Pick<PosDraft, "userId" | "locationId" | "slot">, b: Pick<PosDraft, "userId" | "locationId" | "slot">) =>
   a.userId === b.userId && a.locationId === b.locationId && (a.slot ?? "") === (b.slot ?? "");
 
-/** Nothing worth keeping: no item and no payment typed. */
-export function draftEmpty(d: Pick<PosDraft, "lines" | "pays">): boolean {
-  return d.lines.length === 0 && !d.pays.some((p) => p.amount.trim() !== "");
+/**
+ * Nothing worth keeping: no item. Payments typed into an empty cart are not a sale to come back to (they
+ * were for the items taken out), so such a cart is never kept nor offered as "0 ligne".
+ */
+export function draftEmpty(d: Pick<PosDraft, "lines">): boolean {
+  return d.lines.length === 0;
 }
 
 const str = (x: unknown): x is string => typeof x === "string";

@@ -395,10 +395,12 @@ function BulkDialog({ units, onClose }: { units: Unit[]; onClose: () => void }) 
         )}
         {/* Once the refused line is marked, the note by the button names it: the box would say it twice. */}
         {m.error && !(used && m.error.message.includes(used.chassisNo.trim().toUpperCase())) && <ErrorText error={m.error} />}
+        {/* Above the buttons, not squeezed between them: "Le numéro de châssis … est déjà enregistré" is long. */}
+        {blocked && !m.isPending && <p className={cn("text-sm sm:text-right", used && !dupe && filled.length ? "text-destructive" : "text-muted-foreground")} role="status">{blocked}</p>}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
           <SubmitButton
-            blocked={blocked}
+            disabled={!!blocked}
             pending={m.isPending}
             onClick={() => save()}
           >

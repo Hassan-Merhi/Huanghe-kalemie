@@ -879,6 +879,19 @@ export default function POS() {
     setChangeAmt("");
     setFrancsChosen(false);
   }
+  /**
+   * "Vider": a fresh sale for the same customer (or walk-in) at the same rate. The payments, the change and
+   * the "tout en francs" choice go with the items: they were for them, and kept they would read as money
+   * received for the next item scanned.
+   */
+  function clearCart() {
+    const keep = { customer, customerId };
+    reset();
+    setCustomer(keep.customer);
+    setCustomerId(keep.customerId);
+    setResumeNotes([]);
+    setTried(false);
+  }
   const mutation = useApiMutation<SaleBody, SaleFull>("POST", "/api/sales", {
     success: t("Sale recorded", "Vente enregistrée"),
     onSuccess: (sale) => {
@@ -1006,7 +1019,7 @@ export default function POS() {
     });
   }, [user, locationId, resuming, today, dayRate, lines, discount, customerId, customer, note, pays, changeAccId, changeAmt, francsChosen]);
   /** The cart being rung holds something worth keeping: "Reprendre" asks before putting another in its place. */
-  const cartInUse = !draftEmpty({ lines, pays });
+  const cartInUse = !draftEmpty({ lines });
 
   function discardDraft() {
     if (user && offered) removeDraft(user.id, offered.locationId, offered.slot);
@@ -1196,7 +1209,7 @@ export default function POS() {
             <CardHeader className="flex flex-row items-center justify-between space-y-0 p-4 pb-2">
               <CardTitle className="flex items-center gap-2 text-base"><ShoppingCart className="h-4 w-4" /> {t("Cart", "Panier")} ({lines.length})</CardTitle>
               {lines.length > 0 && (
-                <Button variant="ghost" size="sm" onClick={() => setLines([])}>{t("Clear", "Vider")}</Button>
+                <Button variant="ghost" size="sm" onClick={clearCart}>{t("Clear", "Vider")}</Button>
               )}
             </CardHeader>
             <CardContent className="p-4 pt-0">
