@@ -32,6 +32,7 @@ import { cn } from "@/lib/utils";
 import { AdjustForm, type AdjustmentDraft, type AdjustmentPayload } from "@/pages/Stock";
 import { BalanceWords } from "@/pages/Contacts";
 import { useVoucherChecks } from "@/lib/voucherChecks";
+import { journalAccountAllowed, journalAccountBlocked } from "@/lib/labels";
 
 type T = (en: string, fr: string) => string;
 
@@ -719,6 +720,9 @@ function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: For
   const problems: string[] = [];
   if (!memo.trim()) problems.push(t("Add a description", "Ajoutez une description"));
   if (lines.some((l) => !l.accountId)) problems.push(t("Choose an account on every line", "Choisissez un compte sur chaque ligne"));
+  // A pending entry saved with a stock or transit account: the server would refuse it, so say why here.
+  const refused = lines.map((l) => journalAccountBlocked(acc(l.accountId), t)).find(Boolean);
+  if (refused) problems.push(refused);
   if (lines.some((l) => d(l.debit).gt(0) && d(l.credit).gt(0))) problems.push(t("A line is either debit or credit", "Une ligne est soit au débit soit au crédit"));
   if (lines.some((l) => partyTypes(acc(l.accountId)) && !l.partyId)) problems.push(t("Pick the contact on receivable/payable lines", "Choisissez le contact sur les lignes créances/dettes"));
   if (lines.some((l) => isCdf(acc(l.accountId)) && (!d(l.native).gt(0) || !d(l.rate).gt(0)))) problems.push(t("Franc accounts need the FC amount and the rate", "Les comptes en francs ont besoin du montant en FC et du taux"));
@@ -800,7 +804,7 @@ function JournalForm({ draft, canSave, savingDraft, onSaveDraft, onPosted }: For
                 <div className="grid grid-cols-2 gap-2 md:grid-cols-[minmax(0,1.5fr)_7rem_7rem_minmax(0,1fr)_2.5rem] md:items-center">
                   <div className="col-span-2 min-w-0 md:col-span-1">
                     <span className="mb-1 block text-xs text-muted-foreground md:hidden">{t("Account", "Compte")} {i + 1}</span>
-                    <AccountSelect aria-label={t("Account", "Compte")} value={l.accountId} onChange={(id) => chooseAccount(l, id)} />
+                    <AccountSelect aria-label={t("Account", "Compte")} value={l.accountId} onChange={(id) => chooseAccount(l, id)} filter={journalAccountAllowed} />
                   </div>
                   <Input inputMode="decimal" usd className="text-right tabular" aria-label={t(`Debit, line ${i + 1}`, `Débit, ligne ${i + 1}`)} placeholder={t("Debit", "Débit")} value={l.debit} onChange={(e) => set(l.key, { debit: e.target.value, credit: e.target.value ? "" : l.credit })} />
                   <Input inputMode="decimal" usd className="text-right tabular" aria-label={t(`Credit, line ${i + 1}`, `Crédit, ligne ${i + 1}`)} placeholder={t("Credit", "Crédit")} value={l.credit} onChange={(e) => set(l.key, { credit: e.target.value, debit: e.target.value ? "" : l.debit })} />

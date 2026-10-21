@@ -289,9 +289,17 @@ function BulkDialog({ units, onClose }: { units: Unit[]; onClose: () => void }) 
     success: t("Chassis numbers saved", "Numéros de châssis enregistrés"),
     onSuccess: onClose,
   });
-  const set = (i: number, k: keyof BulkRow, v: string) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
+  // The chassis numbers already registered, to mark a line before saving; the server still checks every number.
+  const all = useQuery<Unit[]>({ queryKey: ["/api/units", { status: undefined, search: undefined }] });
+  const taken = new Map((all.data ?? []).filter((u) => u.chassisNo).map((u) => [u.chassisNo!.toUpperCase(), u.id]));
+  // Any change clears a refusal from the last save: it named a number that may no longer be typed.
+  const set = (i: number, k: keyof BulkRow, v: string) => {
+    m.reset();
+    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
+  };
 
   function applyPaste() {
+    m.reset();
     const lines = paste.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     setRows((rs) =>
       rs.map((r, i) => {
@@ -306,11 +314,18 @@ function BulkDialog({ units, onClose }: { units: Unit[]; onClose: () => void }) 
   const filled = rows.map((r, i) => ({ ...r, unit: units[i] })).filter((r) => r.chassisNo.trim());
   const keys = filled.map((r) => r.chassisNo.trim().toUpperCase());
   const dupe = keys.find((k, i) => keys.indexOf(k) !== i);
+  const takenBy = (r: BulkRow, i: number) => {
+    const id = taken.get(r.chassisNo.trim().toUpperCase());
+    return id !== undefined && id !== units[i].id;
+  };
+  const used = filled.find((r) => takenBy(r, units.indexOf(r.unit)));
   const blocked = !filled.length
     ? t("Enter at least one chassis number", "Saisissez au moins un numéro de châssis")
     : dupe
       ? t(`${dupe} is typed twice`, `${dupe} est saisi deux fois`)
-      : null;
+      : used
+        ? t(`Chassis number ${used.chassisNo.trim().toUpperCase()} is already registered`, `Le numéro de châssis ${used.chassisNo.trim().toUpperCase()} est déjà enregistré`)
+        : null;
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -342,7 +357,7 @@ function BulkDialog({ units, onClose }: { units: Unit[]; onClose: () => void }) 
                 <span className="font-medium">{units[i].productName}</span>
                 <span className="text-xs text-muted-foreground"> · {units[i].label !== "Standard" ? units[i].label : units[i].sku}</span>
               </div>
-              <Input className="col-span-2 font-mono uppercase placeholder:normal-case placeholder:font-sans sm:col-span-1" aria-label={t(`Chassis no., bike ${i + 1} (${units[i].productName})`, `N° de châssis, moto ${i + 1} (${units[i].productName})`)} placeholder={t("Chassis no.", "N° de châssis")} value={r.chassisNo} onChange={(e) => set(i, "chassisNo", e.target.value)} />
+              <Input className="col-span-2 font-mono uppercase placeholder:normal-case placeholder:font-sans sm:col-span-1" aria-label={t(`Chassis no., bike ${i + 1} (${units[i].productName})`, `N° de châssis, moto ${i + 1} (${units[i].productName})`)} placeholder={t("Chassis no.", "N° de châssis")} aria-invalid={takenBy(r, i) || undefined} value={r.chassisNo} onChange={(e) => set(i, "chassisNo", e.target.value)} />
               <Input className="font-mono uppercase placeholder:normal-case placeholder:font-sans" aria-label={t(`Engine no., bike ${i + 1} (${units[i].productName})`, `N° de moteur, moto ${i + 1} (${units[i].productName})`)} placeholder={t("Engine no.", "N° de moteur")} value={r.engineNo} onChange={(e) => set(i, "engineNo", e.target.value)} />
               <Input aria-label={t(`Colour, bike ${i + 1} (${units[i].productName})`, `Couleur, moto ${i + 1} (${units[i].productName})`)} placeholder={t("Colour", "Couleur")} value={r.color} onChange={(e) => set(i, "color", e.target.value)} />
             </div>
