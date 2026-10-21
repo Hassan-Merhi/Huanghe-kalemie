@@ -24,19 +24,19 @@ describe("thirty-fourth UI audit: what a cancelled sale gave back", async () => 
 
   it("says the money handed back drawer by drawer, francs in francs, change netted", () => {
     expect(voidedRefunds(fr, [{ accountId: 1, currency: "USD", amountNative: "20.00", amountUsd: "20.00" }], name)).toEqual([
-      { accountId: 1, text: `20,00${NB}$ remboursés depuis Caisse USD`, amount: `−20,00${NB}$` },
+      { accountId: 1, name: "Caisse USD", text: `20,00${NB}$ remboursés depuis Caisse USD`, amount: `−20,00${NB}$` },
     ]);
     const francs = voidedRefunds(fr, [
       { accountId: 2, currency: "CDF", amountNative: "80000", amountUsd: "28.49" },
       { accountId: 2, currency: "CDF", amountNative: "-4200", amountUsd: "-1.50" },
     ], name);
-    expect(francs).toEqual([{ accountId: 2, text: `75${NB}800${NB}FC remboursés depuis Caisse FC`, amount: `−75${NB}800${NB}FC` }]);
+    expect(francs).toEqual([{ accountId: 2, name: "Caisse FC", text: `75${NB}800${NB}FC remboursés depuis Caisse FC`, amount: `−75${NB}800${NB}FC (−26,99${NB}$)` }]);
     // Paid in francs, change in dollars: the dollar drawer takes its change back.
     const mixed = voidedRefunds(fr, [
       { accountId: 2, currency: "CDF", amountNative: "100000", amountUsd: "35.61" },
       { accountId: 1, currency: "USD", amountNative: "-5.00", amountUsd: "-5.00" },
     ], name);
-    expect(mixed[1]).toEqual({ accountId: 1, text: `5,00${NB}$ de monnaie reprise dans Caisse USD`, amount: `+5,00${NB}$` });
+    expect(mixed[1]).toEqual({ accountId: 1, name: "Caisse USD", text: `5,00${NB}$ de monnaie reprise dans Caisse USD`, amount: `+5,00${NB}$` });
     expect(voidedRefunds(fr, [], name)).toEqual([]);
   });
 });
