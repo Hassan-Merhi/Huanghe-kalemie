@@ -147,11 +147,12 @@ export function voidedRefunds(
   t: Words,
   payments: { accountId: number; currency: string; amountNative: string; amountUsd: string }[],
   accName: (id: number) => string,
-): { accountId: number; text: string; amount: string }[] {
-  const by = new Map<number, { currency: string; native: Decimal }>();
+): { accountId: number; name: string; text: string; amount: string }[] {
+  const by = new Map<number, { currency: string; native: Decimal; usd: Decimal }>();
   for (const p of payments) {
-    const cur = by.get(p.accountId) ?? { currency: p.currency, native: d(0) };
+    const cur = by.get(p.accountId) ?? { currency: p.currency, native: d(0), usd: d(0) };
     cur.native = cur.native.plus(d(p.currency === "CDF" ? p.amountNative : p.amountUsd));
+    cur.usd = cur.usd.plus(d(p.amountUsd));
     by.set(p.accountId, cur);
   }
   return [...by.entries()]
@@ -162,6 +163,9 @@ export function voidedRefunds(
       const text = v.native.gt(0)
         ? t(`${amount} refunded from ${name}`, `${amount} ${frPlural(v.native.toString(), "remboursé")} depuis ${name}`)
         : t(`${amount} of change taken back into ${name}`, `${amount} de monnaie reprise dans ${name}`);
-      return { accountId, text, amount: v.native.gt(0) ? `−${amount}` : `+${amount}` };
+      // Francs carry their dollars, as each payment line does: "−47 700 FC (−16,98 $)", at the sale's own rates.
+      const sign = v.native.gt(0) ? "−" : "+";
+      const worth = v.currency === "CDF" ? ` (${sign}${usd(v.usd.abs().toFixed(2))})` : "";
+      return { accountId, name, text, amount: `${sign}${amount}${worth}` };
     });
 }

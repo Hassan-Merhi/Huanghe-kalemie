@@ -23,6 +23,7 @@ import type { Account } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { WIDE_PRINT_CSS, journalTypeLabel } from "@/pages/ContactDetail";
 import { useSystemText } from "@/lib/systemText";
+import { journalAccountAllowed, journalAccountBlocked } from "@/lib/labels";
 
 /** A balanced report reads as good news: green, not the orange of buttons. */
 const BALANCED = "border-green-700/40 bg-green-50 text-green-800 dark:border-green-400/40 dark:bg-green-950/40 dark:text-green-300";
@@ -1062,6 +1063,8 @@ function ManualJournalDialog({ onClose }: { onClose: () => void }) {
   const problems: string[] = [];
   if (!memo.trim()) problems.push(t("Add a description", "Ajoutez une description"));
   if (lines.some((l) => !l.accountId)) problems.push(t("Choose an account on every line", "Choisissez un compte sur chaque ligne"));
+  const refused = lines.map((l) => journalAccountBlocked(acc(l.accountId), t)).find(Boolean);
+  if (refused) problems.push(refused);
   if (lines.some((l) => d(l.debit).gt(0) && d(l.credit).gt(0))) problems.push(t("A line is either debit or credit", "Une ligne est soit au débit soit au crédit"));
   if (lines.some((l) => partyTypes(acc(l.accountId)) && !l.partyId)) problems.push(t("Pick the customer or supplier on receivable/payable lines", "Choisissez le client ou fournisseur sur les lignes créances/dettes"));
   if (lines.some((l) => isCdf(acc(l.accountId)) && (!d(l.native).gt(0) || !d(l.rate).gt(0)))) problems.push(t("Franc accounts need the FC amount and the rate", "Les comptes en francs ont besoin du montant en FC et du taux"));
@@ -1117,7 +1120,7 @@ function ManualJournalDialog({ onClose }: { onClose: () => void }) {
               <div key={l.key} className="rounded-lg border p-3">
                 <div className="grid grid-cols-1 gap-2 sm:grid-cols-[1fr_7rem_7rem_auto]">
                   <Field label={`${t("Account", "Compte")} ${i + 1}`} required>
-                    <AccountSelect value={l.accountId} onChange={(id) => set(l.key, { accountId: id, partyId: null, native: "", rate: "" })} />
+                    <AccountSelect value={l.accountId} onChange={(id) => set(l.key, { accountId: id, partyId: null, native: "", rate: "" })} filter={journalAccountAllowed} />
                   </Field>
                   <Field label={t("Debit ($)", "Débit ($)")}>
                     <Input inputMode="decimal" usd value={l.debit} onChange={(e) => set(l.key, { debit: e.target.value, credit: e.target.value ? "" : l.credit })} />

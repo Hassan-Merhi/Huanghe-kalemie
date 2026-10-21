@@ -20,7 +20,7 @@ import { draftEmpty, draftNags, lastSaleAt, listDrafts, newSlot, noteSale, remov
 import { useAuth } from "@/lib/auth";
 import { useT } from "@/lib/i18n";
 import { cdf, curLabel, d, date as fmtDate, dateTime, dollarRate, fcRounding, frenchPunctuation, MINUS, money, pct as fmtPct, qty as fmtQty, refusedUnit, todayLocal, typedNumberOk, unclearQty, usd, variantText } from "@/lib/format";
-import { receiptFcRoundingUsd } from "@/lib/saleRows";
+import { receiptFcRoundingUsd, voidedRefunds } from "@/lib/saleRows";
 import { cartCount, unitLabel, wholeUnit } from "@/lib/units";
 import type { Account, MotorcycleUnit, Party, Settings, VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
@@ -240,6 +240,15 @@ export function SaleReceipt({ sale }: { sale: SaleFull }) {
       {/* The money really kept, as the till, the sale page and the Sales list say "Payé" (26,99 $ for 75 800 FC
           on 27,00 $): the payment lines above add up to it, and the rounding line explains the cents to the total. */}
       {sale.payments.length > 0 && <ReceiptRow left={t("Paid", "Payé")} right={usd(paymentsUsd.toFixed(2))} />}
+      {/* A cancelled sale's reprint: the money handed back, drawer by drawer, as its sale page lists it (short, for 80 mm). */}
+      {sale.status === "voided" &&
+        voidedRefunds(t, sale.payments, (id) => accName(id, sale.payments.find((p) => p.accountId === id)?.currency ?? "USD")).map((r) => (
+          <ReceiptRow
+            key={`refund-${r.accountId}`}
+            left={<>{t("Refunded", "Remboursé")} <span className="whitespace-nowrap">({r.name})</span></>}
+            right={r.amount}
+          />
+        ))}
       {/* Credit the customer's avoir covered is not owed: only the rest is "to pay". */}
       {avoir.used.gt(0) && (
         <>

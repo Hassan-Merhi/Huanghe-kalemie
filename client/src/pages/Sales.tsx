@@ -9,13 +9,14 @@ import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableFooter, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard } from "@/components/common";
 import { useAuth } from "@/lib/auth";
-import { count, useT } from "@/lib/i18n";
+import { count, useI18n, useT } from "@/lib/i18n";
 import { cdf, d, date as fmtDate, fcRateGap, fcRounding, monthStart, pct, qty as fmtQty, todayLocal, usd } from "@/lib/format";
 import { cn } from "@/lib/utils";
+import { accountText } from "@/lib/systemText";
 import { creditOf, creditSplit, dailyFigures, netOf, voidedParts, voidedSplit, type Daily, type SaleListRow } from "@/lib/saleRows";
 
 function DailySummary() {
-  const t = useT();
+  const { t, lang } = useI18n();
   const today = todayLocal();
   const q = useQuery<Daily>({ queryKey: ["/api/reports/daily", { date: today }] });
   const data = q.data;
@@ -56,7 +57,7 @@ function DailySummary() {
               {data.byAccount.length === 0 && <p className="text-sm text-muted-foreground">{t("No money received yet today.", "Aucun encaissement aujourd'hui.")}</p>}
               {data.byAccount.map((a) => (
                 <div key={a.account_id} className="rounded-md border px-3 py-2 text-sm">
-                  <p className="text-xs text-muted-foreground">{a.name}</p>
+                  <p className="text-xs text-muted-foreground">{accountText(a.name, lang)}</p>
                   <p className="font-medium tabular">{a.currency === "CDF" ? cdf(a.native) : usd(a.usd)}</p>
                   {/* The francs at the rates the sales and refunds took (the rows' figures), not at today's rate nor at their cost. */}
                   {/* Francs below zero while their dollars are not: refunds at a higher rate than the sales' gave back more francs. */}

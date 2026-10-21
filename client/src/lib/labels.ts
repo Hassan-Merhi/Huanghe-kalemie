@@ -34,3 +34,19 @@ export function duplicateParty<P extends { id: number; name: string; phone: stri
   const byPhone = phone ? others.find((p) => phoneKey(p.phone) === phone) : undefined;
   return byPhone ? { party: byPhone, by: "phone" as const } : null;
 }
+
+/**
+ * Accounts a manual entry (Écriture) cannot use: stock and goods in transit are kept by stock and the containers,
+ * and the server refuses them (operations.ts manualJournal). Kept out of the Écriture account picker.
+ */
+export const JOURNAL_BLOCKED_KEYS: readonly string[] = ["inventory", "goods_in_transit"];
+
+export function journalAccountAllowed(a: { systemKey?: string | null }): boolean {
+  return !(a.systemKey && JOURNAL_BLOCKED_KEYS.includes(a.systemKey));
+}
+
+/** Why a manual entry line cannot use this account, as the server says it, or null when it can. */
+export function journalAccountBlocked(a: { name: string; systemKey?: string | null } | undefined, t: T): string | null {
+  if (!a || journalAccountAllowed(a)) return null;
+  return t(`${a.name} is kept by stock and containers. Use a stock adjustment or the container screen.`, `${a.name} est tenu par le stock et les conteneurs. Utilisez un ajustement de stock ou l'écran des conteneurs.`);
+}

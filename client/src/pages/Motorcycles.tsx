@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 import { Link } from "wouter";
 import { AlertTriangle, ListPlus, Pencil, Search } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "@/components/ui/alert-dialog";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -14,7 +15,10 @@ import { EmptyState, ErrorText, Field, Loading, PageHeader, SubmitButton } from 
 import { Textarea } from "@/components/ui/textarea";
 import { useLocations } from "@/components/pickers";
 import { useApiMutation } from "@/hooks/useApiMutation";
+import { ApiError } from "@/lib/api";
 import { useAuth } from "@/lib/auth";
+import { engineKey, engineRepeats } from "@/lib/engines";
+import { cn } from "@/lib/utils";
 import { count, useT } from "@/lib/i18n";
 import type { MotorcycleUnit } from "@/lib/types";
 
@@ -104,7 +108,7 @@ export default function Motorcycles() {
                 {highlight ? (
                   <Button size="sm" variant="outline" onClick={() => setEditing(u)}>{t("Register", "Saisir")}</Button>
                 ) : (
-                  <Button variant="ghost" size="icon" onClick={() => setEditing(u)}><Pencil className="h-4 w-4" /></Button>
+                  <Button variant="ghost" size="icon" aria-label={t(`Edit ${u.chassisNo ?? "motorcycle"}`, `Modifier ${u.chassisNo ?? "la moto"}`)} onClick={() => setEditing(u)}><Pencil className="h-4 w-4" /></Button>
                 )}
               </TableCell>
             )}
@@ -236,6 +240,19 @@ function UnitDialog({ unit, onClose }: { unit: Unit; onClose: () => void }) {
   const [color, setColor] = useState(unit.color ?? "");
   const sold = unit.status === "sold";
   const m = useApiMutation("PATCH", `/api/units/${unit.id}`, { success: t("Motorcycle saved", "Moto enregistrée"), onSuccess: onClose });
+  // An engine number already on another bike is asked about (an edit keeping the saved one is not).
+  const all = useQuery<Unit[]>({ queryKey: ["/api/units", { status: undefined, search: undefined }] });
+  const engineRepeat = engineKey(engineNo) === engineKey(unit.engineNo) ? null : engineRepeats(t, [{ id: unit.id, engineNo }], all.data ?? []).get(0) ?? null;
+  const [askEngine, setAskEngine] = useState(false);
+  function save(confirmed = false) {
+    if (engineRepeat && !confirmed) return setAskEngine(true);
+    setAskEngine(false);
+    m.mutate({
+      ...(!sold && { chassisNo: chassisNo.trim() || null }),
+      engineNo: engineNo.trim() || null,
+      color: color.trim() || null,
+    });
+  }
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[92vh] overflow-y-auto">
@@ -251,8 +268,9 @@ function UnitDialog({ unit, onClose }: { unit: Unit; onClose: () => void }) {
             <Input autoFocus={!sold} disabled={sold} className="font-mono uppercase" value={chassisNo} onChange={(e) => setChassisNo(e.target.value)} />
           </Field>
           <Field label={t("Engine no.", "N° de moteur")}>
-            <Input className="font-mono uppercase" value={engineNo} onChange={(e) => setEngineNo(e.target.value)} />
+            <Input className={cn("font-mono uppercase", engineRepeat && "border-amber-500")} value={engineNo} onChange={(e) => setEngineNo(e.target.value)} />
           </Field>
+          {engineRepeat && <p className="text-sm text-amber-800 dark:text-amber-400" data-testid="engine-repeat">{engineRepeat}</p>}
           <Field label={t("Colour", "Couleur")}>
             <Input value={color} onChange={(e) => setColor(e.target.value)} />
           </Field>
@@ -260,20 +278,12 @@ function UnitDialog({ unit, onClose }: { unit: Unit; onClose: () => void }) {
         </div>
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
-          <Button
-            disabled={m.isPending}
-            onClick={() =>
-              m.mutate({
-                ...(!sold && { chassisNo: chassisNo.trim() || null }),
-                engineNo: engineNo.trim() || null,
-                color: color.trim() || null,
-              })
-            }
-          >
+          <Button disabled={m.isPending} onClick={() => save()}>
             {t("Save", "Enregistrer")}
           </Button>
         </DialogFooter>
       </DialogContent>
+      <EngineRepeatAlert repeats={engineRepeat ? [engineRepeat] : []} open={askEngine} onCancel={() => setAskEngine(false)} onConfirm={() => save(true)} />
     </Dialog>
   );
 }
@@ -288,10 +298,25 @@ function BulkDialog({ units, onClose }: { units: Unit[]; onClose: () => void }) 
   const m = useApiMutation<{ units: { id: number; chassisNo: string; engineNo: string | null; color: string | null }[] }>("POST", "/api/units/bulk", {
     success: t("Chassis numbers saved", "Numéros de châssis enregistrés"),
     onSuccess: onClose,
+    // Refused because a number was registered meanwhile (on another phone): the list is read again, so the
+    // line it names is marked and the save waits for it to be corrected. The dialog says it, not a toast.
+    onError: (e) => {
+      if (!(e instanceof ApiError && e.status === 409)) return;
+      void all.refetch();
+      return true;
+    },
   });
-  const set = (i: number, k: keyof BulkRow, v: string) => setRows((rs) => rs.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
+  // The chassis numbers already registered, to mark a line before saving; the server still checks every number.
+  const all = useQuery<Unit[]>({ queryKey: ["/api/units", { status: undefined, search: undefined }] });
+  const taken = new Map((all.data ?? []).filter((u) => u.chassisNo).map((u) => [u.chassisNo!.toUpperCase(), u.id]));
+  // Any change clears a refusal from the last save: it named a number that may no longer be typed.
+  const set = (i: number, k: keyof BulkRow, v: string) => {
+    m.reset();
+    setRows((rs) => rs.map((r, j) => (j === i ? { ...r, [k]: v } : r)));
+  };
 
   function applyPaste() {
+    m.reset();
     const lines = paste.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     setRows((rs) =>
       rs.map((r, i) => {
@@ -306,11 +331,26 @@ function BulkDialog({ units, onClose }: { units: Unit[]; onClose: () => void }) 
   const filled = rows.map((r, i) => ({ ...r, unit: units[i] })).filter((r) => r.chassisNo.trim());
   const keys = filled.map((r) => r.chassisNo.trim().toUpperCase());
   const dupe = keys.find((k, i) => keys.indexOf(k) !== i);
+  const takenBy = (r: BulkRow, i: number) => {
+    const id = taken.get(r.chassisNo.trim().toUpperCase());
+    return id !== undefined && id !== units[i].id;
+  };
+  const used = filled.find((r) => takenBy(r, units.indexOf(r.unit)));
+  // The same engine number twice, or already on another bike: marked and asked about, not refused.
+  const engines = engineRepeats(t, rows.map((r, i) => ({ id: units[i].id, engineNo: r.engineNo, saved: !!r.chassisNo.trim() })), all.data ?? []);
+  const [askEngine, setAskEngine] = useState(false);
+  function save(confirmed = false) {
+    if (engines.size && !confirmed) return setAskEngine(true);
+    setAskEngine(false);
+    m.mutate({ units: filled.map((r) => ({ id: r.unit.id, chassisNo: r.chassisNo.trim(), engineNo: r.engineNo.trim() || null, color: r.color.trim() || null })) });
+  }
   const blocked = !filled.length
     ? t("Enter at least one chassis number", "Saisissez au moins un numéro de châssis")
     : dupe
       ? t(`${dupe} is typed twice`, `${dupe} est saisi deux fois`)
-      : null;
+      : used
+        ? t(`Chassis number ${used.chassisNo.trim().toUpperCase()} is already registered`, `Le numéro de châssis ${used.chassisNo.trim().toUpperCase()} est déjà enregistré`)
+        : null;
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
@@ -342,24 +382,55 @@ function BulkDialog({ units, onClose }: { units: Unit[]; onClose: () => void }) 
                 <span className="font-medium">{units[i].productName}</span>
                 <span className="text-xs text-muted-foreground"> · {units[i].label !== "Standard" ? units[i].label : units[i].sku}</span>
               </div>
-              <Input className="col-span-2 font-mono uppercase placeholder:normal-case placeholder:font-sans sm:col-span-1" aria-label={t(`Chassis no., bike ${i + 1} (${units[i].productName})`, `N° de châssis, moto ${i + 1} (${units[i].productName})`)} placeholder={t("Chassis no.", "N° de châssis")} value={r.chassisNo} onChange={(e) => set(i, "chassisNo", e.target.value)} />
-              <Input className="font-mono uppercase placeholder:normal-case placeholder:font-sans" aria-label={t(`Engine no., bike ${i + 1} (${units[i].productName})`, `N° de moteur, moto ${i + 1} (${units[i].productName})`)} placeholder={t("Engine no.", "N° de moteur")} value={r.engineNo} onChange={(e) => set(i, "engineNo", e.target.value)} />
+              <Input className="col-span-2 font-mono uppercase placeholder:normal-case placeholder:font-sans sm:col-span-1" aria-label={t(`Chassis no., bike ${i + 1} (${units[i].productName})`, `N° de châssis, moto ${i + 1} (${units[i].productName})`)} placeholder={t("Chassis no.", "N° de châssis")} aria-invalid={takenBy(r, i) || undefined} value={r.chassisNo} onChange={(e) => set(i, "chassisNo", e.target.value)} />
+              <Input className={cn("font-mono uppercase placeholder:normal-case placeholder:font-sans", engines.has(i) && "border-amber-500")} title={engines.get(i)} aria-label={t(`Engine no., bike ${i + 1} (${units[i].productName})`, `N° de moteur, moto ${i + 1} (${units[i].productName})`)} placeholder={t("Engine no.", "N° de moteur")} value={r.engineNo} onChange={(e) => set(i, "engineNo", e.target.value)} />
               <Input aria-label={t(`Colour, bike ${i + 1} (${units[i].productName})`, `Couleur, moto ${i + 1} (${units[i].productName})`)} placeholder={t("Colour", "Couleur")} value={r.color} onChange={(e) => set(i, "color", e.target.value)} />
             </div>
           ))}
         </div>
-        {m.error && <ErrorText error={m.error} />}
+        {engines.size > 0 && (
+          <ul className="space-y-0.5 text-sm text-amber-800 dark:text-amber-400" data-testid="engine-repeat">
+            {[...new Set(engines.values())].map((text) => <li key={text}>{text}</li>)}
+          </ul>
+        )}
+        {/* Once the refused line is marked, the note by the button names it: the box would say it twice. */}
+        {m.error && !(used && m.error.message.includes(used.chassisNo.trim().toUpperCase())) && <ErrorText error={m.error} />}
         <DialogFooter>
           <Button variant="outline" onClick={onClose}>{t("Cancel", "Annuler")}</Button>
           <SubmitButton
             blocked={blocked}
             pending={m.isPending}
-            onClick={() => m.mutate({ units: filled.map((r) => ({ id: r.unit.id, chassisNo: r.chassisNo.trim(), engineNo: r.engineNo.trim() || null, color: r.color.trim() || null })) })}
+            onClick={() => save()}
           >
             {filled.length > 0 ? t(`Save ${filled.length}`, `Enregistrer ${filled.length}`) : t("Save", "Enregistrer")}
           </SubmitButton>
         </DialogFooter>
       </DialogContent>
+      <EngineRepeatAlert repeats={[...new Set(engines.values())]} open={askEngine} onCancel={() => setAskEngine(false)} onConfirm={() => save(true)} />
     </Dialog>
+  );
+}
+
+/** Asks before saving an engine number that is already on another bike, or typed twice. */
+function EngineRepeatAlert({ repeats, open, onCancel, onConfirm }: { repeats: string[]; open: boolean; onCancel: () => void; onConfirm: () => void }) {
+  const t = useT();
+  return (
+    <AlertDialog open={open && repeats.length > 0} onOpenChange={(o) => !o && onCancel()}>
+      <AlertDialogContent>
+        <AlertDialogHeader>
+          <AlertDialogTitle>{t("Same engine number twice?", "Même numéro de moteur en double\u00a0?")}</AlertDialogTitle>
+          <AlertDialogDescription asChild>
+            <div className="space-y-1">
+              {repeats.map((text) => <p key={text}>{text}.</p>)}
+              <p>{t("Check the number on the engine: it prints on the sale and its documents.", "Vérifiez le numéro sur le moteur\u00a0: il est imprimé sur la vente et ses documents.")}</p>
+            </div>
+          </AlertDialogDescription>
+        </AlertDialogHeader>
+        <AlertDialogFooter>
+          <AlertDialogCancel>{t("Go back", "Revenir")}</AlertDialogCancel>
+          <AlertDialogAction onClick={onConfirm}>{t("Save anyway", "Enregistrer quand même")}</AlertDialogAction>
+        </AlertDialogFooter>
+      </AlertDialogContent>
+    </AlertDialog>
   );
 }
