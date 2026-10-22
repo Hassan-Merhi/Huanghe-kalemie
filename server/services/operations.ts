@@ -401,8 +401,10 @@ export async function applyAdvances(
       const id = await post(on, more);
       first ??= id;
     }
+    // Francs paid since meet the bill on the first day they leave none owed or held, whatever posting that
+    // day leaves them so: a payment, or the undoing of one, a deposit, a bill's reversal (see francsMetLines).
     if (currency === "CDF") {
-      const id = await francsMetLines(tx, payables, partyId, date, days.filter((d) => d.paid).map((d) => String(d.date)), post);
+      const id = await francsMetLines(tx, payables, partyId, date, days.map((d) => String(d.date)), post);
       first ??= id;
     }
   }
@@ -494,12 +496,36 @@ export async function francsMetAfter(tx: Tx, journalId: number | null, date: str
       .innerJoin(journals, eq(journals.id, journalLines.journalId))
       .where(and(eq(journalLines.accountId, key.accountId), key.partyId ? eq(journalLines.partyId, key.partyId) : isNull(journalLines.partyId), eq(journalLines.currency, "CDF"), gt(journals.date, date)))
       .orderBy(journals.date);
-    if (!later.length) continue;
-    await francsMetLines(tx, key.accountId, key.partyId, date, later.map((d) => String(d.date)), (on, lines) =>
+    // Nothing dated after: the journal itself may leave no francs, with dollars the rates explain still on
+    // them (a cent paid on a few francs whose dollars a payment dated back left of the other sign). They go
+    // to exchange differences too, counted since the balance last held no francs.
+    let since = date;
+    if (!later.length) {
+      const bal = await foreignBalance(tx, key.accountId, key.partyId, "CDF");
+      if (bal.usd.isZero() || !bal.native.abs().dividedBy((await rateFor(tx, date)).rate).lt("0.005")) continue;
+      const days = await tx
+        .select({ date: journals.date, native: sql<string>`coalesce(sum(${journalLines.nativeAmount}), 0)` })
+        .from(journalLines)
+        .innerJoin(journals, eq(journals.id, journalLines.journalId))
+        .where(and(eq(journalLines.accountId, key.accountId), key.partyId ? eq(journalLines.partyId, key.partyId) : isNull(journalLines.partyId), eq(journalLines.currency, "CDF")))
+        .groupBy(journals.date)
+        .orderBy(journals.date);
+      let running = new Decimal(0);
+      since = String(days[0]?.date ?? date);
+      for (let i = 0; i < days.length - 1; i++) {
+        running = running.plus(dec(days[i].native));
+        if (running.isZero()) since = String(days[i + 1].date);
+      }
+    }
+    await francsMetLines(tx, key.accountId, key.partyId, since, later.length ? later.map((d) => String(d.date)) : [date], (on, lines) =>
       postJournal(tx, {
         date: on,
         type: "supplier_payment",
-        memo: key.partyId ? `Francs du ${frDate(date)} imputés sur la facture du ${frDate(on)}` : `Francs du ${frDate(date)} imputés sur les francs dus au ${frDate(on)}`,
+        memo: !later.length
+          ? `Écart de change sur les francs soldés le ${frDate(on)}`
+          : key.partyId
+            ? `Francs du ${frDate(date)} imputés sur la facture du ${frDate(on)}`
+            : `Francs du ${frDate(date)} imputés sur les francs dus au ${frDate(on)}`,
         userId,
         lines,
         sourceType: FRANCS_MET_SOURCE,

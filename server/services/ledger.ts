@@ -981,6 +981,11 @@ class YuanPool {
   revalued = false;
   /** Whether a payment was posted while the month was closed (see foreignMarkedOwed): if given, `revalued` is not relied on. */
   postedClosed: ((journalId: number) => boolean) | null = null;
+  /**
+   * The last bill taken away (see removeBill): its yuan owed and paid, and from which of `portions` start
+   * those its paid yuan made paying the bills still owed (see foreignPool, which restates them).
+   */
+  removed: { q: Decimal; from: number } | null = null;
 
   value(): Decimal {
     let v = new Decimal(0);
@@ -1084,6 +1089,11 @@ class YuanPool {
     for (const s of this.open) s.marked = true;
   }
 
+  /** The yuan owed now of those owed at the month's end (see mark). */
+  markedOpen(): Decimal {
+    return sum(this.open.filter((s) => s.marked).map((s) => s.q));
+  }
+
   /**
    * Of the yuan of the bills now, those owed at the month's end marked: owed still, or paid since the
    * month's revaluation was on them, so they still carry their part of it until their bill is taken away.
@@ -1123,10 +1133,13 @@ class YuanPool {
   removeBill(id: number): Decimal {
     const own = this.bills.get(id) ?? new Decimal(0);
     let worth = sum(this.open.filter((s) => s.bill === id).map((s) => s.q.times(s.rate.minus(own))));
+    const owed = sum(this.open.filter((s) => s.bill === id).map((s) => s.q));
     this.open = this.open.filter((s) => s.bill !== id);
     const freed = this.portions.filter((x) => x.bill === id).sort((a, b) => a.lot - b.lot);
     this.portions = this.portions.filter((x) => x.bill !== id);
     this.bills.delete(id);
+    const from = this.portions.length;
+    this.removed = { q: owed.plus(sum(freed.map((p) => p.q))), from };
     for (const p of freed) {
       const lot = this.lots.get(p.lot);
       if (!lot) continue;
@@ -1166,14 +1179,15 @@ const poolSkipped = (l: { kind: string | null; currency?: string | null }) => !!
  * dollars on them, so the pool's yuan owed stay at what the books carry them at, in whatever order the
  * month is closed and reopened.
  * `markAfter` marks the yuan owed at the end of that day (see YuanPool.mark); `marks` gets, for each
- * journal, the marked yuan owed before and after it, and whether it took a bill away.
+ * journal, the marked yuan owed before and after it, whether it took a bill away, and for a payment or its
+ * undoing the marked yuan owed it paid or brings back (see foreignMarkedOwed).
  */
 async function foreignPool(
   tx: Tx,
   payables: number,
   partyId: number,
   currency: ForeignCurrency,
-  opts: { markAfter?: string; marks?: Map<number, { before: Decimal; after: Decimal; removal: boolean }>; postedClosed?: (journalId: number) => boolean } = {},
+  opts: { markAfter?: string; marks?: Map<number, { before: Decimal; after: Decimal; removal: boolean; lot?: Decimal }>; postedClosed?: (journalId: number) => boolean } = {},
 ) {
   const rows = await tx
     .select({
@@ -1219,7 +1233,9 @@ async function foreignPool(
   pool.postedClosed = opts.postedClosed ?? null;
   const refunds = new Set<number>(); // receipts: the supplier's refunds of yuan they owed back
   const kinds = new Map<number, { kind: "lot" | "bill"; native: Decimal; usd: Decimal; rate: string }>();
-  const liveBill = new Map<number, number>(); // container -> the journal that billed it
+  // container -> the journals that billed it, still owed. Francs are replayed by date, and a container
+  // offloaded again dated before its reversal was: that reversal takes away the bill posted before it.
+  const liveBill = new Map<number, number[]>();
   /** Replays one journal; true when it took a bill away. */
   const step = (id: number, lines: typeof rows): boolean => {
     if (lines[0].type === "revaluation") {
@@ -1233,16 +1249,37 @@ async function foreignPool(
     const j = own[0];
     const native = sum(own.map((r) => dec(r.native ?? 0)));
     const usd = sum(own.map((r) => dec(r.usd)));
+    // A bill taken away moves on the francs what the books booked when it was posted (its own lines and the
+    // exchange difference it moved: see yuanTrueUpLines), not what the pool would make of it now. Francs
+    // are replayed by date, so a month reopened or closed since restates the francs before that reversal,
+    // and the pool would take away again the share of the month's revaluation the reversal already took
+    // (or put back what the reopening restated after it): the pool keeps what the books booked, the francs
+    // still owed taking the difference, and those the bill's paid francs pay since (owed again at what
+    // they pay) theirs, so they leave with that share when they part. A payment undone needs none: its
+    // francs come back at exactly what it took (see removeLot).
+    const worth = currency === "CDF" && (j.type === "container_reversal" || j.reverses) ? pool.value() : null;
+    const adopt = () => {
+      if (worth === null) return;
+      const gap = sum(lines.map((r) => dec(r.usd))).minus(pool.value().minus(worth));
+      pool.revalue(gap);
+      const removed = pool.removed;
+      if (removed && removed.q.gt(0)) for (const p of pool.portions.slice(removed.from)) p.rate = p.rate.plus(gap.dividedBy(removed.q));
+    };
     if (j.type === "container_reversal") {
-      const bill = j.sourceId ? liveBill.get(j.sourceId) : undefined;
-      if (bill) pool.removeBill(bill);
-      if (j.sourceId) liveBill.delete(j.sourceId);
+      const billed = j.sourceId ? (liveBill.get(j.sourceId) ?? []) : [];
+      const bill = billed.filter((b) => b < id).at(-1) ?? billed.at(-1);
+      if (bill) {
+        pool.removeBill(bill);
+        adopt();
+        billed.splice(billed.indexOf(bill), 1);
+      }
       return !!bill;
     }
     if (j.reverses) {
       if (pool.lots.has(j.reverses)) pool.removeLot(j.reverses);
       else if (pool.bills.has(j.reverses)) {
         pool.removeBill(j.reverses);
+        adopt();
         return true;
       }
       return false;
@@ -1267,7 +1304,7 @@ async function foreignPool(
       pool.addBill(id, native.abs(), given, j.date);
       kinds.set(id, { kind: "bill", native, usd, rate });
       if (j.type === "receipt" || j.type === "customer_receipt") refunds.add(id);
-      if (j.type === "container_finalize" && j.sourceType === "container" && j.sourceId) liveBill.set(j.sourceId, id);
+      if (j.type === "container_finalize" && j.sourceType === "container" && j.sourceId) liveBill.set(j.sourceId, [...(liveBill.get(j.sourceId) ?? []), id].sort((a, b) => a - b));
     }
     return false;
   };
@@ -1280,9 +1317,14 @@ async function foreignPool(
       marked = true;
     }
     const before = pool.markedOwed();
+    const owedBefore = pool.markedOpen();
+    const undoesLot = !!lines[0].reverses && pool.lots.has(lines[0].reverses);
     const removal = step(id, lines);
     if (opts.markAfter && lines[0].type === "revaluation" && lines[0].sourceType === "period" && !lines[0].reverses && lines[0].date === opts.markAfter) pool.revalued = true;
-    opts.marks?.set(id, { before, after: pool.markedOwed(), removal });
+    // The yuan owed at the month's end a payment paid, or its undoing brings back owed to them (not those a
+    // claim meets on the way, nor those that paid a bill of them taken away since).
+    const lot = undoesLot ? pool.markedOpen().minus(owedBefore) : kinds.get(id)?.kind === "lot" ? owedBefore.minus(pool.markedOpen()) : undefined;
+    opts.marks?.set(id, { before, after: pool.markedOwed(), removal, lot });
   }
   return { pool, kinds, refunds };
 }
@@ -1296,9 +1338,11 @@ async function foreignPool(
  * or closing it again gives back, the part of the revaluation the yuan still owed carry (see restateSettled).
  * `postedClosed` says whether a journal was posted with the month closed: paid then, marked yuan carry
  * their part; paid before the close (or with the month reopened), they leave it on those still owed.
+ * `lot`, for a payment: the yuan owed at the month's end it paid; for its undoing: those it brings back
+ * owed to them, fewer when a bill they paid was taken away since or a claim meets them (see restateSettled).
  */
 export async function foreignMarkedOwed(tx: Tx, payables: number, partyId: number, currency: ForeignCurrency, monthEnd: string, postedClosed: (journalId: number) => boolean) {
-  const marks = new Map<number, { before: Decimal; after: Decimal; removal: boolean }>();
+  const marks = new Map<number, { before: Decimal; after: Decimal; removal: boolean; lot?: Decimal }>();
   await foreignPool(tx, payables, partyId, currency, { markAfter: monthEnd, marks, postedClosed });
   return marks;
 }
