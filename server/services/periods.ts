@@ -275,7 +275,7 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
     const dateOf = new Map(rows.map((r) => [r.journalId, r.date]));
     // What each part paid since the month's end took off the revaluation, closed and reopened: undone, its
     // francs or yuan come back as they left (see reverseJournal), and what it took comes back with them.
-    const took = new Map<number, { closed: Decimal; open: Decimal; owed?: boolean; emptied?: boolean; met?: boolean; marked?: Decimal }>();
+    const took = new Map<number, { closed: Decimal; open: Decimal; owed?: boolean; lot?: Decimal }>();
     let native = new Decimal(0);
     let others = new Decimal(0); // the dollars everything but the month's own journals put on it
     let current = new Decimal(0); // what the month's own journals put on it since its end
@@ -308,13 +308,19 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
         const undoes = last.reverses && last.type !== "revaluation" && dateOf.has(last.reverses) ? last.reverses : null;
         // Only to the yuan or francs it paid (or refunded): once a bill's reversal has turned what was owed
         // into a claim (or the other way), the undoing trues them up at what was paid (see yuanTrueUpLines),
-        // its share with them. A payment that emptied the balance: only if nothing has been owed (or
-        // claimed) since, as a bill that came since has its own share (see `met` below).
+        // its share with them. A payment that emptied the balance gives back what it took, whatever was billed
+        // since: a bill dated after the month's end holds none of the revaluation, so owed again or not, the
+        // yuan or francs it took come back as they left.
         const gave = undoes ? took.get(undoes) : undefined;
-        const restored = !!gave && !!marks && !gave.met && (gave.owed === undefined || (!native.isZero() && native.isNegative() === gave.owed));
+        const restored = !!gave && !!marks && (gave.owed === undefined || (!native.isZero() && native.isNegative() === gave.owed));
         if (restored) {
-          closed = closed.plus(took.get(undoes!)!.closed);
-          open = open.plus(took.get(undoes!)!.open);
+          // In the share of its yuan or francs that come back owed to the bills owed at the month's end (see
+          // foreignMarkedOwed): those that paid a bill of them taken away since left their share with it, and
+          // are a claim now, or pay a bill since.
+          const back = marks?.get(id)?.lot;
+          const share = gave.lot?.gt(0) && back ? Decimal.min(back.dividedBy(gave.lot), 1) : new Decimal(1);
+          closed = closed.plus(cents(gave.closed.times(share)));
+          open = open.plus(cents(gave.open.times(share)));
         }
         const m = restored || ofMonth(last) ? undefined : marks?.get(id);
         // What was owed turned into a claim, or the other way: none of what the revaluation restated is
@@ -356,22 +362,7 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
         // What a part released (see above), or a payment that emptied the balance, comes back with its
         // undoing: its francs or yuan come back at what they left, and the revaluation they left with (a
         // payment before the close took none of it) with them. The other cases have their own.
-        if ((part && !native.isZero()) || (emptied && !undoes)) took.set(id, { closed: before.closed.minus(closed), open: before.open.minus(open), owed: was.isZero() ? undefined : was.isNegative(), emptied: emptied || undefined, marked: emptied && m ? m.before.minus(m.after) : undefined });
-        // Owed again (or claimed again) after a payment emptied the balance: its undoing's francs or yuan
-        // come back to what is owed by then.
-        for (const [k, t] of took) if (t.emptied && k !== id && t.owed !== undefined && !native.isZero() && native.isNegative() === t.owed) t.met = true;
-        // A bill owed at the month's end taken away after the payment that emptied the balance took its yuan
-        // or francs: the share they had goes with it (see yuanTrueUpLines), and the undoing gives back only
-        // the rest's.
-        const bill = last.type === "container_reversal" ? rows.filter((r) => r.type === "container_finalize" && r.sourceId === last.sourceId && r.journalId < id).at(-1) : undefined;
-        if (bill && bill.date <= to)
-          for (const t of took.values())
-            if (t.emptied && !t.met && t.marked?.gt(0)) {
-              const left = Decimal.max(t.marked.minus(native.minus(was).abs()), 0);
-              t.closed = cents(t.closed.times(left).dividedBy(t.marked));
-              t.open = cents(t.open.times(left).dividedBy(t.marked));
-              t.marked = left;
-            }
+        if ((part && !native.isZero()) || (emptied && !undoes)) took.set(id, { closed: before.closed.minus(closed), open: before.open.minus(open), owed: was.isZero() ? undefined : was.isNegative(), lot: marks?.get(id)?.lot });
       }
       if (date <= to) continue;
       // Closed, the revaluation itself puts `cap` on it at the month's end.
