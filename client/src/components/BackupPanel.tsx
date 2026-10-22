@@ -10,6 +10,7 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { ErrorText, Field, Loading, SubmitButton } from "@/components/common";
 import { ApiError, queryClient } from "@/lib/api";
 import { useI18n } from "@/lib/i18n";
+import { downloadStarted } from "@/lib/backupStatus";
 import { dateTime, formatLang, number, usd } from "@/lib/format";
 
 interface Snapshot { id: number; kind: "daily" | "before_restore"; day: string; size: number; createdAt: string }
@@ -33,7 +34,9 @@ export function BackupPanel() {
   const { t } = useI18n();
   const q = useQuery<Status>({ queryKey: ["/api/backups"] });
   const last = q.data?.lastDownloadAt;
-  const stale = !last || daysSince(last) > 7;
+  const [startedFrom, setStartedFrom] = useState<string | null | undefined>(undefined);
+  const started = downloadStarted(startedFrom, last);
+  const stale = !started && (!last || daysSince(last) > 7);
   return (
     <div className="grid max-w-4xl gap-4">
       <Card>
@@ -48,13 +51,22 @@ export function BackupPanel() {
         </CardHeader>
         <CardContent className="flex flex-wrap items-center gap-3">
           <Button asChild>
-            <a href="/api/backup" download onClick={() => setTimeout(() => queryClient.invalidateQueries({ queryKey: ["/api/backups"] }), 3000)}>
+            <a
+              href="/api/backup"
+              download
+              onClick={() => {
+                setStartedFrom(last ?? null);
+                setTimeout(() => queryClient.invalidateQueries({ queryKey: ["/api/backups"] }), 3000);
+              }}
+            >
               <Download className="mr-1 h-4 w-4" /> {t("Download now", "Télécharger maintenant")}
             </a>
           </Button>
           {q.data && (
             <p className={stale ? "text-sm text-amber-800 dark:text-amber-400" : "text-sm text-muted-foreground"}>
-              {last
+              {started
+                ? t("Download started…", "Téléchargement lancé…")
+                : last
                 ? t(`Last download: ${dateTime(last)}`, `Dernier téléchargement : ${dateTime(last)}`)
                 : t("No backup has been downloaded yet.", "Aucune sauvegarde n'a encore été téléchargée.")}
             </p>

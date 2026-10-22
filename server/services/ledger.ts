@@ -975,6 +975,8 @@ class YuanPool {
   portions: { lot: number; bill: number; q: Decimal; rate: Decimal; marked: boolean; carries: boolean }[] = [];
   /** Each bill and its own dollars per yuan. */
   bills = new Map<number, Decimal>();
+  /** The day of each bill (see revalue). */
+  billDates = new Map<number, string>();
   /** The month's revaluation (see mark) is on the yuan owed. */
   revalued = false;
   /** Whether a payment was posted while the month was closed (see foreignMarkedOwed): if given, `revalued` is not relied on. */
@@ -1057,9 +1059,10 @@ class YuanPool {
     if (!lot.claim.gt(0)) this.revalue(book.minus(met.usd));
   }
 
-  addBill(id: number, q: Decimal, given: Decimal) {
+  addBill(id: number, q: Decimal, given: Decimal, date?: string) {
     const rate = given.dividedBy(q);
     this.bills.set(id, rate);
+    if (date) this.billDates.set(id, date);
     const left = this.takeClaim(q, id, rate);
     if (left.gt(0)) this.reopen(id, left, rate);
   }
@@ -1094,12 +1097,16 @@ class YuanPool {
    * keeps what it holds, and what the revaluation leaves on it goes with the yuan as they are taken out at
    * their cost (see takeClaim), or to exchange differences with the payment that is undone (see
    * removeLot). So do the dollars the books move on them when the month is reopened or closed again (see
-   * restateSettled).
+   * restateSettled). Those journals (`asOf`: their day) restate only the yuan of bills dated by then, when
+   * any are owed: yuan are replayed in the order they were posted, and a month closed or reopened after a
+   * bill dated since its end restates no part of that bill, as when it was closed first.
    */
-  revalue(usd: Decimal) {
-    const owed = sum(this.open.map((s) => s.q));
+  revalue(usd: Decimal, asOf?: string) {
+    const dated = asOf ? this.open.filter((s) => (this.billDates.get(s.bill) ?? "") <= asOf) : [];
+    const on = dated.length ? dated : this.open;
+    const owed = sum(on.map((s) => s.q));
     if (owed.gt(0)) {
-      for (const s of this.open) s.rate = s.rate.minus(usd.dividedBy(owed));
+      for (const s of on) s.rate = s.rate.minus(usd.dividedBy(owed));
       return;
     }
     const claimed = sum([...this.lots.values()].map((l) => l.claim));
@@ -1218,7 +1225,7 @@ async function foreignPool(
     if (lines[0].type === "revaluation") {
       // A month closed (or reopened, its revaluation undone), and what either moved on the balances settled
       // since: dollars, no yuan, every line of it (see above).
-      if (sum(lines.map((r) => dec(r.native ?? 0))).isZero()) pool.revalue(sum(lines.map((r) => dec(r.usd))));
+      if (sum(lines.map((r) => dec(r.native ?? 0))).isZero()) pool.revalue(sum(lines.map((r) => dec(r.usd))), lines[0].date);
       return false;
     }
     const own = lines.filter((r) => !poolSkipped({ kind: r.kind, currency }));
@@ -1257,7 +1264,7 @@ async function foreignPool(
     } else {
       // What the bill or refund was worth before its yuan met a claim at the claim's cost.
       const given = clean ? usd.abs().plus(gain) : sum(own.filter((r) => r.rate && dec(r.rate).gt(0)).map((r) => dec(r.native ?? 0).abs().dividedBy(dec(r.rate!))));
-      pool.addBill(id, native.abs(), given);
+      pool.addBill(id, native.abs(), given, j.date);
       kinds.set(id, { kind: "bill", native, usd, rate });
       if (j.type === "receipt" || j.type === "customer_receipt") refunds.add(id);
       if (j.type === "container_finalize" && j.sourceType === "container" && j.sourceId) liveBill.set(j.sourceId, id);
@@ -1447,17 +1454,19 @@ export async function yuanTrueUpLines(
     extra = cents(pool.value().minus(before).minus(move));
   }
   // The cents the books' average costs rounded off on the way go too, so refunding exactly what was
-  // paid closes the claim. Only cents: more is not rounding, and stays. Francs can be posted dated back
-  // (see francsMetAfter) and a residue of them cleared (see costForeignOutflows), so the pool's francs
-  // must be the books' for its cents to be theirs.
+  // paid closes the claim. Yuan: only cents, as more is not rounding, and stays. Francs: whenever the
+  // pool's francs are the books', the books are brought to exactly the pool's worth, however far its
+  // dollars are from theirs (a part paid in dollars and a month's revaluation leave more than cents
+  // between them, as yuan's are not). Francs can be posted dated back (see francsMetAfter) and a residue
+  // of them cleared (see costForeignOutflows), so the pool's francs must be the books' for its worth to
+  // be theirs.
   const native = bal.native.plus(moved);
   const exact = cents(pool.value()).minus(bal.usd).minus(move);
-  if (exact.minus(extra).abs().lte("0.05") && (currency === "CNY" || pool.native().equals(native))) extra = exact;
-  // Francs the books carry at other than their average cost (a part paid in dollars at the day's rate
-  // leaves the rest with what the rate does not explain: see contactLines) are not the pool's: what it
-  // would move is left to the balance's emptying or the month's end (see revaluedDollarLines). Logged: the
-  // pool's francs are meant to be the books' (see POOL_SKIPPED_KINDS), and a share of a month's revaluation
-  // left unbooked here is found by the fuzzers.
+  if (currency === "CNY" ? exact.minus(extra).abs().lte("0.05") : pool.native().equals(native)) extra = exact;
+  // Francs the pool does not hold as the books do (a residue cleared, francs met dated back: see
+  // francsMetAfter) are not the pool's: what it would move is left to the balance's emptying or the month's
+  // end (see revaluedDollarLines). Logged: the pool's francs are meant to be the books' (see
+  // POOL_SKIPPED_KINDS), and a share of a month's revaluation left unbooked here is found by the fuzzers.
   else if (currency === "CDF") {
     log("Franc true-up skipped: the pool and the books disagree", { partyId, undo: "undo" in input ? input.undo : null, bill: "bill" in input ? input.bill : null, exact: exact.toFixed(2), extra: extra.toFixed(2), poolNative: pool.native().toFixed(2), native: native.toFixed(2) });
     return [];
