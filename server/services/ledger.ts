@@ -946,6 +946,20 @@ export async function revaluedDollarLines(tx: Tx, keys: RevaluedKey[], date: str
   return lines;
 }
 
+/** Yuan owed of a bill, at the dollars per yuan they are carried at (see YuanPool.open). */
+type Owed = { bill: number; q: Decimal; rate: Decimal; marked: boolean; wt: Decimal };
+
+/**
+ * A payment undone (see YuanPool.removeLot): its day, the yuan it brought back owed (as many as each holds
+ * then), and each payment posted after it that day (see foreignPool): how many yuan it paid of how many
+ * owed, those it met (as many as each held before) and those still owed after it.
+ */
+interface Undoing {
+  date: string;
+  back: { s: Owed; q: Decimal }[];
+  lots: { q: Decimal; owed: Decimal; met: { s: Owed; q: Decimal; t: Decimal }[]; after: { s: Owed; q: Decimal }[] }[];
+}
+
 /**
  * A supplier's yuan as their payments and bills met them, journal by journal in the order they were
  * posted (a reversal dated back before a payment still undoes a bill that payment paid). Each payment
@@ -968,11 +982,12 @@ class YuanPool {
   lots = new Map<number, { paid: Decimal; claim: Decimal; reval: Decimal }>();
   /**
    * Yuan owed, oldest bill first, at the dollars per yuan they are carried at. `marked`: owed at a month's
-   * end (see mark), so they carry their part of that month's revaluation wherever they go.
+   * end (see mark), so they carry their part of that month's revaluation wherever they go. `wt`: the share
+   * of it each of them holds (see markedWeight).
    */
-  open: { bill: number; q: Decimal; rate: Decimal; marked: boolean }[] = [];
+  open: Owed[] = [];
   /** A lot's yuan matched to a bill's: when they part, the bill's yuan are owed again at `rate`. */
-  portions: { lot: number; bill: number; q: Decimal; rate: Decimal; marked: boolean; carries: boolean }[] = [];
+  portions: { lot: number; bill: number; q: Decimal; rate: Decimal; marked: boolean; carries: boolean; wt: Decimal }[] = [];
   /** Each bill and its own dollars per yuan. */
   bills = new Map<number, Decimal>();
   /** The day of each bill (see revalue). */
@@ -1018,14 +1033,14 @@ class YuanPool {
       // Paid once the month's revaluation is on them (with the month closed: francs are replayed by date,
       // and the revaluation before a payment made before the close), the marked yuan carry their part of it
       // with them; met by a removed bill's paid yuan, they leave it with that bill (see removeBill).
-      this.portions.push({ lot, bill: s.bill, q: t, rate: rate ?? s.rate, marked: s.marked, carries: s.marked && rate !== null && (this.postedClosed ? this.postedClosed(lot) : this.revalued) });
+      this.portions.push({ lot, bill: s.bill, q: t, rate: rate ?? s.rate, marked: s.marked, carries: s.marked && rate !== null && (this.postedClosed ? this.postedClosed(lot) : this.revalued), wt: s.wt });
     }
     this.open = this.open.filter((s) => s.q.gt(0));
     return left;
   }
 
   /** Up to `q` claimed yuan meet `bill`'s, from every lot in proportion; returns the yuan left over. */
-  private takeClaim(q: Decimal, bill: number, rate: Decimal, marked = false): Decimal {
+  private takeClaim(q: Decimal, bill: number, rate: Decimal, marked = false, wt = new Decimal(0)): Decimal {
     const claims = [...this.lots].filter(([, l]) => l.claim.gt(0));
     const total = sum(claims.map(([, l]) => l.claim));
     if (!total.gt(0) || !q.gt(0)) return q;
@@ -1037,20 +1052,20 @@ class YuanPool {
       // Taken out at the claim's average cost, as the books do: their part of the revaluation goes with them.
       l.reval = l.reval.minus(l.reval.times(t).dividedBy(l.claim));
       l.claim = l.claim.minus(t);
-      this.portions.push({ lot: id, bill, q: t, rate, marked, carries: false });
+      this.portions.push({ lot: id, bill, q: t, rate, marked, carries: false, wt });
     });
     return q.minus(take);
   }
 
   /** Claimed yuan meet yuan owed again (a payment or a refund undone left both). */
   private meet() {
-    for (const s of this.open) s.q = this.takeClaim(s.q, s.bill, s.rate, s.marked);
+    for (const s of this.open) s.q = this.takeClaim(s.q, s.bill, s.rate, s.marked, s.wt);
     this.open = this.open.filter((s) => s.q.gt(0));
   }
 
-  private reopen(bill: number, q: Decimal, rate: Decimal, marked = false) {
+  private reopen(bill: number, q: Decimal, rate: Decimal, marked = false, wt = new Decimal(0)) {
     if (!this.bills.has(bill) || !q.gt(0)) return null;
-    const s = { bill, q, rate, marked };
+    const s: Owed = { bill, q, rate, marked, wt };
     this.open.push(s);
     this.open.sort((a, b) => a.bill - b.bill);
     return s;
@@ -1060,10 +1075,22 @@ class YuanPool {
     const lot = { paid: book.minus(gain).dividedBy(q), claim: new Decimal(0), reval: new Decimal(0) };
     this.lots.set(id, lot);
     const met = { usd: new Decimal(0) };
+    const owed = sum(this.open.map((s) => s.q));
+    const weight = this.markedWeight();
+    const from = this.portions.length;
     lot.claim = this.payOpen(id, q, book.dividedBy(q), met);
     // The books take yuan owed out at what they carry them at on average (see bookValue), not the oldest
-    // bill's: the yuan still owed carry the difference, as the books' do.
-    if (!lot.claim.gt(0)) this.revalue(book.minus(met.usd));
+    // bill's: the yuan still owed carry the difference, as the books' do. So does the month's revaluation
+    // on them (see markedWeight): the payment takes its average share of it, the rest stays on those owed.
+    if (!lot.claim.gt(0)) {
+      this.revalue(book.minus(met.usd));
+      const avg = owed.gt(0) ? weight.dividedBy(owed) : new Decimal(0);
+      const paid = this.portions.slice(from);
+      const took = sum(paid.map((p) => p.q.times(p.wt)));
+      for (const p of paid) p.wt = avg;
+      const left = sum(this.open.map((s) => s.q));
+      if (left.gt(0)) for (const s of this.open) s.wt = s.wt.plus(took.minus(avg.times(q)).dividedBy(left));
+    }
   }
 
   addBill(id: number, q: Decimal, given: Decimal, date?: string) {
@@ -1080,9 +1107,9 @@ class YuanPool {
    * yuanTrueUpLines, which moves it to exchange differences with the undoing).
    */
   removeLot(id: number) {
-    const back: { bill: number; q: Decimal; rate: Decimal; marked: boolean }[] = [];
+    const back: Owed[] = [];
     for (const p of this.portions.filter((x) => x.lot === id)) {
-      const s = this.reopen(p.bill, p.q, p.rate, p.marked);
+      const s = this.reopen(p.bill, p.q, p.rate, p.marked, p.wt);
       if (s) back.push(s);
     }
     this.portions = this.portions.filter((x) => x.lot !== id);
@@ -1093,12 +1120,25 @@ class YuanPool {
 
   /** The yuan owed now are those owed at a month's end (see yuanMarkedOwed). */
   mark() {
-    for (const s of this.open) s.marked = true;
+    for (const s of this.open) {
+      s.marked = true;
+      s.wt = new Decimal(1);
+    }
   }
 
   /** The yuan owed now of those owed at the month's end (see mark). */
   markedOpen(): Decimal {
     return sum(this.open.filter((s) => s.marked).map((s) => s.q));
+  }
+
+  /**
+   * The yuan owed now, each counted by the share it holds of the month's revaluation on the yuan owed (see
+   * mark): one for those owed at the month's end, as many as are still owed; a payment since takes its
+   * share at their average (see addLot), the rest staying on the yuan still owed, a bill since among them,
+   * as the books' average cost leaves it. Unlike markedOpen, which counts the marked yuan owed.
+   */
+  markedWeight(): Decimal {
+    return sum(this.open.map((s) => s.q.times(s.wt)));
   }
 
   /**
@@ -1119,13 +1159,17 @@ class YuanPool {
    * after a bill dated since its end restates no part of that bill, as when it was closed first. Nor does
    * what closing or reopening it moves on a later day (a payment undone, posted on its own day): a bill
    * dated since holds none of the month's revaluation, whatever is owed when that is posted. What they move
-   * on the day a payment is undone (`back`: the yuan it brought back owed) gives that payment back what it
-   * took of the revaluation (see restateSettled), so it restates those yuan, when any are still owed.
+   * on the day a payment is undone gives that payment back what it took of the revaluation (see
+   * restateSettled), so it restates the yuan it brought back owed, each by its share (`shares`: see
+   * undoneShares), when any are still owed.
    */
-  revalue(usd: Decimal, asOf?: string, back?: { q: Decimal }[]) {
+  revalue(usd: Decimal, asOf?: string, shares?: Map<Owed, Decimal> | null) {
+    if (shares) {
+      for (const [s, v] of shares) s.rate = s.rate.minus(usd.times(v).dividedBy(s.q));
+      return;
+    }
     const dated = asOf ? this.open.filter((s) => (this.billDates.get(s.bill) ?? "") <= asOf) : [];
-    const brought = back ? dated.filter((s) => back.includes(s)) : [];
-    const on = brought.length ? brought : dated.length ? dated : this.open;
+    const on = dated.length ? dated : this.open;
     const owed = sum(on.map((s) => s.q));
     if (owed.gt(0)) {
       for (const s of on) s.rate = s.rate.minus(usd.dividedBy(owed));
@@ -1134,6 +1178,37 @@ class YuanPool {
     const claimed = sum([...this.lots.values()].map((l) => l.claim));
     if (!claimed.gt(0)) return;
     for (const l of this.lots.values()) l.reval = l.reval.plus(usd.times(l.claim).dividedBy(claimed));
+  }
+
+  /**
+   * The share of each of the yuan owed in what closing or reopening a month moves on the day a payment is
+   * undone (`u`): the yuan it brought back owed, of bills dated by `asOf`, as if it were posted with the
+   * undoing, whichever was posted first. Each payment posted after it that day takes its share of it at the
+   * average cost of the yuan owed, as the books take them, and leaves the rest of what it met on the yuan
+   * still owed (see addLot), as when the month was closed before. Null when none of them is owed now.
+   */
+  undoneShares(u: Undoing, asOf: string): Map<Owed, Decimal> | null {
+    const back = u.back.filter((x) => x.q.gt(0) && (this.billDates.get(x.s.bill) ?? "") <= asOf);
+    const total = sum(back.map((x) => x.q));
+    if (!total.gt(0)) return null;
+    const w = new Map(back.map((x) => [x.s, x.q.dividedBy(total)]));
+    for (const lot of u.lots) {
+      const share = sum([...w.values()]).times(lot.q).dividedBy(lot.owed);
+      let met = new Decimal(0);
+      for (const m of lot.met) {
+        const v = w.get(m.s);
+        if (!v) continue;
+        const t = v.times(m.t).dividedBy(m.q);
+        w.set(m.s, v.minus(t));
+        met = met.plus(t);
+      }
+      const left = sum(lot.after.map((x) => x.q));
+      if (left.gt(0)) for (const x of lot.after) w.set(x.s, (w.get(x.s) ?? new Decimal(0)).plus(met.minus(share).times(x.q).dividedBy(left)));
+    }
+    const on = [...w].filter(([s]) => s.q.gt(0) && this.open.includes(s));
+    const all = sum(on.map(([, v]) => v));
+    if (!all.gt(0)) return null;
+    return new Map(on.map(([s, v]) => [s, v.dividedBy(all)]));
   }
 
   /**
@@ -1174,6 +1249,20 @@ const POOL_SKIPPED_KINDS = new Set<string>(["revalued", "settled_fx"]);
 const poolSkipped = (l: { kind: string | null; currency?: string | null }) => !!l.kind && (POOL_SKIPPED_KINDS.has(l.kind) || (l.kind === "residue" && l.currency !== "CDF"));
 
 /**
+ * What a journal leaves of a supplier's yuan owed at a month's end (see foreignPool): those marked before and
+ * after it, owed or paid since carrying their part of the revaluation (`before`, `after`: see
+ * YuanPool.markedOwed), and the share of the revaluation on those still owed (`owed`: see
+ * YuanPool.markedWeight).
+ */
+export interface ForeignMark {
+  before: Decimal;
+  after: Decimal;
+  removal: boolean;
+  lot?: Decimal;
+  owed: { before: Decimal; after: Decimal };
+}
+
+/**
  * Replay a supplier's yuan (or francs: `currency`) on `payables` into a YuanPool, every journal in the
  * order it was posted. Francs in the order of their dates instead (posted in that order on a day): yuan
  * move dated no earlier than the latest that moved (see assertYuanInOrder), francs can be dated back
@@ -1199,7 +1288,7 @@ async function foreignPool(
   payables: number,
   partyId: number,
   currency: ForeignCurrency,
-  opts: { markAfter?: string; marks?: Map<number, { before: Decimal; after: Decimal; removal: boolean; lot?: Decimal }>; postedClosed?: (journalId: number) => boolean } = {},
+  opts: { markAfter?: string; marks?: Map<number, ForeignMark>; postedClosed?: (journalId: number) => boolean } = {},
 ) {
   const rows = await tx
     .select({
@@ -1258,10 +1347,15 @@ async function foreignPool(
   // container -> the journals that billed it, still owed. Francs are replayed by date, and a container
   // offloaded again dated before its reversal was: that reversal takes away the bill posted before it.
   const liveBill = new Map<number, number[]>();
-  // The yuan owed again by the payment undone by the journal replayed last (see YuanPool.removeLot): what
-  // closing or reopening a month moves on its day, replayed right after it, gives that payment back what
-  // it took of the revaluation (see restateSettled).
-  let undone: { date: string; back: { q: Decimal }[] } | null = null;
+  // The payment undone last (see YuanPool.removeLot), while only payments and bills follow it that day: what
+  // closing or reopening a month moves on its day gives that payment back what it took of the revaluation
+  // (see restateSettled), whether it is replayed right after the undoing or after those payments.
+  let undone: Undoing | null = null;
+  // The day of the payment replayed last when it paid all the yuan owed and more (a claim): what closing or
+  // reopening a month moves on that day restates the yuan it settled (see restateSettled: none of the
+  // revaluation stays once what is owed turns into a claim), which have left the pool, as when it was
+  // posted with the month in the state it is in now. Not the claim: it holds yuan paid for at what was paid.
+  let crossed: string | null = null;
   /** Replays one journal; true when it took a bill away. */
   const step = (id: number, lines: typeof rows): boolean => {
     if (lines[0].type === "revaluation") {
@@ -1269,11 +1363,17 @@ async function foreignPool(
       // since: dollars, no yuan, every line of it (see above), on the bills owed at that month's end.
       const r0 = lines[0];
       const ofPeriod = !!r0.sourceId && !!r0.sourceType && REVALUATION_SOURCES.includes(r0.sourceType);
-      if (sum(lines.map((r) => dec(r.native ?? 0))).isZero()) pool.revalue(sum(lines.map((r) => dec(r.usd))), (ofPeriod ? monthEnds.get(r0.sourceId!) : undefined) ?? r0.date, ofPeriod && r0.sourceType !== "period" && undone?.date === r0.date ? undone.back : undefined);
-      if (undone?.date !== r0.date) undone = null;
+      const asOf = (ofPeriod ? monthEnds.get(r0.sourceId!) : undefined) ?? r0.date;
+      const settles = ofPeriod && r0.sourceType !== "period" && crossed === r0.date && asOf < r0.date && !pool.open.length;
+      if (sum(lines.map((r) => dec(r.native ?? 0))).isZero() && !settles) pool.revalue(sum(lines.map((r) => dec(r.usd))), asOf, ofPeriod && r0.sourceType !== "period" && undone?.date === r0.date ? pool.undoneShares(undone, asOf) : null);
+      // Yuan are replayed in the order they were posted: a month closed since posts its revaluation, dated
+      // before, after them.
+      if (undone && r0.date > undone.date) undone = null;
       return false;
     }
+    const u = undone?.date === lines[0].date ? undone : null;
     undone = null;
+    crossed = null;
     const own = lines.filter((r) => !poolSkipped({ kind: r.kind, currency }));
     if (!own.length) return false;
     const j = own[0];
@@ -1306,7 +1406,7 @@ async function foreignPool(
       return !!bill;
     }
     if (j.reverses) {
-      if (pool.lots.has(j.reverses)) undone = { date: j.date, back: pool.removeLot(j.reverses) };
+      if (pool.lots.has(j.reverses)) undone = { date: j.date, back: pool.removeLot(j.reverses).map((s) => ({ s, q: s.q })), lots: [] };
       else if (pool.bills.has(j.reverses)) {
         pool.removeBill(j.reverses);
         adopt();
@@ -1326,13 +1426,21 @@ async function foreignPool(
     const rate = own.find((r) => r.rate && dec(r.rate).gt(0))?.rate;
     if (!rate) return false;
     if (native.gt(0)) {
+      const before = pool.open.map((s) => ({ s, q: s.q }));
       pool.addLot(id, native, usd, gain);
       kinds.set(id, { kind: "lot", native, usd, rate });
+      if (before.length && pool.lots.get(id)!.claim.gt(0)) crossed = j.date;
+      // A payment after the undoing that day, paying yuan owed only (see YuanPool.undoneShares).
+      if (u && !pool.lots.get(id)!.claim.gt(0)) {
+        u.lots.push({ q: native, owed: sum(before.map((x) => x.q)), met: before.filter((x) => !x.s.q.equals(x.q)).map((x) => ({ s: x.s, q: x.q, t: x.q.minus(x.s.q) })), after: pool.open.map((s) => ({ s, q: s.q })) });
+        undone = u;
+      }
     } else {
       // What the bill or refund was worth before its yuan met a claim at the claim's cost.
       const given = clean ? usd.abs().plus(gain) : sum(own.filter((r) => r.rate && dec(r.rate).gt(0)).map((r) => dec(r.native ?? 0).abs().dividedBy(dec(r.rate!))));
       pool.addBill(id, native.abs(), given, j.date);
       kinds.set(id, { kind: "bill", native, usd, rate });
+      undone = u;
       if (j.type === "receipt" || j.type === "customer_receipt") refunds.add(id);
       if (j.type === "container_finalize" && j.sourceType === "container" && j.sourceId) liveBill.set(j.sourceId, [...(liveBill.get(j.sourceId) ?? []), id].sort((a, b) => a - b));
     }
@@ -1348,13 +1456,14 @@ async function foreignPool(
     }
     const before = pool.markedOwed();
     const owedBefore = pool.markedOpen();
+    const weightBefore = pool.markedWeight();
     const undoesLot = !!lines[0].reverses && pool.lots.has(lines[0].reverses);
     const removal = step(id, lines);
     if (opts.markAfter && lines[0].type === "revaluation" && lines[0].sourceType === "period" && !lines[0].reverses && lines[0].date === opts.markAfter) pool.revalued = true;
     // The yuan owed at the month's end a payment paid, or its undoing brings back owed to them (not those a
     // claim meets on the way, nor those that paid a bill of them taken away since).
     const lot = undoesLot ? pool.markedOpen().minus(owedBefore) : kinds.get(id)?.kind === "lot" ? owedBefore.minus(pool.markedOpen()) : undefined;
-    opts.marks?.set(id, { before, after: pool.markedOwed(), removal, lot });
+    opts.marks?.set(id, { before, after: pool.markedOwed(), removal, lot, owed: { before: weightBefore, after: pool.markedWeight() } });
   }
   return { pool, kinds, refunds };
 }
@@ -1372,7 +1481,7 @@ async function foreignPool(
  * owed to them, fewer when a bill they paid was taken away since or a claim meets them (see restateSettled).
  */
 export async function foreignMarkedOwed(tx: Tx, payables: number, partyId: number, currency: ForeignCurrency, monthEnd: string, postedClosed: (journalId: number) => boolean) {
-  const marks = new Map<number, { before: Decimal; after: Decimal; removal: boolean; lot?: Decimal }>();
+  const marks = new Map<number, ForeignMark>();
   await foreignPool(tx, payables, partyId, currency, { markAfter: monthEnd, marks, postedClosed });
   return marks;
 }
