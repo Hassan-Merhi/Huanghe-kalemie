@@ -337,8 +337,10 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
         // undoing takes its own: the share of the supplier's yuan or francs owed at the month's end it took
         // (see foreignMarkedOwed: a bill since, paid or taken away, leaves them as they were). A supplier's
         // bills only: other balances (an employee's francs, the withholdings) keep the rules above. Not the
-        // undoing of a posting since the month's end.
-        const paidPart = !undoes && !!m && !m.removal && m.before.gt(0) && was.isNegative() && native.isNegative() && native.gt(was);
+        // undoing of a posting since the month's end. Once the bills owed at the month's end are paid, before
+        // the month was closed, what the revaluation left on those still owed (bills since) goes the same way
+        // with the parts paid of them before the close, as the books take them out at their average cost.
+        const paidPart = !undoes && !!m && !m.removal && (m.before.gt(0) || (!postedClosed(id) && !closed.minus(open).isZero())) && was.isNegative() && native.isNegative() && native.gt(was);
         const owedPart = !!undoes && !!m && m.before.gt(0) && m.after.lt(m.before);
         // A supplier's franc claim (francs they owe back, none of their bills owed at the month's end)
         // refunded in part: its share in proportion to the francs, closed or reopened alike. Not yuan: a

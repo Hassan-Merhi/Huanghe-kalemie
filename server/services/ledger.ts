@@ -1049,9 +1049,11 @@ class YuanPool {
   }
 
   private reopen(bill: number, q: Decimal, rate: Decimal, marked = false) {
-    if (!this.bills.has(bill) || !q.gt(0)) return;
-    this.open.push({ bill, q, rate, marked });
+    if (!this.bills.has(bill) || !q.gt(0)) return null;
+    const s = { bill, q, rate, marked };
+    this.open.push(s);
     this.open.sort((a, b) => a.bill - b.bill);
+    return s;
   }
 
   addLot(id: number, q: Decimal, book: Decimal, gain: Decimal) {
@@ -1078,10 +1080,15 @@ class YuanPool {
    * yuanTrueUpLines, which moves it to exchange differences with the undoing).
    */
   removeLot(id: number) {
-    for (const p of this.portions.filter((x) => x.lot === id)) this.reopen(p.bill, p.q, p.rate, p.marked);
+    const back: { bill: number; q: Decimal; rate: Decimal; marked: boolean }[] = [];
+    for (const p of this.portions.filter((x) => x.lot === id)) {
+      const s = this.reopen(p.bill, p.q, p.rate, p.marked);
+      if (s) back.push(s);
+    }
     this.portions = this.portions.filter((x) => x.lot !== id);
     this.lots.delete(id);
     this.meet();
+    return back;
   }
 
   /** The yuan owed now are those owed at a month's end (see yuanMarkedOwed). */
@@ -1107,13 +1114,18 @@ class YuanPool {
    * keeps what it holds, and what the revaluation leaves on it goes with the yuan as they are taken out at
    * their cost (see takeClaim), or to exchange differences with the payment that is undone (see
    * removeLot). So do the dollars the books move on them when the month is reopened or closed again (see
-   * restateSettled). Those journals (`asOf`: their day) restate only the yuan of bills dated by then, when
-   * any are owed: yuan are replayed in the order they were posted, and a month closed or reopened after a
-   * bill dated since its end restates no part of that bill, as when it was closed first.
+   * restateSettled). Those journals (`asOf`: their month's end) restate only the yuan of bills dated by
+   * then, when any are owed: yuan are replayed in the order they were posted, and a month closed or reopened
+   * after a bill dated since its end restates no part of that bill, as when it was closed first. Nor does
+   * what closing or reopening it moves on a later day (a payment undone, posted on its own day): a bill
+   * dated since holds none of the month's revaluation, whatever is owed when that is posted. What they move
+   * on the day a payment is undone (`back`: the yuan it brought back owed) gives that payment back what it
+   * took of the revaluation (see restateSettled), so it restates those yuan, when any are still owed.
    */
-  revalue(usd: Decimal, asOf?: string) {
+  revalue(usd: Decimal, asOf?: string, back?: { q: Decimal }[]) {
     const dated = asOf ? this.open.filter((s) => (this.billDates.get(s.bill) ?? "") <= asOf) : [];
-    const on = dated.length ? dated : this.open;
+    const brought = back ? dated.filter((s) => back.includes(s)) : [];
+    const on = brought.length ? brought : dated.length ? dated : this.open;
     const owed = sum(on.map((s) => s.q));
     if (owed.gt(0)) {
       for (const s of on) s.rate = s.rate.minus(usd.dividedBy(owed));
@@ -1229,6 +1241,16 @@ async function foreignPool(
     }
   }
   const fx = await systemAccountId(tx, SYSTEM_ACCOUNTS.fx);
+  // The end of the month of each revaluation journal: what closing or reopening a month moves since is
+  // posted on the day it settled, and restates the bills owed at that month's end (see YuanPool.revalue).
+  const monthEnds = new Map<number, string>();
+  const periodIds = Array.from(new Set(rows.filter((r) => r.type === "revaluation" && r.sourceId && r.sourceType && REVALUATION_SOURCES.includes(r.sourceType)).map((r) => r.sourceId!)));
+  if (periodIds.length) {
+    for (const p of await tx.select({ id: periods.id, month: periods.month }).from(periods).where(inArray(periods.id, periodIds))) {
+      const [y, m] = p.month.split("-").map(Number);
+      monthEnds.set(p.id, `${p.month}-${String(new Date(Date.UTC(y, m, 0)).getUTCDate()).padStart(2, "0")}`);
+    }
+  }
   const pool = new YuanPool();
   pool.postedClosed = opts.postedClosed ?? null;
   const refunds = new Set<number>(); // receipts: the supplier's refunds of yuan they owed back
@@ -1236,14 +1258,22 @@ async function foreignPool(
   // container -> the journals that billed it, still owed. Francs are replayed by date, and a container
   // offloaded again dated before its reversal was: that reversal takes away the bill posted before it.
   const liveBill = new Map<number, number[]>();
+  // The yuan owed again by the payment undone by the journal replayed last (see YuanPool.removeLot): what
+  // closing or reopening a month moves on its day, replayed right after it, gives that payment back what
+  // it took of the revaluation (see restateSettled).
+  let undone: { date: string; back: { q: Decimal }[] } | null = null;
   /** Replays one journal; true when it took a bill away. */
   const step = (id: number, lines: typeof rows): boolean => {
     if (lines[0].type === "revaluation") {
       // A month closed (or reopened, its revaluation undone), and what either moved on the balances settled
-      // since: dollars, no yuan, every line of it (see above).
-      if (sum(lines.map((r) => dec(r.native ?? 0))).isZero()) pool.revalue(sum(lines.map((r) => dec(r.usd))), lines[0].date);
+      // since: dollars, no yuan, every line of it (see above), on the bills owed at that month's end.
+      const r0 = lines[0];
+      const ofPeriod = !!r0.sourceId && !!r0.sourceType && REVALUATION_SOURCES.includes(r0.sourceType);
+      if (sum(lines.map((r) => dec(r.native ?? 0))).isZero()) pool.revalue(sum(lines.map((r) => dec(r.usd))), (ofPeriod ? monthEnds.get(r0.sourceId!) : undefined) ?? r0.date, ofPeriod && r0.sourceType !== "period" && undone?.date === r0.date ? undone.back : undefined);
+      if (undone?.date !== r0.date) undone = null;
       return false;
     }
+    undone = null;
     const own = lines.filter((r) => !poolSkipped({ kind: r.kind, currency }));
     if (!own.length) return false;
     const j = own[0];
@@ -1276,7 +1306,7 @@ async function foreignPool(
       return !!bill;
     }
     if (j.reverses) {
-      if (pool.lots.has(j.reverses)) pool.removeLot(j.reverses);
+      if (pool.lots.has(j.reverses)) undone = { date: j.date, back: pool.removeLot(j.reverses) };
       else if (pool.bills.has(j.reverses)) {
         pool.removeBill(j.reverses);
         adopt();
