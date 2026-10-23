@@ -326,6 +326,11 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
         // What was owed turned into a claim, or the other way: none of what the revaluation restated is
         // left, so none of it stays.
         const shared = !!m?.removal && m.before.gt(0) && !m.after.equals(m.before);
+        // The revaluation still on the balance is on the yuan or francs still owed, each by its share (see
+        // YuanPool.markedWeight): a part paid of them took its share at their average cost as it was paid (see
+        // paidPart below), whenever the month was closed, so those paid keep none of it here, and a bill since
+        // holds what that average left on it. In the share of those owed, when any were.
+        const sharedOf = m?.owed.before.gt(0) ? m.owed.after.dividedBy(m.owed.before) : m ? m.after.dividedBy(m.before) : null;
         const crossed = !restored && !shared && !ofMonth(last) && !was.isZero() && !native.isZero() && was.isNegative() !== native.isNegative();
         // A part of them paid (or refunded) before the month was closed, at what they cost before the
         // revaluation, or taken away by the undoing of a posting from before the month's end (a cancelled
@@ -350,7 +355,7 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
         const ratio = owedPart ? m!.after.dividedBy(m!.before) : paidPart || claimPart ? native.dividedBy(was) : null;
         const part = !restored && !shared && !crossed && last.type !== "revaluation" && (paidPart || claimPart || !postedClosed(id) || !!undoes) && !(undoes && dateOf.get(undoes)! > to) && ratio !== null;
         if (shared || crossed || part) {
-          const kept = shared ? cents(closed.minus(open).times(m!.after).dividedBy(m!.before)) : part ? cents(closed.minus(open).times(ratio!)) : new Decimal(0);
+          const kept = shared ? cents(closed.minus(open).times(sharedOf!)) : part ? cents(closed.minus(open).times(ratio!)) : new Decimal(0);
           // Posted with the month closed, a payment took its share at the revalued cost, and a bill's
           // removal moved it to exchange differences (see yuanTrueUpLines): reopened, it is taken back.
           if (postedClosed(id) && !(part && undoes)) open = closed.minus(kept);
