@@ -75,11 +75,13 @@ describe.skipIf(!hasDb)("Kalemie shop flow", async () => {
         { variantId: frontPads, quantity: "600", unitPrice: "5" },
         { variantId: rearPads, quantity: "400", unitPrice: "5" },
       ]);
-      await containersSvc.addExpense(tx, row.id, { date: `${D}02`, type: "freight", amount: "3000", currency: "USD", method: "value", paidFromAccountId: cashUsd }, userId);
-      await containersSvc.addExpense(tx, row.id, { date: `${D}03`, type: "duties", amount: "1000", currency: "USD", method: "value", payablePartyId: agentId }, userId);
       return row;
     });
     containerId = container.id;
+    // Each expense in its own transaction, as the app posts them: one takes the money account's lock, the
+    // other the agent's, which the lock order (contacts before money accounts) refuses in one transaction.
+    await db.transaction((tx) => containersSvc.addExpense(tx, containerId, { date: `${D}02`, type: "freight", amount: "3000", currency: "USD", method: "value", paidFromAccountId: cashUsd }, userId));
+    await db.transaction((tx) => containersSvc.addExpense(tx, containerId, { date: `${D}03`, type: "duties", amount: "1000", currency: "USD", method: "value", payablePartyId: agentId }, userId));
 
     const result = await db.transaction((tx) => containersSvc.finalizeContainer(tx, containerId, `${D}05`, userId));
     expect(result.landedTotalUsd).toBe("24000.00");
