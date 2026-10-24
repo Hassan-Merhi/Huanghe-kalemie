@@ -153,7 +153,7 @@ const clampTo = (usd: Decimal, cap: Decimal) => (cap.isNegative() ? Decimal.min(
  */
 async function postAgainstFx(
   tx: Tx,
-  posts: { key: ForeignKey; date: string; usd: Decimal }[],
+  posts: { key: ForeignKey; date: string; usd: Decimal; restates: number | null }[],
   journal: { memo: string; sourceType: string; sourceId: number; userId: number | null; settled: boolean },
 ) {
   const label = journal.settled ? { memo: REVALUATION_SETTLED_MEMO, kind: null } : { memo: REVALUED_MEMO, kind: "revalued" as const };
@@ -184,6 +184,7 @@ async function postAgainstFx(
           rate: p.key.currency === "CNY" ? (cny ?? cdf) : cdf,
           debit: p.usd.isPositive() ? p.usd : 0,
           credit: p.usd.isNegative() ? p.usd.abs() : 0,
+          restatesJournalId: p.restates,
           ...label,
         })),
         { accountId: fx, debit: gain.isNegative() ? gain.abs() : 0, credit: gain.isPositive() ? gain : 0, ...label },
@@ -262,11 +263,11 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
   // their francs are counted as any balance's, not as a supplier's bills (see foreignMarkedOwed).
   const partyIds = Array.from(new Set(Array.from(keys.values()).filter((k) => k.accountId === payables && k.partyId).map((k) => k.partyId!)));
   const employees = new Set(partyIds.length ? (await tx.select({ id: parties.id }).from(parties).where(and(inArray(parties.id, partyIds), eq(parties.type, "employee")))).map((p) => p.id) : []);
-  const posts: { key: ForeignKey; date: string; usd: Decimal }[] = [];
+  const posts: { key: ForeignKey; date: string; usd: Decimal; restates: number | null }[] = [];
   for (const [k, key] of keys) {
     const cap = restated.get(k) ?? new Decimal(0);
     const rows = await tx
-      .select({ journalId: journalLines.journalId, date: journals.date, type: journals.type, reverses: journals.reversesJournalId, sourceType: journals.sourceType, sourceId: journals.sourceId, native: journalLines.nativeAmount, usd: sql<string>`${journalLines.debit} - ${journalLines.credit}` })
+      .select({ journalId: journalLines.journalId, date: journals.date, type: journals.type, reverses: journals.reversesJournalId, sourceType: journals.sourceType, sourceId: journals.sourceId, native: journalLines.nativeAmount, usd: sql<string>`${journalLines.debit} - ${journalLines.credit}`, restates: journalLines.restatesJournalId })
       .from(journalLines)
       .innerJoin(journals, eq(journals.id, journalLines.journalId))
       .where(and(eq(journalLines.accountId, key.accountId), key.partyId ? eq(journalLines.partyId, key.partyId) : isNull(journalLines.partyId), eq(journalLines.currency, key.currency)))
@@ -275,7 +276,7 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
     const dateOf = new Map(rows.map((r) => [r.journalId, r.date]));
     // What each part paid since the month's end took off the revaluation, closed and reopened: undone, its
     // francs or yuan come back as they left (see reverseJournal), and what it took comes back with them.
-    const took = new Map<number, { closed: Decimal; open: Decimal; owed?: boolean; lot?: Decimal }>();
+    const took = new Map<number, { closed: Decimal; open: Decimal; owed?: boolean; lot?: Decimal; over?: boolean }>();
     let native = new Decimal(0);
     let others = new Decimal(0); // the dollars everything but the month's own journals put on it
     let current = new Decimal(0); // what the month's own journals put on it since its end
@@ -292,6 +293,11 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
       // day first, as they restate the day as a whole.
       const day = [...rows.slice(i, end).filter((r) => r.type === "revaluation" && !ofMonth(r)), ...rows.slice(i, end).filter((r) => r.type !== "revaluation" || ofMonth(r))];
       i = end;
+      // What each posting that day moves of the revaluation left on the balance (in the state it is brought
+      // to), and what the month's own journals that day already put on it for each.
+      const moves = new Map<number | null, Decimal>();
+      const had = new Map<number | null, Decimal>();
+      let mover: number | null = null;
       for (let j = 0; j < day.length; ) {
         const id = day[j].journalId;
         const was = native;
@@ -300,7 +306,10 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
           const r = day[j];
           native = native.plus(dec(r.native ?? 0));
           if (ofMonth(r)) {
-            if (date > to) current = current.plus(dec(r.usd));
+            if (date > to) {
+              current = current.plus(dec(r.usd));
+              had.set(r.restates, (had.get(r.restates) ?? new Decimal(0)).plus(dec(r.usd)));
+            }
           } else others = others.plus(dec(r.usd));
         }
         if (date <= to) continue;
@@ -316,8 +325,9 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
         if (restored) {
           // In the share of its yuan or francs that come back owed to the bills owed at the month's end (see
           // foreignMarkedOwed): those that paid a bill of them taken away since left their share with it, and
-          // are a claim now, or pay a bill since.
-          const back = marks?.get(id)?.lot;
+          // are a claim now, or pay a bill since. A payment of all that was owed and more: in the share of the
+          // francs or yuan it paid that come back owed, to any bill (see over below).
+          const back = gave.over ? marks?.get(id)?.brought : marks?.get(id)?.lot;
           const share = gave.lot?.gt(0) && back ? Decimal.min(back.dividedBy(gave.lot), 1) : new Decimal(1);
           closed = closed.plus(cents(gave.closed.times(share)));
           open = open.plus(cents(gave.open.times(share)));
@@ -325,7 +335,11 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
         const m = restored || ofMonth(last) ? undefined : marks?.get(id);
         // What was owed turned into a claim, or the other way: none of what the revaluation restated is
         // left, so none of it stays.
-        const shared = !!m?.removal && m.before.gt(0) && !m.after.equals(m.before);
+        // A bill taken away leaves the share of those still owed: counted by the yuan or francs owed at the
+        // month's end that carry it, or, when those were all paid before the month was closed (they carry none
+        // of it then: see YuanPool.markedOwed), by the share those still owed hold (see YuanPool.markedWeight),
+        // a bill since among them, as when the month was closed first and the payment carried its own.
+        const shared = !!m?.removal && (m.before.gt(0) ? !m.after.equals(m.before) : m.owed.before.gt(0) && !m.owed.after.equals(m.owed.before));
         // The revaluation still on the balance is on the yuan or francs still owed, each by its share (see
         // YuanPool.markedWeight): a part paid of them took its share at their average cost as it was paid (see
         // paidPart below), whenever the month was closed, so those paid keep none of it here, and a bill since
@@ -366,10 +380,21 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
         // back to may hold none by then (its bill taken away since).
         const emptied = native.isZero() && last.type !== "revaluation";
         if (emptied) closed = open = clampTo(others.negated(), cap);
-        // What a part released (see above), or a payment that emptied the balance, comes back with its
-        // undoing: its francs or yuan come back at what they left, and the revaluation they left with (a
-        // payment before the close took none of it) with them. The other cases have their own.
-        if ((part && !native.isZero()) || (emptied && !undoes)) took.set(id, { closed: before.closed.minus(closed), open: before.open.minus(open), owed: was.isZero() ? undefined : was.isNegative(), lot: marks?.get(id)?.lot });
+        // What a part released (see above), or a payment that emptied the balance or paid all that was owed
+        // and more, comes back with its undoing: its francs or yuan come back at what they left, and the
+        // revaluation they left with (a payment before the close took none of it) with them, so a payment
+        // that met them first, undone too, finds them owed as it left them. The other cases have their own.
+        // Paying all that was owed and more, it takes them out at its own average cost, the claim's among them,
+        // and its undoing brings back owed (to the bills they paid, one since among them) those they paid at
+        // that cost (see YuanPool.removeLot): of what they left with, the share of those comes back, the claim's
+        // leaves with the claim.
+        const over = crossed && !undoes && was.isNegative();
+        if ((part && !native.isZero()) || (emptied && !undoes) || over) took.set(id, { closed: before.closed.minus(closed), open: before.open.minus(open), owed: was.isZero() ? undefined : was.isNegative(), lot: over ? native.minus(was) : marks?.get(id)?.lot, over });
+        const move = state === "closed" ? closed.minus(before.closed) : open.minus(before.open);
+        if (!move.isZero()) {
+          moves.set(id, (moves.get(id) ?? new Decimal(0)).plus(move));
+          mover = id;
+        }
       }
       if (date <= to) continue;
       // Closed, the revaluation itself puts `cap` on it at the month's end.
@@ -379,10 +404,16 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
         posted = posted.plus(want);
         continue;
       }
-      if (!want.isZero()) {
-        posts.push({ key, date, usd: want });
-        posted = posted.plus(want);
-      }
+      // Each line says which posting it restates (see foreignPool, which puts it on that posting's francs or
+      // yuan, whatever was posted the same day since): what each moved, less what the month's journals that
+      // day already put on it. What is left (lines written before they said so) goes with the last that moved.
+      const parts = new Map<number | null, Decimal>(moves);
+      for (const [x, v] of had) if (x !== null) parts.set(x, (parts.get(x) ?? new Decimal(0)).minus(v));
+      const rest = want.minus(sum(Array.from(parts.values())));
+      const anchor = mover ?? Array.from(had.keys()).filter((x) => x !== null).at(-1) ?? null;
+      if (!rest.isZero()) parts.set(anchor, (parts.get(anchor) ?? new Decimal(0)).plus(rest));
+      for (const [x, usd] of parts) if (!usd.isZero()) posts.push({ key, date, usd, restates: x });
+      posted = posted.plus(want);
     }
   }
   if (!posts.length) return false;

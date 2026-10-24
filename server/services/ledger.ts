@@ -234,6 +234,8 @@ export interface PostLine {
   kind?: LineKind | null;
   /** Only on a reversal's copy of a line valued at average cost: the opposite of what that one moved (see fxUsd). */
   fxUsd?: DecimalInput | null;
+  /** Only on what closing or reopening a month moves on a balance settled since: the posting it restates (see restatesJournalId). */
+  restatesJournalId?: number | null;
 }
 
 export interface PostJournalInput {
@@ -378,6 +380,7 @@ export async function postJournal(tx: Tx, input: PostJournalInput): Promise<numb
       memo: l.memo ?? null,
       kind: l.kind ?? null,
       fxUsd: l.fxUsd != null ? cents(l.fxUsd) : null,
+      restatesJournalId: l.restatesJournalId ?? null,
     };
   });
 
@@ -573,6 +576,7 @@ type PendingLine = {
   memo: string | null;
   kind?: LineKind | null;
   fxUsd?: Decimal | null;
+  restatesJournalId?: number | null;
 };
 type AccountRow = typeof accounts.$inferSelect;
 
@@ -1259,6 +1263,8 @@ export interface ForeignMark {
   after: Decimal;
   removal: boolean;
   lot?: Decimal;
+  /** For the undoing of a payment: the yuan it brings back owed, to any bill (see restateSettled). */
+  brought?: Decimal;
   owed: { before: Decimal; after: Decimal };
 }
 
@@ -1303,6 +1309,7 @@ async function foreignPool(
       rate: journalLines.rate,
       kind: journalLines.kind,
       fxUsd: journalLines.fxUsd,
+      restates: journalLines.restatesJournalId,
     })
     .from(journalLines)
     .innerJoin(journals, eq(journals.id, journalLines.journalId))
@@ -1365,7 +1372,14 @@ async function foreignPool(
       const ofPeriod = !!r0.sourceId && !!r0.sourceType && REVALUATION_SOURCES.includes(r0.sourceType);
       const asOf = (ofPeriod ? monthEnds.get(r0.sourceId!) : undefined) ?? r0.date;
       const settles = ofPeriod && r0.sourceType !== "period" && crossed === r0.date && asOf < r0.date && !pool.open.length;
-      if (sum(lines.map((r) => dec(r.native ?? 0))).isZero() && !settles) pool.revalue(sum(lines.map((r) => dec(r.usd))), asOf, ofPeriod && r0.sourceType !== "period" && undone?.date === r0.date ? pool.undoneShares(undone, asOf) : null);
+      // Replayed right after a payment of part of the francs owed (see `ordered` below): what it moves is the
+      // share of the revaluation that payment took at their average cost, or left (see restateSettled), so it
+      // restates the francs still owed as the payment's own average cost does (see YuanPool.addLot), a bill
+      // since among them.
+      const x = currency === "CDF" && r0.restates && byJournal.has(r0.restates) ? pool.lots.get(r0.restates) : undefined;
+      const paidPart = ofPeriod && r0.sourceType !== "period" && !!x && !x.claim.gt(0) && pool.open.length > 0;
+      if (paidPart) pool.revalue(sum(lines.map((r) => dec(r.usd))));
+      else if (sum(lines.map((r) => dec(r.native ?? 0))).isZero() && !settles) pool.revalue(sum(lines.map((r) => dec(r.usd))), asOf, ofPeriod && r0.sourceType !== "period" && undone?.date === r0.date ? pool.undoneShares(undone, asOf) : null);
       // Yuan are replayed in the order they were posted: a month closed since posts its revaluation, dated
       // before, after them.
       if (undone && r0.date > undone.date) undone = null;
@@ -1446,10 +1460,30 @@ async function foreignPool(
     }
     return false;
   };
+  // What closing or reopening a month moves on the francs settled since its end says which posting it restates
+  // (see restateSettled): it is replayed right after that posting, as when the month was closed (or reopened)
+  // before what was posted since that day, so it restates the francs that posting paid, brought back owed or
+  // took away, whatever was posted next to it. Lines written before they said so stay where they are (and
+  // `undone` and `crossed` above hand them over). Not yuan: replayed in the order they were posted, the
+  // month's revaluation posted since comes after them, and what its closing moves with it.
+  const replay: [number, typeof rows][] = [];
+  const restating = new Map<number, [number, typeof rows][]>();
+  for (const [id, lines] of byJournal) {
+    const linked = currency === "CDF" && lines[0].type === "revaluation" ? lines.filter((r) => r.restates && r.restates !== id && byJournal.has(r.restates)) : [];
+    for (const x of Array.from(new Set(linked.map((r) => r.restates!)))) {
+      const group: [number, typeof rows] = [id, linked.filter((r) => r.restates === x)];
+      const list = restating.get(x);
+      if (list) list.push(group);
+      else restating.set(x, [group]);
+    }
+    const rest = linked.length ? lines.filter((r) => !linked.includes(r)) : lines;
+    if (rest.length) replay.push([id, rest]);
+  }
+  const ordered = restating.size ? replay.flatMap((e) => [e, ...(restating.get(e[0]) ?? [])]) : replay;
   // No yuan move dated before the latest that moved (see assertYuanInOrder): the yuan owed at the end of a
   // day are those owed before the first journal dated after it that moves any.
   let marked = !opts.markAfter;
-  for (const [id, lines] of byJournal) {
+  for (const [id, lines] of ordered) {
     if (!marked && lines[0].type !== "revaluation" && lines[0].date > opts.markAfter!) {
       pool.mark();
       marked = true;
@@ -1463,7 +1497,8 @@ async function foreignPool(
     // The yuan owed at the month's end a payment paid, or its undoing brings back owed to them (not those a
     // claim meets on the way, nor those that paid a bill of them taken away since).
     const lot = undoesLot ? pool.markedOpen().minus(owedBefore) : kinds.get(id)?.kind === "lot" ? owedBefore.minus(pool.markedOpen()) : undefined;
-    opts.marks?.set(id, { before, after: pool.markedOwed(), removal, lot, owed: { before: weightBefore, after: pool.markedWeight() } });
+    const brought = undoesLot && undone ? sum((undone as Undoing).back.map((x) => x.q)) : undefined;
+    opts.marks?.set(id, { before, after: pool.markedOwed(), removal, lot, brought, owed: { before: weightBefore, after: pool.markedWeight() } });
   }
   return { pool, kinds, refunds };
 }

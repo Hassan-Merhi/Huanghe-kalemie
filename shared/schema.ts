@@ -395,6 +395,12 @@ export const journalLines = pgTable(
      * opposite. Null on lines that were not.
      */
     fxUsd: money("fx_usd"),
+    /**
+     * On a line by which closing or reopening a month moves dollars on a balance settled since its end: the
+     * posting on that balance it restates (see restateSettled). Null on every other line, and on those
+     * written before lines kept it.
+     */
+    restatesJournalId: integer("restates_journal_id"),
   },
   (t) => ({
     journalIdx: index("journal_lines_journal_idx").on(t.journalId),

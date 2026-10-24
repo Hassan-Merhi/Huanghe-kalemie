@@ -127,6 +127,13 @@
       "when": 1792140000000,
       "tag": "0017_u48_sale_rate",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1792150000000,
+      "tag": "0018_a48_restates_journal",
+      "breakpoints": true
     }
   ]
 }
