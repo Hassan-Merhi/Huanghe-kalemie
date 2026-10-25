@@ -325,9 +325,13 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
         if (restored) {
           // In the share of its yuan or francs that come back owed to the bills owed at the month's end (see
           // foreignMarkedOwed): those that paid a bill of them taken away since left their share with it, and
-          // are a claim now, or pay a bill since. A payment of all that was owed and more: in the share of the
-          // francs or yuan it paid that come back owed, to any bill (see over below).
-          const back = gave.over ? marks?.get(id)?.brought : marks?.get(id)?.lot;
+          // are a claim now, or pay a bill since. A payment of all that was owed and more: in the share of what
+          // it took that the francs or yuan coming back owed hold, each by its share (see over below, and
+          // YuanPool.markedWeight): those it paid itself hold its average, those its claim met hold their
+          // bill's (none for a bill since), and those that paid a bill of the month taken away since left
+          // theirs with that bill.
+          const m0 = marks?.get(id);
+          const back = gave.over ? m0?.owed.after.minus(m0.owed.before) : m0?.lot;
           const share = gave.lot?.gt(0) && back ? Decimal.min(back.dividedBy(gave.lot), 1) : new Decimal(1);
           closed = closed.plus(cents(gave.closed.times(share)));
           open = open.plus(cents(gave.open.times(share)));
@@ -387,9 +391,11 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
         // Paying all that was owed and more, it takes them out at its own average cost, the claim's among them,
         // and its undoing brings back owed (to the bills they paid, one since among them) those they paid at
         // that cost (see YuanPool.removeLot): of what they left with, the share of those comes back, the claim's
-        // leaves with the claim.
+        // leaves with the claim. Counted by the share of the revaluation they hold (see YuanPool.markedWeight):
+        // what it paid held all it took.
         const over = crossed && !undoes && was.isNegative();
-        if ((part && !native.isZero()) || (emptied && !undoes) || over) took.set(id, { closed: before.closed.minus(closed), open: before.open.minus(open), owed: was.isZero() ? undefined : was.isNegative(), lot: over ? native.minus(was) : marks?.get(id)?.lot, over });
+        const paidWeight = over && marks?.get(id) ? marks.get(id)!.owed.before.minus(marks.get(id)!.owed.after) : undefined;
+        if ((part && !native.isZero()) || (emptied && !undoes) || over) took.set(id, { closed: before.closed.minus(closed), open: before.open.minus(open), owed: was.isZero() ? undefined : was.isNegative(), lot: over ? paidWeight : marks?.get(id)?.lot, over });
         const move = state === "closed" ? closed.minus(before.closed) : open.minus(before.open);
         if (!move.isZero()) {
           moves.set(id, (moves.get(id) ?? new Decimal(0)).plus(move));
