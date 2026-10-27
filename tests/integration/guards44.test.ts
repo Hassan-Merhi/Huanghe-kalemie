@@ -15,6 +15,10 @@ import { hasDb, resetDatabase } from "./helpers";
  * the revaluation to the month's bills only, not to a bill since they had paid at their own average cost
  * (N2: 17,25 $; 86,26 $ with no second payment; 3,55 $ and 3,09 $ with same-day undoings, 1,11 $). Each case
  * on its own books, closed at every place in its postings.
+ * Since A50 a payment undone brings its francs back owed exactly as they were (see guards45): the month's
+ * francs owed again hold their own share of the revaluation and a bill since none of it, so what is owed
+ * after the month's bill is reversed is the francs of the month left at the month's end rate (and a bill
+ * since at its own), whatever was paid and undone in between.
  */
 describe.skipIf(!hasDb)("Guards found by the forty-fourth audit", async () => {
   const { createApp } = await import("../../server/index");
@@ -191,33 +195,33 @@ describe.skipIf(!hasDb)("Guards found by the forty-fourth audit", async () => {
   it("N1: a payment of all owed and more undone after the month's bill it paid was reversed gives back only the share of what it took that the francs coming back owed hold, wherever the close sits", async () => {
     // 12 000 000 FC paid, 20 000 000 FC billed since, the 10 000 000 FC bill reversed, the payment undone: the
     // 1 000 000 FC bill owed again with its share of what the payment took (before, 7 644,51 $ closed after it).
-    await everywhere("one payment", [["pay", "12000000", "13"], ["bill", "20", "15"], ["reverse", "1", "22"], ["undo", "0", "25"]], ["-21000000.00", "-7509.70"]);
+    await everywhere("one payment", [["pay", "12000000", "13"], ["bill", "20", "15"], ["reverse", "1", "22"], ["undo", "0", "25"]], ["-21000000.00", "-7510.37"]);
     // The same by a payment voucher (before, 134,81 $ off).
-    await everywhere("by voucher", [["voucher", "12000000", "13"], ["bill", "20", "15"], ["reverse", "1", "22"], ["undo", "0", "25"]], ["-21000000.00", "-7509.70"]);
+    await everywhere("by voucher", [["voucher", "12000000", "13"], ["bill", "20", "15"], ["reverse", "1", "22"], ["undo", "0", "25"]], ["-21000000.00", "-7510.37"]);
     // The container offloaded again before the undoing (before, 134,81 $ off).
-    await everywhere("offloaded again", [["pay", "12000000", "13"], ["bill", "20", "15"], ["reverse", "1", "22"], ["reoffload", "1", "23"], ["undo", "0", "25"]], ["-31000000.00", "-11079.70"]);
+    await everywhere("offloaded again", [["pay", "12000000", "13"], ["bill", "20", "15"], ["reverse", "1", "22"], ["reoffload", "1", "23"], ["undo", "0", "25"]], ["-31000000.00", "-11080.37"]);
     // A part paid before, the payment of all the rest and more undone (before, 66,85 $ off).
     await everywhere("a part paid before", [["pay", "6000000", "10"], ["pay", "6000000", "13"], ["bill", "20", "15"], ["reverse", "1", "22"], ["undo", "1", "25"]], ["-15000000.00", "-5355.00"]);
   }, 1_800_000);
 
   it("N1: the same with three bills of the month, or a hundred million francs", async () => {
     // Bills of 1, 10 and 5 containers (before, 138,43 $ off).
-    await everywhere("three bills", [["pay", "17000000", "13"], ["bill", "20", "15"], ["reverse", "1", "22"], ["undo", "0", "25"]], ["-26000000.00", "-9359.38"], ["1", "10", "5"]);
+    await everywhere("three bills", [["pay", "17000000", "13"], ["bill", "20", "15"], ["reverse", "1", "22"], ["undo", "0", "25"]], ["-26000000.00", "-9362.22"], ["1", "10", "5"]);
     // 100 000 000 FC billed in the month, 200 000 000 FC since (before, 1 337,17 $ off).
-    await everywhere("a hundred million", [["pay", "102000000", "13"], ["bill", "200", "13"], ["reverse", "1", "22"], ["undo", "0", "25"]], ["-201000000.00", "-71770.29"], ["1", "100"]);
+    await everywhere("a hundred million", [["pay", "102000000", "13"], ["bill", "200", "13"], ["reverse", "1", "22"], ["undo", "0", "25"]], ["-201000000.00", "-71770.37"], ["1", "100"]);
   }, 1_800_000);
 
   it("N2: payments undone, the month's bill reversed after, leave the revaluation on the francs still owed as when the month was closed first, a bill since among them", async () => {
     // 20 000 000 FC billed since, 31 000 000 FC paid and undone, 15 000 000 FC paid and undone the same day, the
     // 10 000 000 FC bill reversed (before, 7 579,38 $ closed after the second payment).
-    await everywhere("two undone", [["bill", "20", "05"], ["pay", "31000000", "13"], ["undo", "0", "20"], ["pay", "15000000", "20"], ["undo", "1", "20"], ["reverse", "1", "22"]], ["-21000000.00", "-7596.63"]);
+    await everywhere("two undone", [["bill", "20", "05"], ["pay", "31000000", "13"], ["undo", "0", "20"], ["pay", "15000000", "20"], ["undo", "1", "20"], ["reverse", "1", "22"]], ["-21000000.00", "-7510.37"]);
     // With no second payment (before, 86,26 $ off).
-    await everywhere("one undone", [["bill", "20", "05"], ["pay", "31000000", "13"], ["undo", "0", "20"], ["reverse", "1", "22"]], ["-21000000.00", "-7596.63"]);
+    await everywhere("one undone", [["bill", "20", "05"], ["pay", "31000000", "13"], ["undo", "0", "20"], ["reverse", "1", "22"]], ["-21000000.00", "-7510.37"]);
     // Paid, billed, undone and paid again the same day (before, 3,55 $).
-    await everywhere("paid again", [["pay", "12000000", "13"], ["bill", "20", "13"], ["undo", "0", "13"], ["pay", "12000000", "13"], ["reverse", "1", "22"]], ["-9000000.00", "-3253.56"]);
+    await everywhere("paid again", [["pay", "12000000", "13"], ["bill", "20", "13"], ["undo", "0", "13"], ["pay", "12000000", "13"], ["reverse", "1", "22"]], ["-9000000.00", "-3255.70"]);
     // Two payments the same day, both undone (before, 3,09 $).
-    await everywhere("both undone", [["pay", "5000000", "13"], ["bill", "20", "13"], ["pay", "7000000", "13"], ["undo", "1", "13"], ["undo", "0", "20"], ["reverse", "1", "22"]], ["-21000000.00", "-7572.08"]);
+    await everywhere("both undone", [["pay", "5000000", "13"], ["bill", "20", "13"], ["pay", "7000000", "13"], ["undo", "1", "13"], ["undo", "0", "20"], ["reverse", "1", "22"]], ["-21000000.00", "-7510.37"]);
     // All owed and more, a bill the same day, undone before the reversal (before, 1,11 $).
-    await everywhere("undone first", [["pay", "12000000", "13"], ["bill", "20", "13"], ["undo", "0", "20"], ["reverse", "1", "22"]], ["-21000000.00", "-7509.70"]);
+    await everywhere("undone first", [["pay", "12000000", "13"], ["bill", "20", "13"], ["undo", "0", "20"], ["reverse", "1", "22"]], ["-21000000.00", "-7510.37"]);
   }, 1_800_000);
 });

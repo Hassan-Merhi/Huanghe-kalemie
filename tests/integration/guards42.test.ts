@@ -140,10 +140,11 @@ describe.skipIf(!hasDb)("Guards found by the forty-second audit", async () => {
     const cases = {
       // 1 000 000 FC and 10 000 000 FC billed in the month, all paid from the drawer, 20 000 000 FC billed
       // since; the payment undone and 3 000 000 FC paid the same day; the 10 000 000 FC bill reversed.
-      // Before, 6 426,00 $ owed when closed after the second payment.
-      francs: { currency: "CDF", pay: ["11000000", "3000000"], account: "cash_cdf", owed: ["-18000000.00", "-6442.64"] },
-      // 2 000 ¥ and 20 000 ¥ paid in dollars, 40 000 ¥ billed since. Before, 5 121,12 $.
-      yuan: { currency: "CNY", pay: ["3142.86", "800"], account: "cash_usd", owed: ["-36360.00", "-5130.71"] },
+      // A50: the bill since holds none of the revaluation (it was 6 442,64 $ and 5 130,71 $ while the second
+      // payment left part of its share on it), so the month's bill reversed takes all that is left of it.
+      francs: { currency: "CDF", pay: ["11000000", "3000000"], account: "cash_cdf", owed: ["-18000000.00", "-6426.00"] },
+      // 2 000 ¥ and 20 000 ¥ paid in dollars, 40 000 ¥ billed since.
+      yuan: { currency: "CNY", pay: ["3142.86", "800"], account: "cash_usd", owed: ["-36360.00", "-5121.12"] },
     } as const;
     for (const [name, c] of Object.entries(cases)) {
       for (const close of [0, 3, 4, 5, "reopened"] as const) {
