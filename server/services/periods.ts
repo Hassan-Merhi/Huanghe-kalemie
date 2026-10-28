@@ -6,7 +6,7 @@ import type { Tx } from "../db";
 import { badRequest, conflict } from "../errors";
 import { deMonth, frDate, frNumber, monthText } from "@shared/french";
 import { cents } from "@shared/money";
-import { cnyRateFor, lockBalances, lockPeriodsExclusive, postJournal, rateFor, REVALUATION_SETTLED_MEMO, REVALUATION_SOURCES, REVALUED_MEMO, reverseJournal, setRestater, SYSTEM_ACCOUNTS, systemAccountId, foreignMarkedOwed, type PostLine } from "./ledger";
+import { cnyRateFor, lockBalances, lockPeriodsExclusive, postJournal, rateFor, REVALUATION_SETTLED_MEMO, REVALUATION_SOURCES, REVALUED_MEMO, reverseJournal, setRestater, SYSTEM_ACCOUNTS, systemAccountId, foreignMarkedOwed, undoneShare, type ForeignMark, type PostLine } from "./ledger";
 import { todayIso } from "../http";
 
 export function monthRange(month: string): { from: string; to: string } {
@@ -276,7 +276,7 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
     const dateOf = new Map(rows.map((r) => [r.journalId, r.date]));
     // What each part paid since the month's end took off the revaluation, closed and reopened: undone, its
     // francs or yuan come back as they left (see reverseJournal), and what it took comes back with them.
-    const took = new Map<number, { closed: Decimal; open: Decimal; owed?: boolean; lot?: Decimal; over?: boolean }>();
+    const took = new Map<number, { closed: Decimal; open: Decimal; owed?: boolean; lot?: Decimal; over?: boolean; paid?: ForeignMark; fine?: { closed: Decimal; open: Decimal } }>();
     let native = new Decimal(0);
     let others = new Decimal(0); // the dollars everything but the month's own journals put on it
     let current = new Decimal(0); // what the month's own journals put on it since its end
@@ -330,11 +330,22 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
           // YuanPool.markedWeight): those it paid itself hold its average, those its claim met hold their
           // bill's (none for a bill since), and those that paid a bill of the month taken away since left
           // theirs with that bill.
+          // A part paid: in the share of the month's revaluation those coming back owed hold of what it took
+          // (see undoneShare): of a bill of the month's taken away since, the francs or yuan it paid left their
+          // share with it, and what it left on those still owed of that bill left with them (see
+          // YuanPool.removeLot), so the undoing gives back more than it took.
           const m0 = marks?.get(id);
           const back = gave.over ? m0?.owed.after.minus(m0.owed.before) : m0?.lot;
-          const share = gave.lot?.gt(0) && back ? Decimal.min(back.dividedBy(gave.lot), 1) : new Decimal(1);
-          closed = closed.plus(cents(gave.closed.times(share)));
-          open = open.plus(cents(gave.open.times(share)));
+          const share = gave.paid && !gave.over ? undoneShare(gave.paid, m0?.owed, m0?.lot) : gave.lot?.gt(0) && back ? Decimal.min(back.dividedBy(gave.lot), 1) : new Decimal(1);
+          // What it took comes back as it was posted, and what more (or less) its share gives back to the
+          // fraction of a cent, so a payment undone as it was paid restates nothing, to the cent.
+          if (gave.paid && !gave.over && gave.fine) {
+            closed = closed.plus(gave.closed).plus(cents(gave.fine.closed.times(share.minus(1))));
+            open = open.plus(gave.open).plus(cents(gave.fine.open.times(share.minus(1))));
+          } else {
+            closed = closed.plus(cents(gave.closed.times(share)));
+            open = open.plus(cents(gave.open.times(share)));
+          }
         }
         const m = restored || ofMonth(last) ? undefined : marks?.get(id);
         // What was owed turned into a claim, or the other way: none of what the revaluation restated is
@@ -372,12 +383,20 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
         const claimPart = key.currency === "CDF" && !!m && !m.before.gt(0) && was.gt(0) && native.gt(0) && native.lt(was);
         const ratio = owedPart ? m!.after.dividedBy(m!.before) : paidPart || claimPart ? native.dividedBy(was) : null;
         const part = !restored && !shared && !crossed && last.type !== "revaluation" && (paidPart || claimPart || !postedClosed(id) || !!undoes) && !(undoes && dateOf.get(undoes)! > to) && ratio !== null;
+        // What a part paid took, to the fraction of a cent (see restored above: its undoing can give back more).
+        let fine: { closed: Decimal; open: Decimal } | undefined;
         if (shared || crossed || part) {
           const kept = shared ? cents(closed.minus(open).times(sharedOf!)) : part ? cents(closed.minus(open).times(ratio!)) : new Decimal(0);
+          const exact = part ? closed.minus(open).times(ratio!) : kept;
           // Posted with the month closed, a payment took its share at the revalued cost, and a bill's
           // removal moved it to exchange differences (see yuanTrueUpLines): reopened, it is taken back.
-          if (postedClosed(id) && !(part && undoes)) open = closed.minus(kept);
-          else closed = open.plus(kept);
+          if (postedClosed(id) && !(part && undoes)) {
+            fine = { closed: before.closed.minus(closed), open: before.open.minus(closed.minus(exact)) };
+            open = closed.minus(kept);
+          } else {
+            fine = { closed: before.closed.minus(open.plus(exact)), open: before.open.minus(open) };
+            closed = open.plus(kept);
+          }
         }
         // Only a posting empties a balance: a revaluation moves no yuan or francs. The undoing of a posting
         // since the month's end too: its francs or yuan come back as they left, but the balance they come
@@ -395,7 +414,7 @@ async function restateSettled(tx: Tx, month: string, periodId: number, revaluati
         // what it paid held all it took.
         const over = crossed && !undoes && was.isNegative();
         const paidWeight = over && marks?.get(id) ? marks.get(id)!.owed.before.minus(marks.get(id)!.owed.after) : undefined;
-        if ((part && !native.isZero()) || (emptied && !undoes) || over) took.set(id, { closed: before.closed.minus(closed), open: before.open.minus(open), owed: was.isZero() ? undefined : was.isNegative(), lot: over ? paidWeight : marks?.get(id)?.lot, over });
+        if ((part && !native.isZero()) || (emptied && !undoes) || over) took.set(id, { closed: before.closed.minus(closed), open: before.open.minus(open), owed: was.isZero() ? undefined : was.isNegative(), lot: over ? paidWeight : marks?.get(id)?.lot, over, paid: part && paidPart ? marks?.get(id) : undefined, fine: part && paidPart ? fine : undefined });
         const move = state === "closed" ? closed.minus(before.closed) : open.minus(before.open);
         if (!move.isZero()) {
           moves.set(id, (moves.get(id) ?? new Decimal(0)).plus(move));
