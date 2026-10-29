@@ -6,18 +6,21 @@ import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 import { eq } from "drizzle-orm";
 import { z } from "zod";
 import { users, type Role } from "@shared/schema";
-import { db, pool } from "./db";
+import { db, pool, runInCompany, currentCompanyId } from "./db";
+import { publicCompanies } from "./companies";
 import { AppError, forbidden } from "./errors";
 import { asyncHandler } from "./http";
 
 declare module "express-session" {
   interface SessionData {
     userId?: number;
+    companyId?: number;
   }
 }
 
 export interface SessionUser {
   id: number;
+  companyId: number;
   username: string;
   fullName: string;
   role: Role;
@@ -56,12 +59,22 @@ export function setupSession(app: Express) {
     }),
   );
 
+}
+
+/** Called after company context middleware: look up the user inside their company. */
+export function loadSessionUser(app: Express) {
   app.use(
     asyncHandler(async (req, _res, next) => {
       if (req.session.userId) {
+        const selected = req.session.companyId ?? 1;
+        if (selected !== 1 && !(await publicCompanies()).some((row) => row.id === selected)) {
+          req.session.userId = undefined;
+          req.session.companyId = undefined;
+          return next();
+        }
         const [u] = await db.select().from(users).where(eq(users.id, req.session.userId));
         if (u && u.active) {
-          req.user = { id: u.id, username: u.username, fullName: u.fullName, role: u.role, partnerId: u.partnerId, language: u.language };
+          req.user = { id: u.id, companyId: currentCompanyId(), username: u.username, fullName: u.fullName, role: u.role, partnerId: u.partnerId, language: u.language };
         } else {
           delete req.session.userId;
         }
@@ -85,9 +98,14 @@ export function requireRole(...roles: Role[]) {
   };
 }
 
-export const loginSchema = z.object({ username: z.string().min(1).max(60), password: z.string().min(1).max(200) });
+export const loginSchema = z.object({
+  username: z.string().min(1).max(60),
+  password: z.string().min(1).max(200),
+  companyId: z.number().int().positive().optional(),
+});
 
 export function registerAuthRoutes(app: Express) {
+  app.get("/api/auth/companies", asyncHandler(async (_req, res) => res.json(await publicCompanies())));
   // Only failed attempts count, per address and username: a wrong password on one account
   // never locks out the other staff signing in from the same shop connection.
   const loginLimiter = rateLimit({
@@ -109,12 +127,20 @@ export function registerAuthRoutes(app: Express) {
     loginLimiter,
     asyncHandler(async (req, res) => {
       const body = loginSchema.parse(req.body);
-      const [u] = await db.select().from(users).where(eq(users.username, body.username.trim().toLowerCase()));
+      const selected = body.companyId ?? 1;
+      const available = await publicCompanies();
+      if (!available.some((row) => row.id === selected)) {
+        throw new AppError(401, "Wrong username, password or company", "BAD_LOGIN",
+          "Entreprise, identifiant ou mot de passe incorrect");
+      }
+      const [u] = await runInCompany(selected,
+        () => db.select().from(users).where(eq(users.username, body.username.trim().toLowerCase())));
       const ok = u && u.active && (await bcrypt.compare(body.password, u.passwordHash));
       if (!ok) throw new AppError(401, "Wrong username or password", "BAD_LOGIN", "Nom d'utilisateur ou mot de passe incorrect");
       await new Promise<void>((resolve, reject) => req.session.regenerate((err) => (err ? reject(err) : resolve())));
       req.session.userId = u.id;
-      res.json({ id: u.id, username: u.username, fullName: u.fullName, role: u.role, partnerId: u.partnerId, language: u.language });
+      req.session.companyId = selected;
+      res.json({ id: u.id, companyId: selected, username: u.username, fullName: u.fullName, role: u.role, partnerId: u.partnerId, language: u.language });
     }),
   );
 

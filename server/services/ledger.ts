@@ -17,7 +17,7 @@ import {
   type JournalType,
 } from "@shared/schema";
 import { cents, dec, sum, Decimal, type DecimalInput } from "@shared/money";
-import { atTransactionEnd, type Tx } from "../db";
+import { atTransactionEnd, currentCompanyId, type Tx } from "../db";
 import { log } from "../log";
 import { AppError, badRequest, conflict, francDecimalsError } from "../errors";
 
@@ -48,11 +48,12 @@ export function clearLedgerCache(): void {
 }
 
 export async function systemAccountId(tx: Tx, key: SystemAccountKey): Promise<number> {
-  const cached = accountIdCache.get(key);
+  const cacheKey = `${currentCompanyId()}:${key}`;
+  const cached = accountIdCache.get(cacheKey);
   if (cached) return cached;
   const [row] = await tx.select({ id: accounts.id }).from(accounts).where(eq(accounts.systemKey, key));
   if (!row) throw new AppError(500, `System account ${key} is missing. Run the seed.`, "SETUP", `Le compte système ${key} est manquant. Lancez le seed.`);
-  accountIdCache.set(key, row.id);
+  accountIdCache.set(cacheKey, row.id);
   return row.id;
 }
 

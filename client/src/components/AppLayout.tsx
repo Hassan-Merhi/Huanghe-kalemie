@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { roleLabel } from "@/lib/labels";
 import { Link, useLocation } from "wouter";
 import {
@@ -305,6 +306,8 @@ function MenuFollowsWidth() {
 export function AppLayout({ children }: { children: ReactNode }) {
   const { user } = useAuth();
   const { lang, setLang, t } = useI18n();
+  const companies = useQuery<{ id: number; name: string }[]>({ queryKey: ["/api/auth/companies"], staleTime: 300_000 });
+  const currentCompanyName = companies.data?.find((row) => row.id === user?.companyId)?.name ?? "Kalemie";
 
   async function logout() {
     await api("POST", "/api/auth/logout");
@@ -319,7 +322,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
         <SidebarHeader>
           <div className="px-2 py-1">
             <p className="text-lg font-bold text-sidebar-primary">HUANGHE</p>
-            <p className="text-xs text-sidebar-foreground/70">Kalemie</p>
+            <p className="truncate text-xs text-sidebar-foreground/70" title={currentCompanyName}>{currentCompanyName}</p>
           </div>
         </SidebarHeader>
         {/* The menu scrolls on its own above the footer, so a short screen never hides an entry under it. */}

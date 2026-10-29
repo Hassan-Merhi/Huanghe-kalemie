@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Eye, EyeOff } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Field, ErrorText, SubmitButton } from "@/components/common";
 import { ThemeToggle } from "@/components/ThemeProvider";
 import { api, queryClient } from "@/lib/api";
@@ -10,6 +12,8 @@ import type { User } from "@/lib/auth";
 
 export default function Login() {
   const { t, lang, setLang } = useI18n();
+  const companies = useQuery<{ id: number; name: string }[]>({ queryKey: ["/api/auth/companies"] });
+  const [companyId, setCompanyId] = useState(1);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<unknown>(null);
@@ -24,8 +28,9 @@ export default function Login() {
     setBusy(true);
     setError(null);
     try {
-      const user = await api<User>("POST", "/api/auth/login", { username, password });
+      const user = await api<User>("POST", "/api/auth/login", { username, password, companyId });
       if (user.language) setLang(user.language);
+      queryClient.clear(); // Never display cached books from a previously selected company.
       queryClient.setQueryData(["/api/auth/me"], user);
       await queryClient.invalidateQueries();
     } catch (err) {
@@ -49,6 +54,18 @@ export default function Login() {
         </CardHeader>
         <CardContent>
           <form onSubmit={submit} className="space-y-4">
+            {(companies.data?.length ?? 0) > 1 && (
+              <Field label={t("Company", "Entreprise")} required>
+                <Select value={String(companyId)} onValueChange={(id) => setCompanyId(Number(id))}>
+                  <SelectTrigger><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {(companies.data ?? []).map((company) => (
+                      <SelectItem key={company.id} value={String(company.id)}>{company.name}</SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </Field>
+            )}
             <Field label={t("Username", "Nom d'utilisateur")} required>
               <Input autoFocus autoCapitalize="none" autoComplete="username" value={username} onChange={(e) => setUsername(e.target.value)} />
             </Field>

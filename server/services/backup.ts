@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import { gunzipSync, gzipSync } from "zlib";
 import { and, desc, eq, notInArray, sql } from "drizzle-orm";
 import { backups, type BACKUP_KINDS } from "@shared/schema";
-import { db, type Tx } from "../db";
+import { currentCompanyId, db, pool, runInCompany, type Tx } from "../db";
 import { AppError } from "../errors";
 import { todayIso } from "../http";
 import { log } from "../log";
@@ -16,7 +16,7 @@ import { markSystemLines } from "./ledger";
 
 export const BACKUP_FORMAT = 2;
 /** Sign-in sessions, request keys and the snapshots themselves are not business data. */
-const SKIP = ["user_sessions", "idempotency_keys", "backups"];
+const SKIP = ["user_sessions", "idempotency_keys", "backups", "companies", "__drizzle_migrations"];
 const KEEP_DAILY = 7;
 const KEEP_BEFORE_RESTORE = 3;
 
@@ -41,7 +41,7 @@ interface Column { name: string; type: string }
 async function tables(tx: Tx): Promise<string[]> {
   const r = await tx.execute<{ table_name: string }>(sql`
     select table_name from information_schema.tables
-    where table_schema = 'public' and table_type = 'BASE TABLE'
+    where table_schema = current_schema() and table_type = 'BASE TABLE'
     order by table_name
   `);
   return r.rows.map((x) => x.table_name).filter((t) => !SKIP.includes(t));
@@ -51,7 +51,7 @@ async function tables(tx: Tx): Promise<string[]> {
 async function insertOrder(tx: Tx, names: string[]): Promise<string[]> {
   const fks = await tx.execute<{ child: string; parent: string }>(sql`
     select c.conrelid::regclass::text as child, c.confrelid::regclass::text as parent
-    from pg_constraint c where c.contype = 'f' and c.connamespace = 'public'::regnamespace
+    from pg_constraint c where c.contype = 'f' and c.connamespace = current_schema()::regnamespace
   `);
   const deps = new Map(names.map((n) => [n, new Set<string>()]));
   for (const { child, parent } of fks.rows) if (child !== parent && deps.has(child) && deps.has(parent)) deps.get(child)!.add(parent);
@@ -67,7 +67,7 @@ async function insertOrder(tx: Tx, names: string[]): Promise<string[]> {
 async function columns(tx: Tx, table: string): Promise<Column[]> {
   const r = await tx.execute<{ column_name: string; data_type: string }>(sql`
     select column_name, data_type from information_schema.columns
-    where table_schema = 'public' and table_name = ${table} order by ordinal_position
+    where table_schema = current_schema() and table_name = ${table} order by ordinal_position
   `);
   return r.rows.map((c) => ({ name: c.column_name, type: c.data_type }));
 }
@@ -104,7 +104,10 @@ export async function snapshot(tx: Tx): Promise<string> {
     `);
     parts.push(`${JSON.stringify(t)}:${r.rows[0].data}`);
   }
-  const [mig] = (await tx.execute<{ n: number }>(sql`select count(*)::int as n from drizzle.__drizzle_migrations`)).rows;
+  const historySchema = currentCompanyId() === 1 ? "drizzle" : `company_${currentCompanyId()}`;
+  const [mig] = (await tx.execute<{ n: number }>(
+    sql`select count(*)::int as n from ${sql.identifier(historySchema)}.__drizzle_migrations`
+  )).rows;
   const totals = await totalsOf(tx, names);
   return sign(`{"format":${BACKUP_FORMAT},"exportedAt":${JSON.stringify(new Date().toISOString())},"migrations":${mig.n},"totals":${JSON.stringify(totals)},"tables":{${parts.join(",")}}}`);
 }
@@ -242,8 +245,17 @@ export async function restore(tx: Tx, file: BackupFile, opts: { replace: boolean
     ) as n) x
   `);
   // Everyone signs in again against the restored users.
-  const [{ sessions }] = (await tx.execute<{ sessions: string | null }>(sql`select to_regclass('public.user_sessions')::text as sessions`)).rows;
-  if (sessions) await tx.execute(sql`delete from user_sessions`);
+  const [{ sessions }] = (await tx.execute<{ sessions: string | null }>(
+    sql`select to_regclass('public.user_sessions')::text as sessions`
+  )).rows;
+  if (sessions) {
+    const companyId = currentCompanyId();
+    if (companyId === 1) {
+      await tx.execute(sql`delete from public.user_sessions where sess->>'companyId' is null or sess->>'companyId' = '1'`);
+    } else {
+      await tx.execute(sql`delete from public.user_sessions where sess->>'companyId' = ${String(companyId)}`);
+    }
+  }
   return { tables: Object.keys(file.tables).length, rows: rowCount, checks };
 }
 
@@ -273,7 +285,18 @@ export async function ensureDailySnapshot() {
 }
 
 export function scheduleDailySnapshots() {
-  const run = () => ensureDailySnapshot().catch((e) => log("daily backup failed", { error: String(e) }));
+  const run = () => {
+    void (async () => {
+      const result = await pool.query<{ id: number }>("SELECT id FROM public.companies WHERE status='ready'");
+      for (const row of result.rows) {
+        try {
+          await runInCompany(row.id, () => ensureDailySnapshot());
+        } catch (error) {
+          log("daily company backup failed", { companyId: row.id, error: String(error) });
+        }
+      }
+    })().catch((e) => log("daily backup failed", { error: String(e) }));
+  };
   setTimeout(run, 60_000).unref();
   setInterval(run, 60 * 60_000).unref();
 }

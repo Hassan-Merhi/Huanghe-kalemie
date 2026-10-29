@@ -69,6 +69,33 @@ Every operation posts a balanced journal; reports are read from the ledger.
 - Cancelling (sale, expense, container offload) posts a reversal; nothing is deleted.
 - Every money amount uses exact decimal arithmetic (decimal.js), never floats.
 
+## Company workspaces
+
+The owner of the **original Kalemie company** can open **Settings → Companies** to
+create independent companies. At sign-in, choose which company's records to use.
+Each new company starts with its own accounting chart, products, stock, users,
+partners, vouchers, backups and journal numbering. The original company's
+existing data remains in PostgreSQL's `public` schema; each new company gets
+its own `company_<id>` schema. The database role must be allowed to create
+and drop schemas.
+
+The creating owner's login name and password hash are copied to the new
+company once, so they can sign in there. Password and user changes are
+independent after creation. Sign out to switch companies. Data and UI caches
+are not shared across company logins.
+
+To remove a company, choose **Delete** in Settings, review its record counts,
+type its exact name and select the explicit **force-delete** option if it has
+business data. Deleting a company permanently removes its database schema,
+including its private backups; export a backup first. Other companies remain
+intact. For additional safety, the original company cannot be deleted using
+this interface.
+
+Database changes must keep tenant migrations schema-safe: migrations are
+applied separately to each company's schema, with explicit public references
+in migration SQL redirected to that schema. The small `public.companies`
+directory and session store are shared infrastructure, not company data.
+
 ## Run it
 
 Requirements: Node 20+ and PostgreSQL 14+.

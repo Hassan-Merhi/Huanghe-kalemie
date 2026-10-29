@@ -6,6 +6,7 @@ export type Role = "owner" | "manager" | "cashier" | "partner";
 
 export interface User {
   id: number;
+  companyId: number;
   username: string;
   fullName: string;
   role: Role;
