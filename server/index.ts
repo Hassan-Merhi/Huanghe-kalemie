@@ -3,8 +3,8 @@ import helmet from "helmet";
 import path from "path";
 import fs from "fs";
 import { createServer } from "http";
-import { db } from "./db";
-import { registerAuthRoutes, setupSession } from "./auth";
+import { db, isolatedDb, pool, runInCompany } from "./db";
+import { loadSessionUser, registerAuthRoutes, setupSession } from "./auth";
 import { errorHandler } from "./http";
 import { idempotency } from "./idempotency";
 import { log } from "./log";
@@ -31,6 +31,8 @@ export async function createApp() {
   );
   app.use(express.json({ limit: "1mb" }));
   setupSession(app);
+  app.use((req, _res, next) => runInCompany(req.session.companyId ?? 1, () => next()));
+  loadSessionUser(app);
   registerAuthRoutes(app);
   app.use("/api", idempotency());
   registerRoutes(app);
@@ -41,6 +43,8 @@ export async function createApp() {
 
 async function main() {
   await runMigrations(db);
+  const companies = await pool.query<{ id: number }>("SELECT id FROM public.companies WHERE status='ready' AND id>1 ORDER BY id");
+  for (const company of companies.rows) await runMigrations(isolatedDb(company.id), company.id);
   await db.transaction((tx) =>
     ensureSetup(tx, {
       ownerUsername: process.env.OWNER_USERNAME?.toLowerCase(),
