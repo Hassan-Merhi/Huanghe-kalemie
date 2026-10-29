@@ -1,5 +1,5 @@
 import express, { type Express, type Request } from "express";
-import { and, asc, desc, eq, gte, ilike, inArray, lte, ne, or, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gte, ilike, inArray, isNull, lte, ne, or, sql } from "drizzle-orm";
 import { z } from "zod";
 import {
   accounts,
@@ -265,21 +265,54 @@ export function registerRoutes(app: Express) {
   app.get("/api/locations", requireRole(...EVERYONE), asyncHandler(async (_req, res) => {
     res.json(await db.select().from(locations).orderBy(asc(locations.id)));
   }));
+  /** Top-level sites and their child warehouses share one location ID namespace.
+   * Existing stock can stay on a site; stock in a warehouse uses its child ID.
+   */
+  const locationParentFilter = (parentId: number | null) =>
+    parentId === null ? isNull(locations.parentId) : eq(locations.parentId, parentId);
+
   app.post("/api/locations", requireRole(), asyncHandler(async (req, res) => {
-    const body = z.object({ name: z.string().min(1).max(80) }).parse(req.body);
-    const [row] = await db.insert(locations).values(body).returning();
-    await audit(req, "create", "location", row.id, body);
+    const body = z.object({
+      name: z.string().trim().min(1).max(80),
+      parentId: id.nullish(),
+    }).parse(req.body);
+    const parentId = body.parentId ?? null;
+    if (parentId !== null) {
+      const [parent] = await db.select().from(locations).where(eq(locations.id, parentId));
+      if (!parent || parent.parentId !== null || !parent.active) {
+        throw badRequest("Choose an active top-level location for this warehouse", "Choisissez un emplacement principal actif pour cet entrepôt");
+      }
+    }
+    const [duplicate] = await db.select({ id: locations.id }).from(locations)
+      .where(and(eq(locations.name, body.name), locationParentFilter(parentId))).limit(1);
+    if (duplicate) throw conflict("A location or warehouse with this name already exists here", "Un emplacement ou un entrepôt portant ce nom existe déjà ici");
+    const [row] = await db.insert(locations).values({ name: body.name, parentId }).returning();
+    await audit(req, "create", "location", row.id, { name: body.name, parentId });
     res.status(201).json(row);
   }));
   app.patch("/api/locations/:id", requireRole(), asyncHandler(async (req, res) => {
-    const body = z.object({ name: z.string().min(1).max(80).optional(), active: z.boolean().optional() }).parse(req.body);
+    const idValue = paramId(req);
+    const body = z.object({ name: z.string().trim().min(1).max(80).optional(), active: z.boolean().optional() }).parse(req.body);
+    const [current] = await db.select().from(locations).where(eq(locations.id, idValue));
+    if (!current) throw notFound("Location", "Emplacement introuvable");
+    if (body.name !== undefined) {
+      const [duplicate] = await db.select({ id: locations.id }).from(locations)
+        .where(and(eq(locations.name, body.name), locationParentFilter(current.parentId), ne(locations.id, idValue))).limit(1);
+      if (duplicate) throw conflict("A location or warehouse with this name already exists here", "Un emplacement ou un entrepôt portant ce nom existe déjà ici");
+    }
     if (body.active === false) {
-      // Stock in a switched-off place could no longer be sold, counted or moved.
-      const [held] = await db.select({ n: sql<number>`count(*)::int` }).from(stockLevels).where(and(eq(stockLevels.locationId, paramId(req)), sql`${stockLevels.qty} <> 0`));
+      // Deactivating a site with active warehouses would strand those warehouses.
+      const [children] = await db.select({ n: sql<number>`count(*)::int` }).from(locations)
+        .where(and(eq(locations.parentId, idValue), eq(locations.active, true)));
+      if (children.n > 0) {
+        throw badRequest("Deactivate the warehouses inside this location first", "Désactivez d'abord les entrepôts de cet emplacement");
+      }
+      const [held] = await db.select({ n: sql<number>`count(*)::int` }).from(stockLevels)
+        .where(and(eq(stockLevels.locationId, idValue), sql`${stockLevels.qty} <> 0`));
       if (held.n > 0) throw badRequest("Move the stock out of this place before switching it off", "Transférez le stock hors de cet emplacement avant de le désactiver");
     }
-    const [row] = await db.update(locations).set(body).where(eq(locations.id, paramId(req))).returning();
-    await audit(req, "update", "location", paramId(req), body);
+    const [row] = await db.update(locations).set(body).where(eq(locations.id, idValue)).returning();
+    await audit(req, "update", "location", idValue, body);
     res.json(row);
   }));
 

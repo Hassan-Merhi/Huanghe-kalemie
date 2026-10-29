@@ -82,6 +82,7 @@ export async function inventoryByLocation(tx: Tx) {
       productId: products.id,
       productName: products.name,
       categoryName: categories.name,
+      tracksSerials: products.tracksSerials,
       unit: products.unit,
       qty: stockLevels.qty,
       totalQty: variants.stockQty,
@@ -96,9 +97,19 @@ export async function inventoryByLocation(tx: Tx) {
     .where(sql`${stockLevels.qty} <> 0`)
     .orderBy(asc(locations.name), asc(products.name), asc(variants.sku));
   const kept = await keptUnitCosts(tx);
+  // Round cumulative allocations, not each location separately: pennies must add up
+  // to the variant's exact ledger value even when stock is split across warehouses.
+  const allocatedQty = new Map<number, ReturnType<typeof dec>>();
   return rows.map((r) => {
     const tq = dec(r.totalQty);
     const avg = tq.isZero() ? dec(0) : dec(r.totalValue).dividedBy(tq);
+    const beforeQty = allocatedQty.get(r.variantId) ?? dec(0);
+    const afterQty = beforeQty.plus(r.qty);
+    allocatedQty.set(r.variantId, afterQty);
+    const value = tq.isZero()
+      ? dec(0)
+      : dec(r.totalValue).times(afterQty).dividedBy(tq).toDecimalPlaces(2)
+        .minus(dec(r.totalValue).times(beforeQty).dividedBy(tq).toDecimalPlaces(2));
     return {
       locationId: r.locationId,
       locationName: r.locationName,
@@ -112,7 +123,7 @@ export async function inventoryByLocation(tx: Tx) {
       qty: dec(r.qty).toFixed(3),
       // Shown by the same rule as Stock › Valorisation (0,125 $, not 0,1244 $); the value stays exact.
       avgCost: tq.isZero() ? "0.000000" : shownUnitCost(r.totalValue, tq, kept.get(r.variantId)).toFixed(6),
-      value: avg.times(r.qty).toFixed(2),
+      value: value.toFixed(2),
       retailValue: dec(r.qty).times(r.sellPrice).toFixed(2),
     };
   });

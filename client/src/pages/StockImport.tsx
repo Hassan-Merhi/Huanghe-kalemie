@@ -235,27 +235,27 @@ const rowError = (p: PreviewRow | undefined, lang: string) => (p ? (lang === "fr
 
 // ---------------------------------------------------------------- Page
 
-export default function StockImport() {
+export default function StockImport({ embedded = false, onClose }: { embedded?: boolean; onClose?: () => void }) {
   const t = useT();
   const { can } = useAuth();
   const [tab, setTab] = useState("items");
   if (!can("manager")) return <EmptyState title={t("Managers only", "Réservé aux gérants")} />;
   return (
     <div>
-      <PageHeader
+      {!embedded && <PageHeader
         title={t("Stock import", "Import de stock")}
         description={t("Load items, opening stock and prices from a spreadsheet, or export the list to edit it.", "Charger les articles, le stock d'ouverture et les prix depuis un tableur, ou exporter la liste pour la modifier.")}
-      />
+      />}
       <Tabs value={tab} onValueChange={setTab}>
         <div className="overflow-x-auto pb-1">
           <TabsList>
             <TabsTrigger value="items">{t("Items and opening stock", "Articles et stock d'ouverture")}</TabsTrigger>
             <TabsTrigger value="prices">{t("Prices", "Prix")}</TabsTrigger>
             <TabsTrigger value="export">{t("Export", "Exporter")}</TabsTrigger>
-            <SectionLinks />
+            {!embedded && <SectionLinks />}
           </TabsList>
         </div>
-        <TabsContent value="items"><ItemsImport /></TabsContent>
+        <TabsContent value="items"><ItemsImport onClose={onClose} /></TabsContent>
         <TabsContent value="prices"><PricesImport /></TabsContent>
         <TabsContent value="export"><ExportItems /></TabsContent>
       </Tabs>
@@ -283,7 +283,7 @@ interface ImportResult {
   adjustment: { id?: number; number?: string } | null;
 }
 
-function ItemsImport() {
+function ItemsImport({ onClose }: { onClose?: () => void }) {
   const t = useT();
   const { lang } = useI18n();
   const { user } = useAuth();
@@ -416,7 +416,13 @@ function ItemsImport() {
               )}
             </p>
             <p className="flex flex-wrap gap-3 text-sm">
-              <Link href="/stock?tab=history" className="underline underline-offset-2">{t("See stock movements", "Voir les mouvements de stock")}</Link>
+              {onClose ? (
+                  <button type="button" className="underline underline-offset-2" onClick={onClose}>
+                    {t("Back to items", "Retour aux articles")}
+                  </button>
+                ) : (
+                  <Link href="/products" className="underline underline-offset-2">{t("Back to items", "Retour aux articles")}</Link>
+                )}
               <Link href="/daybook" className="underline underline-offset-2">{t("Day book", "Journal du jour")}</Link>
               <Link href="/products" className="underline underline-offset-2">{t("Items", "Articles")}</Link>
             </p>

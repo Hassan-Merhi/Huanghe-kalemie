@@ -222,19 +222,19 @@ export function useLocations() {
   return useQuery<Location[]>({ queryKey: ["/api/locations"] });
 }
 
-export function LocationSelect({ value, onChange, "aria-label": ariaLabel }: { value: number | null; onChange: (id: number) => void; "aria-label"?: string }) {
+export function LocationSelect({ value, onChange, excludeId, "aria-label": ariaLabel }: { value: number | null; onChange: (id: number) => void; excludeId?: number; "aria-label"?: string }) {
   const t = useT();
   const { data = [] } = useLocations();
   useEffect(() => {
-    const active = data.filter((l) => l.active);
+    const active = data.filter((l) => l.active && l.id !== excludeId && (!l.parentId || data.some((p) => p.id === l.parentId && p.active)));
     if (!value && active.length) onChange(active[0].id);
-  }, [data, value, onChange]);
+  }, [data, value, onChange, excludeId]);
   return (
     <Select value={value ? String(value) : ""} onValueChange={(v) => onChange(Number(v))}>
       <SelectTrigger aria-label={ariaLabel ?? t("Location", "Lieu")}><SelectValue /></SelectTrigger>
       <SelectContent>
-        {data.filter((l) => l.active).map((l) => (
-          <SelectItem key={l.id} value={String(l.id)}>{l.name}</SelectItem>
+        {data.filter((l) => l.active && l.id !== excludeId && (!l.parentId || data.some((p) => p.id === l.parentId && p.active))).map((l) => (
+          <SelectItem key={l.id} value={String(l.id)}>{l.parentId ? `${data.find((p) => p.id === l.parentId)?.name ?? ""} / ` : ""}{l.name}</SelectItem>
         ))}
       </SelectContent>
     </Select>
