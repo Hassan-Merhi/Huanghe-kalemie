@@ -2,6 +2,7 @@ import { sql } from "drizzle-orm";
 import {
   boolean,
   check,
+  type AnyPgColumn,
   customType,
   date,
   index,
@@ -117,11 +118,19 @@ export const auditLog = pgTable(
   (t) => ({ entityIdx: index("audit_log_entity_idx").on(t.entity, t.entityId) }),
 );
 
+/** A top-level location is a site; a child location is a warehouse.
+ * Existing locations keep parentId null and retain their stock without migration.
+ * Stock movements and balances continue to reference the same location IDs.
+ */
 export const locations = pgTable("locations", {
   id: serial("id").primaryKey(),
-  name: text("name").notNull().unique(),
+  name: text("name").notNull(),
+  parentId: integer("parent_id").references((): AnyPgColumn => locations.id),
   active: boolean("active").notNull().default(true),
-});
+}, (t) => ({
+  // A warehouse name may be reused at different sites, but not within one site.
+  siblingName: uniqueIndex("locations_sibling_name_unique").on(sql`coalesce(${t.parentId}, 0)`, t.name),
+}));
 
 // ---------------------------------------------------------------- Catalog
 
