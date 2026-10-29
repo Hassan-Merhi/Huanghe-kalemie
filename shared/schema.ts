@@ -130,6 +130,7 @@ export const locations = pgTable("locations", {
 }, (t) => ({
   // A warehouse name may be reused at different sites, but not within one site.
   siblingName: uniqueIndex("locations_sibling_name_unique").on(sql`coalesce(${t.parentId}, 0)`, t.name),
+  parentIdx: index("locations_parent_id_idx").on(t.parentId),
 }));
 
 // ---------------------------------------------------------------- Catalog
