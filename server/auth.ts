@@ -67,7 +67,7 @@ export function loadSessionUser(app: Express) {
     asyncHandler(async (req, _res, next) => {
       if (req.session.userId) {
         const selected = req.session.companyId ?? 1;
-        if (selected !== 1 && !(await publicCompanies()).some((row) => row.id === selected)) {
+        if (!(await publicCompanies()).some((row) => row.id === selected)) {
           req.session.userId = undefined;
           req.session.companyId = undefined;
           return next();
@@ -127,8 +127,8 @@ export function registerAuthRoutes(app: Express) {
     loginLimiter,
     asyncHandler(async (req, res) => {
       const body = loginSchema.parse(req.body);
-      const selected = body.companyId ?? 1;
       const available = await publicCompanies();
+      const selected = body.companyId ?? available[0]?.id ?? 1;
       if (!available.some((row) => row.id === selected)) {
         throw new AppError(401, "Wrong username, password or company", "BAD_LOGIN",
           "Entreprise, identifiant ou mot de passe incorrect");
