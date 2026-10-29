@@ -418,10 +418,10 @@ function ItemsImport({ onClose }: { onClose?: () => void }) {
             <p className="flex flex-wrap gap-3 text-sm">
               {onClose ? (
                   <button type="button" className="underline underline-offset-2" onClick={onClose}>
-                    {t("View stock valuation", "Voir la valorisation du stock")}
+                    {t("Back to items", "Retour aux articles")}
                   </button>
                 ) : (
-                  <Link href="/stock" className="underline underline-offset-2">{t("View stock valuation", "Voir la valorisation du stock")}</Link>
+                  <Link href="/products" className="underline underline-offset-2">{t("Back to items", "Retour aux articles")}</Link>
                 )}
               <Link href="/daybook" className="underline underline-offset-2">{t("Day book", "Journal du jour")}</Link>
               <Link href="/products" className="underline underline-offset-2">{t("Items", "Articles")}</Link>
