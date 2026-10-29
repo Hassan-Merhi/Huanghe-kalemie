@@ -928,13 +928,13 @@ interface TransferLine {
   unitIds: number[];
 }
 
-function TransferForm({ onDone }: { onDone: () => void }) {
+export function TransferForm({ onDone, initialFromId, initialToId }: { onDone: () => void; initialFromId?: number | null; initialToId?: number | null }) {
   const t = useT();
   const { data: locations = [] } = useLocations();
   const active = locations.filter((l) => l.active);
   const [dateValue, setDateValue] = useState(todayLocal());
-  const [fromId, setFromId] = useState<number | null>(null);
-  const [toId, setToId] = useState<number | null>(null);
+  const [fromId, setFromId] = useState<number | null>(initialFromId ?? null);
+  const [toId, setToId] = useState<number | null>(initialToId ?? null);
   const [note, setNote] = useState("");
   const [lines, setLines] = useState<TransferLine[]>([]);
   const [error, setError] = useState<string | null>(null);
