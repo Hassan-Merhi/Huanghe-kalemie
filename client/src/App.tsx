@@ -102,6 +102,7 @@ function Routes() {
         {R("/optional-vouchers", ["manager", "partner"], OptionalVouchers)}
         {R("/accounts", ["manager", "partner"], Accounts)}
         {R("/payroll", ["manager", "partner"], Payroll)}
+        {R("/payroll/employees/:id", ["manager", "partner"], ContactDetail)}
         {R("/sales-tools", ["manager", "cashier", "partner"], SalesTools)}
         {R("/analytics", ["manager", "partner"], Analytics)}
         {R("/containers", ["manager", "partner"], Containers)}

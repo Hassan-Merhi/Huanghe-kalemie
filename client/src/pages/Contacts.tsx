@@ -21,6 +21,7 @@ import type { Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type PartyType = Party["type"];
+type ContactType = Exclude<PartyType, "employee">;
 
 /** Balance in plain words. Debit-positive: positive = they owe us, negative = we owe them. */
 export interface ForeignBalance {
@@ -61,18 +62,17 @@ export function BalanceWords({ balance, className, customer, long }: { balance: 
   return <span className={cn("font-medium text-blue-700 dark:text-blue-400", className)}>{t(`we owe ${usd(b.abs().toFixed(2))}`, `nous devons ${usd(b.abs().toFixed(2))}`)}</span>;
 }
 
-const COUNT_WORDS: Record<PartyType, [[string, string], [string, string]]> = {
+const COUNT_WORDS: Record<ContactType, [[string, string], [string, string]]> = {
   customer: [["customer", "customers"], ["client", "clients"]],
   supplier: [["supplier", "suppliers"], ["fournisseur", "fournisseurs"]],
   agent: [["agent", "agents"], ["agent", "agents"]],
-  employee: [["employee", "employees"], ["employé", "employés"]],
 };
 
 export default function Contacts() {
   const t = useT();
   const { can, user } = useAuth();
   const [, navigate] = useLocation();
-  const [type, setType] = useState<PartyType>("customer");
+  const [type, setType] = useState<ContactType>("customer");
   const [search, setSearch] = useState("");
   const [editing, setEditing] = useState<Party | "new" | null>(null);
   const q = useQuery<Party[]>({ queryKey: ["/api/parties", { type, search: search.trim() || undefined }] });
@@ -81,11 +81,10 @@ export default function Contacts() {
   const owedToUs = rows.reduce((s, r) => (d(r.balance).isPositive() ? s.plus(r.balance) : s), d(0));
   const weOwe = rows.reduce((s, r) => (d(r.balance).isNegative() ? s.plus(d(r.balance).abs()) : s), d(0));
 
-  const labels: Record<PartyType, string> = {
+  const labels: Record<ContactType, string> = {
     customer: t("Customers", "Clients"),
     supplier: t("Suppliers", "Fournisseurs"),
     agent: t("Agents", "Agents"),
-    employee: t("Employees", "Employés"),
   };
 
   return (
@@ -112,12 +111,11 @@ export default function Contacts() {
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         {/* A cashier works with customers only: no tabs to choose from. */}
         {user?.role !== "cashier" && (
-          <Tabs value={type} onValueChange={(v) => setType(v as PartyType)}>
+          <Tabs value={type} onValueChange={(v) => setType(v as ContactType)}>
             <TabsList className="h-auto flex-wrap">
               <TabsTrigger value="customer">{labels.customer}</TabsTrigger>
               <TabsTrigger value="supplier">{labels.supplier}</TabsTrigger>
               <TabsTrigger value="agent">{labels.agent}</TabsTrigger>
-              <TabsTrigger value="employee">{labels.employee}</TabsTrigger>
             </TabsList>
           </Tabs>
         )}
@@ -158,11 +156,6 @@ export default function Contacts() {
                       <TableCell className="font-medium">
                         {p.name}
                         {!p.active && <Badge variant="secondary" className="ml-2">{t("Inactive", "Inactif")}</Badge>}
-                        {type === "employee" && (p.position || p.monthlySalary) && (
-                          <span className="block text-xs text-muted-foreground">
-                            {[p.position, p.monthlySalary ? `${usd(p.monthlySalary)} / ${t("month", "mois")}` : null].filter(Boolean).join(" · ")}
-                          </span>
-                        )}
                         {p.notes && <span className="block max-w-xs truncate text-xs text-muted-foreground">{p.notes}</span>}
                       </TableCell>
                       <TableCell className="whitespace-nowrap">{p.phone}</TableCell>

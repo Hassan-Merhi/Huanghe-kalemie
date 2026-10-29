@@ -194,9 +194,9 @@ function EmployeesTab({ employees, canEdit }: { employees: Party[]; canEdit: boo
               </TableHeader>
               <TableBody>
                 {employees.map((e) => (
-                  <TableRow key={e.id} className="cursor-pointer" onClick={() => navigate(`/contacts/${e.id}`)}>
+                  <TableRow key={e.id} className="cursor-pointer" onClick={() => navigate(`/payroll/employees/${e.id}`)}>
                     <TableCell className="font-medium">
-                      <Link href={`/contacts/${e.id}`} className="hover:underline" onClick={(ev) => ev.stopPropagation()}>{e.name}</Link>
+                      <Link href={`/payroll/employees/${e.id}`} className="hover:underline" onClick={(ev) => ev.stopPropagation()}>{e.name}</Link>
                       {!e.active && <Badge variant="secondary" className="ml-2">{t("Inactive", "Inactif")}</Badge>}
                       {e.phone && <span className="block text-xs text-muted-foreground">{e.phone}</span>}
                     </TableCell>
@@ -705,7 +705,7 @@ function RunLinesTable({ run }: { run: PayrollRun }) {
           {run.lines.map((l) => (
             <TableRow key={l.partyId}>
               <TableCell className="font-medium">
-                <Link href={`/contacts/${l.partyId}`} className="hover:underline">{l.name}</Link>
+                <Link href={`/payroll/employees/${l.partyId}`} className="hover:underline">{l.name}</Link>
               </TableCell>
               <TableCell className="text-right"><Num>{fmt(l.salary)}</Num></TableCell>
               <TableCell className="text-right"><Num>{d(l.bonus).isZero() ? "—" : fmt(l.bonus)}</Num></TableCell>
@@ -1234,7 +1234,7 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
                 {outstanding.map((e) => (
                   <TableRow key={e.id}>
                     <TableCell className="font-medium">
-                      <Link href={`/contacts/${e.id}`} className="hover:underline">{e.name}</Link>
+                      <Link href={`/payroll/employees/${e.id}`} className="hover:underline">{e.name}</Link>
                       {e.position && <span className="block text-xs text-muted-foreground">{e.position}</span>}
                     </TableCell>
                     <TableCell className="text-right">
@@ -1260,7 +1260,7 @@ function AdvancesTab({ employees, canEdit }: { employees: Party[]; canEdit: bool
             <ul className="space-y-1 border-t p-4 text-sm text-muted-foreground" data-testid="advance-deducted">
               {deducted.map((e) => (
                 <li key={e.id}>
-                  <Link href={`/contacts/${e.id}`} className="font-medium text-foreground hover:underline">{e.name}</Link>
+                  <Link href={`/payroll/employees/${e.id}`} className="font-medium text-foreground hover:underline">{e.name}</Link>
                   {t(
                     `: ${usd(e.advanceDeducted!.usd)} of advance already deducted from the ${monthLabel(e.advanceDeducted!.month)} salary`,
                     `\u00a0: ${usd(e.advanceDeducted!.usd)} d'avance déjà déduits du salaire ${deMonth(e.advanceDeducted!.month)}`,

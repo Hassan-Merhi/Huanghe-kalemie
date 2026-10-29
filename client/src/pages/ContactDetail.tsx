@@ -143,12 +143,16 @@ export default function ContactDetail() {
   const isCustomer = party.type === "customer";
   const typeLabel = t(PARTY_LABELS[party.type][0], PARTY_LABELS[party.type][1]);
   const canPay = isCustomer ? can("manager", "cashier") : can("manager");
+  const backHref = party.type === "employee" ? "/payroll" : "/contacts";
+  const backLabel = party.type === "employee"
+    ? t("Payroll", "Paie")
+    : cashier ? t("Customers", "Clients") : t("Customers and suppliers", "Clients et fournisseurs");
 
   return (
     <div>
       <style>{WIDE_PRINT_CSS}</style>
-      <Link href="/contacts" className="mb-2 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
-        <ArrowLeft className="h-4 w-4" /> {cashier ? t("Customers", "Clients") : t("Customers and suppliers", "Clients et fournisseurs")}
+      <Link href={backHref} className="mb-2 inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground">
+        <ArrowLeft className="h-4 w-4" /> {backLabel}
       </Link>
       <PageHeader
         title={party.name}
