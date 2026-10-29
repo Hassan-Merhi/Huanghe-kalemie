@@ -26,9 +26,24 @@ const businessTables = [
 ] as const;
 
 const companySchema = (id: number) => {
-  if (!Number.isSafeInteger(id) || id < 2) throw badRequest("Invalid company", "Entreprise invalide");
-  return `company_${id}`;
+  if (!Number.isSafeInteger(id) || id < 1) throw badRequest("Invalid company", "Entreprise invalide");
+  return id === 1 ? "public" : `company_${id}`;
 };
+
+// All business tables in the public schema (company 1). Leave the directory,
+// its manager grants, and the shared session store untouched. If future
+// migrations add a table, fail closed until this explicit allowlist is updated.
+const originalTables = new Set([
+  "users", "settings", "exchange_rates", "counters", "idempotency_keys",
+  "audit_log", "locations", "categories", "products", "variants",
+  "stock_levels", "stock_movements", "motorcycle_units", "parties",
+  "accounts", "journals", "journal_lines", "partners", "periods",
+  "expenses", "containers", "container_lines", "container_expenses",
+  "sales", "sale_lines", "sale_payments", "sale_returns",
+  "sale_return_lines", "stock_adjustments", "voucher_drafts",
+  "payroll_runs", "backups",
+]);
+const sharedTables = new Set(["companies", "company_managers", "user_sessions"]);
 
 const nameSchema = z.object({ name: z.string().trim().min(1).max(120) });
 const deleteSchema = z.object({ name: z.string(), force: z.boolean().default(false) });
@@ -48,10 +63,19 @@ async function company(id: number): Promise<CompanyRow> {
   return r.rows[0];
 }
 
-function rootOwner(req: Request) {
-  if (req.session.companyId !== undefined && req.session.companyId !== 1) {
-    throw new AppError(403, "Manage companies from the original company", "ROOT_COMPANY_ONLY",
-      "Gérez les entreprises depuis l'entreprise d'origine");
+async function companyManager(req: Request): Promise<boolean> {
+  if (!req.user || req.user.role !== "owner") return false;
+  const result = await pool.query(
+    "SELECT 1 FROM public.company_managers WHERE company_id=$1 AND user_id=$2",
+    [req.user.companyId, req.user.id],
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
+async function requireCompanyManager(req: Request) {
+  if (!(await companyManager(req))) {
+    throw new AppError(403, "Only an authorized company owner can manage companies",
+      "COMPANY_MANAGER_REQUIRED", "Seul un propriétaire autorisé peut gérer les entreprises");
   }
 }
 
@@ -74,20 +98,24 @@ export async function publicCompanies() {
 }
 
 export function registerCompanyRoutes(app: Express) {
+  app.get("/api/companies/permissions", requireRole(), asyncHandler(async (req, res) => {
+    res.json({ canManage: await companyManager(req) });
+  }));
+
   app.get("/api/companies", requireRole(), asyncHandler(async (req, res) => {
-    rootOwner(req);
+    await requireCompanyManager(req);
     res.json((await directory()).map((r) => ({ id: r.id, name: r.name, createdAt: r.created_at, isOriginal: r.id === 1 })));
   }));
 
   app.get("/api/companies/:id/impact", requireRole(), asyncHandler(async (req, res) => {
-    rootOwner(req);
+    await requireCompanyManager(req);
     const id = z.coerce.number().int().positive().parse(req.params.id);
     const row = await company(id);
-    res.json({ id, name: row.name, ...(id === 1 ? { records: null, counts: {} } : await impact(id)) });
+    res.json({ id, name: row.name, ...await impact(id) });
   }));
 
   app.post("/api/companies", requireRole(), asyncHandler(async (req, res) => {
-    rootOwner(req);
+    await requireCompanyManager(req);
     const { name } = nameSchema.parse(req.body);
     const owner = await db.select().from(users).where(eq(users.id, req.user!.id)).limit(1);
     if (!owner[0] || owner[0].role !== "owner") throw new AppError(403, "Owner required", "FORBIDDEN", "Propriétaire requis");
@@ -117,6 +145,13 @@ export function registerCompanyRoutes(app: Express) {
       });
       // Give the new company its own receipt / shop name.
       await isolatedDb(row.id).update(settings).set({ value: name, updatedAt: new Date() }).where(eq(settings.key, "shopName"));
+      const [newOwner] = await isolatedDb(row.id).select({ id: users.id })
+        .from(users).where(eq(users.username, owner[0].username));
+      if (!newOwner) throw new Error("New company owner was not created");
+      await pool.query(
+        "INSERT INTO public.company_managers(company_id,user_id) VALUES($1,$2)",
+        [row.id, newOwner.id],
+      );
       await pool.query("UPDATE public.companies SET status='ready' WHERE id=$1", [row.id]);
     } catch (error) {
       forgetCompany(row.id);
@@ -127,39 +162,74 @@ export function registerCompanyRoutes(app: Express) {
     res.status(201).json({ id: row.id, name: row.name });
   }));
 
-  // POST rather than a bare DELETE so confirmation is sent by the existing
-  // idempotent mutation helper and verified by the server.
+  // POST rather than DELETE: the user must send the exact name and explicitly
+  // opt in to wiping business records, including for the original company.
   app.post("/api/companies/:id/delete", requireRole(), asyncHandler(async (req, res) => {
-    rootOwner(req);
+    await requireCompanyManager(req);
     const id = z.coerce.number().int().positive().parse(req.params.id);
-    if (id === 1) throw new AppError(403,
-      "The original company cannot be deleted. Preserve the existing live accounting data.",
-      "ORIGINAL_COMPANY", "L'entreprise d'origine ne peut pas être supprimée.");
     const body = deleteSchema.parse(req.body);
+    if (req.user!.companyId === id) {
+      throw new AppError(409, "Switch to another company before deleting the current one",
+        "ACTIVE_COMPANY", "Changez d'entreprise avant de supprimer l'entreprise active");
+    }
     const schema = companySchema(id);
     const client = await pool.connect();
     let records = 0;
     try {
       await client.query("BEGIN");
-      const rows = await client.query<CompanyRow>(
-        "SELECT id,name,status,created_at FROM public.companies WHERE id=$1 AND status='ready' FOR UPDATE", [id],
+      // Serializes deletions: two concurrent requests cannot remove the final
+      // two companies and leave nobody able to sign in.
+      const ready = await client.query<CompanyRow>(
+        "SELECT id,name,status,created_at FROM public.companies WHERE status='ready' ORDER BY id FOR UPDATE",
       );
-      if (!rows.rows[0]) throw notFound("Company", "Entreprise introuvable");
-      if (body.name !== rows.rows[0].name) {
+      const target = ready.rows.find((row) => row.id === id);
+      if (!target) throw notFound("Company", "Entreprise introuvable");
+      if (ready.rows.length < 2) {
+        throw new AppError(409, "You cannot delete the last company",
+          "LAST_COMPANY", "Vous ne pouvez pas supprimer la dernière entreprise");
+      }
+      if (body.name !== target.name) {
         throw badRequest("Type the exact company name to confirm deletion", "Tapez le nom exact de l'entreprise pour confirmer");
       }
 
-      // Lock every data table before the final count, so another user cannot
-      // add a sale between the count and the removal.
-      await client.query(`LOCK TABLE ${businessTables.map((table) => `"${schema}"."${table}"`).join(", ")} IN ACCESS EXCLUSIVE MODE`);
-      const result = await client.query<Record<string, number>>(`SELECT ${countsSql(schema)}`);
-      records = Object.values(result.rows[0] ?? {}).reduce((total, n) => total + Number(n), 0);
-      if (records > 0 && !body.force) {
-        throw new AppError(409, "This company has data. Choose Delete company and all data.",
-          "COMPANY_NOT_EMPTY", "Cette entreprise contient des données. Choisissez de supprimer l'entreprise et toutes ses données.");
+      if (id === 1) {
+        // The original shop shares public with the directory and sessions.
+        // Do not drop public or cascade into unrelated schemas.
+        const tables = await client.query<{ tablename: string }>(
+          "SELECT tablename FROM pg_tables WHERE schemaname='public' ORDER BY tablename",
+        );
+        const unknown = tables.rows.filter((row) => !originalTables.has(row.tablename) && !sharedTables.has(row.tablename));
+        if (unknown.length) {
+          throw new AppError(409, "Unknown shared tables exist; original company deletion needs review",
+            "UNKNOWN_PUBLIC_TABLES", "Des tables partagées inconnues existent ; la suppression nécessite une vérification");
+        }
+        const owned = tables.rows.filter((row) => originalTables.has(row.tablename)).map((row) => `"public"."${row.tablename}"`);
+        if (owned.length !== originalTables.size) {
+          throw new AppError(409, "Original company schema does not match the expected tables",
+            "ORIGINAL_SCHEMA_MISMATCH", "Les tables de l'entreprise d'origine ne correspondent pas au schéma attendu");
+        }
+        await client.query(`LOCK TABLE ${owned.join(", ")} IN ACCESS EXCLUSIVE MODE`);
+        const result = await client.query<Record<string, number>>(`SELECT ${countsSql(schema)}`);
+        records = Object.values(result.rows[0] ?? {}).reduce((total, n) => total + Number(n), 0);
+        if (records > 0 && !body.force) {
+          throw new AppError(409, "This company has data. Choose Delete company and all data.",
+            "COMPANY_NOT_EMPTY", "Cette entreprise contient des données. Choisissez de supprimer l'entreprise et toutes ses données.");
+        }
+        // RESTRICT prevents a foreign key outside this allowlist from causing
+        // accidental deletion of another company's data.
+        await client.query(`TRUNCATE TABLE ${owned.join(", ")} RESTART IDENTITY RESTRICT`);
+        await client.query("DELETE FROM public.user_sessions WHERE sess->>'companyId' = '1' OR (sess->>'companyId' IS NULL AND sess ? 'userId')");
+      } else {
+        await client.query(`LOCK TABLE ${businessTables.map((table) => `"${schema}"."${table}"`).join(", ")} IN ACCESS EXCLUSIVE MODE`);
+        const result = await client.query<Record<string, number>>(`SELECT ${countsSql(schema)}`);
+        records = Object.values(result.rows[0] ?? {}).reduce((total, n) => total + Number(n), 0);
+        if (records > 0 && !body.force) {
+          throw new AppError(409, "This company has data. Choose Delete company and all data.",
+            "COMPANY_NOT_EMPTY", "Cette entreprise contient des données. Choisissez de supprimer l'entreprise et toutes ses données.");
+        }
+        await client.query(`DROP SCHEMA "${schema}" CASCADE`);
+        await client.query("DELETE FROM public.user_sessions WHERE sess->>'companyId' = $1", [String(id)]);
       }
-
-      await client.query(`DROP SCHEMA "${schema}" CASCADE`);
       await client.query("DELETE FROM public.companies WHERE id=$1", [id]);
       await client.query("COMMIT");
     } catch (error) {
@@ -168,7 +238,7 @@ export function registerCompanyRoutes(app: Express) {
     } finally {
       client.release();
     }
-    forgetCompany(id);
+    if (id !== 1) forgetCompany(id);
     res.json({ ok: true, deletedRecords: records });
   }));
 }
