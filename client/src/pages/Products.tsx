@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useLocation } from "wouter";
-import { Bike, Plus, Search, Trash2, Wand2, X } from "lucide-react";
+import { Bike, FileUp, Plus, Search, Trash2, Wand2, X } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
@@ -22,6 +22,8 @@ import type { Category, Product } from "@/lib/types";
 
 import { UNITS, unitLabel } from "@/lib/units";
 export { UNITS, unitLabel };
+
+const StockImport = lazy(() => import("@/pages/StockImport"));
 
 /** Debounce a value (search boxes). */
 function useDebounced<T>(value: T, ms = 250) {
@@ -47,6 +49,17 @@ export default function Products() {
   const [categoryId, setCategoryId] = useState<number | null>(null);
   const [includeInactive, setIncludeInactive] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [importOpen, setImportOpen] = useState(() => new URLSearchParams(window.location.search).get("import") === "1");
+  function toggleImport(open: boolean) {
+    setImportOpen(open);
+    if (!open) {
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("import")) {
+        url.searchParams.delete("import");
+        window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+      }
+    }
+  }
   const debounced = useDebounced(search.trim());
   const showValue = can("manager", "partner");
 
@@ -63,9 +76,14 @@ export default function Products() {
         description={t("Motorcycles, spare parts and accessories with their sizes and colours.", "Motos, pièces de rechange et accessoires avec leurs tailles et couleurs.")}
         actions={
           can("manager") && (
-            <Button onClick={() => setCreating(true)}>
-              <Plus className="mr-1 h-4 w-4" /> {t("New item", "Nouvel article")}
-            </Button>
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" onClick={() => toggleImport(true)}>
+                <FileUp className="mr-1 h-4 w-4" />{t("Import", "Importer")}
+              </Button>
+              <Button onClick={() => setCreating(true)}>
+                <Plus className="mr-1 h-4 w-4" /> {t("New item", "Nouvel article")}
+              </Button>
+            </div>
           )
         }
       />
@@ -135,6 +153,22 @@ export default function Products() {
       )}
 
       {creating && <NewProductDialog onClose={() => setCreating(false)} onCreated={(id) => navigate(`/products/${id}`)} />}
+      {can("manager") && (
+        <Dialog open={importOpen} onOpenChange={toggleImport}>
+          <DialogContent className="max-h-[92dvh] max-w-6xl overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>{t("Import items and stock", "Importer les articles et le stock")}</DialogTitle>
+              <DialogDescription>{t(
+                "Import items, opening stock and prices, or export the item list.",
+                "Importer les articles, le stock d'ouverture et les prix, ou exporter la liste d'articles.",
+              )}</DialogDescription>
+            </DialogHeader>
+            <Suspense fallback={<Loading />}>
+              <StockImport embedded onClose={() => toggleImport(false)} />
+            </Suspense>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }
