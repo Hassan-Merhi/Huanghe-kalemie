@@ -23,6 +23,7 @@ import { accountTypeLabel } from "@/pages/Reports";
 import { roleLabel } from "@/lib/labels";
 import { journalTypeLabel } from "@/pages/ContactDetail";
 import { BackupPanel } from "@/components/BackupPanel";
+import { CompaniesPanel } from "@/components/CompaniesPanel";
 
 type T = (en: string, fr: string) => string;
 
@@ -31,6 +32,8 @@ interface UserRow { id: number; username: string; fullName: string; role: Role; 
 export default function Settings() {
   const t = useT();
   const [tab, setTab] = useState("shop");
+  const { user } = useAuth();
+  const manageCompanies = user?.role === "owner" && user.companyId === 1;
   return (
     <div>
       <PageHeader title={t("Settings", "Paramètres")} description={t("Shop, users, places, categories, the chart of accounts and backups.", "Boutique, utilisateurs, emplacements, catégories, plan comptable et sauvegardes.")} />
@@ -38,6 +41,7 @@ export default function Settings() {
         <div className="overflow-x-auto pb-1">
           <TabsList>
             <TabsTrigger value="shop">{t("Shop", "Boutique")}</TabsTrigger>
+            {manageCompanies && <TabsTrigger value="companies">{t("Companies", "Entreprises")}</TabsTrigger>}
             <TabsTrigger value="users">{t("Users", "Utilisateurs")}</TabsTrigger>
             <TabsTrigger value="locations">{t("Locations", "Emplacements")}</TabsTrigger>
             <TabsTrigger value="categories">{t("Categories", "Catégories")}</TabsTrigger>
@@ -46,6 +50,7 @@ export default function Settings() {
           </TabsList>
         </div>
         <TabsContent value="shop"><ShopTab /></TabsContent>
+        {manageCompanies && <TabsContent value="companies"><CompaniesPanel /></TabsContent>}
         <TabsContent value="users"><UsersTab /></TabsContent>
         <TabsContent value="locations"><NamedListTab kind="locations" /></TabsContent>
         <TabsContent value="categories"><NamedListTab kind="categories" /></TabsContent>
