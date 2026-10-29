@@ -3,7 +3,7 @@ import { de } from "@shared/french";
 import { useQuery } from "@tanstack/react-query";
 import Decimal from "decimal.js";
 import { Link } from "wouter";
-import { AlertTriangle, ArrowRightLeft, Bike, CheckCircle2, ChevronDown, ChevronRight, Search, Trash2 } from "lucide-react";
+import { AlertTriangle, ArrowRightLeft, Bike, CheckCircle2, ChevronDown, ChevronRight, FileUp, Search, Trash2 } from "lucide-react";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -14,8 +14,6 @@ import { DecimalInput, Input } from "@/components/ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { SectionLinks } from "@/components/AppLayout";
 import { Textarea } from "@/components/ui/textarea";
 import { EmptyState, ErrorText, Field, Loading, Num, PageHeader, StatCard, SubmitButton } from "@/components/common";
 import { LocationSelect, useLocations, VariantSearch } from "@/components/pickers";
@@ -28,6 +26,7 @@ import { useT, count } from "@/lib/i18n";
 import type { MotorcycleUnit, VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useSystemText } from "@/lib/systemText";
+import StockImport from "@/pages/StockImport";
 
 type T = (en: string, fr: string) => string;
 
@@ -95,10 +94,21 @@ const isPositive = (s: string) => /^\d+(\.\d+)?$/.test(s.trim()) && d(s).gt(0);
 export default function Stock() {
   const t = useT();
   const { can } = useAuth();
-  const { data: locations = [] } = useLocations();
-  const isManager = can("manager");
-  const multiLocation = locations.filter((l) => l.active).length > 1;
-  const [tab, setTab] = useState(() => new URLSearchParams(window.location.search).get("tab") ?? "valuation");
+  const [importOpen, setImportOpen] = useState(
+    () => new URLSearchParams(window.location.search).get("import") === "1",
+  );
+
+  function setImportDialogOpen(open: boolean) {
+    setImportOpen(open);
+    if (!open) {
+      // Old /stock/import bookmarks redirect here; closing the popup should not reopen it on refresh.
+      const url = new URL(window.location.href);
+      if (url.searchParams.has("import")) {
+        url.searchParams.delete("import");
+        window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+      }
+    }
+  }
 
   return (
     <div>
@@ -106,21 +116,33 @@ export default function Stock() {
         title={t("Stock", "Stock")}
         description={t("Stock is valued at weighted average cost (purchase price plus container costs).", "Le stock est valorisé au coût moyen pondéré (prix d'achat plus frais du conteneur).")}
       />
-      <Tabs value={tab} onValueChange={setTab}>
-        <TabsList className="mb-4 flex h-auto w-full flex-wrap justify-start sm:w-auto">
-          <TabsTrigger value="valuation">{t("Valuation", "Valorisation")}</TabsTrigger>
-          {isManager && <TabsTrigger value="adjust">{t("Adjust stock", "Ajuster le stock")}</TabsTrigger>}
-          <TabsTrigger value="history">{t("Adjustments", "Ajustements")}</TabsTrigger>
-          {isManager && multiLocation && <TabsTrigger value="transfer">{t("New transfer", "Nouveau transfert")}</TabsTrigger>}
-          <TabsTrigger value="transfers">{t("Transfers", "Transferts")}</TabsTrigger>
-          <SectionLinks />
-        </TabsList>
-        <TabsContent value="valuation"><Valuation /></TabsContent>
-        {isManager && <TabsContent value="adjust"><AdjustForm onDone={() => setTab("history")} /></TabsContent>}
-        <TabsContent value="history"><AdjustmentHistory /></TabsContent>
-        {isManager && multiLocation && <TabsContent value="transfer"><TransferForm onDone={() => setTab("transfers")} /></TabsContent>}
-        <TabsContent value="transfers"><TransferHistory multiLocation={multiLocation} /></TabsContent>
-      </Tabs>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-xl font-semibold">{t("Valuation", "Valorisation")}</h2>
+        {can("manager") && (
+          <Button variant="outline" onClick={() => setImportDialogOpen(true)}>
+            <FileUp className="mr-2 h-4 w-4" />
+            {t("Import", "Importer")}
+          </Button>
+        )}
+      </div>
+      <Valuation />
+
+      {can("manager") && (
+        <Dialog open={importOpen} onOpenChange={setImportDialogOpen}>
+          <DialogContent className="max-h-[92dvh] max-w-6xl overflow-y-auto">
+            <DialogHeader>
+              <DialogTitle>{t("Stock import", "Import de stock")}</DialogTitle>
+              <DialogDescription>
+                {t(
+                  "Load items, opening stock and prices from a spreadsheet, or export the list to edit it.",
+                  "Charger les articles, le stock d'ouverture et les prix depuis un tableur, ou exporter la liste pour la modifier.",
+                )}
+              </DialogDescription>
+            </DialogHeader>
+            <StockImport embedded />
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   );
 }
