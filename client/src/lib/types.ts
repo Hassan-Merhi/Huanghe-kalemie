@@ -19,6 +19,7 @@ export interface Account {
 export interface Location {
   id: number;
   name: string;
+  parentId: number | null;
   active: boolean;
 }
 
