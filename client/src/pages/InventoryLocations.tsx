@@ -109,7 +109,7 @@ export default function InventoryLocations() {
   const [siteId, setSiteId] = useState<number | null>(null);
   const [warehouseId, setWarehouseId] = useState<number | null>(null);
   const [editing, setEditing] = useState<{ parentId: number | null; place?: Location } | null>(null);
-  const [transferTarget, setTransferTarget] = useState<number | null>(null);
+  const [transferTarget, setTransferTarget] = useState<{ fromId?: number; toId?: number } | null>(null);
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("all");
   const [siteSearch, setSiteSearch] = useState("");
@@ -164,7 +164,7 @@ export default function InventoryLocations() {
         actions={site === undefined || !site
           ? canManagePlaces && <Button onClick={() => setEditing({ parentId: null })}><Plus className="mr-2 h-4 w-4" />{t("Create location", "Créer un emplacement")}</Button>
           : warehouse
-            ? canTransfer && warehouse.active && <Button onClick={() => setTransferTarget(warehouse.id)}><ArrowRightLeft className="mr-2 h-4 w-4" />{t("Move stock", "Transférer le stock")}</Button>
+            ? canTransfer && warehouse.active && <Button onClick={() => setTransferTarget(warehouse.id === site.id ? { fromId: warehouse.id } : { toId: warehouse.id })}><ArrowRightLeft className="mr-2 h-4 w-4" />{warehouse.id === site.id ? t("Send stock", "Envoyer le stock") : t("Move stock here", "Transférer du stock ici")}</Button>
             : canManagePlaces && site.active && <Button onClick={() => setEditing({ parentId: site.id })}><Plus className="mr-2 h-4 w-4" />{t("Create warehouse", "Créer un entrepôt")}</Button>}
       />
 
@@ -225,7 +225,10 @@ export default function InventoryLocations() {
                 <div><h2 className="text-2xl font-semibold">{site.name}</h2>
                   <p className="text-sm text-muted-foreground">{count(t, warehouses.length, ["warehouse", "warehouses"], ["entrepôt", "entrepôts"])} · {count(t, siteRows.length, ["variant position", "variant positions"], ["position de variante", "positions de variantes"])} · {usd(summary(siteRows).value)}</p>
                 </div>
-                {canManagePlaces && <Button variant="outline" size="sm" onClick={() => setEditing({ parentId: null, place: site })}><Pencil className="mr-2 h-4 w-4" />{t("Rename location", "Renommer l'emplacement")}</Button>}
+                <div className="flex flex-wrap gap-2">
+                  {canTransfer && site.active && owners(site).length > 0 && <Button variant="outline" size="sm" onClick={() => setTransferTarget({ fromId: site.id })}><ArrowRightLeft className="mr-2 h-4 w-4" />{t("Send existing stock", "Transférer le stock existant")}</Button>}
+                  {canManagePlaces && <Button variant="outline" size="sm" onClick={() => setEditing({ parentId: null, place: site })}><Pencil className="mr-2 h-4 w-4" />{t("Rename location", "Renommer l'emplacement")}</Button>}
+                </div>
               </div>
               <h3 className="text-lg font-semibold">{t("Warehouses", "Entrepôts")}</h3>
               <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
@@ -338,7 +341,7 @@ export default function InventoryLocations() {
               <DialogTitle>{t("Move stock", "Transférer le stock")}</DialogTitle>
               <DialogDescription>{t("Transfer items between locations or warehouses without changing their average cost.", "Transférez des articles entre les emplacements ou entrepôts sans modifier leur coût moyen.")}</DialogDescription>
             </DialogHeader>
-            <TransferForm initialToId={transferTarget} onDone={() => setTransferTarget(null)} />
+            <TransferForm initialFromId={transferTarget.fromId} initialToId={transferTarget.toId} onDone={() => setTransferTarget(null)} />
           </DialogContent>
         </Dialog>
       )}
