@@ -139,7 +139,7 @@ export default function Stock() {
                 )}
               </DialogDescription>
             </DialogHeader>
-            <StockImport embedded />
+            <StockImport embedded onClose={() => setImportDialogOpen(false)} />
           </DialogContent>
         </Dialog>
       )}
