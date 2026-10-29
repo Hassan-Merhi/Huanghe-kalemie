@@ -933,7 +933,7 @@ export function TransferForm({ onDone, initialFromId, initialToId }: { onDone: (
   const { data: locations = [] } = useLocations();
   const active = locations.filter((l) => l.active);
   const [dateValue, setDateValue] = useState(todayLocal());
-  const [fromId, setFromId] = useState<number | null>(initialFromId ?? null);
+  const [fromId, setFromId] = useState<number | null>(initialFromId ?? active.find((l) => l.id !== initialToId)?.id ?? null);
   const [toId, setToId] = useState<number | null>(initialToId ?? null);
   const [note, setNote] = useState("");
   const [lines, setLines] = useState<TransferLine[]>([]);
