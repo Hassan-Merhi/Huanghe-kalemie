@@ -72,11 +72,10 @@ const NAV: { en: string; fr: string; items: NavItem[] }[] = [
     ],
   },
   {
-    // Not "Stock": the group holds a "Stock" page of its own.
     en: "Goods",
     fr: "Marchandises",
     items: [
-      { href: "/stock", en: "Stock", fr: "Stock", icon: Boxes, roles: ["manager", "partner"], also: ["/inventory"] },
+      { href: "/inventory", en: "Inventory", fr: "Inventaire", icon: Boxes, roles: ["manager", "partner"] },
       { href: "/products", en: "Items", fr: "Articles", icon: Package, roles: ["manager", "cashier", "partner"] },
       { href: "/motorcycles", en: "Motorcycles", fr: "Motos", icon: Bike, roles: ["manager", "cashier", "partner"] },
       { href: "/containers", en: "Containers", fr: "Conteneurs", icon: Container, roles: ["manager", "partner"] },
