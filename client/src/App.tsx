@@ -33,7 +33,6 @@ import Daybook from "@/pages/Daybook";
 import Accounts from "@/pages/Accounts";
 import Payroll from "@/pages/Payroll";
 import Inventory from "@/pages/Inventory";
-import StockImport from "@/pages/StockImport";
 import SalesTools from "@/pages/SalesTools";
 import Analytics from "@/pages/Analytics";
 
@@ -93,7 +92,7 @@ function Routes() {
         {R("/products", ["manager", "cashier", "partner"], Products)}
         {R("/products/:id", ["manager", "cashier", "partner"], ProductDetail)}
         {R("/motorcycles", ["manager", "cashier", "partner"], Motorcycles)}
-        {R("/stock/import", ["manager"], StockImport)}
+        <Route path="/stock/import"><OldLink to="/stock?import=1" roles={["manager"]} /></Route>
         {R("/stock", ["manager", "partner"], Stock)}
         {R("/inventory", ["manager", "partner"], Inventory)}
         {R("/daybook", ["manager", "partner"], Daybook)}
