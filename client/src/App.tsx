@@ -18,7 +18,6 @@ import SaleDetail from "@/pages/SaleDetail";
 import Products from "@/pages/Products";
 import ProductDetail from "@/pages/ProductDetail";
 import Motorcycles from "@/pages/Motorcycles";
-import Stock from "@/pages/Stock";
 import Containers from "@/pages/Containers";
 import ContainerDetail from "@/pages/ContainerDetail";
 import Contacts from "@/pages/Contacts";
@@ -32,7 +31,7 @@ import OptionalVouchers from "@/pages/OptionalVouchers";
 import Daybook from "@/pages/Daybook";
 import Accounts from "@/pages/Accounts";
 import Payroll from "@/pages/Payroll";
-import Inventory from "@/pages/Inventory";
+import InventoryLocations from "@/pages/InventoryLocations";
 import SalesTools from "@/pages/SalesTools";
 import Analytics from "@/pages/Analytics";
 
@@ -92,9 +91,9 @@ function Routes() {
         {R("/products", ["manager", "cashier", "partner"], Products)}
         {R("/products/:id", ["manager", "cashier", "partner"], ProductDetail)}
         {R("/motorcycles", ["manager", "cashier", "partner"], Motorcycles)}
-        <Route path="/stock/import"><OldLink to="/stock?import=1" roles={["manager"]} /></Route>
-        {R("/stock", ["manager", "partner"], Stock)}
-        {R("/inventory", ["manager", "partner"], Inventory)}
+        <Route path="/stock/import"><OldLink to="/products?import=1" roles={["manager"]} /></Route>
+        <Route path="/stock"><OldLink to="/products" roles={["manager", "partner"]} /></Route>
+        {R("/inventory", ["manager", "partner"], InventoryLocations)}
         {R("/daybook", ["manager", "partner"], Daybook)}
         {R("/vouchers/:id", ["manager", "partner"], VoucherPrint)}
         {R("/vouchers", ["manager", "partner"], Vouchers)}
