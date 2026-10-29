@@ -70,9 +70,13 @@ const NEW_ACTIVITY: MovementType[] = ["opening", "container_in", "sale", "adjust
 
 async function assertLocationOpen(tx: Tx, locationId: number, type: MovementType) {
   if (!NEW_ACTIVITY.includes(type)) return;
-  const [loc] = await tx.select({ name: locations.name, active: locations.active }).from(locations).where(eq(locations.id, locationId));
+  const [loc] = await tx.select({ name: locations.name, active: locations.active, parentId: locations.parentId }).from(locations).where(eq(locations.id, locationId));
   if (!loc) throw badRequest("That location does not exist", "Cet emplacement n'existe pas");
   if (!loc.active) throw badRequest(`${loc.name} is switched off: switch it back on first`, `${loc.name} est désactivé : réactivez-le d'abord`);
+  if (loc.parentId !== null) {
+    const [parent] = await tx.select({ active: locations.active }).from(locations).where(eq(locations.id, loc.parentId));
+    if (!parent?.active) throw badRequest("The warehouse's parent location is inactive", "L'emplacement parent de cet entrepôt est désactivé");
+  }
 }
 
 /**
