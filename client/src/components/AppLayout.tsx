@@ -110,8 +110,6 @@ const under = (location: string, href: string) => location === href || location.
 const SECTIONS: { href: string; en: string; fr: string; roles: Role[] }[][] = [
   [
     { href: "/stock", en: "Stock", fr: "Stock", roles: ["manager", "partner"] },
-    { href: "/inventory", en: "Stock count", fr: "Inventaire", roles: ["manager", "partner"] },
-    { href: "/stock/import", en: "Import", fr: "Import", roles: ["manager"] },
   ],
   [
     { href: "/vouchers", en: "Vouchers", fr: "Pièces", roles: ["manager", "partner"] },
@@ -119,7 +117,7 @@ const SECTIONS: { href: string; en: string; fr: string; roles: Role[] }[][] = [
   ],
 ];
 
-/** The stock pages each have their own tab bar; their sister pages are links at the end of it (one row, not two). */
+/** Stock uses valuation as its only view; old inventory links can still return to it. */
 const INLINE_SECTION = "/stock";
 
 /** Links to the other pages of the stock section, for the end of a page's own tab bar. */
@@ -129,6 +127,7 @@ export function SectionLinks() {
   const [location] = useLocation();
   const section = SECTIONS.find((tabs) => tabs[0].href === INLINE_SECTION)!;
   const tabs = section.filter((tab) => can(...tab.roles) && tab.href !== location);
+  if (!tabs.length) return null;
   return (
     <>
       <span className="mx-1 h-5 w-px self-center bg-border" aria-hidden />
