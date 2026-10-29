@@ -47,11 +47,52 @@ export async function ensureCompanyDirectory() {
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     )
   `);
+  // A fresh installation starts with company 1. Once the original company has been
+  // deliberately deleted, other companies remain in the directory and it must NOT
+  // be recreated at the next deployment or server restart.
   await pool.query(
-    "INSERT INTO public.companies(id, name, status) VALUES(1, 'Huanghe Motors Kalemie', 'ready') ON CONFLICT(id) DO NOTHING",
+    "INSERT INTO public.companies(id, name, status) SELECT 1, 'Huanghe Motors Kalemie', 'ready' WHERE NOT EXISTS (SELECT 1 FROM public.companies) ON CONFLICT(id) DO NOTHING",
   );
   await pool.query(`
     SELECT setval('public.companies_id_seq',
-      GREATEST((SELECT last_value FROM public.companies_id_seq), (SELECT max(id) FROM public.companies)), true)
+      GREATEST((SELECT last_value FROM public.companies_id_seq), COALESCE((SELECT max(id) FROM public.companies), 1)), true)
   `);
+
+  // Directory management is granted to the original owners and to the owners
+  // provisioned into their other companies. Store this permission outside the
+  // original company's business tables so it survives deletion of company 1.
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS public.company_managers (
+      company_id INTEGER NOT NULL REFERENCES public.companies(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL,
+      PRIMARY KEY (company_id, user_id)
+    )
+  `);
+  const original = await pool.query("SELECT id FROM public.companies WHERE id=1 AND status='ready'");
+  if (original.rowCount) {
+    await pool.query(`
+      INSERT INTO public.company_managers(company_id, user_id)
+      SELECT 1, id FROM public.users WHERE role='owner'
+      ON CONFLICT DO NOTHING
+    `);
+    // Existing installations already have companies created before the manager
+    // registry existed. Their initial owners were cloned from an original owner;
+    // match by username for the one-time upgrade/backfill.
+    const owners = await pool.query<{ username: string }>("SELECT username FROM public.users WHERE role='owner'");
+    if (owners.rows.length) {
+      const tenants = await pool.query<{ id: number }>(
+        "SELECT id FROM public.companies WHERE status='ready' AND id>1",
+      );
+      for (const tenant of tenants.rows) {
+        const tenantId = tenant.id;
+        if (!Number.isSafeInteger(tenantId) || tenantId < 2) continue;
+        await pool.query(`
+          INSERT INTO public.company_managers(company_id, user_id)
+          SELECT $1, id FROM "company_${tenantId}".users
+          WHERE role='owner' AND username = ANY($2::text[])
+          ON CONFLICT DO NOTHING
+        `, [tenantId, owners.rows.map((row) => row.username)]);
+      }
+    }
+  }
 }
