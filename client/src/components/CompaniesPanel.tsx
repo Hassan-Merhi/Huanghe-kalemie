@@ -9,12 +9,15 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Field, ErrorText, Loading, SubmitButton } from "@/components/common";
 import { useApiMutation } from "@/hooks/useApiMutation";
 import { useT } from "@/lib/i18n";
+import { useAuth } from "@/lib/auth";
+import { CompanySwitcher } from "@/components/CompanySwitcher";
 
 interface Company { id: number; name: string; isOriginal: boolean; createdAt: string }
-interface Impact { id: number; name: string; records: number | null; counts: Record<string, number> }
+interface Impact { id: number; name: string; records: number; counts: Record<string, number> }
 
 export function CompaniesPanel() {
   const t = useT();
+  const { user } = useAuth();
   const companies = useQuery<Company[]>({ queryKey: ["/api/companies"] });
   const [name, setName] = useState("");
   const [selected, setSelected] = useState<Company | null>(null);
@@ -22,7 +25,7 @@ export function CompaniesPanel() {
   const [force, setForce] = useState(false);
   const impact = useQuery<Impact>({
     queryKey: [`/api/companies/${selected?.id ?? 0}/impact`],
-    enabled: !!selected && !selected.isOriginal,
+    enabled: !!selected,
   });
   const create = useApiMutation<{ name: string }>("POST", "/api/companies", {
     success: t("Company created", "Entreprise créée"),
@@ -37,7 +40,7 @@ export function CompaniesPanel() {
 
   const hasRecords = (impact.data?.records ?? 0) > 0;
   const counts = Object.entries(impact.data?.counts ?? {}).filter(([, count]) => count > 0);
-  const canDelete = !!selected && !selected.isOriginal && confirmation === selected.name
+  const canDelete = !!selected && selected.id !== user?.companyId && confirmation === selected.name
     && !impact.isLoading && !impact.isError && (!hasRecords || force);
 
   function close() {
@@ -52,8 +55,8 @@ export function CompaniesPanel() {
         <CardHeader>
           <CardTitle className="text-base">{t("Create company", "Créer une entreprise")}</CardTitle>
           <CardDescription>{t(
-            "Each company gets separate users, products, inventory, sales and accounting. You can choose the company when signing in.",
-            "Chaque entreprise possède ses propres utilisateurs, articles, stocks, ventes et comptabilité. Vous choisissez l'entreprise lors de la connexion.",
+            "Each company gets separate users, products, inventory, sales and accounting. Switch between companies from the menu or sign-in screen.",
+            "Chaque entreprise possède ses propres utilisateurs, articles, stocks, ventes et comptabilité. Changez d'entreprise depuis le menu ou à la connexion.",
           )}</CardDescription>
         </CardHeader>
         <CardContent>
@@ -73,8 +76,8 @@ export function CompaniesPanel() {
         <CardHeader>
           <CardTitle className="text-base">{t("Companies", "Entreprises")}</CardTitle>
           <CardDescription>{t(
-            "Only the owner in the original company can create or delete companies. The original company is protected.",
-            "Seul le propriétaire de l'entreprise d'origine peut créer ou supprimer des entreprises. L'entreprise d'origine est protégée.",
+            "Authorized owners can manage every company, including the original. Switch to another company before deleting the active one. The last company cannot be deleted.",
+            "Les propriétaires autorisés peuvent gérer toutes les entreprises, y compris l'entreprise d'origine. Changez d'entreprise avant de supprimer celle qui est active. La dernière entreprise ne peut pas être supprimée.",
           )}</CardDescription>
         </CardHeader>
         <CardContent className="p-0">
@@ -89,14 +92,18 @@ export function CompaniesPanel() {
                 {(companies.data ?? []).map((company) => (
                   <TableRow key={company.id}>
                     <TableCell className="font-medium">{company.name}
-                      {company.isOriginal && <span className="ml-2 text-xs text-muted-foreground">{t("(original, protected)", "(origine, protégée)")}</span>}
+                      {company.isOriginal && <span className="ml-2 text-xs text-muted-foreground">{t("(original)", "(origine)")}</span>}
+                      {company.id === user?.companyId && <span className="ml-2 text-xs text-primary">{t("(current)", "(active)")}</span>}
                     </TableCell>
                     <TableCell className="text-right">
-                      {!company.isOriginal && (
-                        <Button variant="outline" size="sm" onClick={() => { setSelected(company); setConfirmation(""); setForce(false); }}>
+                      <div className="flex justify-end gap-2">
+                        <CompanySwitcher targetCompanyId={company.id} />
+                        <Button variant="outline" size="sm" disabled={company.id === user?.companyId || (companies.data?.length ?? 0) < 2}
+                          title={company.id === user?.companyId ? t("Switch to another company before deleting", "Changez d'entreprise avant la suppression") : undefined}
+                          onClick={() => { setSelected(company); setConfirmation(""); setForce(false); }}>
                           <Trash2 className="mr-1 h-4 w-4" /> {t("Delete", "Supprimer")}
                         </Button>
-                      )}
+                      </div>
                     </TableCell>
                   </TableRow>
                 ))}
@@ -111,8 +118,8 @@ export function CompaniesPanel() {
           <DialogHeader>
             <DialogTitle>{t("Delete company", "Supprimer l'entreprise")}: {selected?.name}</DialogTitle>
             <DialogDescription>{t(
-              "This is permanent. The company, its staff logins, products, stock, invoices, journals, backups and every other company-specific record will be lost. Other companies are not affected.",
-              "Cette opération est définitive. L'entreprise, ses utilisateurs, articles, stocks, factures, écritures, sauvegardes et autres données seront perdus. Les autres entreprises ne seront pas touchées.",
+              "This is permanent, including for the original company. All its users, inventory, sales, journals, backups and business records will be erased. Other companies remain intact.",
+              "Cette opération est définitive, même pour l'entreprise d'origine. Ses utilisateurs, stocks, ventes, écritures, sauvegardes et autres données seront effacés. Les autres entreprises restent intactes.",
             )}</DialogDescription>
           </DialogHeader>
           {impact.isLoading ? <Loading /> : (
