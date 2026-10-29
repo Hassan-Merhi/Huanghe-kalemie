@@ -82,6 +82,7 @@ export async function inventoryByLocation(tx: Tx) {
       productId: products.id,
       productName: products.name,
       categoryName: categories.name,
+      tracksSerials: products.tracksSerials,
       unit: products.unit,
       qty: stockLevels.qty,
       totalQty: variants.stockQty,
