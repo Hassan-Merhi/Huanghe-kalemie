@@ -33,7 +33,11 @@ export default function Settings() {
   const t = useT();
   const [tab, setTab] = useState("shop");
   const { user } = useAuth();
-  const manageCompanies = user?.role === "owner" && user.companyId === 1;
+  const companyAccess = useQuery<{ canManage: boolean }>({
+    queryKey: ["/api/companies/permissions"],
+    enabled: user?.role === "owner",
+  });
+  const manageCompanies = user?.role === "owner" && companyAccess.data?.canManage === true;
   return (
     <div>
       <PageHeader title={t("Settings", "Paramètres")} description={t("Shop, users, places, categories, the chart of accounts and backups.", "Boutique, utilisateurs, emplacements, catégories, plan comptable et sauvegardes.")} />
