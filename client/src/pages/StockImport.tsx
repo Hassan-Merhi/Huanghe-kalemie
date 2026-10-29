@@ -235,7 +235,7 @@ const rowError = (p: PreviewRow | undefined, lang: string) => (p ? (lang === "fr
 
 // ---------------------------------------------------------------- Page
 
-export default function StockImport({ embedded = false }: { embedded?: boolean }) {
+export default function StockImport({ embedded = false, onClose }: { embedded?: boolean; onClose?: () => void }) {
   const t = useT();
   const { can } = useAuth();
   const [tab, setTab] = useState("items");
@@ -255,7 +255,7 @@ export default function StockImport({ embedded = false }: { embedded?: boolean }
             {!embedded && <SectionLinks />}
           </TabsList>
         </div>
-        <TabsContent value="items"><ItemsImport /></TabsContent>
+        <TabsContent value="items"><ItemsImport onClose={onClose} /></TabsContent>
         <TabsContent value="prices"><PricesImport /></TabsContent>
         <TabsContent value="export"><ExportItems /></TabsContent>
       </Tabs>
@@ -283,7 +283,7 @@ interface ImportResult {
   adjustment: { id?: number; number?: string } | null;
 }
 
-function ItemsImport() {
+function ItemsImport({ onClose }: { onClose?: () => void }) {
   const t = useT();
   const { lang } = useI18n();
   const { user } = useAuth();
@@ -416,7 +416,13 @@ function ItemsImport() {
               )}
             </p>
             <p className="flex flex-wrap gap-3 text-sm">
-              <Link href="/stock" className="underline underline-offset-2">{t("View stock valuation", "Voir la valorisation du stock")}</Link>
+              {onClose ? (
+                  <button type="button" className="underline underline-offset-2" onClick={onClose}>
+                    {t("View stock valuation", "Voir la valorisation du stock")}
+                  </button>
+                ) : (
+                  <Link href="/stock" className="underline underline-offset-2">{t("View stock valuation", "Voir la valorisation du stock")}</Link>
+                )}
               <Link href="/daybook" className="underline underline-offset-2">{t("Day book", "Journal du jour")}</Link>
               <Link href="/products" className="underline underline-offset-2">{t("Items", "Articles")}</Link>
             </p>
