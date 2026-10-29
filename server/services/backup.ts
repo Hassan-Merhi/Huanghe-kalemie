@@ -16,7 +16,7 @@ import { markSystemLines } from "./ledger";
 
 export const BACKUP_FORMAT = 2;
 /** Sign-in sessions, request keys and the snapshots themselves are not business data. */
-const SKIP = ["user_sessions", "idempotency_keys", "backups", "companies"];
+const SKIP = ["user_sessions", "idempotency_keys", "backups", "companies", "__drizzle_migrations"];
 const KEEP_DAILY = 7;
 const KEEP_BEFORE_RESTORE = 3;
 
