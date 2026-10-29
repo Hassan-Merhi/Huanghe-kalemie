@@ -226,15 +226,15 @@ export function LocationSelect({ value, onChange, "aria-label": ariaLabel }: { v
   const t = useT();
   const { data = [] } = useLocations();
   useEffect(() => {
-    const active = data.filter((l) => l.active);
+    const active = data.filter((l) => l.active && (!l.parentId || data.some((p) => p.id === l.parentId && p.active)));
     if (!value && active.length) onChange(active[0].id);
   }, [data, value, onChange]);
   return (
     <Select value={value ? String(value) : ""} onValueChange={(v) => onChange(Number(v))}>
       <SelectTrigger aria-label={ariaLabel ?? t("Location", "Lieu")}><SelectValue /></SelectTrigger>
       <SelectContent>
-        {data.filter((l) => l.active).map((l) => (
-          <SelectItem key={l.id} value={String(l.id)}>{l.name}</SelectItem>
+        {data.filter((l) => l.active && (!l.parentId || data.some((p) => p.id === l.parentId && p.active))).map((l) => (
+          <SelectItem key={l.id} value={String(l.id)}>{l.parentId ? `${data.find((p) => p.id === l.parentId)?.name ?? ""} / ` : ""}{l.name}</SelectItem>
         ))}
       </SelectContent>
     </Select>
