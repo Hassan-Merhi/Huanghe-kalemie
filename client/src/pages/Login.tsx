@@ -14,6 +14,8 @@ export default function Login() {
   const { t, lang, setLang } = useI18n();
   const companies = useQuery<{ id: number; name: string }[]>({ queryKey: ["/api/auth/companies"] });
   const [companyId, setCompanyId] = useState(1);
+  const selectedCompanyId = companies.data?.some((company) => company.id === companyId)
+    ? companyId : companies.data?.[0]?.id ?? companyId;
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<unknown>(null);
@@ -28,7 +30,7 @@ export default function Login() {
     setBusy(true);
     setError(null);
     try {
-      const user = await api<User>("POST", "/api/auth/login", { username, password, companyId });
+      const user = await api<User>("POST", "/api/auth/login", { username, password, companyId: selectedCompanyId });
       if (user.language) setLang(user.language);
       queryClient.clear(); // Never display cached books from a previously selected company.
       queryClient.setQueryData(["/api/auth/me"], user);
@@ -56,7 +58,7 @@ export default function Login() {
           <form onSubmit={submit} className="space-y-4">
             {(companies.data?.length ?? 0) > 1 && (
               <Field label={t("Company", "Entreprise")} required>
-                <Select value={String(companyId)} onValueChange={(id) => setCompanyId(Number(id))}>
+                <Select value={String(selectedCompanyId)} onValueChange={(id) => setCompanyId(Number(id))}>
                   <SelectTrigger><SelectValue /></SelectTrigger>
                   <SelectContent>
                     {(companies.data ?? []).map((company) => (
@@ -87,7 +89,7 @@ export default function Login() {
             <SubmitButton
               type="submit"
               className="sm:flex-col sm:items-stretch [&>button]:w-full [&>p]:text-center"
-              blocked={!username ? t("Enter your username", "Saisissez votre nom d'utilisateur") : !password ? t("Enter your password", "Saisissez votre mot de passe") : null}
+              blocked={!companies.data?.length ? t("Loading companies", "Chargement des entreprises") : !username ? t("Enter your username", "Saisissez votre nom d'utilisateur") : !password ? t("Enter your password", "Saisissez votre mot de passe") : null}
               pending={busy}
             >
               {t("Sign in", "Se connecter")}
