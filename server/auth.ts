@@ -66,6 +66,12 @@ export function loadSessionUser(app: Express) {
   app.use(
     asyncHandler(async (req, _res, next) => {
       if (req.session.userId) {
+        const selected = req.session.companyId ?? 1;
+        if (selected !== 1 && !(await publicCompanies()).some((row) => row.id === selected)) {
+          req.session.userId = undefined;
+          req.session.companyId = undefined;
+          return next();
+        }
         const [u] = await db.select().from(users).where(eq(users.id, req.session.userId));
         if (u && u.active) {
           req.user = { id: u.id, companyId: currentCompanyId(), username: u.username, fullName: u.fullName, role: u.role, partnerId: u.partnerId, language: u.language };
