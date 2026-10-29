@@ -58,6 +58,7 @@ import * as ops from "./services/operations";
 import * as periodSvc from "./services/periods";
 import * as reports from "./services/reports";
 import * as checks from "./services/checks";
+import { registerCompanyRoutes } from "./companies";
 import * as backup from "./services/backup";
 import { getSetting } from "./setup";
 import { assertNotFuture, assertPeriodOpen, assertUndoKeepsRefunds, cnyRateFor, FRANCS_MET_SOURCE, rateFor, reverseJournal, setExchangeRate } from "./services/ledger";
@@ -126,6 +127,8 @@ export function registerRoutes(app: Express) {
     await db.execute(sql`select 1`);
     res.json({ ok: true });
   }));
+
+  registerCompanyRoutes(app);
 
   // ---------------------------------------------------------------- Settings, rates, users
 
