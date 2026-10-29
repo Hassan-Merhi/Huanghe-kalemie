@@ -21,7 +21,7 @@ import type { Party } from "@/lib/types";
 import { cn } from "@/lib/utils";
 
 type PartyType = Party["type"];
-type ContactType = Exclude<PartyType, "employee">;
+type ContactType = Extract<PartyType, "customer" | "supplier">;
 
 /** Balance in plain words. Debit-positive: positive = they owe us, negative = we owe them. */
 export interface ForeignBalance {
@@ -65,7 +65,6 @@ export function BalanceWords({ balance, className, customer, long }: { balance: 
 const COUNT_WORDS: Record<ContactType, [[string, string], [string, string]]> = {
   customer: [["customer", "customers"], ["client", "clients"]],
   supplier: [["supplier", "suppliers"], ["fournisseur", "fournisseurs"]],
-  agent: [["agent", "agents"], ["agent", "agents"]],
 };
 
 export default function Contacts() {
@@ -84,7 +83,6 @@ export default function Contacts() {
   const labels: Record<ContactType, string> = {
     customer: t("Customers", "Clients"),
     supplier: t("Suppliers", "Fournisseurs"),
-    agent: t("Agents", "Agents"),
   };
 
   return (
@@ -95,8 +93,8 @@ export default function Contacts() {
           user?.role === "cashier"
             ? t("What each customer owes the shop.", "Ce que chaque client doit à la boutique.")
             : t(
-                "Who owes the shop and whom the shop owes. Agents are clearing agents, transporters and similar.",
-                "Qui doit à la boutique et à qui la boutique doit. Les agents sont les transitaires, transporteurs, etc.",
+                "Customers who owe the shop and suppliers the shop owes.",
+                "Les clients qui doivent à la boutique et les fournisseurs auxquels la boutique doit.",
               )
         }
         actions={
@@ -115,7 +113,6 @@ export default function Contacts() {
             <TabsList className="h-auto flex-wrap">
               <TabsTrigger value="customer">{labels.customer}</TabsTrigger>
               <TabsTrigger value="supplier">{labels.supplier}</TabsTrigger>
-              <TabsTrigger value="agent">{labels.agent}</TabsTrigger>
             </TabsList>
           </Tabs>
         )}
