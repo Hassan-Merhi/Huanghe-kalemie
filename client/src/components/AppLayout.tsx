@@ -45,6 +45,7 @@ import { ThemeToggle } from "@/components/ThemeProvider";
 import { api, queryClient } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { MyAccountButton } from "@/components/MyAccount";
+import { CompanySwitcher } from "@/components/CompanySwitcher";
 
 interface NavItem {
   href: string;
@@ -321,6 +322,7 @@ export function AppLayout({ children }: { children: ReactNode }) {
           <div className="px-2 py-1">
             <p className="text-lg font-bold text-sidebar-primary">HUANGHE</p>
             <p className="truncate text-xs text-sidebar-foreground/70" title={currentCompanyName}>{currentCompanyName}</p>
+            <CompanySwitcher compact />
           </div>
         </SidebarHeader>
         {/* The menu scrolls on its own above the footer, so a short screen never hides an entry under it. */}
