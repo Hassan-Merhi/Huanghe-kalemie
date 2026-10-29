@@ -987,7 +987,7 @@ export function TransferForm({ onDone, initialFromId, initialToId }: { onDone: (
       <Card>
         <CardContent className="grid gap-3 p-4 sm:grid-cols-2 lg:grid-cols-4">
           <Field label={t("Date", "Date")}><Input type="date" value={dateValue} onChange={(e) => setDateValue(e.target.value)} /></Field>
-          <Field label={t("From", "De")} required><LocationSelect value={fromId} onChange={setFromId} aria-label={t("From", "De")} /></Field>
+          <Field label={t("From", "De")} required><LocationSelect value={fromId} onChange={setFromId} excludeId={initialToId ?? undefined} aria-label={t("From", "De")} /></Field>
           <Field label={t("To", "Vers")} required>
             <Select value={toId ? String(toId) : ""} onValueChange={(v) => setToId(Number(v))}>
               <SelectTrigger aria-label={t("To", "Vers")}><SelectValue placeholder={t("Choose…", "Choisir…")} /></SelectTrigger>
