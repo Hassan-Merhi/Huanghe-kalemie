@@ -134,6 +134,13 @@
       "when": 1792150000000,
       "tag": "0018_a48_restates_journal",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "7",
+      "when": 1793270000000,
+      "tag": "0019_inventory_warehouses",
+      "breakpoints": true
     }
   ]
 }
