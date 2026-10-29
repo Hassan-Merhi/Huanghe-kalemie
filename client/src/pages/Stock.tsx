@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useRef, useState } from "react";
+import { Fragment, lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { de } from "@shared/french";
 import { useQuery } from "@tanstack/react-query";
 import Decimal from "decimal.js";
@@ -26,7 +26,7 @@ import { useT, count } from "@/lib/i18n";
 import type { MotorcycleUnit, VariantRow } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { useSystemText } from "@/lib/systemText";
-import StockImport from "@/pages/StockImport";
+const StockImport = lazy(() => import("@/pages/StockImport"));
 
 type T = (en: string, fr: string) => string;
 
@@ -139,7 +139,9 @@ export default function Stock() {
                 )}
               </DialogDescription>
             </DialogHeader>
-            <StockImport embedded onClose={() => setImportDialogOpen(false)} />
+            <Suspense fallback={<Loading />}>
+              <StockImport embedded onClose={() => setImportDialogOpen(false)} />
+            </Suspense>
           </DialogContent>
         </Dialog>
       )}
