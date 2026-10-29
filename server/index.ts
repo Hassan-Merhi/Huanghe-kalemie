@@ -45,17 +45,22 @@ async function main() {
   await runMigrations(db);
   const companies = await pool.query<{ id: number }>("SELECT id FROM public.companies WHERE status='ready' AND id>1 ORDER BY id");
   for (const company of companies.rows) await runMigrations(isolatedDb(company.id), company.id);
-  await db.transaction((tx) =>
-    ensureSetup(tx, {
-      ownerUsername: process.env.OWNER_USERNAME?.toLowerCase(),
-      ownerPassword: process.env.OWNER_PASSWORD ?? (process.env.NODE_ENV === "production" ? undefined : "admin12345"),
-      partnerAName: process.env.PARTNER_A_NAME,
-      partnerBName: process.env.PARTNER_B_NAME,
-      locationName: process.env.LOCATION_NAME,
-    }),
-  );
+  // Company 1 may have been permanently deleted while another company remains.
+  // Never repopulate the old public shop on startup after that deletion.
+  const original = await pool.query("SELECT id FROM public.companies WHERE id=1 AND status='ready'");
+  if (original.rowCount) {
+    await db.transaction((tx) =>
+      ensureSetup(tx, {
+        ownerUsername: process.env.OWNER_USERNAME?.toLowerCase(),
+        ownerPassword: process.env.OWNER_PASSWORD ?? (process.env.NODE_ENV === "production" ? undefined : "admin12345"),
+        partnerAName: process.env.PARTNER_A_NAME,
+        partnerBName: process.env.PARTNER_B_NAME,
+        locationName: process.env.LOCATION_NAME,
+      }),
+    );
+  }
   // DEMO_DATA=true fills an empty shop with sample items and sales (for a demo server only).
-  if (process.env.DEMO_DATA === "true") {
+  if (original.rowCount && process.env.DEMO_DATA === "true") {
     const demo = await import("./demo");
     if (await demo.isEmptyShop()) await demo.seedDemo();
   }
