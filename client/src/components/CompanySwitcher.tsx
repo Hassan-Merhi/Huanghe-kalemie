@@ -15,7 +15,7 @@ import { useI18n } from "@/lib/i18n";
  * never a client-supplied tenant header. Each company has separate users and
  * credentials. Clear all cached ledgers after the server rotates the session.
  */
-export function CompanySwitcher({ compact = false }: { compact?: boolean }) {
+export function CompanySwitcher({ compact = false, targetCompanyId }: { compact?: boolean; targetCompanyId?: number }) {
   const { user } = useAuth();
   const { t, setLang } = useI18n();
   const companies = useQuery<{ id: number; name: string }[]>({
@@ -31,7 +31,7 @@ export function CompanySwitcher({ compact = false }: { compact?: boolean }) {
 
   function open() {
     if (!available.length) return;
-    setTargetId(String(available[0].id));
+    setTargetId(String(targetCompanyId && available.some((c) => c.id === targetCompanyId) ? targetCompanyId : available[0].id));
     setUsername(user?.username ?? "");
     setPassword("");
     setError(null);
@@ -59,14 +59,14 @@ export function CompanySwitcher({ compact = false }: { compact?: boolean }) {
     }
   }
 
-  if (!user || !available.length) return null;
+  if (!user || !available.length || (targetCompanyId && !available.some((c) => c.id === targetCompanyId))) return null;
   return (
     <>
       <Button type="button" variant={compact ? "ghost" : "outline"} size="sm"
         className={compact ? "mt-1 h-7 justify-start gap-1 px-1 text-xs text-sidebar-foreground/80 hover:text-sidebar-foreground" : "gap-2"}
         onClick={open}>
         <ArrowLeftRight className="h-3.5 w-3.5" />
-        {t("Switch company", "Changer d'entreprise")}
+        {targetCompanyId ? t("Switch", "Changer") : t("Switch company", "Changer d'entreprise")}
       </Button>
       <Dialog open={isOpen} onOpenChange={(value) => { if (!busy) setIsOpen(value); }}>
         <DialogContent className="sm:max-w-md">
